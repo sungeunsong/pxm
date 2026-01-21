@@ -1,0 +1,15 @@
+services:
+  db:
+    image: postgres:16
+    container_name: pxm-db
+    environment:
+      POSTGRES_USER: pxm
+      POSTGRES_PASSWORD: bpm
+      POSTGRES_DB: pxm
+    ports:
+      - "5432:5432"
+    volumes:
+      - pxm_pgdata:/var/lib/postgresql/data
+      - ./db/migrations:/docker-entrypoint-initdb.d:ro
+volumes:
+  pxm_pgdata:

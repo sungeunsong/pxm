@@ -1,0 +1,127 @@
+import { Controller, Param, Req, Sse } from '@nestjs/common';
+import type { Request } from 'express';
+import { Observable } from 'rxjs';
+import { OutboxService } from '../outbox/outbox.service';
+
+type SseMessage = {
+  id?: string;
+  event?: string;
+  data: any;
+};
+
+@Controller()
+export class InstancesController {
+  constructor(private readonly outbox: OutboxService) {}
+
+  @Sse('/instances/:id/stream')
+  stream(
+    @Param('id') instanceId: string,
+    @Req() req: Request,
+  ): Observable<MessageEvent> {
+    // SSE 표준: Last-Event-ID 헤더로 재연결 커서 전달
+    const lastEventIdHeader =
+      req.header('last-event-id') ?? req.header('Last-Event-ID');
+    let cursor = Number(lastEventIdHeader ?? 0);
+    if (!Number.isFinite(cursor) || cursor < 0) cursor = 0;
+
+    const pollMs = Number(process.env.SSE_POLL_MS ?? 700);
+    const pingMs = Number(process.env.SSE_PING_MS ?? 15000);
+
+    return new Observable<MessageEvent>((subscriber) => {
+      let alive = true;
+      let polling = false;
+
+      const send = (msg: SseMessage) => {
+        subscriber.next({
+          // Nest의 MessageEvent 타입은 사실상 아래 shape을 허용
+          // id/event는 SSE 필드로 나감
+          data: msg.data,
+          id: msg.id,
+          type: msg.event,
+        } as any);
+      };
+
+      // 1) keepalive ping
+      const pingTimer = setInterval(() => {
+        if (!alive) return;
+        send({
+          event: 'ping',
+          id: String(cursor),
+          data: { ok: true, ts: new Date().toISOString() },
+        });
+      }, pingMs);
+
+      // 2) polling loop
+      const pollTimer = setInterval(async () => {
+        if (!alive) return;
+        if (polling) return; // 중복 폴링 방지
+        polling = true;
+
+        try {
+          const rows = await this.outbox.fetchAfter(instanceId, cursor, 200);
+
+          for (const r of rows) {
+            cursor = r.id;
+            send({
+              id: String(r.id),
+              event: r.event_type, // NODE_STARTED 같은 타입이 event명이 됨
+              data: {
+                id: r.id,
+                instance_id: r.instance_id,
+                event_type: r.event_type,
+                payload: r.payload,
+                created_at: r.created_at,
+              },
+            });
+          }
+        } catch (e: any) {
+          // 연결을 끊지 않고, 에러 이벤트를 한번 쏘고 계속
+          send({
+            event: 'error',
+            id: String(cursor),
+            data: { message: e?.message ?? 'poll error' },
+          });
+        } finally {
+          polling = false;
+        }
+      }, pollMs);
+
+      // 3) 첫 진입 즉시 한 번 당겨오기 (체감 “탁”)
+      (async () => {
+        try {
+          const rows = await this.outbox.fetchAfter(instanceId, cursor, 200);
+          for (const r of rows) {
+            cursor = r.id;
+            send({
+              id: String(r.id),
+              event: r.event_type,
+              data: {
+                id: r.id,
+                instance_id: r.instance_id,
+                event_type: r.event_type,
+                payload: r.payload,
+                created_at: r.created_at,
+              },
+            });
+          }
+        } catch {
+          // 무시
+        }
+      })();
+
+      // cleanup
+      req.on('close', () => {
+        alive = false;
+        clearInterval(pollTimer);
+        clearInterval(pingTimer);
+        subscriber.complete();
+      });
+
+      return () => {
+        alive = false;
+        clearInterval(pollTimer);
+        clearInterval(pingTimer);
+      };
+    });
+  }
+}
