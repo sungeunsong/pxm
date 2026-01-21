@@ -1,7 +1,8 @@
-import { Controller, Param, Req, Sse } from '@nestjs/common';
+import { Body, Controller, Param, Post, Req, Sse } from '@nestjs/common';
 import type { Request } from 'express';
 import { Observable } from 'rxjs';
 import { OutboxService } from '../outbox/outbox.service';
+import { InstancesService } from './instances.service';
 
 type SseMessage = {
   id?: string;
@@ -11,7 +12,19 @@ type SseMessage = {
 
 @Controller()
 export class InstancesController {
-  constructor(private readonly outbox: OutboxService) {}
+  constructor(
+    private readonly outbox: OutboxService,
+    private readonly instances: InstancesService,
+  ) {}
+
+  @Post('/instances')
+  async create(@Body() body: any) {
+    // dto를 엄격히 하고 싶으면 CreateInstanceDto로 바꿔도 OK
+    return this.instances.createInstance({
+      template_id: body?.template_id,
+      ctx: body?.ctx,
+    });
+  }
 
   @Sse('/instances/:id/stream')
   stream(

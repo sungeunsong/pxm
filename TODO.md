@@ -40,10 +40,10 @@
 - [x] infra Postgres + init schema
 
 ## 1. Real Outbox → SSE (핵심 슬라이스)
-- [ ] DB: event_outbox insert 테스트용 SQL/seed 추가
-- [ ] API: Postgres 연결(PG pool) + outbox polling
-- [ ] API: /instances/:id/stream 에서 outbox 이벤트를 SSE로 스트리밍 (Last-Event-ID 지원)
-- [ ] WEB: SSE 연결해서 이벤트 로그 콘솔/패널에 출력
+- [x] DB: event_outbox insert 테스트용 SQL/seed 추가
+- [x] API: Postgres 연결(PG pool) + outbox polling
+- [x] API: /instances/:id/stream 에서 outbox 이벤트를 SSE로 스트리밍 (Last-Event-ID 지원)
+- [x] WEB: SSE 연결해서 이벤트 로그 콘솔/패널에 출력
 
 ## 2. Instance create → engine_jobs (시작 트리거)
 - [ ] API: POST /instances (instance row + engine_jobs START)
