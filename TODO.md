@@ -3,9 +3,9 @@
 ## A. Engine / Runtime (Core, Must)
 - [x] Bootstrap
 - [x] Outbox → SSE
-- [ ] Instance → Job → Worker loop
+- [x] Instance → Job → Worker loop
 - [ ] Token execution (Start/Service/Gateway)
-- [ ] Lock / Lease / Heartbeat
+- [x] Lock / Lease / Heartbeat
 - [ ] Retry / Timer
 - [ ] Engine crash recovery
 
@@ -46,9 +46,9 @@
 - [x] WEB: SSE 연결해서 이벤트 로그 콘솔/패널에 출력
 
 ## 2. Instance create → engine_jobs (시작 트리거)
-- [ ] API: POST /instances (instance row + engine_jobs START)
-- [ ] ENGINE: engine_jobs SKIP LOCKED fetch
-- [ ] ENGINE: instance status RUNNING + outbox INSTANCE_RUNNING 기록
+- [x] API: POST /instances (instance row + engine_jobs START)
+- [x] ENGINE: engine_jobs SKIP LOCKED fetch
+- [x] ENGINE: instance status RUNNING + outbox INSTANCE_RUNNING 기록
 
 ## 3. Runtime trace (와 포인트)
 - [ ] WEB: 간단 그래프(노드 5개) 렌더

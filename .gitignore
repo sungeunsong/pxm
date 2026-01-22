@@ -20,3 +20,5 @@ build/
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json
+
+postgres_data/
