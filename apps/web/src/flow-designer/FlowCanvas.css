@@ -1,0 +1,107 @@
+/* ============================================
+   Flow Canvas Styles
+   ============================================ */
+
+.flow-canvas-wrapper {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-primary);
+}
+
+/* ===== React Flow Overrides ===== */
+.react-flow {
+  background: var(--bg-primary);
+}
+
+.react-flow__attribution {
+  background: var(--bg-tertiary) !important;
+  color: var(--text-tertiary) !important;
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: 10px;
+}
+
+.react-flow__attribution a {
+  color: var(--color-info) !important;
+}
+
+/* ===== Controls ===== */
+.flow-controls {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+
+.flow-controls button {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  transition: all var(--transition-base);
+}
+
+.flow-controls button:last-child {
+  border-bottom: none;
+}
+
+.flow-controls button:hover {
+  background: var(--bg-tertiary);
+  color: var(--color-info);
+}
+
+.flow-controls button svg {
+  fill: currentColor;
+}
+
+/* ===== MiniMap ===== */
+.flow-minimap {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+
+.react-flow__minimap-mask {
+  fill: var(--bg-secondary);
+  fill-opacity: 0.6;
+}
+
+.react-flow__minimap-node {
+  fill: var(--bg-tertiary);
+  stroke: var(--border-strong);
+  stroke-width: 1;
+}
+
+/* ===== Edges ===== */
+.react-flow__edge-path {
+  stroke: var(--color-info);
+  stroke-width: 2;
+}
+
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: var(--color-success);
+  stroke-width: 3;
+}
+
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke: var(--color-success);
+}
+
+/* ===== Selection ===== */
+.react-flow__nodesselection-rect,
+.react-flow__selection {
+  background: rgba(33, 150, 243, 0.1);
+  border: 1px solid var(--color-info);
+}
+
+/* ===== Connection Line ===== */
+.react-flow__connectionline {
+  stroke: var(--color-info);
+  stroke-width: 2;
+}
+
+.react-flow__connection-path {
+  stroke: var(--color-info);
+  stroke-width: 2;
+}

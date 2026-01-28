@@ -1,0 +1,135 @@
+/* ============================================
+   Custom Node Styles
+   ============================================ */
+
+.custom-node {
+  min-width: 180px;
+  background: var(--bg-elevated);
+  border: 2px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  padding: var(--space-md);
+  box-shadow: var(--shadow-md);
+  transition: all var(--transition-base);
+  cursor: pointer;
+}
+
+.custom-node:hover {
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-2px);
+}
+
+.custom-node.selected {
+  border-color: var(--color-info);
+  box-shadow: var(--shadow-glow-blue);
+}
+
+/* ===== Node Content ===== */
+.custom-node-content {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.custom-node-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  color: white;
+  font-size: 20px;
+  box-shadow: var(--shadow-sm);
+  flex-shrink: 0;
+}
+
+.custom-node-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.custom-node-label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+
+.custom-node-description {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ===== Node Type Colors ===== */
+.custom-node-start .custom-node-icon {
+  background: var(--node-start);
+}
+
+.custom-node-service .custom-node-icon {
+  background: var(--node-service);
+}
+
+.custom-node-timer .custom-node-icon {
+  background: var(--node-timer);
+}
+
+.custom-node-gateway .custom-node-icon {
+  background: var(--node-gateway);
+}
+
+.custom-node-approval .custom-node-icon {
+  background: var(--node-approval);
+}
+
+.custom-node-end .custom-node-icon {
+  background: var(--node-end);
+}
+
+/* ===== Handles ===== */
+.custom-handle {
+  width: 12px;
+  height: 12px;
+  background: var(--color-info);
+  border: 2px solid var(--bg-elevated);
+  transition: all var(--transition-base);
+}
+
+.custom-handle:hover {
+  width: 16px;
+  height: 16px;
+  background: var(--color-success);
+}
+
+/* ===== Selected State Colors ===== */
+.custom-node.selected.custom-node-start {
+  border-color: var(--node-start);
+  box-shadow: 0 0 0 3px rgba(76, 175, 80, 0.3);
+}
+
+.custom-node.selected.custom-node-service {
+  border-color: var(--node-service);
+  box-shadow: 0 0 0 3px rgba(33, 150, 243, 0.3);
+}
+
+.custom-node.selected.custom-node-timer {
+  border-color: var(--node-timer);
+  box-shadow: 0 0 0 3px rgba(255, 152, 0, 0.3);
+}
+
+.custom-node.selected.custom-node-gateway {
+  border-color: var(--node-gateway);
+  box-shadow: 0 0 0 3px rgba(156, 39, 176, 0.3);
+}
+
+.custom-node.selected.custom-node-approval {
+  border-color: var(--node-approval);
+  box-shadow: 0 0 0 3px rgba(255, 193, 7, 0.3);
+}
+
+.custom-node.selected.custom-node-end {
+  border-color: var(--node-end);
+  box-shadow: 0 0 0 3px rgba(244, 67, 54, 0.3);
+}

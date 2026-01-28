@@ -115,25 +115,31 @@ DB: infra/docker-compose + 001_init.sql 적용됨(process_instance, engine_jobs,
    - [x] 반응형 브레이크포인트 (모바일, 태블릿, 데스크톱)
    - [x] FlowDesigner 컴포넌트 (전체 레이아웃 통합)
 
-### Phase 1: Flow Designer 기본 구현
+### Phase 1: Flow Designer 기본 구현 (진행 중 - 80% 완료)
 
 **목표**: 사용자가 워크플로우를 시각적으로 설계할 수 있는 캔버스 제공
 
-1. **노드 팔레트 UI** (1-2일)
-   - [ ] 좌측 사이드바에 노드 타입 목록 (Start, Service, Timer, Gateway, Approval, End)
-   - [ ] 드래그 가능한 노드 아이템 (grab cursor, opacity 효과)
-   - [ ] 노드 아이콘 및 설명 (Lucide 아이콘 사용)
-   - [ ] 노드별 색상 구분 (Total.js 스타일)
+1. **노드 팔레트 UI** (1-2일) ✅ 완료 (1/28)
+   - [x] 좌측 사이드바에 노드 타입 목록 (Start, Service, Timer, Gateway, Approval, End)
+   - [x] 드래그 가능한 노드 아이템 (grab cursor, opacity 효과)
+   - [x] 노드 아이콘 및 설명 (Lucide 아이콘 사용)
+   - [x] 노드별 색상 구분 (Total.js 스타일)
 
-2. **캔버스 기본 기능** (2-3일)
-   - [ ] React Flow 또는 직접 구현 선택
-   - [ ] 노드 드래그&드롭
-   - [ ] 노드 간 엣지 연결
-   - [ ] 줌/팬 기능
-   - [ ] 미니맵 (선택)
+2. **캔버스 기본 기능** (2-3일) ✅ 완료 (1/28)
+   - [x] React Flow 통합 (v11.11.4)
+   - [x] 노드 드래그&드롭
+   - [x] 노드 간 엣지 연결 (Smoothstep, 애니메이션)
+   - [x] 줌/팬 기능 (Controls)
+   - [x] 미니맵 (노드별 색상)
+   - [x] 커스텀 노드 컴포넌트
+   - [x] Background (Dots)
 
-3. **노드 속성 패널** (2일)
-   - [ ] 우측 패널: 선택된 노드의 속성 편집
+3. **노드 속성 패널** (2일) 🔄 진행 중 (50% 완료)
+   - [x] 우측 사이드바 레이아웃
+   - [x] 노드 선택 시 속성 표시 (ID, 타입, 레이블, 위치)
+   - [ ] 노드별 설정 폼 (Input 컴포넌트 활용)
+   - [ ] 속성 변경 핸들러
+   - [ ] 실시간 업데이트
    - [ ] Service 노드: URL, Method, Headers, Timeout, Retry 설정
    - [ ] Timer 노드: duration_ms 설정
    - [ ] Gateway 노드: 조건식 입력

@@ -184,6 +184,36 @@
   padding: var(--space-xl);
 }
 
+/* ===== Properties Form ===== */
+.properties-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.property-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.property-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.property-value {
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  padding: var(--space-sm);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
 /* ============================================
    Responsive Design
    ============================================ */
