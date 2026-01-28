@@ -145,47 +145,76 @@ DB: infra/docker-compose + 001_init.sql 적용됨(process_instance, engine_jobs,
    - [x] Approval 노드: 승인자, Approval Type 설정
    - [ ] Approval 노드: 승인자 선택
 
-4. **템플릿 저장/불러오기** (1일)
-   - [ ] POST /templates API (process_def 저장)
-   - [ ] GET /templates API (템플릿 목록)
-   - [ ] 캔버스 → JSON 직렬화
-   - [ ] JSON → 캔버스 복원
+4. **템플릿 저장/불러오기** (1일) ✅ 완료 (1/28)
+   - [x] POST /templates API (workflow_templates 저장)
+   - [x] GET /templates API (템플릿 목록)
+   - [x] 캔버스 → JSON 직렬화
+   - [x] JSON → 캔버스 복원
+   - [x] 템플릿 선택 모달 UI
 
-### Phase 2: Gateway 노드 실행 (엔진 강화)
+### Phase 2: 동적 워크플로우 실행 엔진 ✅ 완료 (1/28)
+
+**목표**: 템플릿 기반 동적 워크플로우 실행
+
+5. **템플릿 실행 API** (1일) ✅ 완료 (1/28)
+   - [x] POST /templates/:id/execute (process_instance + engine_jobs 생성)
+   - [x] ctx 구조 설계 (cursor, nodes, edges, template_id)
+   - [x] START job 생성
+
+6. **동적 워크플로우 엔진** (2일) ✅ 완료 (1/28)
+   - [x] ENGINE: ctx에서 nodes, edges 읽기
+   - [x] ENGINE: cursor 기반 현재 노드 찾기
+   - [x] ENGINE: edges에서 다음 노드 동적 탐색
+   - [x] ENGINE: 노드 타입별 처리 (start, service, timer, approval, gateway, end)
+   - [x] ENGINE: RESUME job 생성으로 다음 노드 실행
+   - [x] ENGINE: TIMER job 처리 개선 (동적 다음 노드 찾기)
+
+7. **실시간 실행 시각화** (1일) ✅ 완료 (1/28)
+   - [x] WEB: ExecutionModal (SSE 기반 실시간 이벤트 표시)
+   - [x] WEB: SSE 커스텀 이벤트 타입 처리 (addEventListener)
+   - [x] WEB: 캔버스 노드 상태 실시간 업데이트
+   - [x] WEB: 노드 실행 상태 스타일 (pending, running, completed, failed)
+   - [x] WEB: 노드 애니메이션 (펄스, 회전 아이콘)
+   - [x] 이벤트 타임라인 UI
+
+### Phase 3: Gateway 노드 실행 (엔진 강화)
 
 **목표**: 조건 분기 로직 실행
 
-5. **Gateway 노드 구현** (2-3일)
+8. **Gateway 노드 구현** (2-3일)
    - [ ] ENGINE: 조건식 평가 (ctx 기반)
    - [ ] ENGINE: 다중 아웃바운드 엣지 처리
    - [ ] ENGINE: 조건에 따른 토큰 라우팅
    - [ ] 테스트: 간단한 if-else 분기
 
-### Phase 3: Approval 노드 + 작업함
+### Phase 4: Approval 노드 + 작업함
 
 **목표**: 사람 승인 워크플로우
 
-6. **Approval 노드 + Task 생성** (3일)
+9. **Approval 노드 + Task 생성** (3일)
    - [ ] ENGINE: Approval 노드에서 task 생성 + INSTANCE_WAITING
    - [ ] API: POST /tasks/:id/approve, /tasks/:id/reject
    - [ ] API: 승인 후 RESUME job 생성
    - [ ] WEB: Inbox 페이지 (내 작업함)
    - [ ] WEB: 승인/반려 버튼
 
-### Phase 4: 제품 완성도
+### Phase 5: 제품 완성도
 
-7. **에러 처리 UI** (1일)
-   - [ ] WEB: 실패 노드 에러 카드 (retry count, next retry time)
-   - [ ] WEB: 에러 상세 모달
+10. **에러 처리 UI** (1일)
 
-8. **템플릿 갤러리** (1-2일)
-   - [ ] 기본 템플릿 3개 (권한요청, 구매요청, 계정생성)
-   - [ ] 템플릿 선택 → 인스턴스 생성 플로우
+- [ ] WEB: 실패 노드 에러 카드 (retry count, next retry time)
+- [ ] WEB: 에러 상세 모달
 
-9. **Identity/Access 기본** (3-4일)
-   - [ ] User, Org 모델
-   - [ ] 로그인/로그아웃 (JWT)
-   - [ ] 승인자 자동 할당 (매니저)
+11. **템플릿 갤러리** (1-2일)
+
+- [ ] 기본 템플릿 3개 (권한요청, 구매요청, 계정생성)
+- [ ] 템플릿 선택 → 인스턴스 생성 플로우
+
+12. **Identity/Access 기본** (3-4일)
+
+- [ ] User, Org 모델
+- [ ] 로그인/로그아웃 (JWT)
+- [ ] 승인자 자동 할당 (매니저)
 
 ## TODO의 축
 

@@ -40,7 +40,8 @@ export const ExecutionModal: React.FC<ExecutionModalProps> = ({
     const eventSource = new EventSource(`http://localhost:3000/instances/${instanceId}/stream`);
     eventSourceRef.current = eventSource;
 
-    eventSource.onmessage = (event) => {
+    // 공통 이벤트 핸들러
+    const handleEvent = (event: MessageEvent) => {
       try {
         const data = JSON.parse(event.data);
         console.log('SSE Event (Modal):', data);
@@ -73,6 +74,29 @@ export const ExecutionModal: React.FC<ExecutionModalProps> = ({
         console.error('Failed to parse SSE event:', err);
       }
     };
+
+    // 모든 이벤트 타입에 대해 리스너 등록
+    const eventTypes = [
+      'INSTANCE_CREATED',
+      'INSTANCE_RUNNING',
+      'INSTANCE_WAITING',
+      'INSTANCE_COMPLETED',
+      'INSTANCE_FAILED',
+      'NODE_STARTED',
+      'NODE_COMPLETED',
+      'NODE_FAILED',
+      'TIMER_SCHEDULED',
+      'TIMER_ESCALATED',
+      'RETRY_SCHEDULED',
+      'APPROVAL_REQUIRED',
+    ];
+
+    eventTypes.forEach((eventType) => {
+      eventSource.addEventListener(eventType, handleEvent);
+    });
+
+    // 기본 message 이벤트도 처리
+    eventSource.onmessage = handleEvent;
 
     eventSource.onerror = (err) => {
       console.error('SSE Error:', err);

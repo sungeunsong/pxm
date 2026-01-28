@@ -298,23 +298,26 @@ async fn main() -> Result<()> {
 }
 
 async fn run_instance_job(pool: &PgPool, worker_id: &str, job: &Job) -> Result<()> {
-    // 확장 포인트: 노드/템플릿별로 retry policy를 ctx나 definition에서 가져오도록 변경
+    // 1) ctx 읽기 (nodes, edges, cursor)
+    let row = sqlx::query!(
+        r#"select ctx from process_instance where id = $1"#,
+        job.instance_id
+    )
+    .fetch_one(pool)
+    .await?;
 
-    // 1) 현재 cursor 읽기
-    let mut cursor = {
-        let row = sqlx::query!(
-            r#"select ctx from process_instance where id = $1"#,
-            job.instance_id
-        )
-        .fetch_one(pool)
-        .await?;
+    let ctx: Value = row.ctx;
+    let cursor = ctx.get("cursor").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let nodes = ctx.get("nodes").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let edges = ctx.get("edges").and_then(|v| v.as_array()).cloned().unwrap_or_default();
 
-        let ctx: Value = row.ctx;
-        ctx.get("cursor").and_then(|v| v.as_str()).unwrap_or("start").to_string()
-    };
+    if cursor.is_empty() {
+        eprintln!("[engine] cursor is empty, cannot proceed");
+        mark_job_failed(pool, job.id).await?;
+        return Ok(());
+    }
 
-    // 2) RUNNING 표시 + INSTANCE_RUNNING 이벤트 (MVP에서는 매 실행마다 찍힐 수 있음)
-    // 확장 포인트: "최초 RUNNING 전환 시 1회만"을 보장하려면 status 변화가 있을 때만 emit
+    // 2) RUNNING 상태로 전환
     {
         let mut tx = pool.begin().await?;
         sqlx::query!(
@@ -336,71 +339,199 @@ async fn run_instance_job(pool: &PgPool, worker_id: &str, job: &Job) -> Result<(
         tx.commit().await?;
     }
 
-    // 3) cursor부터 노드 실행
-    if cursor == "start" {
-        node_start(pool, job.instance_id).await?;
-        set_cursor(pool, job.instance_id, "service").await?;
-        cursor = "service".to_string();
-    }
+    // 3) 현재 노드 찾기
+    let current_node = nodes.iter().find(|n| {
+        n.get("id").and_then(|v| v.as_str()) == Some(&cursor)
+    });
 
-    if cursor == "service" {
-        let ok = node_service_http(pool, job, worker_id).await?;
-        if !ok {
-            // 실패면 여기서 종료. RETRY job 스케줄이 이미 node_service_http에서 처리됨.
-            return Ok(());
-        }
-        set_cursor(pool, job.instance_id, "timer").await?;
-        cursor = "timer".to_string();
-    }
-
-    // timer 노드: 타이머 스케줄 후 WAITING 상태로 전환
-    // 타이머 만료 시 TIMER job이 실행되어 cursor를 "timer_done"으로 변경
-    if cursor == "timer" {
-        node_timer(pool, job.instance_id, worker_id).await?;
-        // 타이머가 스케줄되면 여기서 job 종료 (WAITING 상태)
-        // 타이머 만료 시 RESUME job이 생성되어 timer_done부터 재개
-        mark_job_done(pool, job.id).await?;
+    if current_node.is_none() {
+        eprintln!("[engine] node not found: {}", cursor);
+        mark_job_failed(pool, job.id).await?;
         return Ok(());
     }
 
-    // 타이머 완료 후 재개 지점
-    if cursor == "timer_done" {
-        set_cursor(pool, job.instance_id, "end").await?;
-        cursor = "end".to_string();
+    let current_node = current_node.unwrap();
+    let node_type = current_node
+        .get("data")
+        .and_then(|d| d.get("nodeType"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+
+    println!("[engine] executing node: id={}, type={}", cursor, node_type);
+
+    // 4) 노드 타입별 처리
+    match node_type {
+        "start" => {
+            // START 노드 실행
+            let mut tx = pool.begin().await?;
+            emit_outbox(&mut tx, job.instance_id, "NODE_STARTED", json!({
+                "node_id": cursor,
+                "node_label": current_node.get("data").and_then(|d| d.get("label")),
+            })).await?;
+            emit_outbox(&mut tx, job.instance_id, "NODE_COMPLETED", json!({
+                "node_id": cursor,
+                "node_label": current_node.get("data").and_then(|d| d.get("label")),
+            })).await?;
+            tx.commit().await?;
+
+            // 다음 노드 찾기
+            if let Some(next_id) = find_next_node(&cursor, &edges) {
+                set_cursor(pool, job.instance_id, &next_id).await?;
+                // 다음 노드 실행을 위한 RESUME job 생성
+                create_resume_job(pool, job.instance_id).await?;
+            } else {
+                // 다음 노드 없음 (고립된 노드)
+                eprintln!("[engine] no next node found for: {}", cursor);
+            }
+            mark_job_done(pool, job.id).await?;
+        }
+
+        "service" => {
+            // SERVICE 노드 실행 (기존 로직 사용)
+            let ok = node_service_http(pool, job, worker_id).await?;
+            if !ok {
+                return Ok(()); // 실패 시 재시도 스케줄됨
+            }
+
+            // 다음 노드로
+            if let Some(next_id) = find_next_node(&cursor, &edges) {
+                set_cursor(pool, job.instance_id, &next_id).await?;
+                create_resume_job(pool, job.instance_id).await?;
+            }
+            mark_job_done(pool, job.id).await?;
+        }
+
+        "timer" => {
+            // TIMER 노드 실행
+            let duration_ms = current_node
+                .get("data")
+                .and_then(|d| d.get("durationMs"))
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(5000);
+
+            let config = TimerConfig {
+                duration_ms,
+                timer_type: "delay".to_string(),
+                node_id: cursor.clone(),
+                on_expire: "continue".to_string(),
+            };
+
+            schedule_timer(pool, job.instance_id, &config, worker_id).await?;
+            mark_job_done(pool, job.id).await?;
+            // 타이머 만료 시 TIMER job이 실행되어 다음 노드로 진행
+        }
+
+        "approval" => {
+            // APPROVAL 노드 (향후 구현)
+            let mut tx = pool.begin().await?;
+            emit_outbox(&mut tx, job.instance_id, "NODE_STARTED", json!({
+                "node_id": cursor,
+                "node_label": current_node.get("data").and_then(|d| d.get("label")),
+            })).await?;
+            emit_outbox(&mut tx, job.instance_id, "APPROVAL_REQUIRED", json!({
+                "node_id": cursor,
+                "instance_id": job.instance_id,
+            })).await?;
+            tx.commit().await?;
+
+            // 승인 대기 상태로 전환
+            sqlx::query!(
+                r#"update process_instance set status='WAITING', updated_at=now() where id=$1"#,
+                job.instance_id
+            ).execute(pool).await?;
+
+            mark_job_done(pool, job.id).await?;
+            // 승인 후 RESUME job 생성 필요
+        }
+
+        "gateway" => {
+            // GATEWAY 노드 (향후 구현 - 조건 분기)
+            let mut tx = pool.begin().await?;
+            emit_outbox(&mut tx, job.instance_id, "NODE_STARTED", json!({
+                "node_id": cursor,
+                "node_label": current_node.get("data").and_then(|d| d.get("label")),
+            })).await?;
+            emit_outbox(&mut tx, job.instance_id, "NODE_COMPLETED", json!({
+                "node_id": cursor,
+                "node_label": current_node.get("data").and_then(|d| d.get("label")),
+            })).await?;
+            tx.commit().await?;
+
+            // 기본: 첫 번째 다음 노드로
+            if let Some(next_id) = find_next_node(&cursor, &edges) {
+                set_cursor(pool, job.instance_id, &next_id).await?;
+                create_resume_job(pool, job.instance_id).await?;
+            }
+            mark_job_done(pool, job.id).await?;
+        }
+
+        "end" => {
+            // END 노드 실행
+            let mut tx = pool.begin().await?;
+            emit_outbox(&mut tx, job.instance_id, "NODE_STARTED", json!({
+                "node_id": cursor,
+                "node_label": current_node.get("data").and_then(|d| d.get("label")),
+            })).await?;
+            emit_outbox(&mut tx, job.instance_id, "NODE_COMPLETED", json!({
+                "node_id": cursor,
+                "node_label": current_node.get("data").and_then(|d| d.get("label")),
+            })).await?;
+            tx.commit().await?;
+
+            // 워크플로우 완료
+            complete_instance(pool, job.instance_id).await?;
+            mark_job_done(pool, job.id).await?;
+        }
+
+        _ => {
+            eprintln!("[engine] unknown node type: {}", node_type);
+            mark_job_failed(pool, job.id).await?;
+        }
     }
 
-    if cursor == "end" {
-        node_end(pool, job.instance_id).await?;
-        set_cursor(pool, job.instance_id, "done").await?;
-        cursor = "done".to_string();
-    }
+    Ok(())
+}
 
-    // 4) 인스턴스 완료 + job DONE
-    {
-        let mut tx = pool.begin().await?;
-        sqlx::query!(
-            r#"update process_instance set status='COMPLETED', updated_at=now() where id=$1"#,
-            job.instance_id
-        )
-        .execute(&mut *tx)
-        .await?;
+// 다음 노드 ID 찾기 (edges에서 source가 current_id인 첫 번째 edge의 target)
+fn find_next_node(current_id: &str, edges: &[Value]) -> Option<String> {
+    edges.iter()
+        .find(|e| e.get("source").and_then(|v| v.as_str()) == Some(current_id))
+        .and_then(|e| e.get("target").and_then(|v| v.as_str()))
+        .map(|s| s.to_string())
+}
 
-        emit_outbox(&mut tx, job.instance_id, "INSTANCE_COMPLETED", json!({
-            "instance_id": job.instance_id,
-            "status": "COMPLETED"
-        }))
-        .await?;
+// RESUME job 생성 (다음 노드 실행)
+async fn create_resume_job(pool: &PgPool, instance_id: Uuid) -> Result<()> {
+    sqlx::query!(
+        r#"
+        insert into engine_jobs (instance_id, type, run_at, attempt, status, payload)
+        values ($1, 'RESUME', now(), 0, 'READY', '{}'::jsonb)
+        "#,
+        instance_id
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
 
-        sqlx::query!(
-            r#"update engine_jobs set status='DONE', updated_at=now() where id=$1"#,
-            job.id
-        )
-        .execute(&mut *tx)
-        .await?;
+// 인스턴스 완료 처리
+async fn complete_instance(pool: &PgPool, instance_id: Uuid) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    sqlx::query!(
+        r#"update process_instance set status='COMPLETED', updated_at=now() where id=$1"#,
+        instance_id
+    )
+    .execute(&mut *tx)
+    .await?;
 
-        tx.commit().await?;
-    }
+    emit_outbox(&mut tx, instance_id, "INSTANCE_COMPLETED", json!({
+        "instance_id": instance_id,
+        "status": "COMPLETED"
+    }))
+    .await?;
 
+    tx.commit().await?;
     Ok(())
 }
 
@@ -728,6 +859,17 @@ async fn run_timer_job(pool: &PgPool, worker_id: &str, job: &Job) -> Result<()> 
         .and_then(|v| v.as_str())
         .unwrap_or("continue");
 
+    // ctx에서 edges 읽기
+    let row = sqlx::query!(
+        r#"select ctx from process_instance where id = $1"#,
+        job.instance_id
+    )
+    .fetch_one(pool)
+    .await?;
+
+    let ctx: Value = row.ctx;
+    let edges = ctx.get("edges").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+
     let mut tx = pool.begin().await?;
 
     // NODE_STARTED 이벤트 (타이머 완료)
@@ -747,38 +889,44 @@ async fn run_timer_job(pool: &PgPool, worker_id: &str, job: &Job) -> Result<()> 
     // on_expire에 따른 처리
     match on_expire {
         "continue" => {
-            // 다음 노드로 진행: cursor 업데이트 후 RESUME job 생성
-            // 여기서는 cursor를 timer_done으로 설정하고 RESUME job 생성
-            sqlx::query!(
-                r#"
-                update process_instance
-                set ctx = jsonb_set(ctx, '{cursor}', '"timer_done"'::jsonb, true),
-                    status = 'RUNNING',
-                    updated_at = now()
-                where id = $1
-                "#,
-                job.instance_id
-            ).execute(&mut *tx).await?;
+            // 다음 노드 찾기
+            if let Some(next_id) = find_next_node(node_id, &edges) {
+                // cursor를 다음 노드로 업데이트
+                sqlx::query!(
+                    r#"
+                    update process_instance
+                    set ctx = jsonb_set(ctx, '{cursor}', to_jsonb($2::text), true),
+                        status = 'RUNNING',
+                        updated_at = now()
+                    where id = $1
+                    "#,
+                    job.instance_id,
+                    next_id
+                ).execute(&mut *tx).await?;
 
-            // RESUME job 생성하여 다음 노드 실행
-            sqlx::query!(
-                r#"
-                insert into engine_jobs (instance_id, type, run_at, attempt, status, payload)
-                values ($1, 'RESUME', now(), 0, 'READY', $2::jsonb)
-                "#,
-                job.instance_id,
-                json!({
+                // RESUME job 생성하여 다음 노드 실행
+                sqlx::query!(
+                    r#"
+                    insert into engine_jobs (instance_id, type, run_at, attempt, status, payload)
+                    values ($1, 'RESUME', now(), 0, 'READY', $2::jsonb)
+                    "#,
+                    job.instance_id,
+                    json!({
+                        "reason": "timer_expired",
+                        "from_node": node_id
+                    })
+                ).execute(&mut *tx).await?;
+
+                emit_outbox(&mut tx, job.instance_id, "INSTANCE_RUNNING", json!({
+                    "instance_id": job.instance_id,
+                    "status": "RUNNING",
                     "reason": "timer_expired",
-                    "from_node": node_id
-                })
-            ).execute(&mut *tx).await?;
-
-            emit_outbox(&mut tx, job.instance_id, "INSTANCE_RUNNING", json!({
-                "instance_id": job.instance_id,
-                "status": "RUNNING",
-                "reason": "timer_expired",
-                "worker_id": worker_id
-            })).await?;
+                    "worker_id": worker_id
+                })).await?;
+            } else {
+                // 다음 노드 없음 - 워크플로우 완료
+                eprintln!("[engine] no next node after timer: {}", node_id);
+            }
         }
         "escalate" => {
             // 에스컬레이션: 담당자에게 알림 (여기서는 이벤트만 발행)

@@ -56,10 +56,11 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
       const eventSource = new EventSource(`http://localhost:3000/instances/${result.instance_id}/stream`);
       eventSourceRef.current = eventSource;
 
-      eventSource.onmessage = (event) => {
+      // 공통 이벤트 핸들러
+      const handleEvent = (event: MessageEvent) => {
         try {
           const data = JSON.parse(event.data);
-          console.log('SSE Event:', data);
+          console.log('SSE Event (Canvas):', data);
 
           // 노드 상태 업데이트
           if (data.event_type === 'NODE_STARTED' && data.payload?.node_id) {
@@ -80,6 +81,29 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
           console.error('Failed to parse SSE event:', err);
         }
       };
+
+      // 모든 이벤트 타입에 대해 리스너 등록
+      const eventTypes = [
+        'INSTANCE_CREATED',
+        'INSTANCE_RUNNING',
+        'INSTANCE_WAITING',
+        'INSTANCE_COMPLETED',
+        'INSTANCE_FAILED',
+        'NODE_STARTED',
+        'NODE_COMPLETED',
+        'NODE_FAILED',
+        'TIMER_SCHEDULED',
+        'TIMER_ESCALATED',
+        'RETRY_SCHEDULED',
+        'APPROVAL_REQUIRED',
+      ];
+
+      eventTypes.forEach((eventType) => {
+        eventSource.addEventListener(eventType, handleEvent);
+      });
+
+      // 기본 message 이벤트도 처리
+      eventSource.onmessage = handleEvent;
 
       eventSource.onerror = (err) => {
         console.error('SSE Error:', err);
