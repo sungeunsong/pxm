@@ -1,0 +1,133 @@
+/* ============================================
+   Component Showcase Styles
+   ============================================ */
+
+.showcase {
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--space-2xl);
+  background: var(--bg-primary);
+}
+
+.showcase-header {
+  margin-bottom: var(--space-2xl);
+}
+
+.showcase-header h1 {
+  margin: 0 0 var(--space-sm) 0;
+  font-size: var(--font-size-3xl);
+  font-weight: var(--font-weight-bold);
+  color: var(--text-primary);
+}
+
+.showcase-grid {
+  display: grid;
+  gap: var(--space-xl);
+  max-width: 1200px;
+}
+
+/* ===== Component Sections ===== */
+.component-section {
+  margin-bottom: var(--space-lg);
+}
+
+.component-section:last-child {
+  margin-bottom: 0;
+}
+
+.section-title {
+  margin: 0 0 var(--space-md) 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* ===== Button Group ===== */
+.button-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+}
+
+/* ===== Form Grid ===== */
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-lg);
+}
+
+/* ===== Checkbox Group ===== */
+.checkbox-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+
+/* ===== Color Grid ===== */
+.color-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--space-md);
+}
+
+.color-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  transition: all var(--transition-base);
+}
+
+.color-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+  border-color: var(--node-color);
+}
+
+.color-swatch {
+  width: 100%;
+  height: 60px;
+  background: var(--node-color);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+}
+
+.color-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.color-name {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+
+.color-hex {
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 768px) {
+  .showcase {
+    padding: var(--space-lg);
+  }
+
+  .showcase-header h1 {
+    font-size: var(--font-size-2xl);
+  }
+
+  .color-grid {
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  }
+}

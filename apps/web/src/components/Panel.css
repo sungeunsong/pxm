@@ -1,0 +1,133 @@
+/* ============================================
+   Panel Component Styles
+   Total.js Flow Style
+   ============================================ */
+
+.panel {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  transition: all var(--transition-base);
+}
+
+.panel:hover {
+  box-shadow: var(--shadow-md);
+}
+
+/* ===== Header ===== */
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-md) var(--space-lg);
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-subtle);
+  gap: var(--space-md);
+}
+
+.panel-header-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.panel-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.panel-title {
+  margin: 0;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+  line-height: var(--line-height-tight);
+}
+
+.panel-subtitle {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  line-height: var(--line-height-tight);
+}
+
+/* ===== Actions ===== */
+.panel-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+}
+
+.panel-collapse-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.panel-collapse-btn:hover {
+  background: var(--bg-elevated);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.panel-collapse-btn:active {
+  transform: scale(0.95);
+}
+
+/* ===== Body ===== */
+.panel-body {
+  padding: var(--space-lg);
+  animation: panelBodyExpand 0.2s ease;
+}
+
+@keyframes panelBodyExpand {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ===== Collapsed State ===== */
+.panel-collapsed {
+  box-shadow: var(--shadow-xs);
+}
+
+.panel-collapsed .panel-header {
+  border-bottom: none;
+}
+
+/* ===== Variants ===== */
+
+/* No Header */
+.panel:not(:has(.panel-header)) .panel-body {
+  padding: var(--space-lg);
+}
+
+/* Compact */
+.panel-compact .panel-header {
+  padding: var(--space-sm) var(--space-md);
+}
+
+.panel-compact .panel-body {
+  padding: var(--space-md);
+}
+
+.panel-compact .panel-title {
+  font-size: var(--font-size-sm);
+}

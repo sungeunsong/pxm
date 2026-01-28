@@ -94,19 +94,22 @@ DB: infra/docker-compose + 001_init.sql 적용됨(process_instance, engine_jobs,
 
 **참고**: `UI_DESIGN_GUIDE.md` 문서 참조
 
-0. **디자인 시스템 기초** (1-2일)
-   - [ ] `design-system.css` 생성 (CSS 변수: 색상, 간격, 그림자, 애니메이션)
-   - [ ] 타이포그래피 설정 (Inter 폰트)
-   - [ ] 다크 모드 우선 색상 팔레트
-   - [ ] 아이콘 시스템 (Lucide React 설치)
+0. **디자인 시스템 기초** (1-2일) ✅ 완료 (1/28)
+   - [x] `design-system.css` 생성 (CSS 변수: 색상, 간격, 그림자, 애니메이션)
+   - [x] 타이포그래피 설정 (Inter 폰트)
+   - [x] 다크 모드 우선 색상 팔레트
+   - [x] 아이콘 시스템 (Lucide React 설치)
 
-1. **기본 컴포넌트 라이브러리** (2일)
-   - [ ] Button 컴포넌트 (primary, secondary, ghost, danger)
-   - [ ] Panel 컴포넌트 (collapsible, header, actions)
-   - [ ] Input, Select, Checkbox 컴포넌트
-   - [ ] Tooltip, Modal 컴포넌트
+1. **기본 컴포넌트 라이브러리** (2일) ✅ 완료 (1/28)
+   - [x] Button 컴포넌트 (primary, secondary, ghost, danger)
+   - [x] Panel 컴포넌트 (collapsible, header, actions)
+   - [x] Input 컴포넌트 (label, error, helperText, icons)
+   - [x] Select 컴포넌트 (dropdown, placeholder, error)
+   - [x] Checkbox 컴포넌트 (label, helperText, error)
+   - [x] ComponentShowcase 페이지 (한글 설명)
+   - [ ] Tooltip, Modal 컴포넌트 (필요시 추가)
 
-2. **레이아웃 시스템** (1일)
+2. **레이아웃 시스템** (1일) - 다음 단계
    - [ ] 3-column 레이아웃 (노드 팔레트 240px | 캔버스 flex-1 | 속성 패널 320px)
    - [ ] 반응형 브레이크포인트 (모바일, 태블릿, 데스크톱)
    - [ ] 헤더 컴포넌트 (로고, 타이틀, 액션 버튼)
