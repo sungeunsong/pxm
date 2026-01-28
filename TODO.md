@@ -88,14 +88,38 @@ DB: infra/docker-compose + 001_init.sql 적용됨(process_instance, engine_jobs,
 
 ## 🎯 다음 단계 우선순위 (2026-01-28 기준)
 
-### Phase 1: Flow Designer 기본 구현 (최우선)
+### Phase 0: UI 디자인 시스템 구축 (선행 작업) ⭐
+
+**목표**: Total.js Flow 스타일의 네이티브 앱 같은 세련된 디자인 시스템
+
+**참고**: `UI_DESIGN_GUIDE.md` 문서 참조
+
+0. **디자인 시스템 기초** (1-2일)
+   - [ ] `design-system.css` 생성 (CSS 변수: 색상, 간격, 그림자, 애니메이션)
+   - [ ] 타이포그래피 설정 (Inter 폰트)
+   - [ ] 다크 모드 우선 색상 팔레트
+   - [ ] 아이콘 시스템 (Lucide React 설치)
+
+1. **기본 컴포넌트 라이브러리** (2일)
+   - [ ] Button 컴포넌트 (primary, secondary, ghost, danger)
+   - [ ] Panel 컴포넌트 (collapsible, header, actions)
+   - [ ] Input, Select, Checkbox 컴포넌트
+   - [ ] Tooltip, Modal 컴포넌트
+
+2. **레이아웃 시스템** (1일)
+   - [ ] 3-column 레이아웃 (노드 팔레트 240px | 캔버스 flex-1 | 속성 패널 320px)
+   - [ ] 반응형 브레이크포인트 (모바일, 태블릿, 데스크톱)
+   - [ ] 헤더 컴포넌트 (로고, 타이틀, 액션 버튼)
+
+### Phase 1: Flow Designer 기본 구현
 
 **목표**: 사용자가 워크플로우를 시각적으로 설계할 수 있는 캔버스 제공
 
 1. **노드 팔레트 UI** (1-2일)
    - [ ] 좌측 사이드바에 노드 타입 목록 (Start, Service, Timer, Gateway, Approval, End)
-   - [ ] 드래그 가능한 노드 아이템
-   - [ ] 노드 아이콘 및 설명
+   - [ ] 드래그 가능한 노드 아이템 (grab cursor, opacity 효과)
+   - [ ] 노드 아이콘 및 설명 (Lucide 아이콘 사용)
+   - [ ] 노드별 색상 구분 (Total.js 스타일)
 
 2. **캔버스 기본 기능** (2-3일)
    - [ ] React Flow 또는 직접 구현 선택
