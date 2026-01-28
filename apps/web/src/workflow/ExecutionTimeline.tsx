@@ -1,7 +1,9 @@
 import { type ExecutionEvent } from './types';
+import { type ThemeMode, themes } from './theme';
 
 interface ExecutionTimelineProps {
   events: ExecutionEvent[];
+  themeMode?: ThemeMode;
 }
 
 // 이벤트 타입별 아이콘과 색상
@@ -33,7 +35,12 @@ function formatTime(timestamp: string): string {
   }
 }
 
-function EventCard({ event }: { event: ExecutionEvent }) {
+interface EventCardProps {
+  event: ExecutionEvent;
+  colors: typeof themes.dark;
+}
+
+function EventCard({ event, colors }: EventCardProps) {
   const style = EVENT_STYLES[event.eventType] || { icon: '📌', color: '#64748b' };
 
   return (
@@ -42,7 +49,7 @@ function EventCard({ event }: { event: ExecutionEvent }) {
         display: 'flex',
         gap: 12,
         padding: '10px 12px',
-        backgroundColor: '#1e293b',
+        backgroundColor: colors.bgSecondary,
         borderRadius: 8,
         borderLeft: `3px solid ${style.color}`,
         marginBottom: 8,
@@ -62,21 +69,21 @@ function EventCard({ event }: { event: ExecutionEvent }) {
           <span style={{ fontWeight: 600, fontSize: 12, color: style.color }}>
             {event.eventType}
           </span>
-          <span style={{ fontSize: 10, color: '#64748b' }}>
+          <span style={{ fontSize: 10, color: colors.textMuted }}>
             {formatTime(event.timestamp)}
           </span>
         </div>
 
         {/* 노드 ID */}
         {event.nodeId && (
-          <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 4 }}>
-            Node: <span style={{ color: '#e2e8f0' }}>{event.nodeId}</span>
+          <div style={{ fontSize: 11, color: colors.borderLight, marginBottom: 4 }}>
+            Node: <span style={{ color: colors.textSecondary }}>{event.nodeId}</span>
           </div>
         )}
 
         {/* 메시지 */}
         {event.message && (
-          <div style={{ fontSize: 11, color: '#94a3b8' }}>
+          <div style={{ fontSize: 11, color: colors.borderLight }}>
             {event.message}
           </div>
         )}
@@ -87,19 +94,19 @@ function EventCard({ event }: { event: ExecutionEvent }) {
             style={{
               marginTop: 6,
               padding: '6px 8px',
-              backgroundColor: '#0f172a',
+              backgroundColor: colors.bgPrimary,
               borderRadius: 6,
               fontSize: 10,
               fontFamily: 'monospace',
-              color: '#94a3b8',
+              color: colors.borderLight,
               maxHeight: 60,
               overflow: 'auto',
             }}
           >
             {Object.entries(event.details).map(([key, value]) => (
               <div key={key}>
-                <span style={{ color: '#64748b' }}>{key}:</span>{' '}
-                <span style={{ color: '#e2e8f0' }}>
+                <span style={{ color: colors.textMuted }}>{key}:</span>{' '}
+                <span style={{ color: colors.textSecondary }}>
                   {typeof value === 'object' ? JSON.stringify(value) : String(value)}
                 </span>
               </div>
@@ -111,7 +118,8 @@ function EventCard({ event }: { event: ExecutionEvent }) {
   );
 }
 
-export function ExecutionTimeline({ events }: ExecutionTimelineProps) {
+export function ExecutionTimeline({ events, themeMode = 'dark' }: ExecutionTimelineProps) {
+  const colors = themes[themeMode];
   // 최신 이벤트가 위로
   const reversedEvents = [...events].reverse();
 
@@ -121,22 +129,24 @@ export function ExecutionTimeline({ events }: ExecutionTimelineProps) {
         height: '100%',
         display: 'flex',
         flexDirection: 'column',
-        backgroundColor: '#0f172a',
-        borderLeft: '1px solid #334155',
+        backgroundColor: colors.bgPrimary,
+        borderLeft: `1px solid ${colors.border}`,
+        transition: 'all 0.3s',
       }}
     >
       {/* 헤더 */}
       <div
         style={{
           padding: '12px 16px',
-          borderBottom: '1px solid #334155',
-          backgroundColor: '#1e293b',
+          borderBottom: `1px solid ${colors.border}`,
+          backgroundColor: colors.bgSecondary,
+          transition: 'all 0.3s',
         }}
       >
-        <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600, color: '#e2e8f0' }}>
+        <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600, color: colors.textSecondary }}>
           Execution Timeline
         </h3>
-        <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
+        <div style={{ fontSize: 11, color: colors.textMuted, marginTop: 4 }}>
           {events.length} events
         </div>
       </div>
@@ -153,7 +163,7 @@ export function ExecutionTimeline({ events }: ExecutionTimelineProps) {
           <div
             style={{
               textAlign: 'center',
-              color: '#64748b',
+              color: colors.textMuted,
               padding: 24,
               fontSize: 13,
             }}
@@ -162,7 +172,7 @@ export function ExecutionTimeline({ events }: ExecutionTimelineProps) {
           </div>
         ) : (
           reversedEvents.map((event) => (
-            <EventCard key={event.id} event={event} />
+            <EventCard key={event.id} event={event} colors={colors} />
           ))
         )}
       </div>

@@ -16,6 +16,7 @@ import '@xyflow/react/dist/style.css';
 
 import { WorkflowNode } from './WorkflowNode';
 import { type WorkflowNodeData, type NodeStatus, NODE_STATUS_COLORS } from './types';
+import { type ThemeMode, themes, getNodeStatusColors } from './theme';
 
 // 노드 타입 별칭
 type WfNode = Node<WorkflowNodeData>;
@@ -100,9 +101,13 @@ const createInitialEdges = (): Edge[] => [
 interface WorkflowGraphProps {
   nodeStatuses: Record<string, { status: NodeStatus; attempt?: number; error?: string; duration?: number }>;
   activeEdge?: { source: string; target: string } | null;
+  themeMode?: ThemeMode;
 }
 
-export function WorkflowGraph({ nodeStatuses, activeEdge }: WorkflowGraphProps) {
+export function WorkflowGraph({ nodeStatuses, activeEdge, themeMode = 'dark' }: WorkflowGraphProps) {
+  const colors = themes[themeMode];
+  const statusColors = getNodeStatusColors(themeMode);
+
   const initialNodes = useMemo(() => createInitialNodes(), []);
   const initialEdges = useMemo(() => createInitialEdges(), []);
 
@@ -166,11 +171,11 @@ export function WorkflowGraph({ nodeStatuses, activeEdge }: WorkflowGraphProps) 
   const nodeColor = useCallback((node: Node) => {
     const data = node.data as WorkflowNodeData | undefined;
     const status = data?.status || 'idle';
-    return NODE_STATUS_COLORS[status].border;
-  }, []);
+    return statusColors[status].border;
+  }, [statusColors]);
 
   return (
-    <div style={{ width: '100%', height: '100%', backgroundColor: '#0f172a' }}>
+    <div style={{ width: '100%', height: '100%', backgroundColor: colors.graphBg, transition: 'background-color 0.3s' }}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -187,22 +192,24 @@ export function WorkflowGraph({ nodeStatuses, activeEdge }: WorkflowGraphProps) 
           variant={BackgroundVariant.Dots}
           gap={20}
           size={1}
-          color="#334155"
+          color={colors.graphDots}
         />
         <Controls
           style={{
-            backgroundColor: '#1e293b',
+            backgroundColor: colors.bgSecondary,
             borderRadius: 8,
-            border: '1px solid #334155',
+            border: `1px solid ${colors.border}`,
+            transition: 'all 0.3s',
           }}
         />
         <MiniMap
           nodeColor={nodeColor}
-          maskColor="rgba(15, 23, 42, 0.8)"
+          maskColor={themeMode === 'dark' ? 'rgba(15, 23, 42, 0.8)' : 'rgba(248, 250, 252, 0.8)'}
           style={{
-            backgroundColor: '#1e293b',
+            backgroundColor: colors.bgSecondary,
             borderRadius: 8,
-            border: '1px solid #334155',
+            border: `1px solid ${colors.border}`,
+            transition: 'all 0.3s',
           }}
         />
       </ReactFlow>
