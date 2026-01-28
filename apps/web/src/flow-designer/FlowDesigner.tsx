@@ -5,6 +5,9 @@ import { FlowCanvas } from './FlowCanvas';
 import type { FlowCanvasRef } from './FlowCanvas';
 import type { CustomNodeData } from './CustomNode';
 import { NodePropertiesForm } from './NodePropertiesForm';
+import { TemplateListModal } from './TemplateListModal';
+import { templatesApi } from '../api/templates';
+import type { WorkflowTemplate } from '../api/templates';
 import './FlowDesigner.css';
 
 export interface FlowDesignerProps {
@@ -14,18 +17,62 @@ export interface FlowDesignerProps {
 export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
   const [darkMode, setDarkMode] = useState(true);
   const [selectedNode, setSelectedNode] = useState<Node<CustomNodeData> | null>(null);
+  const [currentTemplateId, setCurrentTemplateId] = useState<string | null>(null);
+  const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const flowCanvasRef = useRef<FlowCanvasRef>(null);
 
   const handleRun = () => {
     console.log('Run workflow');
+    // TODO: 워크플로우 실행 API 호출
   };
 
-  const handleSave = () => {
-    console.log('Save workflow');
+  const handleSave = async () => {
+    const nodes = flowCanvasRef.current?.getNodes() || [];
+    const edges = flowCanvasRef.current?.getEdges() || [];
+
+    const templateName = prompt('템플릿 이름을 입력하세요:', currentTemplateId ? undefined : 'New Workflow');
+    if (!templateName) return;
+
+    try {
+      if (currentTemplateId) {
+        // 기존 템플릿 업데이트
+        const updated = await templatesApi.update(currentTemplateId, {
+          name: templateName,
+          nodes,
+          edges,
+        });
+        alert(`템플릿이 업데이트되었습니다: ${updated.name} (v${updated.version})`);
+      } else {
+        // 새 템플릿 생성
+        const created = await templatesApi.create({
+          name: templateName,
+          description: '워크플로우 템플릿',
+          nodes,
+          edges,
+        });
+        setCurrentTemplateId(created.id);
+        alert(`템플릿이 저장되었습니다: ${created.name}`);
+      }
+    } catch (error) {
+      console.error('Failed to save template:', error);
+      alert('템플릿 저장에 실패했습니다.');
+    }
+  };
+
+  const handleLoad = () => {
+    setIsTemplateModalOpen(true);
+  };
+
+  const handleTemplateSelect = (template: WorkflowTemplate) => {
+    // 템플릿의 노드와 엣지를 캔버스에 적용
+    flowCanvasRef.current?.setNodesAndEdges(template.nodes, template.edges);
+    setCurrentTemplateId(template.id);
+    alert(`템플릿 "${template.name}"을 불러왔습니다.`);
   };
 
   const handleSettings = () => {
     console.log('Open settings');
+    // TODO: 설정 모달 열기
   };
 
   const handleToggleDarkMode = () => {
@@ -58,6 +105,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
         title="PXM Flow Designer"
         onRun={handleRun}
         onSave={handleSave}
+        onLoad={handleLoad}
         onSettings={handleSettings}
         darkMode={darkMode}
         onToggleDarkMode={handleToggleDarkMode}
@@ -164,6 +212,13 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
           </div>
         </aside>
       </div>
+
+      {/* 템플릿 목록 모달 */}
+      <TemplateListModal
+        isOpen={isTemplateModalOpen}
+        onClose={() => setIsTemplateModalOpen(false)}
+        onSelect={handleTemplateSelect}
+      />
     </div>
   );
 };

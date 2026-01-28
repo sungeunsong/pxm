@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, Save, Settings, Moon, Sun } from 'lucide-react';
+import { Play, Save, FolderOpen, Settings, Moon, Sun } from 'lucide-react';
 import { Button } from './Button';
 import './Header.css';
 
@@ -7,6 +7,7 @@ export interface HeaderProps {
   title?: string;
   onRun?: () => void;
   onSave?: () => void;
+  onLoad?: () => void;
   onSettings?: () => void;
   darkMode?: boolean;
   onToggleDarkMode?: () => void;
@@ -16,6 +17,7 @@ export const Header: React.FC<HeaderProps> = ({
   title = 'PXM Flow Designer',
   onRun,
   onSave,
+  onLoad,
   onSettings,
   darkMode = true,
   onToggleDarkMode,
@@ -46,6 +48,15 @@ export const Header: React.FC<HeaderProps> = ({
             onClick={onSave}
           >
             Save
+          </Button>
+        )}
+        {onLoad && (
+          <Button
+            variant="secondary"
+            icon={<FolderOpen />}
+            onClick={onLoad}
+          >
+            Load
           </Button>
         )}
         {onSettings && (

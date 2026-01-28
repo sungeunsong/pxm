@@ -36,6 +36,9 @@ export interface FlowCanvasProps {
 
 export interface FlowCanvasRef {
   updateNodeData: (nodeId: string, data: Partial<CustomNodeData>) => void;
+  getNodes: () => Node[];
+  getEdges: () => Edge[];
+  setNodesAndEdges: (nodes: Node[], edges: Edge[]) => void;
 }
 
 export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
@@ -69,13 +72,31 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
       [setNodes, onNodeSelect]
     );
 
-    // ref를 통해 updateNodeData 노출
+    // 노드와 엣지 가져오기
+    const getNodes = useCallback(() => nodes, [nodes]);
+    const getEdges = useCallback(() => edges, [edges]);
+
+    // 노드와 엣지 설정하기 (템플릿 불러오기용)
+    const setNodesAndEdges = useCallback(
+      (newNodes: Node[], newEdges: Edge[]) => {
+        setNodes(newNodes);
+        setEdges(newEdges);
+        // 선택 해제
+        onNodeSelect?.(null);
+      },
+      [setNodes, setEdges, onNodeSelect]
+    );
+
+    // ref를 통해 메서드 노출
     React.useImperativeHandle(
       ref,
       () => ({
         updateNodeData,
+        getNodes,
+        getEdges,
+        setNodesAndEdges,
       }),
-      [updateNodeData]
+      [updateNodeData, getNodes, getEdges, setNodesAndEdges]
     );
 
   const onConnect = useCallback(

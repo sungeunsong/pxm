@@ -3,11 +3,11 @@
    ============================================ */
 
 .custom-node {
-  min-width: 180px;
+  min-width: 120px;
   background: var(--bg-elevated);
   border: 2px solid var(--border-strong);
   border-radius: var(--radius-lg);
-  padding: var(--space-md);
+  padding: 8px 12px;
   box-shadow: var(--shadow-md);
   transition: all var(--transition-base);
   cursor: pointer;
@@ -27,18 +27,18 @@
 .custom-node-content {
   display: flex;
   align-items: center;
-  gap: var(--space-md);
+  gap: 8px;
 }
 
 .custom-node-icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 28px;
+  height: 28px;
   border-radius: var(--radius-md);
   color: white;
-  font-size: 20px;
+  font-size: 14px;
   box-shadow: var(--shadow-sm);
   flex-shrink: 0;
 }
@@ -49,14 +49,14 @@
 }
 
 .custom-node-label {
-  font-size: var(--font-size-sm);
+  font-size: 13px;
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
   margin-bottom: 2px;
 }
 
 .custom-node-description {
-  font-size: var(--font-size-xs);
+  font-size: 11px;
   color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
