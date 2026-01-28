@@ -17,3 +17,6 @@ export type { SelectProps, SelectOption } from './Select';
 
 export { Checkbox } from './Checkbox';
 export type { CheckboxProps } from './Checkbox';
+
+export { Header } from './Header';
+export type { HeaderProps } from './Header';

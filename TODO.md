@@ -109,10 +109,11 @@ DB: infra/docker-compose + 001_init.sql 적용됨(process_instance, engine_jobs,
    - [x] ComponentShowcase 페이지 (한글 설명)
    - [ ] Tooltip, Modal 컴포넌트 (필요시 추가)
 
-2. **레이아웃 시스템** (1일) - 다음 단계
-   - [ ] 3-column 레이아웃 (노드 팔레트 240px | 캔버스 flex-1 | 속성 패널 320px)
-   - [ ] 반응형 브레이크포인트 (모바일, 태블릿, 데스크톱)
-   - [ ] 헤더 컴포넌트 (로고, 타이틀, 액션 버튼)
+2. **레이아웃 시스템** (1일) ✅ 완료 (1/28)
+   - [x] Header 컴포넌트 (로고, 타이틀, 액션 버튼)
+   - [x] 3-column 레이아웃 (노드 팔레트 240px | 캔버스 flex-1 | 속성 패널 320px)
+   - [x] 반응형 브레이크포인트 (모바일, 태블릿, 데스크톱)
+   - [x] FlowDesigner 컴포넌트 (전체 레이아웃 통합)
 
 ### Phase 1: Flow Designer 기본 구현
 

@@ -6,7 +6,7 @@ export interface ButtonProps {
   size?: 'sm' | 'md' | 'lg';
   icon?: React.ReactNode;
   iconPosition?: 'left' | 'right';
-  children: React.ReactNode;
+  children?: React.ReactNode;
   onClick?: () => void;
   disabled?: boolean;
   className?: string;
@@ -28,6 +28,7 @@ export const Button: React.FC<ButtonProps> = ({
     'btn',
     `btn-${variant}`,
     `btn-${size}`,
+    !children && 'btn-icon-only',
     className,
   ].filter(Boolean).join(' ');
 
@@ -41,7 +42,7 @@ export const Button: React.FC<ButtonProps> = ({
       {icon && iconPosition === 'left' && (
         <span className="btn-icon btn-icon-left">{icon}</span>
       )}
-      <span className="btn-text">{children}</span>
+      {children && <span className="btn-text">{children}</span>}
       {icon && iconPosition === 'right' && (
         <span className="btn-icon btn-icon-right">{icon}</span>
       )}

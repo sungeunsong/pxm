@@ -148,3 +148,16 @@
   width: 18px;
   height: 18px;
 }
+
+/* ===== Icon Only Button ===== */
+.btn-icon-only {
+  padding: var(--space-sm);
+}
+
+.btn-icon-only.btn-sm {
+  padding: var(--space-xs);
+}
+
+.btn-icon-only.btn-lg {
+  padding: var(--space-md);
+}

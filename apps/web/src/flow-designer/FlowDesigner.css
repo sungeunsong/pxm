@@ -1,0 +1,241 @@
+/* ============================================
+   Flow Designer Layout Styles
+   ============================================ */
+
+.flow-designer {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100vh;
+  background: var(--bg-primary);
+  overflow: hidden;
+}
+
+/* ===== Content Area (3-Column Layout) ===== */
+.flow-designer-content {
+  display: grid;
+  grid-template-columns: 240px 1fr 320px;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ============================================
+   Node Palette (Left Sidebar)
+   ============================================ */
+
+.node-palette {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-subtle);
+  overflow: hidden;
+}
+
+.palette-header {
+  padding: var(--space-lg);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.palette-title {
+  margin: 0;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+
+.palette-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-md);
+}
+
+.palette-section {
+  margin-bottom: var(--space-lg);
+}
+
+.palette-section-title {
+  margin: 0 0 var(--space-md) 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.palette-nodes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.palette-node {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  cursor: grab;
+  transition: all var(--transition-base);
+}
+
+.palette-node:hover {
+  background: var(--bg-elevated);
+  border-color: var(--border-strong);
+  transform: translateX(4px);
+  box-shadow: var(--shadow-md);
+}
+
+.palette-node:active {
+  cursor: grabbing;
+}
+
+.palette-node-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  color: white;
+  font-size: 16px;
+  box-shadow: var(--shadow-sm);
+  flex-shrink: 0;
+}
+
+.palette-node-label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+
+/* ============================================
+   Canvas (Center)
+   ============================================ */
+
+.canvas {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-primary);
+  overflow: hidden;
+  position: relative;
+}
+
+.canvas-content {
+  flex: 1;
+  overflow: auto;
+  position: relative;
+}
+
+.canvas-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  text-align: center;
+  padding: var(--space-2xl);
+}
+
+.canvas-placeholder h2 {
+  margin: 0 0 var(--space-md) 0;
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+
+/* ============================================
+   Properties Panel (Right Sidebar)
+   ============================================ */
+
+.properties-panel {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border-subtle);
+  overflow: hidden;
+}
+
+.properties-header {
+  padding: var(--space-lg);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.properties-title {
+  margin: 0;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+
+.properties-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-lg);
+}
+
+.properties-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  text-align: center;
+  padding: var(--space-xl);
+}
+
+/* ============================================
+   Responsive Design
+   ============================================ */
+
+/* Tablet (768px ~ 1024px) */
+@media (max-width: 1024px) {
+  .flow-designer-content {
+    grid-template-columns: 200px 1fr 280px;
+  }
+
+  .palette-node {
+    padding: var(--space-sm);
+  }
+
+  .palette-node-icon {
+    width: 28px;
+    height: 28px;
+    font-size: 14px;
+  }
+}
+
+/* Mobile (< 768px) */
+@media (max-width: 768px) {
+  .flow-designer-content {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr auto;
+  }
+
+  .node-palette {
+    border-right: none;
+    border-bottom: 1px solid var(--border-subtle);
+    max-height: 200px;
+  }
+
+  .palette-nodes {
+    flex-direction: row;
+    overflow-x: auto;
+  }
+
+  .palette-node {
+    flex-direction: column;
+    min-width: 80px;
+    text-align: center;
+  }
+
+  .properties-panel {
+    border-left: none;
+    border-top: 1px solid var(--border-subtle);
+    max-height: 200px;
+  }
+
+  .canvas {
+    order: -1;
+  }
+}
