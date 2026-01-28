@@ -115,7 +115,7 @@ DB: infra/docker-compose + 001_init.sql 적용됨(process_instance, engine_jobs,
    - [x] 반응형 브레이크포인트 (모바일, 태블릿, 데스크톱)
    - [x] FlowDesigner 컴포넌트 (전체 레이아웃 통합)
 
-### Phase 1: Flow Designer 기본 구현 (진행 중 - 80% 완료)
+### Phase 1: Flow Designer 기본 구현 ✅ 완료 (1/28)
 
 **목표**: 사용자가 워크플로우를 시각적으로 설계할 수 있는 캔버스 제공
 
@@ -134,15 +134,15 @@ DB: infra/docker-compose + 001_init.sql 적용됨(process_instance, engine_jobs,
    - [x] 커스텀 노드 컴포넌트
    - [x] Background (Dots)
 
-3. **노드 속성 패널** (2일) 🔄 진행 중 (50% 완료)
+3. **노드 속성 패널** (2일) ✅ 완료 (1/28)
    - [x] 우측 사이드바 레이아웃
    - [x] 노드 선택 시 속성 표시 (ID, 타입, 레이블, 위치)
-   - [ ] 노드별 설정 폼 (Input 컴포넌트 활용)
-   - [ ] 속성 변경 핸들러
-   - [ ] 실시간 업데이트
-   - [ ] Service 노드: URL, Method, Headers, Timeout, Retry 설정
-   - [ ] Timer 노드: duration_ms 설정
-   - [ ] Gateway 노드: 조건식 입력
+   - [x] 노드별 설정 폼 (Input, Select, Checkbox 컴포넌트 활용)
+   - [x] 속성 변경 핸들러 (실시간 업데이트)
+   - [x] Service 노드: URL, Method, Headers, Timeout, Retry 설정
+   - [x] Timer 노드: duration_ms, Timer Type 설정
+   - [x] Gateway 노드: 조건식, Gateway Type 입력
+   - [x] Approval 노드: 승인자, Approval Type 설정
    - [ ] Approval 노드: 승인자 선택
 
 4. **템플릿 저장/불러오기** (1일)

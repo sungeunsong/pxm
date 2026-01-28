@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import type { Node } from 'reactflow';
 import { Header } from '../components/Header';
 import { FlowCanvas } from './FlowCanvas';
+import type { FlowCanvasRef } from './FlowCanvas';
 import type { CustomNodeData } from './CustomNode';
+import { NodePropertiesForm } from './NodePropertiesForm';
 import './FlowDesigner.css';
 
 export interface FlowDesignerProps {
@@ -12,6 +14,7 @@ export interface FlowDesignerProps {
 export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
   const [darkMode, setDarkMode] = useState(true);
   const [selectedNode, setSelectedNode] = useState<Node<CustomNodeData> | null>(null);
+  const flowCanvasRef = useRef<FlowCanvasRef>(null);
 
   const handleRun = () => {
     console.log('Run workflow');
@@ -31,6 +34,11 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
 
   const handleNodeSelect = (node: Node | null) => {
     setSelectedNode(node as Node<CustomNodeData> | null);
+  };
+
+  // 노드 업데이트 핸들러
+  const handleNodeUpdate = (nodeId: string, data: Partial<CustomNodeData>) => {
+    flowCanvasRef.current?.updateNodeData(nodeId, data);
   };
 
   // 드래그 시작 핸들러
@@ -132,7 +140,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
 
         {/* Canvas */}
         <main className="canvas">
-          <FlowCanvas onNodeSelect={handleNodeSelect} />
+          <FlowCanvas ref={flowCanvasRef} onNodeSelect={handleNodeSelect} />
         </main>
 
         {/* Properties Panel */}
@@ -142,32 +150,10 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
           </div>
           <div className="properties-content">
             {selectedNode ? (
-              <div className="properties-form">
-                <div className="property-group">
-                  <label className="property-label">노드 ID</label>
-                  <div className="property-value">{selectedNode.id}</div>
-                </div>
-                <div className="property-group">
-                  <label className="property-label">노드 타입</label>
-                  <div className="property-value">{selectedNode.data.nodeType}</div>
-                </div>
-                <div className="property-group">
-                  <label className="property-label">레이블</label>
-                  <div className="property-value">{selectedNode.data.label}</div>
-                </div>
-                {selectedNode.data.description && (
-                  <div className="property-group">
-                    <label className="property-label">설명</label>
-                    <div className="property-value">{selectedNode.data.description}</div>
-                  </div>
-                )}
-                <div className="property-group">
-                  <label className="property-label">위치</label>
-                  <div className="property-value">
-                    X: {Math.round(selectedNode.position.x)}, Y: {Math.round(selectedNode.position.y)}
-                  </div>
-                </div>
-              </div>
+              <NodePropertiesForm
+                node={selectedNode}
+                onUpdate={handleNodeUpdate}
+              />
             ) : (
               <div className="properties-placeholder">
                 <p className="text-secondary">

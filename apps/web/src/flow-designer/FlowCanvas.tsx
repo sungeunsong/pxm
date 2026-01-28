@@ -31,11 +31,52 @@ const initialEdges: Edge[] = [];
 
 export interface FlowCanvasProps {
   onNodeSelect?: (node: Node | null) => void;
+  onNodesChange?: (nodes: Node[]) => void;
 }
 
-export const FlowCanvas: React.FC<FlowCanvasProps> = ({ onNodeSelect }) => {
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+export interface FlowCanvasRef {
+  updateNodeData: (nodeId: string, data: Partial<CustomNodeData>) => void;
+}
+
+export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
+  ({ onNodeSelect, onNodesChange: onNodesChangeProp }, ref) => {
+    const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
+    const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+
+    // 노드 변경 시 부모에게 알림
+    React.useEffect(() => {
+      onNodesChangeProp?.(nodes);
+    }, [nodes, onNodesChangeProp]);
+
+    // 노드 데이터 업데이트 핸들러
+    const updateNodeData = useCallback(
+      (nodeId: string, data: Partial<CustomNodeData>) => {
+        setNodes((nds) =>
+          nds.map((node) => {
+            if (node.id === nodeId) {
+              const updatedNode = {
+                ...node,
+                data: { ...node.data, ...data },
+              };
+              // 선택된 노드 정보도 업데이트
+              onNodeSelect?.(updatedNode);
+              return updatedNode;
+            }
+            return node;
+          })
+        );
+      },
+      [setNodes, onNodeSelect]
+    );
+
+    // ref를 통해 updateNodeData 노출
+    React.useImperativeHandle(
+      ref,
+      () => ({
+        updateNodeData,
+      }),
+      [updateNodeData]
+    );
 
   const onConnect = useCallback(
     (params: Connection) => {
@@ -142,4 +183,4 @@ export const FlowCanvas: React.FC<FlowCanvasProps> = ({ onNodeSelect }) => {
       </ReactFlow>
     </div>
   );
-};
+});

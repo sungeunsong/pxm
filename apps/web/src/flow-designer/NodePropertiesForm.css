@@ -1,0 +1,55 @@
+/* ============================================
+   Node Properties Form Styles
+   ============================================ */
+
+.node-properties-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+}
+
+/* ===== Property Section ===== */
+.property-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding-bottom: var(--space-lg);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.property-section:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.property-section-title {
+  margin: 0 0 var(--space-sm) 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+
+/* ===== Property Group ===== */
+.property-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.property-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.property-value-readonly {
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  padding: var(--space-sm);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-family: 'Courier New', monospace;
+}
