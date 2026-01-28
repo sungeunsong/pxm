@@ -6,6 +6,7 @@ import type { FlowCanvasRef } from './FlowCanvas';
 import type { CustomNodeData } from './CustomNode';
 import { NodePropertiesForm } from './NodePropertiesForm';
 import { TemplateListModal } from './TemplateListModal';
+import { ExecutionModal } from './ExecutionModal';
 import { templatesApi } from '../api/templates';
 import type { WorkflowTemplate } from '../api/templates';
 import './FlowDesigner.css';
@@ -18,19 +19,89 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
   const [darkMode, setDarkMode] = useState(true);
   const [selectedNode, setSelectedNode] = useState<Node<CustomNodeData> | null>(null);
   const [currentTemplateId, setCurrentTemplateId] = useState<string | null>(null);
+  const [currentTemplateName, setCurrentTemplateName] = useState<string>('');
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
+  const [isExecutionModalOpen, setIsExecutionModalOpen] = useState(false);
+  const [executionInstanceId, setExecutionInstanceId] = useState<string | null>(null);
   const flowCanvasRef = useRef<FlowCanvasRef>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
 
-  const handleRun = () => {
-    console.log('Run workflow');
-    // TODO: 워크플로우 실행 API 호출
+  // SSE 연결 정리
+  React.useEffect(() => {
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
+    };
+  }, []);
+
+  const handleRun = async () => {
+    if (!currentTemplateId) {
+      alert('먼저 템플릿을 저장하거나 불러와주세요.');
+      return;
+    }
+
+    try {
+      const result = await templatesApi.execute(currentTemplateId);
+      
+      // 실행 모달 열기
+      setExecutionInstanceId(result.instance_id);
+      setIsExecutionModalOpen(true);
+      
+      // SSE 연결하여 캔버스 노드 상태 업데이트
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
+
+      const eventSource = new EventSource(`http://localhost:3000/instances/${result.instance_id}/stream`);
+      eventSourceRef.current = eventSource;
+
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          console.log('SSE Event:', data);
+
+          // 노드 상태 업데이트
+          if (data.event_type === 'NODE_STARTED' && data.payload?.node_id) {
+            updateNodeExecutionStatus(data.payload.node_id, 'running');
+          } else if (data.event_type === 'NODE_COMPLETED' && data.payload?.node_id) {
+            updateNodeExecutionStatus(data.payload.node_id, 'completed');
+          } else if (data.event_type === 'NODE_FAILED' && data.payload?.node_id) {
+            updateNodeExecutionStatus(data.payload.node_id, 'failed');
+          }
+
+          // 완료 시 연결 종료
+          if (data.event_type === 'INSTANCE_COMPLETED' || data.event_type === 'INSTANCE_FAILED') {
+            setTimeout(() => {
+              eventSource.close();
+            }, 1000);
+          }
+        } catch (err) {
+          console.error('Failed to parse SSE event:', err);
+        }
+      };
+
+      eventSource.onerror = (err) => {
+        console.error('SSE Error:', err);
+        eventSource.close();
+      };
+      
+      console.log('Workflow execution started:', result);
+    } catch (error) {
+      console.error('Failed to execute workflow:', error);
+      alert('워크플로우 실행에 실패했습니다.');
+    }
+  };
+
+  const updateNodeExecutionStatus = (nodeId: string, status: 'pending' | 'running' | 'completed' | 'failed') => {
+    flowCanvasRef.current?.updateNodeData(nodeId, { executionStatus: status });
   };
 
   const handleSave = async () => {
     const nodes = flowCanvasRef.current?.getNodes() || [];
     const edges = flowCanvasRef.current?.getEdges() || [];
 
-    const templateName = prompt('템플릿 이름을 입력하세요:', currentTemplateId ? undefined : 'New Workflow');
+    const templateName = prompt('템플릿 이름을 입력하세요:', currentTemplateName || 'New Workflow');
     if (!templateName) return;
 
     try {
@@ -41,6 +112,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
           nodes,
           edges,
         });
+        setCurrentTemplateName(updated.name);
         alert(`템플릿이 업데이트되었습니다: ${updated.name} (v${updated.version})`);
       } else {
         // 새 템플릿 생성
@@ -51,6 +123,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
           edges,
         });
         setCurrentTemplateId(created.id);
+        setCurrentTemplateName(created.name);
         alert(`템플릿이 저장되었습니다: ${created.name}`);
       }
     } catch (error) {
@@ -67,6 +140,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
     // 템플릿의 노드와 엣지를 캔버스에 적용
     flowCanvasRef.current?.setNodesAndEdges(template.nodes, template.edges);
     setCurrentTemplateId(template.id);
+    setCurrentTemplateName(template.name);
     alert(`템플릿 "${template.name}"을 불러왔습니다.`);
   };
 
@@ -218,6 +292,14 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
         isOpen={isTemplateModalOpen}
         onClose={() => setIsTemplateModalOpen(false)}
         onSelect={handleTemplateSelect}
+      />
+
+      {/* 실행 상태 모달 */}
+      <ExecutionModal
+        isOpen={isExecutionModalOpen}
+        instanceId={executionInstanceId}
+        templateName={currentTemplateName}
+        onClose={() => setIsExecutionModalOpen(false)}
       />
     </div>
   );

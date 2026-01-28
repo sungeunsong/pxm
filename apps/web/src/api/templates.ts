@@ -29,6 +29,14 @@ export interface UpdateTemplateRequest {
   is_active?: boolean;
 }
 
+export interface ExecuteTemplateResponse {
+  instance_id: string;
+  template_id: string;
+  template_name: string;
+  status: string;
+  job_id: number;
+}
+
 const API_BASE_URL = 'http://localhost:3000';
 
 export const templatesApi = {
@@ -100,5 +108,18 @@ export const templatesApi = {
     if (!response.ok) {
       throw new Error(`Failed to delete template: ${response.statusText}`);
     }
+  },
+
+  // 템플릿 실행
+  async execute(id: string): Promise<ExecuteTemplateResponse> {
+    const response = await fetch(`${API_BASE_URL}/templates/${id}/execute`, {
+      method: 'POST',
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to execute template: ${response.statusText}`);
+    }
+
+    return response.json();
   },
 };

@@ -1,0 +1,298 @@
+/* 실행 모달 */
+.execution-modal {
+  max-width: 800px;
+}
+
+.modal-subtitle {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+/* 전체 상태 */
+.execution-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 8px;
+  margin-bottom: 24px;
+  border: 2px solid;
+  transition: all 0.3s;
+}
+
+.execution-status.status-running {
+  background: rgba(33, 150, 243, 0.1);
+  border-color: var(--node-service);
+}
+
+.execution-status.status-completed,
+.execution-status.status-success {
+  background: rgba(76, 175, 80, 0.1);
+  border-color: var(--node-start);
+}
+
+.execution-status.status-failed,
+.execution-status.status-error {
+  background: rgba(244, 67, 54, 0.1);
+  border-color: var(--node-end);
+}
+
+.execution-status.status-pending {
+  background: rgba(158, 158, 158, 0.1);
+  border-color: var(--border-primary);
+}
+
+.execution-status-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.execution-status-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.execution-status-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* 상태 아이콘 */
+.status-icon {
+  flex-shrink: 0;
+}
+
+.status-icon.success {
+  color: var(--node-start);
+}
+
+.status-icon.error {
+  color: var(--node-end);
+}
+
+.status-icon.running {
+  color: var(--node-service);
+  animation: spin 1s linear infinite;
+}
+
+.status-icon.pending {
+  color: var(--text-tertiary);
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 에러 메시지 */
+.execution-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  background: rgba(244, 67, 54, 0.1);
+  border: 1px solid var(--node-end);
+  border-radius: 6px;
+  color: var(--node-end);
+  margin-bottom: 16px;
+}
+
+/* 타임라인 */
+.execution-timeline {
+  margin-top: 24px;
+}
+
+.timeline-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 16px;
+}
+
+.timeline-empty {
+  text-align: center;
+  padding: 48px 24px;
+  color: var(--text-secondary);
+}
+
+.timeline-empty .spinning {
+  animation: spin 1s linear infinite;
+  margin-bottom: 12px;
+}
+
+.timeline-events {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 400px;
+  overflow-y: auto;
+  padding-right: 8px;
+}
+
+/* 타임라인 이벤트 */
+.timeline-event {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  background: var(--surface-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  transition: all 0.2s;
+  animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.timeline-event:hover {
+  border-color: var(--primary);
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.1);
+}
+
+.timeline-event-marker {
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+
+.timeline-event-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.timeline-event-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.timeline-event-type {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.timeline-event-time {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-family: 'Courier New', monospace;
+}
+
+.timeline-event-detail {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.timeline-event-detail strong {
+  color: var(--text-primary);
+}
+
+/* 상태 배지 */
+.status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.status-badge.status-success,
+.status-badge.status-completed {
+  background: rgba(76, 175, 80, 0.2);
+  color: var(--node-start);
+}
+
+.status-badge.status-error,
+.status-badge.status-failed {
+  background: rgba(244, 67, 54, 0.2);
+  color: var(--node-end);
+}
+
+.status-badge.status-running {
+  background: rgba(33, 150, 243, 0.2);
+  color: var(--node-service);
+}
+
+.status-badge.status-pending {
+  background: rgba(158, 158, 158, 0.2);
+  color: var(--text-tertiary);
+}
+
+/* 페이로드 상세 */
+.timeline-event-payload {
+  margin-top: 8px;
+  cursor: pointer;
+}
+
+.timeline-event-payload summary {
+  font-size: 12px;
+  color: var(--primary);
+  user-select: none;
+}
+
+.timeline-event-payload summary:hover {
+  text-decoration: underline;
+}
+
+.timeline-event-payload pre {
+  margin-top: 8px;
+  padding: 12px;
+  background: var(--surface-tertiary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow-x: auto;
+  max-height: 200px;
+}
+
+/* 스크롤바 스타일 */
+.timeline-events::-webkit-scrollbar {
+  width: 6px;
+}
+
+.timeline-events::-webkit-scrollbar-track {
+  background: var(--surface-tertiary);
+  border-radius: 3px;
+}
+
+.timeline-events::-webkit-scrollbar-thumb {
+  background: var(--border-primary);
+  border-radius: 3px;
+}
+
+.timeline-events::-webkit-scrollbar-thumb:hover {
+  background: var(--primary);
+}
+
+/* 반응형 */
+@media (max-width: 768px) {
+  .execution-modal {
+    width: 95%;
+  }
+
+  .timeline-events {
+    max-height: 300px;
+  }
+}

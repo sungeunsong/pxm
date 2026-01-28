@@ -133,3 +133,71 @@
   border-color: var(--node-end);
   box-shadow: 0 0 0 3px rgba(244, 67, 54, 0.3);
 }
+
+/* ===== Execution Status ===== */
+.execution-status-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+}
+
+.execution-status-icon {
+  flex-shrink: 0;
+}
+
+.execution-status-icon.running {
+  color: var(--node-service);
+  animation: spin 1s linear infinite;
+}
+
+.execution-status-icon.completed {
+  color: var(--node-start);
+}
+
+.execution-status-icon.failed {
+  color: var(--node-end);
+}
+
+.execution-status-icon.pending {
+  color: var(--text-tertiary);
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Execution state borders */
+.custom-node.execution-running {
+  border-color: var(--node-service);
+  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.3);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.custom-node.execution-completed {
+  border-color: var(--node-start);
+  box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.3);
+}
+
+.custom-node.execution-failed {
+  border-color: var(--node-end);
+  box-shadow: 0 0 0 2px rgba(244, 67, 54, 0.3);
+}
+
+.custom-node.execution-pending {
+  border-color: var(--text-tertiary);
+  opacity: 0.7;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(33, 150, 243, 0.5);
+  }
+}
