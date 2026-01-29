@@ -298,7 +298,7 @@ async fn main() -> Result<()> {
 }
 
 async fn run_instance_job(pool: &PgPool, worker_id: &str, job: &Job) -> Result<()> {
-    // 1) ctx 읽기 (nodes, edges, cursor)
+    // 1) ctx 읽기 (nodes, edges, cursor, formData)
     let row = sqlx::query!(
         r#"select ctx from process_instance where id = $1"#,
         job.instance_id
@@ -310,6 +310,11 @@ async fn run_instance_job(pool: &PgPool, worker_id: &str, job: &Job) -> Result<(
     let cursor = ctx.get("cursor").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let nodes = ctx.get("nodes").and_then(|v| v.as_array()).cloned().unwrap_or_default();
     let edges = ctx.get("edges").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let form_data = ctx.get("formData").cloned();
+
+    if let Some(data) = &form_data {
+        println!("[engine] formData received: {}", serde_json::to_string_pretty(data).unwrap_or_default());
+    }
 
     if cursor.is_empty() {
         eprintln!("[engine] cursor is empty, cannot proceed");

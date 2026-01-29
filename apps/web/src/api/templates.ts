@@ -111,9 +111,13 @@ export const templatesApi = {
   },
 
   // 템플릿 실행
-  async execute(id: string): Promise<ExecuteTemplateResponse> {
+  async execute(id: string, formData?: Record<string, any>): Promise<ExecuteTemplateResponse> {
     const response = await fetch(`${API_BASE_URL}/templates/${id}/execute`, {
       method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: formData ? JSON.stringify({ formData }) : undefined,
     });
 
     if (!response.ok) {

@@ -51,7 +51,10 @@ export class TemplatesController {
   }
 
   @Post(':id/execute')
-  async execute(@Param('id') id: string) {
+  async execute(
+    @Param('id') id: string,
+    @Body() body?: { formData?: Record<string, any> },
+  ) {
     // 템플릿 조회
     const template = await this.templatesService.findOne(id);
     if (!template) {
@@ -73,6 +76,8 @@ export class TemplatesController {
       edges: template.edges,
       template_id: template.id,
       template_name: template.name,
+      // formData 추가 (있으면)
+      ...(body?.formData && { formData: body.formData }),
     };
 
     const client = await this.pool.connect();

@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { X, CheckCircle, Circle, AlertCircle, Loader } from 'lucide-react';
 import { Button } from '../components/Button';
+import { FormRenderer } from './FormRenderer';
+import type { FormSchema } from './form-types';
 import './ExecutionModal.css';
 
 export interface ExecutionEvent {
@@ -17,6 +19,8 @@ export interface ExecutionModalProps {
   isOpen: boolean;
   instanceId: string | null;
   templateName: string;
+  formSchema?: FormSchema;
+  onFormSubmit?: (formData: Record<string, any>) => void;
   onClose: () => void;
 }
 
@@ -24,6 +28,8 @@ export const ExecutionModal: React.FC<ExecutionModalProps> = ({
   isOpen,
   instanceId,
   templateName,
+  formSchema,
+  onFormSubmit,
   onClose,
 }) => {
   const [events, setEvents] = useState<ExecutionEvent[]>([]);
@@ -161,69 +167,87 @@ export const ExecutionModal: React.FC<ExecutionModalProps> = ({
         </div>
 
         <div className="modal-body">
-          {/* 전체 상태 */}
-          <div className={`execution-status status-${getStatusColor(status)}`}>
-            {getStatusIcon(status)}
-            <div className="execution-status-info">
-              <span className="execution-status-label">상태</span>
-              <span className="execution-status-value">{status}</span>
+          {/* 폼 입력 화면 (instanceId가 null이고 formSchema가 있을 때) */}
+          {!instanceId && formSchema && onFormSubmit ? (
+            <div className="execution-form">
+              <p className="form-description">
+                워크플로우를 실행하기 전에 필요한 정보를 입력해주세요.
+              </p>
+              <FormRenderer
+                schema={formSchema}
+                onSubmit={(data) => {
+                  onFormSubmit(data);
+                }}
+                onCancel={handleClose}
+              />
             </div>
-          </div>
-
-          {/* 에러 메시지 */}
-          {error && (
-            <div className="execution-error">
-              <AlertCircle size={16} />
-              <span>{error}</span>
-            </div>
-          )}
-
-          {/* 이벤트 타임라인 */}
-          <div className="execution-timeline">
-            <h3 className="timeline-title">실행 로그</h3>
-            {events.length === 0 ? (
-              <div className="timeline-empty">
-                <Loader size={24} className="spinning" />
-                <p>이벤트를 기다리는 중...</p>
+          ) : (
+            <>
+              {/* 전체 상태 */}
+              <div className={`execution-status status-${getStatusColor(status)}`}>
+                {getStatusIcon(status)}
+                <div className="execution-status-info">
+                  <span className="execution-status-label">상태</span>
+                  <span className="execution-status-value">{status}</span>
+                </div>
               </div>
-            ) : (
-              <div className="timeline-events">
-                {events.map((event, index) => (
-                  <div key={index} className={`timeline-event event-${event.type.toLowerCase()}`}>
-                    <div className="timeline-event-marker">
-                      {getStatusIcon(event.status)}
-                    </div>
-                    <div className="timeline-event-content">
-                      <div className="timeline-event-header">
-                        <span className="timeline-event-type">{event.type}</span>
-                        <span className="timeline-event-time">
-                          {new Date(event.timestamp).toLocaleTimeString('ko-KR')}
-                        </span>
-                      </div>
-                      {event.node_label && (
-                        <div className="timeline-event-detail">
-                          노드: <strong>{event.node_label}</strong>
-                        </div>
-                      )}
-                      {event.status && (
-                        <div className="timeline-event-detail">
-                          상태: <span className={`status-badge status-${getStatusColor(event.status)}`}>
-                            {event.status}
-                          </span>
-                        </div>
-                      )}
-                      {event.payload && (
-                        <details className="timeline-event-payload">
-                          <summary>상세 정보</summary>
-                          <pre>{JSON.stringify(event.payload, null, 2)}</pre>
-                        </details>
-                      )}
-                    </div>
+
+              {/* 에러 메시지 */}
+              {error && (
+                <div className="execution-error">
+                  <AlertCircle size={16} />
+                  <span>{error}</span>
+                </div>
+              )}
+
+              {/* 이벤트 타임라인 */}
+              <div className="execution-timeline">
+                <h3 className="timeline-title">실행 로그</h3>
+                {events.length === 0 ? (
+                  <div className="timeline-empty">
+                    <Loader size={24} className="spinning" />
+                    <p>이벤트를 기다리는 중...</p>
                   </div>
-                ))}
+                ) : (
+                  <div className="timeline-events">
+                    {events.map((event, index) => (
+                      <div key={index} className={`timeline-event event-${event.type.toLowerCase()}`}>
+                        <div className="timeline-event-marker">
+                          {getStatusIcon(event.status)}
+                        </div>
+                        <div className="timeline-event-content">
+                          <div className="timeline-event-header">
+                            <span className="timeline-event-type">{event.type}</span>
+                            <span className="timeline-event-time">
+                              {new Date(event.timestamp).toLocaleTimeString('ko-KR')}
+                            </span>
+                          </div>
+                          {event.node_label && (
+                            <div className="timeline-event-detail">
+                              노드: <strong>{event.node_label}</strong>
+                            </div>
+                          )}
+                          {event.status && (
+                            <div className="timeline-event-detail">
+                              상태: <span className={`status-badge status-${getStatusColor(event.status)}`}>
+                                {event.status}
+                              </span>
+                            </div>
+                          )}
+                          {event.payload && (
+                            <details className="timeline-event-payload">
+                              <summary>상세 정보</summary>
+                              <pre>{JSON.stringify(event.payload, null, 2)}</pre>
+                            </details>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            </>
+          )}
         </div>
 
         <div className="modal-footer">

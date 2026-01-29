@@ -83,5 +83,6 @@ export interface ValidationResult {
   errors: Record<string, string>;  // fieldId -> error message
 }
 
-// 폼 데이터
-export type FormData = Record<string, any>;
+// 폼 데이터 (브라우저 내장 FormData와 충돌 방지를 위해 FormValues로 명명)
+export type FormValues = Record<string, any>;
+

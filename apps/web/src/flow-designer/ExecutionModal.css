@@ -9,6 +9,19 @@
   margin-top: 4px;
 }
 
+/* 폼 입력 화면 */
+.execution-form {
+  padding: var(--space-md) 0;
+}
+
+.form-description {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-bottom: var(--space-lg);
+  line-height: 1.5;
+}
+
+
 /* 전체 상태 */
 .execution-status {
   display: flex;

@@ -187,23 +187,26 @@ DB: infra/docker-compose + 001_init.sql 적용됨(process_instance, engine_jobs,
 - 핵심 요구사항: HTML import / DnD 폼 빌더 / JSON export-import
 - 접근법: JSON Schema 기반으로 시작 → 단계적 확장
 
-8. **기본 폼 스키마 구현** (1-2일) 🔥 진행 중
+8. **기본 폼 스키마 구현** (1-2일) ✅ 완료
    - [x] Start 노드 데이터 구조 확장 (formSchema 필드 추가)
    - [x] 폼 필드 타입 정의 (text, textarea, select, number, checkbox, date, file)
    - [x] Start 노드 속성 패널: 폼 필드 관리 UI
      - [x] "필드 추가" 버튼
      - [x] 필드 목록 (편집/삭제)
      - [x] 필드 설정 모달 (타입, 레이블, 필수 여부, 옵션 등)
-   - [ ] 템플릿 저장 시 formSchema 포함
+     - [x] 태그 입력 방식 (Enter/Space로 옵션 추가)
+   - [x] 템플릿 저장 시 formSchema 포함
    - [ ] JSON export/import 지원 (템플릿 전체)
 
-9. **동적 폼 렌더링** (1일)
-   - [ ] 템플릿 실행 시 Start 노드의 formSchema 읽기
-   - [ ] FormRenderer 컴포넌트 구현 (JSON Schema → React Form)
-   - [ ] 필드 타입별 렌더링 (Input, Textarea, Select, Checkbox 등)
-   - [ ] 클라이언트 검증 (required, min/max, pattern 등)
-   - [ ] 폼 제출 시 ctx.formData에 저장
-   - [ ] API: POST /instances (formData 포함)
+9. **동적 폼 렌더링** (1일) ✅ 완료
+   - [x] 템플릿 실행 시 Start 노드의 formSchema 읽기
+   - [x] FormRenderer 컴포넌트 구현 (JSON Schema → React Form)
+   - [x] 필드 타입별 렌더링 (Input, Textarea, Select, Checkbox 등)
+   - [x] 클라이언트 검증 (required, min/max, pattern 등)
+   - [x] 폼 제출 시 ctx.formData에 저장
+   - [x] API: POST /templates/:id/execute (formData 포함)
+   - [x] 백엔드: formData를 ctx에 포함하여 DB 저장
+   - [x] 엔진: ctx.formData 읽기 및 로깅
 
 10. **폼 데이터 활용** (1일)
     - [ ] ENGINE: ctx.formData를 워크플로우 컨텍스트로 전달

@@ -3,7 +3,7 @@ import type { Node } from 'reactflow';
 import { Header } from '../components/Header';
 import { FlowCanvas } from './FlowCanvas';
 import type { FlowCanvasRef } from './FlowCanvas';
-import type { CustomNodeData } from './CustomNode';
+import type { CustomNodeData, FormSchema } from './form-types';
 import { NodePropertiesForm } from './NodePropertiesForm';
 import { TemplateListModal } from './TemplateListModal';
 import { ExecutionModal } from './ExecutionModal';
@@ -23,6 +23,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [isExecutionModalOpen, setIsExecutionModalOpen] = useState(false);
   const [executionInstanceId, setExecutionInstanceId] = useState<string | null>(null);
+  const [executionFormSchema, setExecutionFormSchema] = useState<FormSchema | undefined>(undefined);
   const flowCanvasRef = useRef<FlowCanvasRef>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
 
@@ -35,18 +36,64 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
     };
   }, []);
 
-  const handleRun = async () => {
+  const handleRun = async (formData?: Record<string, any>) => {
     if (!currentTemplateId) {
       alert('먼저 템플릿을 저장하거나 불러와주세요.');
       return;
     }
 
-    try {
-      const result = await templatesApi.execute(currentTemplateId);
+    // formData가 없으면 Start 노드에 폼이 있는지 확인
+    if (!formData) {
+      const nodes = flowCanvasRef.current?.getNodes() || [];
+      console.log('[DEBUG] All nodes:', nodes);
       
-      // 실행 모달 열기
+      const startNode = nodes.find(n => n.data.nodeType === 'start');
+      console.log('[DEBUG] Start node:', startNode);
+      console.log('[DEBUG] formSchema:', startNode?.data.formSchema);
+      
+      if (startNode?.data.formSchema && startNode.data.formSchema.fields.length > 0) {
+        console.log('[DEBUG] Opening form modal with fields:', startNode.data.formSchema.fields);
+        // 폼이 있으면 실행 모달을 열어서 폼을 먼저 표시
+        // formSchema를 깊은 복사하여 저장 (circular reference 방지)
+        setExecutionFormSchema(JSON.parse(JSON.stringify(startNode.data.formSchema)));
+        setExecutionInstanceId(null); // 아직 실행 전
+        setIsExecutionModalOpen(true);
+        return;
+      } else {
+        console.log('[DEBUG] No form fields found, executing directly');
+      }
+    }
+
+    try {
+      // formData 정리 (circular reference 제거)
+      let cleanFormData: Record<string, any> | undefined = undefined;
+      if (formData) {
+        console.log('[FlowDesigner] Original formData:', formData);
+        cleanFormData = {};
+        Object.keys(formData).forEach(key => {
+          const value = formData[key];
+          // 기본 타입만 복사
+          if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' || value === null || value === undefined) {
+            cleanFormData![key] = value;
+          } else if (Array.isArray(value)) {
+            // 배열은 기본 타입만 포함된 경우 복사
+            cleanFormData![key] = value.filter(v => 
+              typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean' || v === null
+            );
+          } else {
+            console.warn(`[FlowDesigner] Skipping non-primitive value for key ${key}:`, typeof value);
+          }
+        });
+        console.log('[FlowDesigner] Clean formData:', cleanFormData);
+      }
+      
+      const result = await templatesApi.execute(currentTemplateId, cleanFormData);
+      
+      // 실행 모달 열기 (또는 업데이트)
       setExecutionInstanceId(result.instance_id);
-      setIsExecutionModalOpen(true);
+      if (!isExecutionModalOpen) {
+        setIsExecutionModalOpen(true);
+      }
       
       // SSE 연결하여 캔버스 노드 상태 업데이트
       if (eventSourceRef.current) {
@@ -201,7 +248,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
     <div className="flow-designer">
       <Header
         title="PXM Flow Designer"
-        onRun={handleRun}
+        onRun={() => handleRun()}
         onSave={handleSave}
         onLoad={handleLoad}
         onSettings={handleSettings}
@@ -323,6 +370,10 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
         isOpen={isExecutionModalOpen}
         instanceId={executionInstanceId}
         templateName={currentTemplateName}
+        formSchema={executionFormSchema}
+        onFormSubmit={(formData) => {
+          handleRun(formData);
+        }}
         onClose={() => setIsExecutionModalOpen(false)}
       />
     </div>

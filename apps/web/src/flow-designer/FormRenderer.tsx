@@ -2,7 +2,7 @@
 // apps/web/src/flow-designer/FormRenderer.tsx
 
 import React, { useState } from 'react';
-import { FormSchema, FormField, FormData, ValidationResult } from './form-types';
+import type { FormSchema, FormField, FormValues, ValidationResult } from './form-types';
 import { Input } from '../components/Input';
 import { Select } from '../components/Select';
 import { Checkbox } from '../components/Checkbox';
@@ -11,8 +11,8 @@ import './FormRenderer.css';
 
 interface FormRendererProps {
   schema?: FormSchema;
-  initialData?: FormData;
-  onSubmit: (data: FormData) => void;
+  initialData?: FormValues;
+  onSubmit: (data: FormValues) => void;
   onCancel?: () => void;
 }
 
@@ -22,7 +22,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   onSubmit,
   onCancel,
 }) => {
-  const [formData, setFormData] = useState<FormData>(initialData);
+  const [formData, setFormData] = useState<FormValues>(initialData);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   if (!schema || !schema.fields || schema.fields.length === 0) {
@@ -121,7 +121,24 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
       return;
     }
 
-    onSubmit(formData);
+    console.log('[FormRenderer] Submitting formData:', formData);
+    console.log('[FormRenderer] formData keys:', Object.keys(formData));
+    console.log('[FormRenderer] formData values:', Object.values(formData));
+    
+    // formData를 깨끗하게 복사 (circular reference 제거)
+    const cleanFormData: Record<string, any> = {};
+    Object.keys(formData).forEach(key => {
+      const value = formData[key];
+      // 기본 타입만 복사
+      if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' || value === null || value === undefined) {
+        cleanFormData[key] = value;
+      } else {
+        console.warn(`[FormRenderer] Skipping non-primitive value for key ${key}:`, value);
+      }
+    });
+    
+    console.log('[FormRenderer] Clean formData:', cleanFormData);
+    onSubmit(cleanFormData);
   };
 
   const renderField = (field: FormField) => {
