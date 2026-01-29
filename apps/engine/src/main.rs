@@ -313,7 +313,8 @@ async fn run_instance_job(pool: &PgPool, worker_id: &str, job: &Job) -> Result<(
     let form_data = ctx.get("formData").cloned();
 
     if let Some(data) = &form_data {
-        println!("[engine] formData received: {}", serde_json::to_string_pretty(data).unwrap_or_default());
+        println!("[engine] 📝 Form data received:");
+        println!("{}", serde_json::to_string_pretty(data).unwrap_or_default());
     }
 
     if cursor.is_empty() {
@@ -393,7 +394,7 @@ async fn run_instance_job(pool: &PgPool, worker_id: &str, job: &Job) -> Result<(
 
         "service" => {
             // SERVICE 노드 실행 (기존 로직 사용)
-            let ok = node_service_http(pool, job, worker_id).await?;
+            let ok = node_service_http(pool, job, worker_id, &form_data).await?;
             if !ok {
                 return Ok(()); // 실패 시 재시도 스케줄됨
             }
@@ -451,22 +452,51 @@ async fn run_instance_job(pool: &PgPool, worker_id: &str, job: &Job) -> Result<(
         }
 
         "gateway" => {
-            // GATEWAY 노드 (향후 구현 - 조건 분기)
+            // GATEWAY 노드 - 조건 분기
             let mut tx = pool.begin().await?;
             emit_outbox(&mut tx, job.instance_id, "NODE_STARTED", json!({
                 "node_id": cursor,
                 "node_label": current_node.get("data").and_then(|d| d.get("label")),
             })).await?;
+            
+            // 조건 평가
+            let condition = current_node
+                .get("data")
+                .and_then(|d| d.get("condition"))
+                .and_then(|c| c.as_str())
+                .unwrap_or("");
+            
+            let condition_result = if !condition.is_empty() {
+                evaluate_condition(condition, &form_data)
+            } else {
+                true // 조건이 없으면 기본 true
+            };
+            
+            println!("[engine] 🔀 Gateway condition: '{}' => {}", condition, condition_result);
+            
             emit_outbox(&mut tx, job.instance_id, "NODE_COMPLETED", json!({
                 "node_id": cursor,
                 "node_label": current_node.get("data").and_then(|d| d.get("label")),
+                "condition_result": condition_result,
             })).await?;
             tx.commit().await?;
 
-            // 기본: 첫 번째 다음 노드로
-            if let Some(next_id) = find_next_node(&cursor, &edges) {
+            // 조건에 따라 다음 노드 선택
+            let next_id = if condition_result {
+                // true 경로: sourceHandle이 "true"인 edge
+                find_next_node_by_handle(&cursor, &edges, "true")
+                    .or_else(|| find_next_node(&cursor, &edges)) // fallback
+            } else {
+                // false 경로: sourceHandle이 "false"인 edge
+                find_next_node_by_handle(&cursor, &edges, "false")
+            };
+            
+            if let Some(next_id) = next_id {
                 set_cursor(pool, job.instance_id, &next_id).await?;
                 create_resume_job(pool, job.instance_id).await?;
+            } else {
+                println!("[engine] ⚠️  No next node found for gateway, completing instance");
+                complete_instance(pool, job.instance_id).await?;
             }
             mark_job_done(pool, job.id).await?;
         }
@@ -505,6 +535,52 @@ fn find_next_node(current_id: &str, edges: &[Value]) -> Option<String> {
         .and_then(|e| e.get("target").and_then(|v| v.as_str()))
         .map(|s| s.to_string())
 }
+
+// sourceHandle로 다음 노드 찾기 (Gateway 노드용)
+fn find_next_node_by_handle(current_id: &str, edges: &[Value], handle: &str) -> Option<String> {
+    edges.iter()
+        .find(|e| {
+            e.get("source").and_then(|v| v.as_str()) == Some(current_id)
+                && e.get("sourceHandle").and_then(|v| v.as_str()) == Some(handle)
+        })
+        .and_then(|e| e.get("target").and_then(|v| v.as_str()))
+        .map(|s| s.to_string())
+}
+
+// 조건 평가 (간단한 구현)
+fn evaluate_condition(condition: &str, form_data: &Option<Value>) -> bool {
+    if let Some(data) = form_data {
+        // 간단한 조건 평가: "fieldName == value" 형식
+        // 예: "gender == 남자", "age > 18"
+        
+        if let Some((field, rest)) = condition.split_once("==") {
+            let field = field.trim();
+            let expected = rest.trim().trim_matches('"').trim_matches('\'');
+            
+            if let Some(actual) = data.get(field).and_then(|v| v.as_str()) {
+                return actual == expected;
+            }
+        } else if let Some((field, rest)) = condition.split_once(">") {
+            let field = field.trim();
+            let threshold: f64 = rest.trim().parse().unwrap_or(0.0);
+            
+            if let Some(actual) = data.get(field).and_then(|v| v.as_f64()) {
+                return actual > threshold;
+            }
+        } else if let Some((field, rest)) = condition.split_once("<") {
+            let field = field.trim();
+            let threshold: f64 = rest.trim().parse().unwrap_or(0.0);
+            
+            if let Some(actual) = data.get(field).and_then(|v| v.as_f64()) {
+                return actual < threshold;
+            }
+        }
+    }
+    
+    // 조건을 평가할 수 없으면 false
+    false
+}
+
 
 // RESUME job 생성 (다음 노드 실행)
 async fn create_resume_job(pool: &PgPool, instance_id: Uuid) -> Result<()> {
@@ -586,7 +662,7 @@ async fn set_cursor(pool: &PgPool, instance_id: Uuid, cursor: &str) -> Result<()
     Ok(())
 }
 
-async fn node_service_http(pool: &PgPool, job: &Job, worker_id: &str) -> Result<bool> {
+async fn node_service_http(pool: &PgPool, job: &Job, worker_id: &str, form_data: &Option<Value>) -> Result<bool> {
     let api_base = std::env::var("API_BASE_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
     let retry_policy = RetryPolicy::from_env();
     let timeout_secs: u64 = std::env::var("HTTP_TIMEOUT_SECS")
@@ -602,18 +678,31 @@ async fn node_service_http(pool: &PgPool, job: &Job, worker_id: &str) -> Result<
             "token_id": "t1",
             "url": url,
             "attempt": job.attempt,
-            "timeout_secs": timeout_secs
+            "timeout_secs": timeout_secs,
+            "has_form_data": form_data.is_some()
         })).await?;
         tx.commit().await?;
     }
 
     // 네트워크 호출은 트랜잭션 밖에서 (운영급 기본)
     let client = reqwest::Client::new();
-    let resp = client
-        .get(&url)
-        .timeout(Duration::from_secs(timeout_secs))
-        .send()
-        .await;
+    
+    // formData가 있으면 POST로, 없으면 GET으로
+    let resp = if let Some(data) = form_data {
+        println!("[engine] 🌐 Sending HTTP POST with formData");
+        client
+            .post(&url)
+            .json(data)
+            .timeout(Duration::from_secs(timeout_secs))
+            .send()
+            .await
+    } else {
+        client
+            .get(&url)
+            .timeout(Duration::from_secs(timeout_secs))
+            .send()
+            .await
+    };
 
     // HTTP 호출 결과를 구조화
     let call_result: HttpCallResult = match resp {

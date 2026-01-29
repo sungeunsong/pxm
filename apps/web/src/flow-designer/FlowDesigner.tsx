@@ -45,22 +45,15 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
     // formData가 없으면 Start 노드에 폼이 있는지 확인
     if (!formData) {
       const nodes = flowCanvasRef.current?.getNodes() || [];
-      console.log('[DEBUG] All nodes:', nodes);
-      
       const startNode = nodes.find(n => n.data.nodeType === 'start');
-      console.log('[DEBUG] Start node:', startNode);
-      console.log('[DEBUG] formSchema:', startNode?.data.formSchema);
       
       if (startNode?.data.formSchema && startNode.data.formSchema.fields.length > 0) {
-        console.log('[DEBUG] Opening form modal with fields:', startNode.data.formSchema.fields);
         // 폼이 있으면 실행 모달을 열어서 폼을 먼저 표시
         // formSchema를 깊은 복사하여 저장 (circular reference 방지)
         setExecutionFormSchema(JSON.parse(JSON.stringify(startNode.data.formSchema)));
         setExecutionInstanceId(null); // 아직 실행 전
         setIsExecutionModalOpen(true);
         return;
-      } else {
-        console.log('[DEBUG] No form fields found, executing directly');
       }
     }
 
@@ -68,7 +61,6 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
       // formData 정리 (circular reference 제거)
       let cleanFormData: Record<string, any> | undefined = undefined;
       if (formData) {
-        console.log('[FlowDesigner] Original formData:', formData);
         cleanFormData = {};
         Object.keys(formData).forEach(key => {
           const value = formData[key];
@@ -81,10 +73,9 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
               typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean' || v === null
             );
           } else {
-            console.warn(`[FlowDesigner] Skipping non-primitive value for key ${key}:`, typeof value);
+            console.warn(`[FlowDesigner] Skipping non-primitive value for key "${key}"`);
           }
         });
-        console.log('[FlowDesigner] Clean formData:', cleanFormData);
       }
       
       const result = await templatesApi.execute(currentTemplateId, cleanFormData);

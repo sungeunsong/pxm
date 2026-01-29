@@ -120,10 +120,6 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
       setErrors(validation.errors);
       return;
     }
-
-    console.log('[FormRenderer] Submitting formData:', formData);
-    console.log('[FormRenderer] formData keys:', Object.keys(formData));
-    console.log('[FormRenderer] formData values:', Object.values(formData));
     
     // formData를 깨끗하게 복사 (circular reference 제거)
     const cleanFormData: Record<string, any> = {};
@@ -133,11 +129,10 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
       if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' || value === null || value === undefined) {
         cleanFormData[key] = value;
       } else {
-        console.warn(`[FormRenderer] Skipping non-primitive value for key ${key}:`, value);
+        console.warn(`[FormRenderer] Skipping non-primitive value for key "${key}"`);
       }
     });
     
-    console.log('[FormRenderer] Clean formData:', cleanFormData);
     onSubmit(cleanFormData);
   };
 
