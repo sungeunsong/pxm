@@ -446,30 +446,47 @@ const FieldEditor: React.FC<FieldEditorProps> = ({
             )}
 
             {(field.type === 'text' || field.type === 'textarea') && (
-              <div className="form-row">
-                <div className="form-group">
-                  <label className="form-label">최소 길이</label>
-                  <input
-                    type="number"
-                    value={field.minLength ?? ''}
-                    onChange={(e) => handleChange('minLength', e.target.value ? Number(e.target.value) : undefined)}
-                    className="form-input"
-                    placeholder="제한 없음"
-                    min={0}
-                  />
+              <>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label className="form-label">최소 길이</label>
+                    <input
+                      type="number"
+                      value={field.minLength ?? ''}
+                      onChange={(e) => handleChange('minLength', e.target.value ? Number(e.target.value) : undefined)}
+                      className="form-input"
+                      placeholder="제한 없음"
+                      min={0}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">최대 길이</label>
+                    <input
+                      type="number"
+                      value={field.maxLength ?? ''}
+                      onChange={(e) => handleChange('maxLength', e.target.value ? Number(e.target.value) : undefined)}
+                      className="form-input"
+                      placeholder="제한 없음"
+                      min={0}
+                    />
+                  </div>
                 </div>
-                <div className="form-group">
-                  <label className="form-label">최대 길이</label>
+
+                <div className="form-group" style={{ marginTop: 'var(--space-sm)' }}>
+                  <label className="form-label">입력 형식 (정규식)</label>
                   <input
-                    type="number"
-                    value={field.maxLength ?? ''}
-                    onChange={(e) => handleChange('maxLength', e.target.value ? Number(e.target.value) : undefined)}
+                    type="text"
+                    value={field.pattern || ''}
+                    onChange={(e) => handleChange('pattern', e.target.value)}
                     className="form-input"
-                    placeholder="제한 없음"
-                    min={0}
+                    style={{ fontFamily: 'var(--font-mono)', fontSize: '13px' }}
+                    placeholder="예: ^[0-9]+$ (숫자만)"
                   />
+                  <span className="helper-text">
+                    입력값 검증을 위한 정규식 (예: 이메일 <code>^[^\s@]+@[^\s@]+\.[^\s@]+$</code>)
+                  </span>
                 </div>
-              </div>
+              </>
             )}
           </div>
 
