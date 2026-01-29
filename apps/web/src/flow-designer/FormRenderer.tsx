@@ -50,10 +50,36 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
     }
   };
 
+
+  const checkCondition = (field: FormField): boolean => {
+    if (!field.condition) return true;
+
+    const { field: targetFieldId, operator, value: targetValue } = field.condition;
+    const actualValue = formData[targetFieldId];
+
+    // 값 비교 (문자열로 변환하여 비교하는 것이 안전)
+    const strActual = String(actualValue ?? '');
+    const strTarget = String(targetValue);
+
+    if (operator === 'eq') {
+      return strActual === strTarget;
+    }
+    if (operator === 'neq') {
+      return strActual !== strTarget;
+    }
+
+    return true;
+  };
+
   const validateForm = (): ValidationResult => {
     const newErrors: Record<string, string> = {};
 
     schema.fields.forEach(field => {
+      // 조건부 필드: 조건이 맞지 않으면 검증 스킵
+      if (!checkCondition(field)) {
+        return;
+      }
+
       const value = formData[field.id];
 
       // 필수 필드 검증
@@ -137,6 +163,11 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   };
 
   const renderField = (field: FormField) => {
+    // 조건부 필드: 조건이 맞지 않으면 렌더링 안 함
+    if (!checkCondition(field)) {
+      return null;
+    }
+
     const value = formData[field.id] ?? field.defaultValue ?? '';
     const error = errors[field.id];
 

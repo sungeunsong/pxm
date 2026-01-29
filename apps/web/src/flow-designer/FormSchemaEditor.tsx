@@ -160,7 +160,7 @@ export const FormSchemaEditor: React.FC<FormSchemaEditorProps> = ({
       {(editingField || isAddingField) && (
         <FieldEditor
           field={editingField!}
-          existingFieldIds={fields.map(f => f.id).filter(id => id !== editingField?.id)}
+          existingFields={fields.filter(f => f.id !== editingField?.id)}
           onSave={handleSaveField}
           onCancel={handleCancelEdit}
         />
@@ -246,14 +246,14 @@ const TagInput: React.FC<TagInputProps> = ({ tags, onChange, placeholder, error 
 // 필드 편집 인라인 컴포넌트
 interface FieldEditorProps {
   field: FormField;
-  existingFieldIds: string[];
+  existingFields: FormField[];
   onSave: (field: FormField) => void;
   onCancel: () => void;
 }
 
 const FieldEditor: React.FC<FieldEditorProps> = ({
   field: initialField,
-  existingFieldIds,
+  existingFields,
   onSave,
   onCancel,
 }) => {
@@ -278,7 +278,7 @@ const FieldEditor: React.FC<FieldEditorProps> = ({
       newErrors.id = '필드 ID는 필수입니다.';
     } else if (!/^[a-z_][a-z0-9_]*$/i.test(field.id)) {
       newErrors.id = '영문, 숫자, 언더스코어(_)만 사용 가능합니다.';
-    } else if (existingFieldIds.includes(field.id)) {
+    } else if (existingFields.some(f => f.id === field.id)) {
       newErrors.id = '이미 사용 중인 ID입니다.';
     }
 
@@ -515,6 +515,79 @@ const FieldEditor: React.FC<FieldEditorProps> = ({
               />
               <span className="helper-text">필드 아래에 표시될 설명</span>
             </div>
+          </div>
+
+          {/* 표시 조건 섹션 */}
+          <div className="editor-section">
+            <h5 className="section-title">표시 조건 (옵션)</h5>
+            
+            <div className="form-group checkbox-group">
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={!!field.condition}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      handleChange('condition', {
+                        field: existingFields[0]?.id || '',
+                        operator: 'eq',
+                        value: ''
+                      });
+                    } else {
+                      handleChange('condition', undefined);
+                    }
+                  }}
+                  disabled={existingFields.length === 0}
+                />
+                <span className="checkbox-text">조건부 표시 활성화</span>
+              </label>
+              {existingFields.length === 0 && (
+                <span className="helper-text error-text">참조할 수 있는 다른 필드가 없습니다.</span>
+              )}
+            </div>
+
+            {field.condition && (
+              <div className="condition-settings p-sm bg-tertiary rounded-md mt-sm">
+                <div className="form-group">
+                  <label className="form-label">참조 필드</label>
+                  <select
+                    value={field.condition.field}
+                    onChange={(e) => handleChange('condition', { ...field.condition!, field: e.target.value })}
+                    className="form-select"
+                  >
+                    {existingFields.map(f => (
+                      <option key={f.id} value={f.id}>
+                        {f.label} ({f.id})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="form-row">
+                  <div className="form-group flex-1">
+                    <label className="form-label">조건</label>
+                    <select
+                      value={field.condition.operator}
+                      onChange={(e) => handleChange('condition', { ...field.condition!, operator: e.target.value as any })}
+                      className="form-select"
+                    >
+                      <option value="eq">같음 (Errors)</option>
+                      <option value="neq">다름 (Not Equals)</option>
+                    </select>
+                  </div>
+                  <div className="form-group flex-1">
+                    <label className="form-label">값</label>
+                    <input
+                      type="text"
+                      value={String(field.condition.value)}
+                      onChange={(e) => handleChange('condition', { ...field.condition!, value: e.target.value })}
+                      className="form-input"
+                      placeholder="비교할 값"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

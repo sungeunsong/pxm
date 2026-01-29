@@ -209,16 +209,16 @@ DB: infra/docker-compose + 001_init.sql 적용됨(process_instance, engine_jobs,
    - [x] 엔진: ctx.formData 읽기 및 로깅
 
 10. **폼 데이터 활용** (1일)
-    - [ ] ENGINE: ctx.formData를 워크플로우 컨텍스트로 전달
-    - [ ] Gateway 노드에서 formData 참조 (예: `ctx.formData.permission_level > 3`)
-    - [ ] Service 노드에서 formData 사용 (HTTP Body에 포함)
-    - [ ] Approval 노드에서 formData 표시 (승인자가 요청 내용 확인)
+    - [x] ENGINE: ctx.formData를 워크플로우 컨텍스트로 전달
+    - [x] Gateway 노드에서 formData 참조 (예: `ctx.formData.permission_level > 3`)
+    - [x] Service 노드에서 formData 사용 (HTTP Body에 포함)
+    - [ ] Approval 노드에서 formData 표시 (승인자가 요청 내용 확인) - Phase 4에서 구현
 
 11. **고급 폼 기능** (2-3일) - Phase 4 이후
     - [ ] 조건부 필드 (다른 필드 값에 따라 표시/숨김)
     - [ ] 필드 검증 규칙 확장 (정규식, custom validator)
     - [ ] 필드 간 의존성 (cascading select)
-    - [ ] 파일 업로드 필드 (S3/MinIO 연동)
+    - [ ] 파일 업로드 필드 (S3/MinIO 연동) - 추후 구현 예정
     - [ ] 기본값 설정 (static / dynamic / expression)
     - [ ] 필드 도움말 (tooltip, helperText)
 

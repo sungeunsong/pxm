@@ -11,33 +11,36 @@ export type FormFieldType =
   | 'date'       // 날짜 선택
   | 'file';      // 파일 업로드 (Phase 4+)
 
-export interface FormField {
-  id: string;                    // 필드 고유 ID (예: "requester_name")
-  type: FormFieldType;           // 필드 타입
-  label: string;                 // 필드 레이블 (예: "요청자 이름")
-  placeholder?: string;          // 플레이스홀더
-  required?: boolean;            // 필수 여부
-  defaultValue?: any;            // 기본값
+  // 조건부 표시 로직을 위한 타입
+  export interface FieldCondition {
+    field: string;               // 참조할 필드 ID (예: "job")
+    operator: 'eq' | 'neq';      // 비교 연산자 (eq: 같음, neq: 다름)
+    value: string | number | boolean; // 비교할 값
+  }
   
-  // 타입별 옵션
-  options?: string[];            // select, radio용 옵션 목록
-  min?: number;                  // number, date용 최소값
-  max?: number;                  // number, date용 최대값
-  minLength?: number;            // text, textarea용 최소 길이
-  maxLength?: number;            // text, textarea용 최대 길이
-  pattern?: string;              // 정규식 패턴 (예: 이메일, 전화번호)
-  
-  // UI 옵션
-  helperText?: string;           // 도움말 텍스트
-  rows?: number;                 // textarea용 행 수
-  
-  // 고급 기능 (Phase 4+)
-  conditional?: {                // 조건부 표시
-    field: string;               // 참조 필드 ID
-    operator: '==' | '!=' | '>' | '<' | 'contains';
-    value: any;
-  };
-}
+  export interface FormField {
+    id: string;                    // 필드 고유 ID (예: "requester_name")
+    type: FormFieldType;           // 필드 타입
+    label: string;                 // 필드 레이블 (예: "요청자 이름")
+    placeholder?: string;          // 플레이스홀더
+    required?: boolean;            // 필수 여부
+    defaultValue?: any;            // 기본값
+    
+    // 타입별 옵션
+    options?: string[];            // select, radio용 옵션 목록
+    min?: number;                  // number, date용 최소값
+    max?: number;                  // number, date용 최대값
+    minLength?: number;            // text, textarea용 최소 길이
+    maxLength?: number;            // text, textarea용 최대 길이
+    pattern?: string;              // 정규식 패턴 (예: 이메일, 전화번호)
+    
+    // UI 옵션
+    helperText?: string;           // 도움말 텍스트
+    rows?: number;                 // textarea용 행 수
+    
+    // 조건부 표시 (이 필드가 언제 보일지)
+    condition?: FieldCondition;
+  }
 
 export interface FormSchema {
   fields: FormField[];
