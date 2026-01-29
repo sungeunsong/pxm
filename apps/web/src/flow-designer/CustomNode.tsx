@@ -33,6 +33,8 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({ data, selected
     }
   };
 
+  const isGateway = data.nodeType === 'gateway';
+
   return (
     <div className={`custom-node custom-node-${data.nodeType} ${selected ? 'selected' : ''} ${data.executionStatus ? `execution-${data.executionStatus}` : ''}`}>
       {data.nodeType !== 'start' && (
@@ -62,12 +64,33 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({ data, selected
         </div>
       </div>
 
-      {data.nodeType !== 'end' && (
-        <Handle
-          type="source"
-          position={Position.Right}
-          className="custom-handle"
-        />
+      {isGateway ? (
+        <>
+          <div className="gateway-handle-label true-label">True</div>
+          <Handle
+            type="source"
+            position={Position.Right}
+            id="true"
+            className="custom-handle custom-handle-true"
+            style={{ top: '30%' }}
+          />
+          <div className="gateway-handle-label false-label">False</div>
+          <Handle
+            type="source"
+            position={Position.Right}
+            id="false"
+            className="custom-handle custom-handle-false"
+            style={{ top: '70%' }}
+          />
+        </>
+      ) : (
+        data.nodeType !== 'end' && (
+          <Handle
+            type="source"
+            position={Position.Right}
+            className="custom-handle"
+          />
+        )
       )}
     </div>
   );

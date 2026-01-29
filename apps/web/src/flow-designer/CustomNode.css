@@ -201,3 +201,45 @@
     box-shadow: 0 0 0 4px rgba(33, 150, 243, 0.5);
   }
 }
+
+/* ===== Gateway Node Specifics ===== */
+.custom-node-gateway {
+  padding-right: 50px; /* True/False 라벨을 위한 공간 확보 */
+}
+
+/* ===== Gateway Handles ===== */
+.custom-handle-true {
+  background: var(--color-success) !important;
+  width: 14px !important;
+  height: 14px !important;
+  right: -7px !important; /* 핸들을 노드 경계선에 걸치게 조정 */
+}
+
+.custom-handle-false {
+  background: var(--color-error) !important;
+  width: 14px !important;
+  height: 14px !important;
+  right: -7px !important;
+}
+
+.gateway-handle-label {
+  position: absolute;
+  right: 12px;
+  font-size: 11px;
+  font-weight: var(--font-weight-bold);
+  pointer-events: none;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.true-label {
+  top: 30%;
+  color: var(--color-success);
+  transform: translateY(-50%);
+}
+
+.false-label {
+  top: 70%;
+  color: var(--color-error);
+  transform: translateY(-50%);
+}
