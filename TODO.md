@@ -177,40 +177,101 @@ DB: infra/docker-compose + 001_init.sql 적용됨(process_instance, engine_jobs,
    - [x] WEB: 노드 애니메이션 (펄스, 회전 아이콘)
    - [x] 이벤트 타임라인 UI
 
+### Phase 2.5: 동적 폼 구성 (Start 노드) ⭐ 결재 솔루션 핵심
+
+**목표**: Start 노드에서 동적 폼을 구성하여 범용 결재/승인 워크플로우 지원
+
+**배경**:
+
+- 원래 목표: 결재 솔루션 → 범용 BPM으로 확장
+- 핵심 요구사항: HTML import / DnD 폼 빌더 / JSON export-import
+- 접근법: JSON Schema 기반으로 시작 → 단계적 확장
+
+8. **기본 폼 스키마 구현** (1-2일) 🔥 진행 중
+   - [x] Start 노드 데이터 구조 확장 (formSchema 필드 추가)
+   - [x] 폼 필드 타입 정의 (text, textarea, select, number, checkbox, date, file)
+   - [x] Start 노드 속성 패널: 폼 필드 관리 UI
+     - [x] "필드 추가" 버튼
+     - [x] 필드 목록 (편집/삭제)
+     - [x] 필드 설정 모달 (타입, 레이블, 필수 여부, 옵션 등)
+   - [ ] 템플릿 저장 시 formSchema 포함
+   - [ ] JSON export/import 지원 (템플릿 전체)
+
+9. **동적 폼 렌더링** (1일)
+   - [ ] 템플릿 실행 시 Start 노드의 formSchema 읽기
+   - [ ] FormRenderer 컴포넌트 구현 (JSON Schema → React Form)
+   - [ ] 필드 타입별 렌더링 (Input, Textarea, Select, Checkbox 등)
+   - [ ] 클라이언트 검증 (required, min/max, pattern 등)
+   - [ ] 폼 제출 시 ctx.formData에 저장
+   - [ ] API: POST /instances (formData 포함)
+
+10. **폼 데이터 활용** (1일)
+    - [ ] ENGINE: ctx.formData를 워크플로우 컨텍스트로 전달
+    - [ ] Gateway 노드에서 formData 참조 (예: `ctx.formData.permission_level > 3`)
+    - [ ] Service 노드에서 formData 사용 (HTTP Body에 포함)
+    - [ ] Approval 노드에서 formData 표시 (승인자가 요청 내용 확인)
+
+11. **고급 폼 기능** (2-3일) - Phase 4 이후
+    - [ ] 조건부 필드 (다른 필드 값에 따라 표시/숨김)
+    - [ ] 필드 검증 규칙 확장 (정규식, custom validator)
+    - [ ] 필드 간 의존성 (cascading select)
+    - [ ] 파일 업로드 필드 (S3/MinIO 연동)
+    - [ ] 기본값 설정 (static / dynamic / expression)
+    - [ ] 필드 도움말 (tooltip, helperText)
+
+12. **비주얼 폼 빌더** (2-3주) - Phase 6 (MVP 이후)
+    - [ ] DnD 폼 디자이너 UI
+    - [ ] 필드 팔레트 (좌측)
+    - [ ] 폼 캔버스 (중앙)
+    - [ ] 필드 속성 패널 (우측)
+    - [ ] 레이아웃 설정 (1-column, 2-column, grid)
+    - [ ] 섹션/그룹 기능
+    - [ ] 미리보기 모드
+    - [ ] 템플릿 갤러리 (권한요청, 구매요청, 휴가신청 등)
+
+**참고 자료**:
+
+- JSON Schema: https://json-schema.org/
+- react-jsonschema-form: https://github.com/rjsf-team/react-jsonschema-form
+- Formily (Alibaba): https://formilyjs.org/
+- Form.io: https://form.io/
+
 ### Phase 3: Gateway 노드 실행 (엔진 강화)
 
 **목표**: 조건 분기 로직 실행
 
-8. **Gateway 노드 구현** (2-3일)
-   - [ ] ENGINE: 조건식 평가 (ctx 기반)
-   - [ ] ENGINE: 다중 아웃바운드 엣지 처리
-   - [ ] ENGINE: 조건에 따른 토큰 라우팅
-   - [ ] 테스트: 간단한 if-else 분기
+13. **Gateway 노드 구현** (2-3일)
+
+- [ ] ENGINE: 조건식 평가 (ctx 기반)
+- [ ] ENGINE: 다중 아웃바운드 엣지 처리
+- [ ] ENGINE: 조건에 따른 토큰 라우팅
+- [ ] 테스트: 간단한 if-else 분기
 
 ### Phase 4: Approval 노드 + 작업함
 
 **목표**: 사람 승인 워크플로우
 
-9. **Approval 노드 + Task 생성** (3일)
-   - [ ] ENGINE: Approval 노드에서 task 생성 + INSTANCE_WAITING
-   - [ ] API: POST /tasks/:id/approve, /tasks/:id/reject
-   - [ ] API: 승인 후 RESUME job 생성
-   - [ ] WEB: Inbox 페이지 (내 작업함)
-   - [ ] WEB: 승인/반려 버튼
+14. **Approval 노드 + Task 생성** (3일)
+
+- [ ] ENGINE: Approval 노드에서 task 생성 + INSTANCE_WAITING
+- [ ] API: POST /tasks/:id/approve, /tasks/:id/reject
+- [ ] API: 승인 후 RESUME job 생성
+- [ ] WEB: Inbox 페이지 (내 작업함)
+- [ ] WEB: 승인/반려 버튼
 
 ### Phase 5: 제품 완성도
 
-10. **에러 처리 UI** (1일)
+15. **에러 처리 UI** (1일)
 
 - [ ] WEB: 실패 노드 에러 카드 (retry count, next retry time)
 - [ ] WEB: 에러 상세 모달
 
-11. **템플릿 갤러리** (1-2일)
+16. **템플릿 갤러리** (1-2일)
 
 - [ ] 기본 템플릿 3개 (권한요청, 구매요청, 계정생성)
 - [ ] 템플릿 선택 → 인스턴스 생성 플로우
 
-12. **Identity/Access 기본** (3-4일)
+17. **Identity/Access 기본** (3-4일)
 
 - [ ] User, Org 모델
 - [ ] 로그인/로그아웃 (JWT)

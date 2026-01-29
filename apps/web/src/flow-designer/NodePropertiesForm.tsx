@@ -1,7 +1,8 @@
 import React from 'react';
 import type { Node } from 'reactflow';
 import { Input, Select, Checkbox } from '../components';
-import type { CustomNodeData } from './CustomNode';
+import type { CustomNodeData, FormSchema } from './form-types';
+import { FormSchemaEditor } from './FormSchemaEditor';
 import './NodePropertiesForm.css';
 
 export interface NodePropertiesFormProps {
@@ -140,6 +141,19 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({ node, on
     );
   };
 
+  // Start 노드 속성
+  const renderStartProperties = () => {
+    const data = node.data as any;
+    return (
+      <div className="property-section">
+        <FormSchemaEditor
+          schema={data.formSchema}
+          onChange={(schema: FormSchema) => onUpdate(node.id, { ...data, formSchema: schema })}
+        />
+      </div>
+    );
+  };
+
   // Approval 노드 속성
   const renderApprovalProperties = () => {
     const data = node.data as any;
@@ -201,6 +215,7 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({ node, on
       </div>
 
       {/* 노드별 속성 */}
+      {node.data.nodeType === 'start' && renderStartProperties()}
       {node.data.nodeType === 'service' && renderServiceProperties()}
       {node.data.nodeType === 'timer' && renderTimerProperties()}
       {node.data.nodeType === 'gateway' && renderGatewayProperties()}

@@ -2,14 +2,8 @@ import React from 'react';
 import { Handle, Position } from 'reactflow';
 import type { NodeProps } from 'reactflow';
 import { Loader, CheckCircle, XCircle, Clock } from 'lucide-react';
+import type { CustomNodeData } from './form-types';
 import './CustomNode.css';
-
-export interface CustomNodeData {
-  label: string;
-  nodeType: 'start' | 'service' | 'timer' | 'gateway' | 'approval' | 'end';
-  description?: string;
-  executionStatus?: 'pending' | 'running' | 'completed' | 'failed';
-}
 
 export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({ data, selected }) => {
   const getNodeIcon = (type: string) => {
