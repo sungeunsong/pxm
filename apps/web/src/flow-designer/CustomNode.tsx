@@ -4,6 +4,7 @@ import type { NodeProps } from 'reactflow';
 import { Loader, CheckCircle, XCircle, Clock } from 'lucide-react';
 import type { CustomNodeData } from './form-types';
 import './CustomNode.css';
+import './NodeAnimations.css';
 
 export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({ data, selected }) => {
   const getNodeIcon = (type: string) => {
@@ -36,7 +37,14 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({ data, selected
   const isGateway = data.nodeType === 'gateway';
 
   return (
-    <div className={`custom-node custom-node-${data.nodeType} ${selected ? 'selected' : ''} ${data.executionStatus ? `execution-${data.executionStatus}` : ''}`}>
+    <div 
+      className={`custom-node custom-node-${data.nodeType} ${selected ? 'selected' : ''} ${data.executionStatus ? `execution-${data.executionStatus}` : ''}`}
+      style={{ position: 'relative' }}
+    >
+      {data.executionStatus && data.executionStatus !== 'pending' && (
+        <div className={`status-ring status-${data.executionStatus}`} />
+      )}
+
       {data.nodeType !== 'start' && (
         <Handle
           type="target"

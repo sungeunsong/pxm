@@ -1,0 +1,65 @@
+/* ConditionEdge.css */
+
+/* 기본 엣지 경로 스타일 */
+.react-flow__edge-path {
+  stroke-width: 2px;
+  stroke: var(--border-strong);
+  transition: stroke 0.3s, stroke-width 0.3s;
+}
+
+/* TRUE 조건: 녹색 실선, 두께 증가 */
+.condition-edge-true {
+  stroke: #4caf50 !important;
+  stroke-width: 3px !important;
+}
+
+/* FALSE 조건: 주황/보라 계열 점선, 얇게 */
+.condition-edge-false {
+  stroke: #ff9800 !important; /* 주황색 */
+  stroke-width: 1.5px !important;
+  stroke-dasharray: 5, 5;
+}
+
+/* 애니메이션: 토큰 흐름 (stroke-dasharray 활용) */
+/* animated가 true일 때만 적용 */
+.condition-edge-animated {
+  stroke-dasharray: 10;
+  animation: dashdraw 1s linear infinite;
+}
+
+/* FALSE이면서 animated인 경우 점선 간격을 유지하면서 흐르게 하려면 복잡하므로 
+   애니메이션 시에는 실선으로 바뀌면서 흐르거나, 
+   stroke-dashoffset만 조절해야 함.
+   요구사항에 "glow 이동 느낌"도 언급되었으므로 stroke 색상을 옅게 줬다가 진하게 하는 것도 방법이지만
+   stroke-dashoffset이 가장 확실함.
+*/
+
+@keyframes dashdraw {
+  from {
+    stroke-dashoffset: 20;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* 라벨 스타일 (Pill 형태) */
+.condition-edge-label {
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  z-index: 10; /* 엣지 위에 표시 */
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.label-true {
+  background-color: #4caf50;
+  border: 1px solid #388e3c;
+}
+
+.label-false {
+  background-color: #ff9800;
+  border: 1px solid #f57c00;
+}

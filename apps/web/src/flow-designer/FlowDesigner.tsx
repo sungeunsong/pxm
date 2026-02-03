@@ -106,12 +106,45 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
         const data = JSON.parse(event.data);
         console.log('SSE Event (Canvas):', data);
 
-        if (data.event_type === 'NODE_STARTED' && data.payload?.node_id) {
-          updateNodeExecutionStatus(data.payload.node_id, 'running');
-        } else if (data.event_type === 'NODE_COMPLETED' && data.payload?.node_id) {
-          updateNodeExecutionStatus(data.payload.node_id, 'completed');
-        } else if (data.event_type === 'NODE_FAILED' && data.payload?.node_id) {
-          updateNodeExecutionStatus(data.payload.node_id, 'failed');
+        const nodes = flowCanvasRef.current?.getNodes() || [];
+        let targetNodeId = data.payload?.node_id;
+
+        // ID 불일치 대응: 이벤트의 노드 ID가 캔버스에 없으면, 실행 중인 노드를 찾아 매핑
+        if (targetNodeId && !nodes.find(n => n.id === targetNodeId)) {
+          if (data.event_type === 'NODE_FAILED' || data.event_type === 'NODE_COMPLETED') {
+            // 1. 실행 중인 노드 찾기
+            let fallbackNode = nodes.find(n => n.data.executionStatus === 'running');
+
+            // 2. 타입 기반 추론 (targetNodeId에 타입 이름이 포함된 경우)
+            if (!fallbackNode && typeof targetNodeId === 'string') {
+              const lowerId = targetNodeId.toLowerCase();
+              let typeToSearch = '';
+              if (lowerId.includes('service')) typeToSearch = 'service';
+              else if (lowerId.includes('timer')) typeToSearch = 'timer';
+              else if (lowerId.includes('gateway')) typeToSearch = 'gateway';
+
+              if (typeToSearch) {
+                const candidates = nodes.filter(n => n.data.nodeType === typeToSearch);
+                // 해당 타입의 노드가 딱 하나만 있을 때만 매칭 (오탐 방지)
+                if (candidates.length === 1) {
+                  fallbackNode = candidates[0];
+                }
+              }
+            }
+
+            if (fallbackNode) {
+              console.warn(`Node ID mismatch: event node_id=${targetNodeId} not found, using fallback node=${fallbackNode.id}`);
+              targetNodeId = fallbackNode.id;
+            }
+          }
+        }
+
+        if (data.event_type === 'NODE_STARTED' && targetNodeId) {
+          updateNodeExecutionStatus(targetNodeId, 'running');
+        } else if (data.event_type === 'NODE_COMPLETED' && targetNodeId) {
+          updateNodeExecutionStatus(targetNodeId, 'completed');
+        } else if (data.event_type === 'NODE_FAILED' && targetNodeId) {
+          updateNodeExecutionStatus(targetNodeId, 'failed');
         }
 
         if (data.event_type === 'INSTANCE_COMPLETED' || data.event_type === 'INSTANCE_FAILED') {

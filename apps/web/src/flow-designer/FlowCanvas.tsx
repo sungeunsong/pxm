@@ -11,11 +11,17 @@ import ReactFlow, {
 import type { Node, Edge, Connection, NodeTypes } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { CustomNode } from './CustomNode';
-import type { CustomNodeData } from './CustomNode';
+import type { CustomNodeData } from './form-types';
 import './FlowCanvas.css';
+
+import { ConditionEdge } from './ConditionEdge';
 
 const nodeTypes: NodeTypes = {
   custom: CustomNode,
+};
+
+const edgeTypes = {
+  conditionEdge: ConditionEdge,
 };
 
 const initialNodes: Node<CustomNodeData>[] = [
@@ -79,8 +85,23 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
     // 노드와 엣지 설정하기 (템플릿 불러오기용)
     const setNodesAndEdges = useCallback(
       (newNodes: Node[], newEdges: Edge[]) => {
+        // 기존 엣지 타입 보정 로직 (Gateway Outgoing -> conditionEdge)
+        // nodes 리스트를 Map으로 만들어서 빠른 조회
+        const nodeTypeMap = new Map<string, string>();
+        newNodes.forEach(node => {
+           nodeTypeMap.set(node.id, (node.data as CustomNodeData).nodeType);
+        });
+
+        const adjustedEdges = newEdges.map(edge => {
+          const sourceType = nodeTypeMap.get(edge.source);
+          if (sourceType === 'gateway') {
+            return { ...edge, type: 'conditionEdge' };
+          }
+          return edge;
+        });
+
         setNodes(newNodes);
-        setEdges(newEdges);
+        setEdges(adjustedEdges);
         // 선택 해제
         onNodeSelect?.(null);
       },
@@ -101,14 +122,35 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
 
   const onConnect = useCallback(
     (params: Connection) => {
-      setEdges((eds) => addEdge({
-        ...params,
-        type: 'smoothstep',
-        animated: true,
-        style: { stroke: 'var(--color-info)', strokeWidth: 2 },
-      }, eds));
+      // source 노드의 타입을 찾아서 edge type 결정
+      setNodes((currentNodes) => {
+        const sourceNode = currentNodes.find((n) => n.id === params.source);
+        const isGateway = sourceNode?.data?.nodeType === 'gateway';
+        
+        setEdges((eds) => {
+          // Gateway인 경우, 이미 연결된 outgoing 엣지가 있는지 확인
+          let label = 'TRUE';
+          if (isGateway) {
+            const existingEdge = eds.find(e => e.source === params.source);
+            if (existingEdge) {
+              label = 'FALSE';
+            }
+          }
+
+          return addEdge({
+            ...params,
+            type: isGateway ? 'conditionEdge' : 'smoothstep',
+            animated: true,
+            style: { stroke: 'var(--color-info)', strokeWidth: 2 },
+            // Gateway라면 라벨 설정 (첫 번째 TRUE, 두 번째 FALSE)
+            data: isGateway ? { label, animated: false } : undefined,
+          }, eds);
+        });
+        
+        return currentNodes; // setNodes 자체는 변경 없음
+      });
     },
-    [setEdges]
+    [setNodes, setEdges]
   );
 
   const onNodeClick = useCallback(
@@ -172,6 +214,7 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
         onDrop={onDrop}
         onDragOver={onDragOver}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         fitView
         attributionPosition="bottom-left"
       >

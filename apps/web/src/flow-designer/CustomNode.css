@@ -171,35 +171,11 @@
   }
 }
 
-/* Execution state borders */
-.custom-node.execution-running {
-  border-color: var(--node-service);
-  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.3);
-  animation: pulse 2s ease-in-out infinite;
-}
-
-.custom-node.execution-completed {
-  border-color: var(--node-start);
-  box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.3);
-}
-
-.custom-node.execution-failed {
-  border-color: var(--node-end);
-  box-shadow: 0 0 0 2px rgba(244, 67, 54, 0.3);
-}
+/* Execution state borders - Removed to avoid conflict with status rings */
+/* Status is now shown only via .status-ring in NodeAnimations.css */
 
 .custom-node.execution-pending {
-  border-color: var(--text-tertiary);
   opacity: 0.7;
-}
-
-@keyframes pulse {
-  0%, 100% {
-    box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.3);
-  }
-  50% {
-    box-shadow: 0 0 0 4px rgba(33, 150, 243, 0.5);
-  }
 }
 
 /* ===== Gateway Node Specifics ===== */

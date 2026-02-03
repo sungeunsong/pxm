@@ -1,0 +1,76 @@
+/* NodeAnimations.css */
+
+/* Running: 천천히 Pulse (Opacity만) */
+@keyframes ring-pulse {
+  0% {
+    opacity: 0.3;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(1.1);
+  }
+  100% {
+    opacity: 0.3;
+    transform: scale(1);
+  }
+}
+
+/* Waiting: 느린 회전 또는 점멸 (여기서는 회전 + dash 느낌) */
+@keyframes ring-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Failed: 빨간 파동이 번지는 효과 */
+@keyframes ring-error-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(244, 67, 54, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(244, 67, 54, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(244, 67, 54, 0);
+  }
+}
+
+/* Status Ring 공통 스타일 */
+.status-ring {
+  position: absolute;
+  top: -6px;
+  left: -6px;
+  right: -6px;
+  bottom: -6px;
+  border-radius: calc(var(--radius-lg) + 4px);
+  pointer-events: none;
+  z-index: -1;
+}
+
+/* running 상태 */
+.status-ring.status-running {
+  border: 3px solid var(--color-info);
+  animation: ring-pulse 2s ease-in-out infinite;
+}
+
+/* waiting 상태 */
+.status-ring.status-waiting {
+  border: 3px dashed var(--color-warning);
+  animation: ring-spin 10s linear infinite;
+}
+
+/* completed 상태 */
+.status-ring.status-completed {
+  border: 3px solid var(--color-success);
+  /* 애니메이션 없음: 고정 */
+}
+
+/* failed 상태 */
+.status-ring.status-failed {
+  border: 3px solid var(--color-error);
+  animation: ring-error-pulse 2s infinite;
+}
