@@ -161,10 +161,10 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({ node, on
       <div className="property-section">
         <h4 className="property-section-title">승인 설정</h4>
         <Input
-          label="Approver"
+          label="Approver (Email)"
           placeholder="user@example.com"
-          value={data.approver || ''}
-          onChange={(e) => onUpdate(node.id, { ...data, approver: e.target.value })}
+          value={data.assignee || ''}
+          onChange={(e) => onUpdate(node.id, { ...data, assignee: e.target.value })}
           fullWidth
         />
         <Select

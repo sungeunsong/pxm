@@ -75,7 +75,7 @@ export interface CustomNodeData {
   condition?: string;
   
   // Approval 노드 전용
-  approver?: string;
+  assignee?: string;
   approvalType?: string;
   requireComment?: boolean;
 }

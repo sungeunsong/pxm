@@ -37,7 +37,7 @@ export interface ExecuteTemplateResponse {
   job_id: number;
 }
 
-const API_BASE_URL = 'http://localhost:3000';
+const API_BASE_URL = '/api';
 
 export const templatesApi = {
   // 템플릿 생성
@@ -59,10 +59,10 @@ export const templatesApi = {
 
   // 템플릿 목록 조회
   async list(activeOnly = true): Promise<WorkflowTemplate[]> {
-    const url = new URL(`${API_BASE_URL}/templates`);
-    url.searchParams.set('activeOnly', String(activeOnly));
-
-    const response = await fetch(url.toString());
+    const params = new URLSearchParams();
+    params.set('activeOnly', String(activeOnly));
+    
+    const response = await fetch(`${API_BASE_URL}/templates?${params.toString()}`);
 
     if (!response.ok) {
       throw new Error(`Failed to fetch templates: ${response.statusText}`);

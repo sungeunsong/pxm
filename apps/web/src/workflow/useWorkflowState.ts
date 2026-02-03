@@ -176,7 +176,7 @@ export function useWorkflowState(instanceId: string) {
   useEffect(() => {
     if (!instanceId) return;
 
-    const url = `http://localhost:3000/instances/${instanceId}/stream`;
+    const url = `/api/instances/${instanceId}/stream`;
     const es = new EventSource(url);
     eventSourceRef.current = es;
 

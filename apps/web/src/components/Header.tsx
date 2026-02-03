@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, Save, FolderOpen, Settings, Moon, Sun } from 'lucide-react';
+import { Play, Save, FolderOpen, Settings, Moon, Sun, Clock } from 'lucide-react';
 import { Button } from './Button';
 import './Header.css';
 
@@ -8,9 +8,11 @@ export interface HeaderProps {
   onRun?: () => void;
   onSave?: () => void;
   onLoad?: () => void;
+  onHistory?: () => void;
   onSettings?: () => void;
   darkMode?: boolean;
   onToggleDarkMode?: () => void;
+  actions?: React.ReactNode;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -18,9 +20,11 @@ export const Header: React.FC<HeaderProps> = ({
   onRun,
   onSave,
   onLoad,
+  onHistory,
   onSettings,
   darkMode = true,
   onToggleDarkMode,
+  actions,
 }) => {
   return (
     <header className="header">
@@ -32,6 +36,7 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       <div className="header-right">
+        {actions}
         {onRun && (
           <Button
             variant="primary"
@@ -57,6 +62,15 @@ export const Header: React.FC<HeaderProps> = ({
             onClick={onLoad}
           >
             Load
+          </Button>
+        )}
+        {onHistory && (
+          <Button
+            variant="secondary"
+            icon={<Clock />}
+            onClick={onHistory}
+          >
+            History
           </Button>
         )}
         {onSettings && (

@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { InstancesModule } from './instances/instances.module';
 import { DebugModule } from './debug/debug.module';
 import { TemplatesModule } from './templates/templates.module';
+import { TasksModule } from './tasks/tasks.module';
 
 @Module({
   imports: [
@@ -13,6 +14,7 @@ import { TemplatesModule } from './templates/templates.module';
     InstancesModule,
     DebugModule,
     TemplatesModule,
+    TasksModule,
   ],
 })
 export class AppModule {}

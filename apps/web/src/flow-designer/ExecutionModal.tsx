@@ -43,7 +43,7 @@ export const ExecutionModal: React.FC<ExecutionModalProps> = ({
     }
 
     // SSE 연결
-    const eventSource = new EventSource(`http://localhost:3000/instances/${instanceId}/stream`);
+    const eventSource = new EventSource(`/api/instances/${instanceId}/stream`);
     eventSourceRef.current = eventSource;
 
     // 공통 이벤트 핸들러

@@ -1,16 +1,18 @@
 import { FlowDesigner } from './flow-designer/FlowDesigner';
-// import { ComponentShowcase } from './ComponentShowcase';
-// import { RuntimeTrace } from './workflow/RuntimeTrace';
+import { InboxPage } from './inbox/InboxPage';
 
 function App() {
-  // Main application: Flow Designer
-  return <FlowDesigner />;
-  
-  // For testing components:
-  // return <ComponentShowcase />;
-  
-  // For runtime trace:
-  // return <RuntimeTrace />;
+  const path = window.location.pathname;
+  const isInbox = path === '/inbox';
+
+  return (
+    <>
+      <div style={{ display: isInbox ? 'none' : 'block', height: '100vh' }}>
+        <FlowDesigner />
+      </div>
+      {isInbox && <InboxPage />}
+    </>
+  );
 }
 
 export default App;

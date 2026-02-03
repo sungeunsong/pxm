@@ -64,4 +64,28 @@ export class InstancesService {
       client.release();
     }
   }
+  async findAll() {
+    const { rows } = await this.pool.query(`
+      SELECT 
+        pi.id, 
+        pi.template_id, 
+        pi.status, 
+        pi.created_at, 
+        pi.updated_at,
+        wt.name as template_name
+      FROM process_instance pi
+      LEFT JOIN workflow_templates wt ON pi.template_id = wt.id
+      ORDER BY pi.created_at DESC
+      LIMIT 50
+    `);
+    return rows;
+  }
+
+  async findOne(id: string) {
+    const { rows } = await this.pool.query(
+      `SELECT * FROM process_instance WHERE id = $1`,
+      [id]
+    );
+    return rows[0];
+  }
 }

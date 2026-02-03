@@ -429,26 +429,96 @@ async fn run_instance_job(pool: &PgPool, worker_id: &str, job: &Job) -> Result<(
         }
 
         "approval" => {
-            // APPROVAL 노드 (향후 구현)
+            // 0. 이미 처리된 Task가 있는지 확인 (재진입용: API가 승인 후 RESUME 시킴)
+            let completed_task = sqlx::query!(
+                r#"select status from tasks where instance_id=$1 and node_id=$2 and status in ('APPROVED', 'REJECTED')"#,
+                job.instance_id,
+                cursor
+            )
+            .fetch_optional(pool)
+            .await?;
+
+            if let Some(task) = completed_task {
+                println!("[engine] ✅ Approval Task is {:?}, moving next.", task.status);
+                
+                // 승인 완료 이벤트
+                let mut tx = pool.begin().await?;
+                emit_outbox(&mut tx, job.instance_id, "NODE_COMPLETED", json!({
+                    "node_id": cursor,
+                    "node_label": current_node.get("data").and_then(|d| d.get("label")),
+                    "approval_status": task.status
+                })).await?;
+                tx.commit().await?;
+
+                if task.status == "REJECTED" {
+                    // 반려 시 종료 (또는 반려 처리 로직)
+                    println!("[engine] 🛑 Task rejected, stopping instance.");
+                    // process_instance를 FAILED 또는 COMPLETED로 바꿀 수 있음 (여기선 그냥 종료)
+                    // 만약 반려 경로(edge)가 있다면 거기로 보내야 함 (Phase 5+)
+                    mark_job_done(pool, job.id).await?;
+                    return Ok(());
+                }
+
+                // 승인 시 다음 노드 진행
+                if let Some(next_id) = find_next_node(&cursor, &edges) {
+                    set_cursor(pool, job.instance_id, &next_id).await?;
+                    create_resume_job(pool, job.instance_id).await?;
+                }
+                mark_job_done(pool, job.id).await?;
+                return Ok(());
+            }
+
+            // APPROVAL 노드 - Task 생성 및 대기 (Task가 없을 때만 실행)
             let mut tx = pool.begin().await?;
+            
+            // 1. 노드 시작 이벤트
             emit_outbox(&mut tx, job.instance_id, "NODE_STARTED", json!({
                 "node_id": cursor,
                 "node_label": current_node.get("data").and_then(|d| d.get("label")),
             })).await?;
-            emit_outbox(&mut tx, job.instance_id, "APPROVAL_REQUIRED", json!({
+
+            // 2. Task 생성
+            let task_id = Uuid::new_v4();
+            let assignee = current_node
+                .get("data")
+                .and_then(|d| d.get("assignee"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("admin"); // 기본값: admin
+
+            sqlx::query!(
+                r#"
+                insert into tasks (id, instance_id, node_id, assignee, status, payload)
+                values ($1, $2, $3, $4, 'OPEN', $5)
+                "#,
+                task_id,
+                job.instance_id,
+                cursor,
+                assignee,
+                json!({})
+            )
+            .execute(&mut *tx)
+            .await?;
+
+            println!("[engine] 📝 Task created: id={}, assignee={}", task_id, assignee);
+
+            // 3. Task 생성 이벤트 발행
+            emit_outbox(&mut tx, job.instance_id, "TASK_CREATED", json!({
                 "node_id": cursor,
-                "instance_id": job.instance_id,
+                "task_id": task_id,
+                "assignee": assignee,
+                "node_label": current_node.get("data").and_then(|d| d.get("label")),
             })).await?;
+            
             tx.commit().await?;
 
-            // 승인 대기 상태로 전환
+            // 4. 인스턴스 승인 대기 상태로 전환
             sqlx::query!(
                 r#"update process_instance set status='WAITING', updated_at=now() where id=$1"#,
                 job.instance_id
             ).execute(pool).await?;
 
             mark_job_done(pool, job.id).await?;
-            // 승인 후 RESUME job 생성 필요
+            // 여기서 엔진은 멈춤 (API가 Task 승인 후 RESUME job을 만들어줘야 함)
         }
 
         "gateway" => {

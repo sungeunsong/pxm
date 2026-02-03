@@ -1,4 +1,4 @@
-import { Body, Controller, Param, Post, Req, Sse } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Req, Sse } from '@nestjs/common';
 import type { Request } from 'express';
 import { Observable } from 'rxjs';
 import { OutboxService } from '../outbox/outbox.service';
@@ -24,6 +24,16 @@ export class InstancesController {
       template_id: body?.template_id,
       ctx: body?.ctx,
     });
+  }
+
+  @Get('/instances')
+  async findAll() {
+    return this.instances.findAll();
+  }
+
+  @Get('/instances/:id')
+  async findOne(@Param('id') id: string) {
+    return this.instances.findOne(id);
   }
 
   @Sse('/instances/:id/stream')
