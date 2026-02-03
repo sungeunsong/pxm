@@ -74,7 +74,7 @@ export class InstancesService {
         pi.updated_at,
         wt.name as template_name
       FROM process_instance pi
-      LEFT JOIN workflow_templates wt ON pi.template_id = wt.id
+      LEFT JOIN workflow_template wt ON pi.template_id = wt.id
       ORDER BY pi.created_at DESC
       LIMIT 50
     `);

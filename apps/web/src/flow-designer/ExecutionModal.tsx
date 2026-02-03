@@ -125,16 +125,27 @@ export const ExecutionModal: React.FC<ExecutionModalProps> = ({
     onClose();
   };
 
+  const getActivityStatus = (type: string) => {
+    if (type.includes('COMPLETED')) return 'COMPLETED';
+    if (type.includes('FAILED')) return 'FAILED';
+    if (type.includes('RUNNING') || type.includes('STARTED')) return 'RUNNING';
+    return undefined;
+  };
+
   if (!isOpen) return null;
 
-  const getStatusIcon = (eventStatus?: string) => {
+  const getStatusIcon = (eventStatus?: string, isTimeline = false) => {
     switch (eventStatus) {
       case 'COMPLETED':
         return <CheckCircle size={16} className="status-icon success" />;
       case 'FAILED':
         return <AlertCircle size={16} className="status-icon error" />;
       case 'RUNNING':
-        return <Loader size={16} className="status-icon running" />;
+        return isTimeline ? (
+          <Circle size={16} className="status-icon running" fill="currentColor" />
+        ) : (
+          <Loader size={16} className="status-icon running" />
+        );
       default:
         return <Circle size={16} className="status-icon pending" />;
     }
@@ -213,7 +224,7 @@ export const ExecutionModal: React.FC<ExecutionModalProps> = ({
                     {events.map((event, index) => (
                       <div key={index} className={`timeline-event event-${event.type.toLowerCase()}`}>
                         <div className="timeline-event-marker">
-                          {getStatusIcon(event.status)}
+                          {getStatusIcon(event.status || getActivityStatus(event.type), true)}
                         </div>
                         <div className="timeline-event-content">
                           <div className="timeline-event-header">
