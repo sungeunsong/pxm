@@ -232,18 +232,13 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             label={field.label}
             value={value}
             onChange={(e) => handleFieldChange(field.id, e.target.value)}
+            options={(field.options || []).map(opt => ({ label: opt, value: opt }))}
+            placeholder="선택하세요"
             error={error}
             helperText={error || field.helperText}
             required={field.required}
             fullWidth
-          >
-            <option value="">선택하세요</option>
-            {field.options?.map(option => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </Select>
+          />
         );
 
       case 'checkbox':
