@@ -61,6 +61,7 @@ export class TemplatesController {
       throw new Error('Template not found');
     }
 
+    // 실행 요청마다 새로운 인스턴스를 발급한다 (실행 트리거는 job 큐)
     const instanceId = randomUUID();
     
     // 시작 노드 찾기
@@ -69,7 +70,8 @@ export class TemplatesController {
       throw new Error('Start node not found in template');
     }
 
-    // ctx 구조: Rust Engine이 기대하는 형식
+    // ctx 구조: Rust Engine이 기대하는 실행 컨텍스트
+    // cursor가 "현재/다음에 실행할 노드"를 가리킨다.
     const ctx = {
       cursor: startNode.id, // 시작 노드 ID
       nodes: template.nodes,
@@ -80,6 +82,7 @@ export class TemplatesController {
       ...(body?.formData && { formData: body.formData }),
     };
 
+    // 인스턴스/START job/outbox를 하나의 트랜잭션으로 생성해 일관성 보장
     const client = await this.pool.connect();
     try {
       await client.query('begin');
@@ -92,6 +95,7 @@ export class TemplatesController {
       );
 
       // 2) engine_jobs 생성 (START)
+      // READY job이 엔진의 실행 트리거가 된다 (폴링 대상)
       const jobRes = await client.query(
         `INSERT INTO engine_jobs (instance_id, type, run_at, status, payload)
          VALUES ($1::uuid, $2, now(), 'READY', $3::jsonb)
@@ -108,6 +112,7 @@ export class TemplatesController {
       const jobId = jobRes.rows[0]?.id;
 
       // 3) event_outbox 생성
+      // UI/SSE가 즉시 실행 시작을 감지할 수 있도록 이벤트 기록
       await client.query(
         `INSERT INTO event_outbox (instance_id, type, payload)
          VALUES ($1::uuid, $2, $3::jsonb)`,

@@ -253,11 +253,14 @@ async fn main() -> Result<()> {
     let mut last_reap = std::time::Instant::now();
     
     loop {
+        // 실행 트리거는 process_instance가 아니라 engine_jobs의 READY job이다.
+        // READY job만 가져와 RUNNING으로 바꾸고 실행한다.
         if let Some(job) = fetch_and_mark_running(&pool).await? {
             println!("[engine] got job: {:?}", job);
 
             match job.job_type.as_str() {
     // START / RETRY / RESUME 는 모두 같은 실행 루트
+    // (RESUME는 이전 노드가 cursor를 다음 노드로 옮긴 뒤 생성한 job)
     "START" | "RETRY" | "RESUME" => {
         if let Err(e) = run_instance_job(&pool, &worker_id, &job).await {
             eprintln!("[engine] job {} failed: {e:?}", job.id);
@@ -299,6 +302,7 @@ async fn main() -> Result<()> {
 
 async fn run_instance_job(pool: &PgPool, worker_id: &str, job: &Job) -> Result<()> {
     // 1) ctx 읽기 (nodes, edges, cursor, formData)
+    // cursor는 "현재 실행할 노드"를 가리키는 포인터 역할
     let row = sqlx::query!(
         r#"select ctx from process_instance where id = $1"#,
         job.instance_id
@@ -323,7 +327,7 @@ async fn run_instance_job(pool: &PgPool, worker_id: &str, job: &Job) -> Result<(
         return Ok(());
     }
 
-    // 2) RUNNING 상태로 전환
+    // 2) RUNNING 상태로 전환 (인스턴스 상태는 표시용, 실행 트리거는 job 큐)
     {
         let mut tx = pool.begin().await?;
         sqlx::query!(
@@ -366,6 +370,7 @@ async fn run_instance_job(pool: &PgPool, worker_id: &str, job: &Job) -> Result<(
     println!("[engine] executing node: id={}, type={}", cursor, node_type);
 
     // 4) 노드 타입별 처리
+    // 완료 후 다음 노드가 있으면 cursor를 업데이트하고 RESUME job을 생성한다.
     match node_type {
         "start" => {
             // START 노드 실행
@@ -662,6 +667,7 @@ fn evaluate_condition(condition: &str, form_data: &Option<Value>) -> bool {
 
 
 // RESUME job 생성 (다음 노드 실행)
+// 이 job이 폴링에 잡히며 "다음 노드 실행"의 실제 트리거가 된다.
 async fn create_resume_job(pool: &PgPool, instance_id: Uuid) -> Result<()> {
     sqlx::query!(
         r#"
@@ -1245,10 +1251,11 @@ async fn schedule_retry(pool: &PgPool, job: &Job, worker_id: &str, error_body: V
 
 
 // 1) READY job을 SKIP LOCKED로 가져오고 RUNNING으로 바꿈 (하나의 tx)
+// 멀티 워커 환경에서 중복 실행을 막기 위해 SKIP LOCKED 사용
 async fn fetch_and_mark_running(pool: &PgPool) -> Result<Option<Job>> {
     let mut tx = pool.begin().await?;
 
-    // 잡 1개 잠금 획득
+    // READY이며 실행 시간이 도래한 job 1개만 가져온다
     let row = sqlx::query!(
         r#"
         select id, instance_id, type as "job_type!", attempt
