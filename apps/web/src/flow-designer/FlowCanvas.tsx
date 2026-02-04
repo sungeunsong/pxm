@@ -15,6 +15,7 @@ import type { CustomNodeData } from './form-types';
 import './FlowCanvas.css';
 
 import { ConditionEdge } from './ConditionEdge';
+import { AnimatedEdge } from './AnimatedEdge';
 
 const nodeTypes: NodeTypes = {
   custom: CustomNode,
@@ -22,6 +23,7 @@ const nodeTypes: NodeTypes = {
 
 const edgeTypes = {
   conditionEdge: ConditionEdge,
+  animatedEdge: AnimatedEdge,
 };
 
 const initialNodes: Node<CustomNodeData>[] = [
@@ -45,6 +47,7 @@ export interface FlowCanvasRef {
   getNodes: () => Node[];
   getEdges: () => Edge[];
   setNodesAndEdges: (nodes: Node[], edges: Edge[]) => void;
+  updateEdgesByNodeStatus: (nodeId: string, status: string) => void;
 }
 
 export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
@@ -108,6 +111,71 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
       [setNodes, setEdges, onNodeSelect]
     );
 
+    // 노드 상태에 따른 엣지 업데이트
+    const updateEdgesByNodeStatus = useCallback(
+      (nodeId: string, status: string) => {
+        setEdges((eds) =>
+          eds.map((edge) => {
+            // 해당 노드에서 나가는 엣지
+            if (edge.source === nodeId) {
+              let className = '';
+              let edgeType = edge.type;
+              let style: any = { ...edge.style };
+              
+              if (status === 'running') {
+                // running 상태일 때 AnimatedEdge 사용
+                className = 'edge-active';
+                edgeType = 'animatedEdge';
+                style = {
+                  ...style,
+                  stroke: '#2196f3',
+                  strokeWidth: 3.5,
+                };
+              } else if (status === 'completed') {
+                className = 'edge-completed';
+                edgeType = edge.data?.isGateway ? 'conditionEdge' : 'smoothstep';
+                style = {
+                  ...style,
+                  stroke: '#4caf50',
+                  strokeWidth: 3,
+                  strokeDasharray: 'none',
+                  strokeDashoffset: '0',
+                };
+              } else if (status === 'failed') {
+                className = 'edge-failed';
+                edgeType = edge.data?.isGateway ? 'conditionEdge' : 'smoothstep';
+                style = {
+                  ...style,
+                  stroke: '#f44336',
+                  strokeWidth: 3,
+                  strokeDasharray: '8 4',
+                };
+              } else if (status === 'waiting') {
+                className = 'edge-waiting';
+                edgeType = edge.data?.isGateway ? 'conditionEdge' : 'smoothstep';
+                style = {
+                  ...style,
+                  stroke: '#FFC107',
+                  strokeWidth: 3,
+                  strokeDasharray: '0.05 0.05',
+                };
+              }
+              
+              return {
+                ...edge,
+                type: edgeType,
+                className,
+                style,
+                animated: false,
+              };
+            }
+            return edge;
+          })
+        );
+      },
+      [setEdges]
+    );
+
     // ref를 통해 메서드 노출
     React.useImperativeHandle(
       ref,
@@ -116,8 +184,9 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
         getNodes,
         getEdges,
         setNodesAndEdges,
+        updateEdgesByNodeStatus,
       }),
-      [updateNodeData, getNodes, getEdges, setNodesAndEdges]
+      [updateNodeData, getNodes, getEdges, setNodesAndEdges, updateEdgesByNodeStatus]
     );
 
   const onConnect = useCallback(

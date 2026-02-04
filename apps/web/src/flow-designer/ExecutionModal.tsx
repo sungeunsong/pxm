@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { X, CheckCircle, Circle, AlertCircle, Loader } from 'lucide-react';
+import { X, CheckCircle, Circle, AlertCircle, Loader, Clock } from 'lucide-react';
 import { Button } from '../components/Button';
 import { FormRenderer } from './FormRenderer';
 import type { FormSchema } from './form-types';
@@ -66,7 +66,15 @@ export const ExecutionModal: React.FC<ExecutionModalProps> = ({
         setEvents((prev) => [...prev, executionEvent]);
 
         // 상태 업데이트
-        if (executionEvent.status) {
+        if (executionEvent.type === 'INSTANCE_WAITING') {
+          setStatus('WAITING');
+        } else if (executionEvent.type === 'INSTANCE_RUNNING') {
+          setStatus('RUNNING');
+        } else if (executionEvent.type === 'INSTANCE_COMPLETED') {
+          setStatus('COMPLETED');
+        } else if (executionEvent.type === 'INSTANCE_FAILED') {
+          setStatus('FAILED');
+        } else if (executionEvent.status) {
           setStatus(executionEvent.status);
         }
 
@@ -128,6 +136,7 @@ export const ExecutionModal: React.FC<ExecutionModalProps> = ({
   const getActivityStatus = (type: string) => {
     if (type.includes('COMPLETED')) return 'COMPLETED';
     if (type.includes('FAILED')) return 'FAILED';
+    if (type.includes('WAITING')) return 'WAITING';
     if (type.includes('RUNNING') || type.includes('STARTED')) return 'RUNNING';
     return undefined;
   };
@@ -140,6 +149,8 @@ export const ExecutionModal: React.FC<ExecutionModalProps> = ({
         return <CheckCircle size={16} className="status-icon success" />;
       case 'FAILED':
         return <AlertCircle size={16} className="status-icon error" />;
+      case 'WAITING':
+        return <Clock size={16} className="status-icon waiting" />;
       case 'RUNNING':
         return isTimeline ? (
           <Circle size={16} className="status-icon running" fill="currentColor" />
@@ -157,6 +168,8 @@ export const ExecutionModal: React.FC<ExecutionModalProps> = ({
         return 'success';
       case 'FAILED':
         return 'error';
+      case 'WAITING':
+        return 'waiting';
       case 'RUNNING':
         return 'running';
       default:
@@ -245,12 +258,19 @@ export const ExecutionModal: React.FC<ExecutionModalProps> = ({
                               </span>
                             </div>
                           )}
-                          {event.payload && (
-                            <details className="timeline-event-payload">
-                              <summary>상세 정보</summary>
-                              <pre>{JSON.stringify(event.payload, null, 2)}</pre>
-                            </details>
-                          )}
+                          {/* 상세 정보 - 항상 표시 */}
+                          <details className="timeline-event-payload">
+                            <summary>상세 정보 보기</summary>
+                            <pre>{JSON.stringify({
+                              type: event.type,
+                              instance_id: event.instance_id,
+                              node_id: event.node_id,
+                              node_label: event.node_label,
+                              status: event.status,
+                              timestamp: event.timestamp,
+                              payload: event.payload
+                            }, null, 2)}</pre>
+                          </details>
                         </div>
                       </div>
                     ))}
@@ -261,11 +281,14 @@ export const ExecutionModal: React.FC<ExecutionModalProps> = ({
           )}
         </div>
 
-        <div className="modal-footer">
-          <Button onClick={handleClose} variant="secondary">
-            닫기
-          </Button>
-        </div>
+        {/* 폼이 아닐 때만 푸터 표시 */}
+        {!(!instanceId && formSchema && onFormSubmit) && (
+          <div className="modal-footer">
+            <Button onClick={handleClose} variant="secondary">
+              닫기
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

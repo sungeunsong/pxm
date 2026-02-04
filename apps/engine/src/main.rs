@@ -509,13 +509,22 @@ async fn run_instance_job(pool: &PgPool, worker_id: &str, job: &Job) -> Result<(
                 "node_label": current_node.get("data").and_then(|d| d.get("label")),
             })).await?;
             
-            tx.commit().await?;
-
             // 4. 인스턴스 승인 대기 상태로 전환
             sqlx::query!(
                 r#"update process_instance set status='WAITING', updated_at=now() where id=$1"#,
                 job.instance_id
-            ).execute(pool).await?;
+            ).execute(&mut *tx).await?;
+
+            // 5. INSTANCE_WAITING 이벤트 발행
+            emit_outbox(&mut tx, job.instance_id, "INSTANCE_WAITING", json!({
+                "instance_id": job.instance_id,
+                "status": "WAITING",
+                "node_id": cursor,
+                "task_id": task_id,
+                "reason": "approval_required"
+            })).await?;
+
+            tx.commit().await?;
 
             mark_job_done(pool, job.id).await?;
             // 여기서 엔진은 멈춤 (API가 Task 승인 후 RESUME job을 만들어줘야 함)

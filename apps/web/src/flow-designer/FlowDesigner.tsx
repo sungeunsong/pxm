@@ -9,6 +9,7 @@ import type { CustomNodeData, FormSchema } from './form-types';
 import { NodePropertiesForm } from './NodePropertiesForm';
 import { TemplateListModal } from './TemplateListModal';
 import { ExecutionModal } from './ExecutionModal';
+import { ExecutionPanel } from './ExecutionPanel';
 import { HistoryListModal } from './HistoryListModal';
 import { templatesApi } from '../api/templates';
 import type { WorkflowTemplate } from '../api/templates';
@@ -25,11 +26,14 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
   const [currentTemplateName, setCurrentTemplateName] = useState<string>('');
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [isExecutionModalOpen, setIsExecutionModalOpen] = useState(false);
+  const [isExecutionPanelOpen, setIsExecutionPanelOpen] = useState(false);
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [executionInstanceId, setExecutionInstanceId] = useState<string | null>(null);
   const [executionFormSchema, setExecutionFormSchema] = useState<FormSchema | undefined>(undefined);
   const flowCanvasRef = useRef<FlowCanvasRef>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const eventQueueRef = useRef<Array<{nodeId: string, status: 'pending' | 'running' | 'completed' | 'failed'}>>([]); 
+  const isProcessingRef = useRef(false);
 
   // SSE 연결 정리
   React.useEffect(() => {
@@ -80,9 +84,9 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
       const result = await templatesApi.execute(currentTemplateId, cleanFormData);
       
       setExecutionInstanceId(result.instance_id);
-      if (!isExecutionModalOpen) {
-        setIsExecutionModalOpen(true);
-      }
+      // 실행 시작 후에는 패널로 표시
+      setIsExecutionModalOpen(false);
+      setIsExecutionPanelOpen(true);
       
       connectSSE(result.instance_id);
       console.log('Workflow execution started:', result);
@@ -174,9 +178,48 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
     };
   };
 
-  const updateNodeExecutionStatus = (nodeId: string, status: 'pending' | 'running' | 'completed' | 'failed') => {
-    flowCanvasRef.current?.updateNodeData(nodeId, { executionStatus: status });
-  };
+  // 이벤트 큐 처리
+  const processEventQueue = React.useCallback(() => {
+    if (isProcessingRef.current || eventQueueRef.current.length === 0) {
+      return;
+    }
+
+    isProcessingRef.current = true;
+    const event = eventQueueRef.current.shift()!;
+    const { nodeId, status } = event;
+
+    if (status === 'completed') {
+      // 1. 엣지 애니메이션 시작
+      flowCanvasRef.current?.updateEdgesByNodeStatus(nodeId, 'running');
+      
+      // 2. 1.2초 후 노드 완료 표시
+      setTimeout(() => {
+        flowCanvasRef.current?.updateNodeData(nodeId, { executionStatus: status });
+        flowCanvasRef.current?.updateEdgesByNodeStatus(nodeId, status);
+        
+        // 3. 약간의 여유 시간 후 다음 이벤트 처리
+        setTimeout(() => {
+          isProcessingRef.current = false;
+          processEventQueue();
+        }, 300); // 다음 노드 시작 전 짧은 대기
+      }, 1200);
+    } else {
+      // running, failed 등은 즉시 처리
+      flowCanvasRef.current?.updateNodeData(nodeId, { executionStatus: status });
+      flowCanvasRef.current?.updateEdgesByNodeStatus(nodeId, status);
+      
+      setTimeout(() => {
+        isProcessingRef.current = false;
+        processEventQueue();
+      }, 100);
+    }
+  }, []);
+
+  const updateNodeExecutionStatus = React.useCallback((nodeId: string, status: 'pending' | 'running' | 'completed' | 'failed') => {
+    // 이벤트를 큐에 추가
+    eventQueueRef.current.push({ nodeId, status });
+    processEventQueue();
+  }, [processEventQueue]);
 
   const handleSave = async () => {
     const nodes = flowCanvasRef.current?.getNodes() || [];
@@ -244,9 +287,9 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
         }
       }
       
-      // 2. 실행 상태 모달 열기 및 SSE 연결
+      // 2. 실행 상태 패널 열기 및 SSE 연결
       setExecutionInstanceId(instanceId);
-      setIsExecutionModalOpen(true);
+      setIsExecutionPanelOpen(true);
       connectSSE(instanceId);
       setIsHistoryModalOpen(false);
       
@@ -343,23 +386,39 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
         </main>
 
         <aside className="properties-panel">
-          <div className="properties-header">
-            <h3 className="properties-title">속성 패널</h3>
-          </div>
-          <div className="properties-content">
-            {selectedNode ? (
-              <NodePropertiesForm
-                node={selectedNode}
-                onUpdate={handleNodeUpdate}
-              />
-            ) : (
-              <div className="properties-placeholder">
-                <p className="text-secondary">
-                  노드를 선택하면 속성이 표시됩니다
-                </p>
+          {isExecutionPanelOpen ? (
+            <ExecutionPanel
+              instanceId={executionInstanceId}
+              templateName={currentTemplateName}
+              formSchema={executionFormSchema}
+              onFormSubmit={(formData) => handleRun(formData)}
+              onClose={() => {
+                setIsExecutionPanelOpen(false);
+                setExecutionInstanceId(null);
+                setExecutionFormSchema(undefined);
+              }}
+            />
+          ) : (
+            <>
+              <div className="properties-header">
+                <h3 className="properties-title">속성 패널</h3>
               </div>
-            )}
-          </div>
+              <div className="properties-content">
+                {selectedNode ? (
+                  <NodePropertiesForm
+                    node={selectedNode}
+                    onUpdate={handleNodeUpdate}
+                  />
+                ) : (
+                  <div className="properties-placeholder">
+                    <p className="text-secondary">
+                      노드를 선택하면 속성이 표시됩니다
+                    </p>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </aside>
       </div>
 
