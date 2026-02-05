@@ -61,6 +61,5 @@ PXM은 pnpm 모노레포로 구성된 BPM 스타일 워크플로우 플랫폼입
 - API 환경변수: `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`.
 
 **알려진 이슈 및 갭**
-- `infra/seed/010_outbox_seed.sql`의 `event_type` 컬럼은 스키마의 `type`과 불일치하며, `process_instance`에 필수인 `template_id`가 누락됨.
 - `apps/web/src/outbox/useInstanceStream.ts`는 SSE 경로가 `/api` 없이 `/instances/:id/stream`으로 호출됨.
 - `apps/api/src/sse/sse.controller.ts`는 모듈에 등록되지 않아 비활성 상태.

@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { CheckCircle, Circle, AlertCircle, Loader, Clock, X } from 'lucide-react';
 import type { FormSchema } from './form-types';
 import { FormRenderer } from './FormRenderer';
+import { RetryScheduledCard, NodeFailedCard } from './RetryCards';
 import './ExecutionPanel.css';
 
 export interface ExecutionEvent {
@@ -51,7 +52,7 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
 
         // event_type과 payload를 사용하여 이벤트 생성
         const executionEvent: ExecutionEvent = {
-          type: data.event_type || 'UNKNOWN',
+          type: data.type || 'UNKNOWN',
           instance_id: data.instance_id,
           status: data.payload?.status,
           node_id: data.payload?.node_id,
@@ -216,7 +217,37 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
                 </div>
               ) : (
                 <div className="timeline-events">
-                  {events.map((event, index) => (
+                  {events.map((event, index) => {
+                    // RETRY_SCHEDULED 이벤트 특별 처리
+                    if (event.type === 'RETRY_SCHEDULED' && event.payload?.retry_info) {
+                      return (
+                        <RetryScheduledCard
+                          key={index}
+                          retryInfo={event.payload.retry_info}
+                          timestamp={event.timestamp}
+                          nodeLabel={event.node_label}
+                          payload={event.payload}
+                        />
+                      );
+                    }
+                    
+                    // NODE_FAILED 이벤트 특별 처리
+                    if (event.type === 'NODE_FAILED' && event.payload?.retry_info) {
+                      return (
+                        <NodeFailedCard
+                          key={index}
+                          retryInfo={event.payload.retry_info}
+                          timestamp={event.timestamp}
+                          nodeLabel={event.node_label}
+                          payload={event.payload}
+                          isFinal={event.payload.final === true}
+                          statusCode={event.payload.status_code}
+                        />
+                      );
+                    }
+                    
+                    // 기본 이벤트 렌더링
+                    return (
                     <div key={index} className={`timeline-event event-${event.type.toLowerCase()}`}>
                       <div className="timeline-event-marker">
                         {getStatusIcon(event.status || getActivityStatus(event.type), true)}
@@ -249,7 +280,8 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
                         </details>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

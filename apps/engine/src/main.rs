@@ -754,7 +754,7 @@ async fn node_service_http(pool: &PgPool, job: &Job, worker_id: &str, form_data:
         .ok().and_then(|v| v.parse().ok()).unwrap_or(10);
 
     // 확장 포인트: URL/Method/Headers/Body/Secrets/Mapping을 process_def에서 읽도록
-    let url = format!("{}/debug/flaky?key={}&fail=2", api_base, job.instance_id);
+    let url = format!("{}/api/debug/flaky?key={}&fail=2", api_base, job.instance_id);
 
     {
         let mut tx = pool.begin().await?;

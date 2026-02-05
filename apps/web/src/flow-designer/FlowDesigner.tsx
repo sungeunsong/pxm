@@ -115,7 +115,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
 
         // ID 불일치 대응: 이벤트의 노드 ID가 캔버스에 없으면, 실행 중인 노드를 찾아 매핑
         if (targetNodeId && !nodes.find(n => n.id === targetNodeId)) {
-          if (data.event_type === 'NODE_FAILED' || data.event_type === 'NODE_COMPLETED') {
+          if (data.type === 'NODE_FAILED' || data.type === 'NODE_COMPLETED') {
             // 1. 실행 중인 노드 찾기
             let fallbackNode = nodes.find(n => n.data.executionStatus === 'running');
 
@@ -143,15 +143,15 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
           }
         }
 
-        if (data.event_type === 'NODE_STARTED' && targetNodeId) {
+        if (data.type === 'NODE_STARTED' && targetNodeId) {
           updateNodeExecutionStatus(targetNodeId, 'running');
-        } else if (data.event_type === 'NODE_COMPLETED' && targetNodeId) {
+        } else if (data.type === 'NODE_COMPLETED' && targetNodeId) {
           updateNodeExecutionStatus(targetNodeId, 'completed');
-        } else if (data.event_type === 'NODE_FAILED' && targetNodeId) {
+        } else if (data.type === 'NODE_FAILED' && targetNodeId) {
           updateNodeExecutionStatus(targetNodeId, 'failed');
         }
 
-        if (data.event_type === 'INSTANCE_COMPLETED' || data.event_type === 'INSTANCE_FAILED') {
+        if (data.type === 'INSTANCE_COMPLETED' || data.type === 'INSTANCE_FAILED') {
           setTimeout(() => {
             eventSource.close();
           }, 1000);

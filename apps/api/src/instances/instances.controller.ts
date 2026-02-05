@@ -91,7 +91,7 @@ export class InstancesController {
               data: {
                 id: r.id,
                 instance_id: r.instance_id,
-                event_type: r.event_type,
+                type: r.event_type,  // type으로 통일
                 payload: r.payload,
                 created_at: r.created_at,
               },
@@ -121,7 +121,7 @@ export class InstancesController {
               data: {
                 id: r.id,
                 instance_id: r.instance_id,
-                event_type: r.event_type,
+                type: r.event_type,  // type으로 통일
                 payload: r.payload,
                 created_at: r.created_at,
               },

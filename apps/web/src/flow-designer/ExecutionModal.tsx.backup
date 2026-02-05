@@ -53,9 +53,9 @@ export const ExecutionModal: React.FC<ExecutionModalProps> = ({
         const data = JSON.parse(event.data);
         console.log('SSE Event (Modal):', data);
 
-        // type과 payload를 사용하여 이벤트 생성
+        // event_type과 payload를 사용하여 이벤트 생성
         const executionEvent: ExecutionEvent = {
-          type: data.type || 'UNKNOWN',
+          type: data.event_type || 'UNKNOWN',
           instance_id: data.instance_id,
           status: data.payload?.status,
           node_id: data.payload?.node_id,
@@ -228,7 +228,6 @@ export const ExecutionModal: React.FC<ExecutionModalProps> = ({
               {/* 이벤트 타임라인 */}
               <div className="execution-timeline">
                 <h3 className="timeline-title">실행 로그</h3>
-                {console.log('Events array length:', events.length, events)}
                 {events.length === 0 ? (
                   <div className="timeline-empty">
                     <Loader size={24} className="spinning" />
@@ -236,38 +235,7 @@ export const ExecutionModal: React.FC<ExecutionModalProps> = ({
                   </div>
                 ) : (
                   <div className="timeline-events">
-                    {events.map((event, index) => {
-                      console.log("event: ", event)
-                      // RETRY_SCHEDULED 이벤트 특별 처리
-                      if (event.type === 'RETRY_SCHEDULED' && event.payload?.retry_info) {
-                        return (
-                          <RetryScheduledCard
-                            key={index}
-                            retryInfo={event.payload.retry_info}
-                            timestamp={event.timestamp}
-                            nodeLabel={event.node_label}
-                            payload={event.payload}
-                          />
-                        );
-                      }
-                      
-                      // NODE_FAILED 이벤트 특별 처리
-                      if (event.type === 'NODE_FAILED' && event.payload?.retry_info) {
-                        return (
-                          <NodeFailedCard
-                            key={index}
-                            retryInfo={event.payload.retry_info}
-                            timestamp={event.timestamp}
-                            nodeLabel={event.node_label}
-                            payload={event.payload}
-                            isFinal={event.payload.final === true}
-                            statusCode={event.payload.status_code}
-                          />
-                        );
-                      }
-                      
-                      // 기본 이벤트 렌더링
-                      return (
+                    {events.map((event, index) => (
                       <div key={index} className={`timeline-event event-${event.type.toLowerCase()}`}>
                         <div className="timeline-event-marker">
                           {getStatusIcon(event.status || getActivityStatus(event.type), true)}
@@ -306,8 +274,7 @@ export const ExecutionModal: React.FC<ExecutionModalProps> = ({
                           </details>
                         </div>
                       </div>
-                      );
-                    })}
+                    ))}
                   </div>
                 )}
               </div>

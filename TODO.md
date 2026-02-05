@@ -8,9 +8,9 @@
 - [x] Token execution (Start/Service/Timer) ✅ 1/22 완료
 - [x] Lock / Lease / Heartbeat ✅ 1/22 완료
 - [x] Retry / Timer ✅ 1/22 완료 (Exponential backoff + Jitter)
-- [ ] Gateway 노드 구현 (조건 분기)
+- [x] Gateway 노드 구현 (조건 분기) ✅ 완료
+- [x] Approval 노드 + Task 생성 ✅ 완료
 - [ ] Engine crash recovery
-- [ ] Approval 노드 + Task 생성
 
 ## B. Identity / Access (Product Essential)
 
@@ -70,7 +70,7 @@
 - [x] WEB: 간단 그래프(노드 5개) 렌더 ✅ 1/22 완료
 - [x] WEB: NODE_STARTED/NODE_COMPLETED 이벤트로 하이라이트/edge 애니메이션 ✅ 1/22 완료
 - [x] WEB: ExecutionTimeline 컴포넌트 ✅ 1/22 완료
-- [ ] WEB: 실패 노드 에러 카드 표시 (retry count, next retry time)
+- [x] WEB: 실패 노드 에러 카드 표시 (retry count, next retry time) ✅ 2/5 완료
 - [ ] WEB: Edge 애니메이션 개선 (토큰 흐름 시각화)
 
 ## 4. Lock / Lease / Retry (운영급 심장)
@@ -239,35 +239,36 @@ DB: infra/docker-compose + 001_init.sql 적용됨(process_instance, engine_jobs,
 - Formily (Alibaba): https://formilyjs.org/
 - Form.io: https://form.io/
 
-### Phase 3: Gateway 노드 실행 (엔진 강화)
+### Phase 3: Gateway 노드 실행 (엔진 강화) ✅ 완료
 
 **목표**: 조건 분기 로직 실행
 
-13. **Gateway 노드 구현** (2-3일)
+13. **Gateway 노드 구현** (2-3일) ✅ 완료
 
-- [ ] ENGINE: 조건식 평가 (ctx 기반)
-- [ ] ENGINE: 다중 아웃바운드 엣지 처리
-- [ ] ENGINE: 조건에 따른 토큰 라우팅
-- [ ] 테스트: 간단한 if-else 분기
+- [x] ENGINE: 조건식 평가 (ctx 기반)
+- [x] ENGINE: 다중 아웃바운드 엣지 처리
+- [x] ENGINE: 조건에 따른 토큰 라우팅
+- [x] 테스트: 간단한 if-else 분기
 
-### Phase 4: Approval 노드 + 작업함
+### Phase 4: Approval 노드 + 작업함 ✅ 완료
 
 **목표**: 사람 승인 워크플로우
 
-14. **Approval 노드 + Task 생성** (3일)
+14. **Approval 노드 + Task 생성** (3일) ✅ 완료
 
-- [ ] ENGINE: Approval 노드에서 task 생성 + INSTANCE_WAITING
-- [ ] API: POST /tasks/:id/approve, /tasks/:id/reject
-- [ ] API: 승인 후 RESUME job 생성
-- [ ] WEB: Inbox 페이지 (내 작업함)
-- [ ] WEB: 승인/반려 버튼
+- [x] ENGINE: Approval 노드에서 task 생성 + INSTANCE_WAITING
+- [x] API: POST /tasks/:id/complete (approve/reject)
+- [x] API: 승인 후 RESUME job 생성
+- [x] WEB: Inbox 페이지 (내 작업함)
+- [x] WEB: 승인/반려 버튼
 
 ### Phase 5: 제품 완성도
 
-15. **에러 처리 UI** (1일)
+15. **에러 처리 UI** (1일) ✅ 완료 (2/5)
 
-- [ ] WEB: 실패 노드 에러 카드 (retry count, next retry time)
-- [ ] WEB: 에러 상세 모달
+- [x] WEB: 실패 노드 에러 카드 (retry count, next retry time)
+- [x] WEB: RETRY_SCHEDULED 이벤트 카드
+- [x] WEB: NODE_FAILED 이벤트 카드 (최종 실패 구분)
 
 16. **템플릿 갤러리** (1-2일)
 
