@@ -259,33 +259,33 @@ async fn main() -> Result<()> {
             println!("[engine] got job: {:?}", job);
 
             match job.job_type.as_str() {
-    // START / RETRY / RESUME 는 모두 같은 실행 루트
-    // (RESUME는 이전 노드가 cursor를 다음 노드로 옮긴 뒤 생성한 job)
-    "START" | "RETRY" | "RESUME" => {
-        if let Err(e) = run_instance_job(&pool, &worker_id, &job).await {
-            eprintln!("[engine] job {} failed: {e:?}", job.id);
+                // START / RETRY / RESUME 는 모두 같은 실행 루트
+                // (RESUME는 이전 노드가 cursor를 다음 노드로 옮긴 뒤 생성한 job)
+                "START" | "RETRY" | "RESUME" => {
+                    if let Err(e) = run_instance_job(&pool, &worker_id, &job).await {
+                        eprintln!("[engine] job {} failed: {e:?}", job.id);
 
-            // 확장 포인트:
-            // - 여기서 fatal error / retryable error 구분 가능
-            // - 지금은 단순히 job FAILED 처리
-            mark_job_failed(&pool, job.id).await?;
-        }
-    }
+                        // 확장 포인트:
+                        // - 여기서 fatal error / retryable error 구분 가능
+                        // - 지금은 단순히 job FAILED 처리
+                        mark_job_failed(&pool, job.id).await?;
+                    }
+                }
 
-    // TIMER: 타이머 만료 시 실행
-    "TIMER" => {
-        if let Err(e) = run_timer_job(&pool, &worker_id, &job).await {
-            eprintln!("[engine] timer job {} failed: {e:?}", job.id);
-            mark_job_failed(&pool, job.id).await?;
-        }
-    }
+                // TIMER: 타이머 만료 시 실행
+                "TIMER" => {
+                    if let Err(e) = run_timer_job(&pool, &worker_id, &job).await {
+                        eprintln!("[engine] timer job {} failed: {e:?}", job.id);
+                        mark_job_failed(&pool, job.id).await?;
+                    }
+                }
 
-    // 그 외는 무시
-    _ => {
-        println!("[engine] unsupported job_type={}, mark DONE", job.job_type);
-        mark_job_done(&pool, job.id).await?;
-    }
-}
+                // 그 외는 무시
+                _ => {
+                    println!("[engine] unsupported job_type={}, mark DONE", job.job_type);
+                    mark_job_done(&pool, job.id).await?;
+                }
+            }
         } else {
             if last_reap.elapsed() > Duration::from_secs(2) {
             let n = reclaim_stale_running_jobs(&pool).await?;

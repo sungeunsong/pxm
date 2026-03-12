@@ -172,9 +172,9 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({ node, on
           value={data.approvalType || 'single'}
           onChange={(e) => onUpdate(node.id, { ...data, approvalType: e.target.value })}
           options={[
-            { value: 'single', label: 'Single Approver' },
-            { value: 'multiple', label: 'Multiple Approvers' },
-            { value: 'sequential', label: 'Sequential' },
+            { value: 'single', label: '단일 승인자' },
+            { value: 'multiple', label: '다중 승인자' },
+            { value: 'sequential', label: '순차 승인' },
           ]}
           fullWidth
         />
