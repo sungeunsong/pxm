@@ -1,13 +1,11 @@
 import { Body, Controller, Post, Get, Query } from '@nestjs/common';
-import type { Pool } from 'pg';
-import { Inject } from '@nestjs/common';
-import { PG_POOL } from '../db/pg.provider';
+import { OutboxRepositoryPort } from '../db/ports/db.ports';
 
 @Controller('/debug')
 export class DebugController {
   private flakyCounter = new Map<string, number>();
 
-  constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
+  constructor(private readonly outboxRepo: OutboxRepositoryPort) {}
 
   @Post('/outbox')
   async insertOutbox(@Body() body: any) {
@@ -15,16 +13,7 @@ export class DebugController {
     const eventType = body.event_type ?? 'NODE_STARTED';
     const payload = body.payload ?? {};
 
-    const { rows } = await this.pool.query(
-      `
-  insert into event_outbox (instance_id, type, payload)
-  values ($1::uuid, $2, $3::jsonb)
-  returning id
-  `,
-      [instanceId, eventType, JSON.stringify(payload)],
-    );
-
-    return { ok: true, id: rows[0].id };
+    return this.outboxRepo.appendEvent(instanceId, eventType, payload);
   }
 
   // Flaky endpoint - GET/POST 모두 지원

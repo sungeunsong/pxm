@@ -1,15 +1,14 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Query, Inject } from '@nestjs/common';
-import type { Pool } from 'pg';
-import { PG_POOL } from '../db/pg.provider';
+import { Controller, Get, Post, Put, Delete, Body, Param, Query } from '@nestjs/common';
 import { TemplatesService } from './templates.service';
 import { CreateTemplateDto, UpdateTemplateDto } from './dto/template.dto';
+import { WorkflowInstanceRepositoryPort } from '../db/ports/db.ports';
 import { randomUUID } from 'crypto';
 
 @Controller('templates')
 export class TemplatesController {
   constructor(
     private readonly templatesService: TemplatesService,
-    @Inject(PG_POOL) private readonly pool: Pool,
+    private readonly instanceRepo: WorkflowInstanceRepositoryPort,
   ) {}
 
   @Post()
@@ -41,6 +40,23 @@ export class TemplatesController {
     return template;
   }
 
+  @Post(':id/deploy')
+  async deploy(
+    @Param('id') id: string,
+    @Body() body: { name?: string; nodes: any[]; edges: any[] },
+  ) {
+    const template = await this.templatesService.update(id, {
+      name: body.name,
+      nodes: body.nodes,
+      edges: body.edges,
+    });
+    if (!template) {
+      throw new Error('Template not found');
+    }
+    console.log(`[BFF] Template ${id} deployed. Nodes: ${body.nodes.length}, Edges: ${body.edges.length}`);
+    return { success: true, template };
+  }
+
   @Delete(':id')
   async delete(@Param('id') id: string) {
     const success = await this.templatesService.delete(id);
@@ -61,7 +77,7 @@ export class TemplatesController {
       throw new Error('Template not found');
     }
 
-    // 실행 요청마다 새로운 인스턴스를 발급한다 (실행 트리거는 job 큐)
+    // 실행 요청마다 새로운 인스턴스를 발급한다
     const instanceId = randomUUID();
     
     // 시작 노드 찾기
@@ -71,79 +87,45 @@ export class TemplatesController {
     }
 
     // ctx 구조: Rust Engine이 기대하는 실행 컨텍스트
-    // cursor가 "현재/다음에 실행할 노드"를 가리킨다.
     const ctx = {
       cursor: startNode.id, // 시작 노드 ID
       nodes: template.nodes,
       edges: template.edges,
       template_id: template.id,
       template_name: template.name,
-      // formData 추가 (있으면)
       ...(body?.formData && { formData: body.formData }),
     };
 
-    // 인스턴스/START job/outbox를 하나의 트랜잭션으로 생성해 일관성 보장
-    const client = await this.pool.connect();
-    try {
-      await client.query('begin');
+    // 1) process_instance 생성
+    await this.instanceRepo.createInstance(instanceId, template.id, 'CREATED', ctx);
 
-      // 1) process_instance 생성
-      await client.query(
-        `INSERT INTO process_instance (id, template_id, status, ctx)
-         VALUES ($1::uuid, $2::uuid, $3, $4::jsonb)`,
-        [instanceId, template.id, 'CREATED', JSON.stringify(ctx)],
-      );
+    // 2) engine_jobs 생성 (START)
+    await this.instanceRepo.createJob({
+      instanceId,
+      type: 'START',
+      runAt: new Date(),
+      payload: {
+        node_id: startNode.id,
+        reason: 'template_execute',
+      },
+    });
 
-      // 2) engine_jobs 생성 (START)
-      // READY job이 엔진의 실행 트리거가 된다 (폴링 대상)
-      const jobRes = await client.query(
-        `INSERT INTO engine_jobs (instance_id, type, run_at, status, payload)
-         VALUES ($1::uuid, $2, now(), 'READY', $3::jsonb)
-         RETURNING id`,
-        [
-          instanceId,
-          'START',
-          JSON.stringify({
-            node_id: startNode.id,
-            reason: 'template_execute',
-          }),
-        ],
-      );
-      const jobId = jobRes.rows[0]?.id;
+    // 3) 시작 토큰 발행
+    const startTokenId = randomUUID();
+    await this.instanceRepo.createToken({
+      id: startTokenId,
+      instanceId,
+      nodeId: startNode.id,
+      status: 'ACTIVE',
+    });
 
-      // 3) event_outbox 생성
-      // UI/SSE가 즉시 실행 시작을 감지할 수 있도록 이벤트 기록
-      await client.query(
-        `INSERT INTO event_outbox (instance_id, type, payload)
-         VALUES ($1::uuid, $2, $3::jsonb)`,
-        [
-          instanceId,
-          'INSTANCE_CREATED',
-          JSON.stringify({
-            instance_id: instanceId,
-            template_id: template.id,
-            template_name: template.name,
-            status: 'CREATED',
-            job_id: jobId,
-            timestamp: new Date().toISOString(),
-          }),
-        ],
-      );
+    console.log(`[BFF] Executed template ${template.name}. instance_id=${instanceId}`);
 
-      await client.query('commit');
-
-      return {
-        instance_id: instanceId,
-        template_id: template.id,
-        template_name: template.name,
-        status: 'CREATED',
-        job_id: jobId,
-      };
-    } catch (e) {
-      await client.query('rollback');
-      throw e;
-    } finally {
-      client.release();
-    }
+    return {
+      instance_id: instanceId,
+      template_id: template.id,
+      template_name: template.name,
+      status: 'CREATED',
+    };
   }
 }

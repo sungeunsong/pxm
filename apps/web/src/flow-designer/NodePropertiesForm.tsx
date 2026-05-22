@@ -22,38 +22,89 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({ node, on
   // Service 노드 속성
   const renderServiceProperties = () => {
     const data = node.data as any;
+    const pluginId = data.plugin_id || 'builtin.http_request';
     return (
       <>
         <div className="property-section">
-          <h4 className="property-section-title">HTTP 설정</h4>
-          <Input
-            label="URL"
-            placeholder="https://api.example.com/endpoint"
-            value={data.url || ''}
-            onChange={(e) => onUpdate(node.id, { ...data, url: e.target.value })}
-            fullWidth
-          />
+          <h4 className="property-section-title">플러그인 선택</h4>
           <Select
-            label="HTTP Method"
-            value={data.method || 'GET'}
-            onChange={(e) => onUpdate(node.id, { ...data, method: e.target.value })}
+            label="Connector Type"
+            value={pluginId}
+            onChange={(e) => onUpdate(node.id, { ...data, plugin_id: e.target.value })}
             options={[
-              { value: 'GET', label: 'GET' },
-              { value: 'POST', label: 'POST' },
-              { value: 'PUT', label: 'PUT' },
-              { value: 'PATCH', label: 'PATCH' },
-              { value: 'DELETE', label: 'DELETE' },
+              { value: 'builtin.http_request', label: 'HTTP Request (Built-in)' },
+              { value: 'connector.slack', label: 'Slack Alerter (Mock)' },
+              { value: 'connector.acra', label: 'ACRA Security Assessor (Mock)' },
+              { value: 'connector.nit', label: 'NIT VM Provisioner (Mock)' },
             ]}
             fullWidth
           />
-          <Input
-            label="Headers (JSON)"
-            placeholder='{"Content-Type": "application/json"}'
-            value={data.headers || ''}
-            onChange={(e) => onUpdate(node.id, { ...data, headers: e.target.value })}
-            fullWidth
-          />
         </div>
+
+        {pluginId === 'builtin.http_request' && (
+          <div className="property-section">
+            <h4 className="property-section-title">HTTP 설정</h4>
+            <Input
+              label="URL"
+              placeholder="https://api.example.com/endpoint"
+              value={data.url || ''}
+              onChange={(e) => onUpdate(node.id, { ...data, url: e.target.value })}
+              fullWidth
+            />
+            <Select
+              label="HTTP Method"
+              value={data.method || 'GET'}
+              onChange={(e) => onUpdate(node.id, { ...data, method: e.target.value })}
+              options={[
+                { value: 'GET', label: 'GET' },
+                { value: 'POST', label: 'POST' },
+                { value: 'PUT', label: 'PUT' },
+                { value: 'PATCH', label: 'PATCH' },
+                { value: 'DELETE', label: 'DELETE' },
+              ]}
+              fullWidth
+            />
+            <Input
+              label="Headers (JSON)"
+              placeholder='{"Content-Type": "application/json"}'
+              value={data.headers || ''}
+              onChange={(e) => onUpdate(node.id, { ...data, headers: e.target.value })}
+              fullWidth
+            />
+          </div>
+        )}
+
+        {pluginId === 'connector.slack' && (
+          <div className="property-section">
+            <h4 className="property-section-title">Slack Alerter 설정</h4>
+            <Input
+              label="Message"
+              placeholder="보낼 알림 메시지"
+              value={data.message || ''}
+              onChange={(e) => onUpdate(node.id, { ...data, message: e.target.value })}
+              fullWidth
+            />
+          </div>
+        )}
+
+        {pluginId === 'connector.acra' && (
+          <div className="property-section">
+            <h4 className="property-section-title">ACRA Assessor 설정</h4>
+            <div style={{ fontSize: '11px', color: 'var(--text-secondary)', padding: '10px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
+              🛡️ ACRA 보안 등급 검수 및 취약점 검증을 수행합니다. (자동 Mock 승인)
+            </div>
+          </div>
+        )}
+
+        {pluginId === 'connector.nit' && (
+          <div className="property-section">
+            <h4 className="property-section-title">NIT Provisioner 설정</h4>
+            <div style={{ fontSize: '11px', color: 'var(--text-secondary)', padding: '10px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
+              💻 사내 IT 클라우드에 신규 가상 환경 및 리소스를 생성합니다. (자동 Mock 할당)
+            </div>
+          </div>
+        )}
+
         <div className="property-section">
           <h4 className="property-section-title">고급 설정</h4>
           <Input

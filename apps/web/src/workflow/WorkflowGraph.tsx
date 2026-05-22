@@ -15,7 +15,7 @@ import {
 import '@xyflow/react/dist/style.css';
 
 import { WorkflowNode } from './WorkflowNode';
-import { type WorkflowNodeData, type NodeStatus, NODE_STATUS_COLORS } from './types';
+import { type WorkflowNodeData, type NodeStatus } from './types';
 import { type ThemeMode, themes, getNodeStatusColors } from './theme';
 
 // 노드 타입 별칭

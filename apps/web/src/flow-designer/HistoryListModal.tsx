@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { X, Clock, Play, CheckCircle, AlertCircle, Loader } from 'lucide-react';
+import { X, Clock, CheckCircle, AlertCircle, Loader } from 'lucide-react';
 import './HistoryListModal.css';
 
 interface Instance {

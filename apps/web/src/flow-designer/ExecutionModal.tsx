@@ -228,7 +228,6 @@ export const ExecutionModal: React.FC<ExecutionModalProps> = ({
               {/* 이벤트 타임라인 */}
               <div className="execution-timeline">
                 <h3 className="timeline-title">실행 로그</h3>
-                {console.log('Events array length:', events.length, events)}
                 {events.length === 0 ? (
                   <div className="timeline-empty">
                     <Loader size={24} className="spinning" />

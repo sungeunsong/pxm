@@ -11,5 +11,15 @@ services:
     volumes:
       - pxm_pgdata:/var/lib/postgresql/data
       - ./db/migrations:/docker-entrypoint-initdb.d:ro
+
+  mongodb:
+    image: mongo:6.0
+    container_name: pxm-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - pxm_mongodata:/data/db
+
 volumes:
   pxm_pgdata:
+  pxm_mongodata:

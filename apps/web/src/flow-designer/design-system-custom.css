@@ -1,0 +1,190 @@
+/* ============================================
+   Elegant Enterprise White Theme (Clean White & Deep Navy)
+   ============================================ */
+
+:root {
+  --n8n-bg: #f8fafc;
+  --n8n-card: #ffffff;
+  --n8n-border: #e2e8f0;
+  --n8n-border-hover: #cbd5e1;
+  --n8n-text-main: #0f172a;
+  --n8n-text-muted: #64748b;
+  --n8n-primary: #2563eb;
+  --n8n-primary-glow: rgba(37, 99, 235, 0.15);
+  
+  /* Node category colors (Vivid Enterprise Colors) */
+  --n8n-start: #10b981;
+  --n8n-start-glow: rgba(16, 185, 129, 0.15);
+  --n8n-service: #3b82f6;
+  --n8n-service-glow: rgba(59, 130, 246, 0.15);
+  --n8n-timer: #f59e0b;
+  --n8n-timer-glow: rgba(245, 158, 11, 0.15);
+  --n8n-gateway: #8b5cf6;
+  --n8n-gateway-glow: rgba(139, 92, 246, 0.15);
+  --n8n-approval: #ec4899;
+  --n8n-approval-glow: rgba(236, 72, 153, 0.15);
+  --n8n-end: #ef4444;
+  --n8n-end-glow: rgba(239, 68, 68, 0.15);
+
+  /* Sidebar Specific Deep Navy Colors */
+  --sidebar-bg: #0b1329;
+  --sidebar-hover: rgba(255, 255, 255, 0.08);
+  --sidebar-active: #2563eb;
+  --sidebar-text: #94a3b8;
+  --sidebar-text-active: #ffffff;
+}
+
+/* Global body styling - Premium Enterprise Light Grey/White */
+body {
+  background-color: var(--n8n-bg) !important;
+  color: var(--n8n-text-main) !important;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+  background-image: none !important;
+}
+
+/* React Flow premium dark grid background styling */
+.react-flow {
+  background-color: #ffffff !important;
+}
+
+.react-flow__background {
+  background: radial-gradient(circle, #e2e8f0 1.2px, transparent 1.2px) !important;
+  background-size: 20px 20px !important;
+}
+
+/* Custom premium styles for nodes - Semi-transparent glassmorphism with dynamic gradient glow */
+.custom-node {
+  background: #ffffff !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 12px !important;
+  color: var(--n8n-text-main) !important;
+  padding: 10px 14px !important;
+  box-shadow: 
+    0 4px 6px -1px rgba(0, 0, 0, 0.05),
+    0 2px 4px -1px rgba(0, 0, 0, 0.03) !important;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  position: relative;
+  overflow: visible;
+}
+
+.custom-node:hover {
+  border-color: #cbd5e1 !important;
+  transform: translateY(-3px) !important;
+  box-shadow: 
+    0 10px 15px -3px rgba(0, 0, 0, 0.08),
+    0 4px 6px -4px rgba(0, 0, 0, 0.08) !important;
+}
+
+/* Selected state with vibrant neon glow match */
+.custom-node.selected.custom-node-start {
+  border-color: var(--n8n-start) !important;
+  box-shadow: 0 0 0 3px var(--n8n-start-glow), 0 4px 6px -1px rgba(0, 0, 0, 0.05) !important;
+}
+.custom-node.selected.custom-node-service {
+  border-color: var(--n8n-service) !important;
+  box-shadow: 0 0 0 3px var(--n8n-service-glow), 0 4px 6px -1px rgba(0, 0, 0, 0.05) !important;
+}
+.custom-node.selected.custom-node-timer {
+  border-color: var(--n8n-timer) !important;
+  box-shadow: 0 0 0 3px var(--n8n-timer-glow), 0 4px 6px -1px rgba(0, 0, 0, 0.05) !important;
+}
+.custom-node.selected.custom-node-gateway {
+  border-color: var(--n8n-gateway) !important;
+  box-shadow: 0 0 0 3px var(--n8n-gateway-glow), 0 4px 6px -1px rgba(0, 0, 0, 0.05) !important;
+}
+.custom-node.selected.custom-node-approval {
+  border-color: var(--n8n-approval) !important;
+  box-shadow: 0 0 0 3px var(--n8n-approval-glow), 0 4px 6px -1px rgba(0, 0, 0, 0.05) !important;
+}
+.custom-node.selected.custom-node-end {
+  border-color: var(--n8n-end) !important;
+  box-shadow: 0 0 0 3px var(--n8n-end-glow), 0 4px 6px -1px rgba(0, 0, 0, 0.05) !important;
+}
+
+/* Premium Icons container with vivid background */
+.custom-node-icon {
+  width: 32px !important;
+  height: 32px !important;
+  border-radius: 8px !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
+  border: none !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.custom-node-start .custom-node-icon { background: linear-gradient(135deg, #10b981, #059669) !important; }
+.custom-node-service .custom-node-icon { background: linear-gradient(135deg, #3b82f6, #2563eb) !important; }
+.custom-node-timer .custom-node-icon { background: linear-gradient(135deg, #f59e0b, #d97706) !important; }
+.custom-node-gateway .custom-node-icon { background: linear-gradient(135deg, #8b5cf6, #7c3aed) !important; }
+.custom-node-approval .custom-node-icon { background: linear-gradient(135deg, #ec4899, #db2777) !important; }
+.custom-node-end .custom-node-icon { background: linear-gradient(135deg, #ef4444, #dc2626) !important; }
+
+/* Custom Handles */
+.custom-handle {
+  width: 10px !important;
+  height: 10px !important;
+  background: var(--n8n-primary) !important;
+  border: 2px solid #ffffff !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2) !important;
+  border-radius: 50% !important;
+  transition: all 0.2s ease !important;
+}
+
+.custom-handle:hover {
+  width: 13px !important;
+  height: 13px !important;
+  background: var(--n8n-start) !important;
+}
+
+/* React Flow controls/panels customization */
+.react-flow__controls {
+  background: #ffffff !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05) !important;
+  overflow: hidden !important;
+}
+
+.react-flow__controls-button {
+  background: transparent !important;
+  color: var(--n8n-text-muted) !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+  fill: currentColor !important;
+  transition: all 0.2s ease !important;
+}
+
+.react-flow__controls-button:hover {
+  background: #f8fafc !important;
+  color: var(--n8n-text-main) !important;
+}
+
+/* Node Palette Premium Light Enterprise Styling */
+.node-palette {
+  background: #ffffff !important;
+  border-right: 1px solid #e2e8f0 !important;
+}
+
+.palette-node {
+  background: #f8fafc !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 10px !important;
+  padding: 8px 10px !important;
+  transition: all 0.2s ease !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02) !important;
+  cursor: grab !important;
+}
+
+.palette-node:hover {
+  background: #ffffff !important;
+  border-color: #cbd5e1 !important;
+  transform: translateY(-2px) !important;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05) !important;
+}
+
+/* Glassmorphism Sidebar Properties Panel */
+.properties-panel {
+  background: #ffffff !important;
+  border-left: 1px solid #e2e8f0 !important;
+}
+

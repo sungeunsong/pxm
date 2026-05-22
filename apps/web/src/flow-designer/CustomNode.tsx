@@ -1,21 +1,22 @@
 import React from 'react';
 import { Handle, Position } from 'reactflow';
 import type { NodeProps } from 'reactflow';
-import { Loader, CheckCircle, XCircle, Clock } from 'lucide-react';
+import { Loader, CheckCircle, XCircle, Clock, Play, Cpu, Shuffle, CheckSquare, Square } from 'lucide-react';
 import type { CustomNodeData } from './form-types';
 import './CustomNode.css';
 import './NodeAnimations.css';
+import './design-system-custom.css';
 
 export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({ data, selected }) => {
   const getNodeIcon = (type: string) => {
     switch (type) {
-      case 'start': return '▶';
-      case 'service': return '⚙';
-      case 'timer': return '⏱';
-      case 'gateway': return '◆';
-      case 'approval': return '✓';
-      case 'end': return '■';
-      default: return '●';
+      case 'start': return <Play size={15} fill="currentColor" style={{ marginLeft: '1px' }} />;
+      case 'service': return <Cpu size={15} />;
+      case 'timer': return <Clock size={15} />;
+      case 'gateway': return <Shuffle size={15} />;
+      case 'approval': return <CheckSquare size={15} />;
+      case 'end': return <Square size={15} fill="currentColor" />;
+      default: return null;
     }
   };
 

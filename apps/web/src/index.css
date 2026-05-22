@@ -4,6 +4,7 @@
 
 /* Import Design System */
 @import './design-system.css';
+@import './flow-designer/design-system-custom.css';
 
 /* Import Inter Font from Google Fonts */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');

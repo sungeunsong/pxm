@@ -1,5 +1,6 @@
 use serde_json::Value;
 use uuid::Uuid;
+use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GatewayType {
@@ -17,6 +18,29 @@ pub enum TokenStatus {
     Failed,
 }
 
+impl TokenStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Active => "ACTIVE",
+            Self::Waiting => "WAITING",
+            Self::Completed => "COMPLETED",
+            Self::Consumed => "CONSUMED",
+            Self::Failed => "FAILED",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "ACTIVE" => Self::Active,
+            "WAITING" => Self::Waiting,
+            "COMPLETED" => Self::Completed,
+            "CONSUMED" => Self::Consumed,
+            "FAILED" => Self::Failed,
+            _ => Self::Active,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobType {
     Start,
@@ -27,12 +51,48 @@ pub enum JobType {
     Escalation,
 }
 
+impl JobType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Start => "START",
+            Self::Resume => "RESUME",
+            Self::Retry => "RETRY",
+            Self::Timer => "TIMER",
+            Self::Reminder => "REMINDER",
+            Self::Escalation => "ESCALATION",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "START" => Self::Start,
+            "RESUME" => Self::Resume,
+            "RETRY" => Self::Retry,
+            "TIMER" => Self::Timer,
+            "REMINDER" => Self::Reminder,
+            "ESCALATION" => Self::Escalation,
+            _ => Self::Start,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobStatus {
     Queued,
     Running,
     Completed,
     Failed,
+}
+
+impl JobStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Queued => "QUEUED",
+            Self::Running => "RUNNING",
+            Self::Completed => "COMPLETED",
+            Self::Failed => "FAILED",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -43,6 +103,18 @@ pub struct V2Job {
     pub job_type: JobType,
     pub attempt: i32,
     pub payload: Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct V2Token {
+    pub id: Uuid,
+    pub instance_id: Uuid,
+    pub node_id: String,
+    pub status: TokenStatus,
+    pub parent_token_id: Option<Uuid>,
+    pub scope_key: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone)]
@@ -61,3 +133,25 @@ pub struct NodeDef {
     pub node_type: String,
     pub config: Value,
 }
+
+#[derive(Debug, Clone)]
+pub struct V2Instance {
+    pub id: Uuid,
+    pub process_definition_id: Uuid,
+    pub state: String,
+    pub context: Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct V2Task {
+    pub id: Uuid,
+    pub instance_id: Uuid,
+    pub token_id: Uuid,
+    pub node_id: String,
+    pub assignee: String,
+    pub status: String,
+    pub payload: Value,
+}
+
+
+

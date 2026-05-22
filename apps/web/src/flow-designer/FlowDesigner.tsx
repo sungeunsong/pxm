@@ -17,9 +17,11 @@ import './FlowDesigner.css';
 
 export interface FlowDesignerProps {
   children?: React.ReactNode;
+  onSwitchToInbox?: () => void;
+  initialMonitorInstanceId?: string;
 }
 
-export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
+export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, initialMonitorInstanceId }) => {
   const [darkMode, setDarkMode] = useState(true);
   const [selectedNode, setSelectedNode] = useState<Node<CustomNodeData> | null>(null);
   const [currentTemplateId, setCurrentTemplateId] = useState<string | null>(null);
@@ -43,6 +45,14 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
       }
     };
   }, []);
+
+  // 실시간 추적 인스턴스 전이 연동
+  React.useEffect(() => {
+    if (initialMonitorInstanceId) {
+      console.log('Restoring instance for real-time tracking:', initialMonitorInstanceId);
+      handleHistorySelect(initialMonitorInstanceId);
+    }
+  }, [initialMonitorInstanceId]);
 
   const handleRun = async (formData?: Record<string, any>) => {
     if (!currentTemplateId) {
@@ -330,7 +340,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = () => {
       <Header
         title="PXM Flow Designer"
         actions={
-          <Button variant="ghost" icon={<Inbox />} onClick={() => window.location.href = '/inbox'}>
+          <Button variant="ghost" icon={<Inbox />} onClick={() => onSwitchToInbox?.()}>
             내 결재함
           </Button>
         }
