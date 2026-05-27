@@ -1,16 +1,18 @@
-use std::any::Any;
-use anyhow::Result;
-use uuid::Uuid;
-use serde_json::Value;
-use mongodb::{Client, Database, ClientSession};
-use mongodb::bson::{doc, Document, Bson};
-use chrono::{DateTime, Utc};
-use crate::v2::types::{V2Job, V2Token, NodeDef, EdgeRule, TokenStatus, JobType, V2Instance, V2Task};
 use crate::v2::ports::{
-    Tx, TransactionManagerPort, JobQueuePort, InstanceLockPort,
-    TokenRepositoryPort, TaskRepositoryPort, ExecutionLogPort, OutboxPort,
-    ProcessDefinitionRepositoryPort, WorkflowInstanceRepositoryPort
+    ExecutionLogPort, InstanceLockPort, JobQueuePort, OutboxPort, ProcessDefinitionRepositoryPort,
+    TaskRepositoryPort, TokenRepositoryPort, TransactionManagerPort, Tx,
+    WorkflowInstanceRepositoryPort,
 };
+use crate::v2::types::{
+    EdgeRule, JobType, NodeDef, TokenStatus, V2Instance, V2Job, V2Task, V2Token,
+};
+use anyhow::Result;
+use chrono::{DateTime, Utc};
+use mongodb::bson::{doc, Bson, Document};
+use mongodb::{Client, ClientSession, Database};
+use serde_json::Value;
+use std::any::Any;
+use uuid::Uuid;
 
 use async_trait::async_trait;
 
@@ -41,13 +43,19 @@ pub struct MongoAdapter {
 impl MongoAdapter {
     pub fn new(client: Client, db_name: &str, is_replica_set: bool) -> Self {
         let db = client.database(db_name);
-        Self { client, db, is_replica_set }
+        Self {
+            client,
+            db,
+            is_replica_set,
+        }
     }
 }
 
 /// internal 헬퍼: Tx에서 MongoDB ClientSession을 안전하게 추출 (Replica Set인 경우에만 Some 반환)
 fn get_session_mut<'a>(tx: &'a mut dyn Tx) -> Result<Option<&'a mut ClientSession>> {
-    let concrete = tx.as_any_mut().downcast_mut::<MongoTx>()
+    let concrete = tx
+        .as_any_mut()
+        .downcast_mut::<MongoTx>()
         .ok_or_else(|| anyhow::anyhow!("Failed to downcast Tx to MongoTx"))?;
     if concrete.is_replica_set {
         Ok(concrete.session.as_mut())
@@ -57,7 +65,11 @@ fn get_session_mut<'a>(tx: &'a mut dyn Tx) -> Result<Option<&'a mut ClientSessio
 }
 
 /// 몽고DB 순차 sequence 번호 생성기 (잡 ID 등 발급용)
-async fn get_next_sequence(db: &Database, counter_name: &str, session: Option<&mut ClientSession>) -> Result<i64> {
+async fn get_next_sequence(
+    db: &Database,
+    counter_name: &str,
+    session: Option<&mut ClientSession>,
+) -> Result<i64> {
     let coll = db.collection::<Document>("v2_counters");
     let filter = doc! { "_id": counter_name };
     let update = doc! { "$inc": { "seq": 1 } };
@@ -65,15 +77,20 @@ async fn get_next_sequence(db: &Database, counter_name: &str, session: Option<&m
         .upsert(true)
         .return_document(mongodb::options::ReturnDocument::After)
         .build();
-    
+
     let res = if let Some(sess) = session {
-        coll.find_one_and_update_with_session(filter, update, options, sess).await?
+        coll.find_one_and_update_with_session(filter, update, options, sess)
+            .await?
     } else {
         coll.find_one_and_update(filter, update, options).await?
     };
 
     if let Some(doc) = res {
-        if let Some(seq) = doc.get("seq").and_then(|v| v.as_i64().or_else(|| v.as_i32().map(|i| i as i64)).or_else(|| v.as_f64().map(|f| f as i64))) {
+        if let Some(seq) = doc.get("seq").and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_i32().map(|i| i as i64))
+                .or_else(|| v.as_f64().map(|f| f as i64))
+        }) {
             return Ok(seq);
         }
     }
@@ -111,8 +128,11 @@ fn doc_to_token(doc: &Document) -> Result<V2Token> {
     let node_id = doc.get_str("node_id")?.to_string();
     let status_str = doc.get_str("status")?;
     let parent_str = doc.get("parent_token_id").and_then(|v| v.as_str());
-    let scope_key = doc.get("scope_key").and_then(|v| v.as_str()).map(|s| s.to_string());
-    
+    let scope_key = doc
+        .get("scope_key")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
     let created_str = doc.get_str("created_at")?;
     let updated_str = doc.get_str("updated_at")?;
 
@@ -129,18 +149,28 @@ fn doc_to_token(doc: &Document) -> Result<V2Token> {
 }
 
 fn doc_to_job(doc: &Document) -> Result<V2Job> {
-    let id = doc.get("_id")
-        .and_then(|v| v.as_i64().or_else(|| v.as_i32().map(|i| i as i64)).or_else(|| v.as_f64().map(|f| f as i64)))
+    let id = doc
+        .get("_id")
+        .and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_i32().map(|i| i as i64))
+                .or_else(|| v.as_f64().map(|f| f as i64))
+        })
         .ok_or_else(|| anyhow::anyhow!("_id missing or not a number"))?;
-        
+
     let inst_str = doc.get_str("instance_id")?;
     let token_str = doc.get("token_id").and_then(|v| v.as_str());
     let job_type_str = doc.get_str("job_type")?;
-    
-    let attempt = doc.get("attempt")
-        .and_then(|v| v.as_i32().or_else(|| v.as_i64().map(|i| i as i32)).or_else(|| v.as_f64().map(|f| f as i32)))
+
+    let attempt = doc
+        .get("attempt")
+        .and_then(|v| {
+            v.as_i32()
+                .or_else(|| v.as_i64().map(|i| i as i32))
+                .or_else(|| v.as_f64().map(|f| f as i32))
+        })
         .unwrap_or(0);
-        
+
     let payload_bson = doc.get("payload").unwrap_or(&Bson::Null);
 
     Ok(V2Job {
@@ -149,6 +179,26 @@ fn doc_to_job(doc: &Document) -> Result<V2Job> {
         token_id: token_str.and_then(|s| Uuid::parse_str(s).ok()),
         job_type: JobType::from_str(job_type_str),
         attempt,
+        payload: bson_to_json(payload_bson),
+    })
+}
+
+fn doc_to_task(doc: &Document) -> Result<V2Task> {
+    let id = Uuid::parse_str(doc.get_str("_id")?)?;
+    let instance_id = Uuid::parse_str(doc.get_str("instance_id")?)?;
+    let token_id = Uuid::parse_str(doc.get_str("token_id")?)?;
+    let node_id = doc.get_str("node_id")?.to_string();
+    let assignee = doc.get_str("assignee")?.to_string();
+    let status = doc.get_str("status")?.to_string();
+    let payload_bson = doc.get("payload").unwrap_or(&Bson::Null);
+
+    Ok(V2Task {
+        id,
+        instance_id,
+        token_id,
+        node_id,
+        assignee,
+        status,
         payload: bson_to_json(payload_bson),
     })
 }
@@ -167,11 +217,16 @@ impl TransactionManagerPort for MongoAdapter {
         } else {
             None
         };
-        Ok(Box::new(MongoTx { session, is_replica_set: self.is_replica_set }))
+        Ok(Box::new(MongoTx {
+            session,
+            is_replica_set: self.is_replica_set,
+        }))
     }
 
     async fn commit(&self, tx: Box<dyn Tx>) -> Result<()> {
-        let mut concrete_tx = tx.into_any().downcast::<MongoTx>()
+        let mut concrete_tx = tx
+            .into_any()
+            .downcast::<MongoTx>()
             .map_err(|_| anyhow::anyhow!("Failed to downcast Tx to MongoTx"))?;
         if concrete_tx.is_replica_set {
             if let Some(ref mut sess) = concrete_tx.session {
@@ -182,7 +237,9 @@ impl TransactionManagerPort for MongoAdapter {
     }
 
     async fn rollback(&self, tx: Box<dyn Tx>) -> Result<()> {
-        let mut concrete_tx = tx.into_any().downcast::<MongoTx>()
+        let mut concrete_tx = tx
+            .into_any()
+            .downcast::<MongoTx>()
             .map_err(|_| anyhow::anyhow!("Failed to downcast Tx to MongoTx"))?;
         if concrete_tx.is_replica_set {
             if let Some(ref mut sess) = concrete_tx.session {
@@ -198,12 +255,12 @@ impl JobQueuePort for MongoAdapter {
     async fn fetch_and_mark_running(&self, worker_id: &str) -> Result<Option<V2Job>> {
         let coll = self.db.collection::<Document>("v2_engine_jobs");
         let now = Utc::now().to_rfc3339();
-        
+
         let filter = doc! {
             "status": "QUEUED",
             "run_at": { "$lte": &now }
         };
-        
+
         let update = doc! {
             "$set": {
                 "status": "RUNNING",
@@ -211,14 +268,14 @@ impl JobQueuePort for MongoAdapter {
                 "updated_at": &now
             }
         };
-        
+
         let options = mongodb::options::FindOneAndUpdateOptions::builder()
             .sort(doc! { "_id": 1 })
             .return_document(mongodb::options::ReturnDocument::After)
             .build();
-            
+
         let res = coll.find_one_and_update(filter, update, options).await?;
-        
+
         if let Some(doc) = res {
             Ok(Some(doc_to_job(&doc)?))
         } else {
@@ -233,7 +290,8 @@ impl JobQueuePort for MongoAdapter {
         let filter = doc! { "_id": job_id };
         let update = doc! { "$set": { "status": "COMPLETED", "updated_at": &now } };
         if let Some(sess) = session {
-            coll.update_one_with_session(filter, update, None, sess).await?;
+            coll.update_one_with_session(filter, update, None, sess)
+                .await?;
         } else {
             coll.update_one(filter, update, None).await?;
         }
@@ -247,7 +305,8 @@ impl JobQueuePort for MongoAdapter {
         let filter = doc! { "_id": job_id };
         let update = doc! { "$set": { "status": "FAILED", "updated_at": &now } };
         if let Some(sess) = session {
-            coll.update_one_with_session(filter, update, None, sess).await?;
+            coll.update_one_with_session(filter, update, None, sess)
+                .await?;
         } else {
             coll.update_one(filter, update, None).await?;
         }
@@ -265,11 +324,16 @@ impl JobQueuePort for MongoAdapter {
         tx: &mut dyn Tx,
     ) -> Result<()> {
         let mut session = get_session_mut(tx)?;
-        let next_id = get_next_sequence(&self.db, "v2_engine_jobs", session.as_mut().map(|s| &mut **s)).await?;
-        
+        let next_id = get_next_sequence(
+            &self.db,
+            "v2_engine_jobs",
+            session.as_mut().map(|s| &mut **s),
+        )
+        .await?;
+
         let run_at = Utc::now() + chrono::Duration::milliseconds((run_after_sec * 1000.0) as i64);
         let now = Utc::now().to_rfc3339();
-        
+
         let coll = self.db.collection::<Document>("v2_engine_jobs");
         let new_job = doc! {
             "_id": next_id,
@@ -283,7 +347,7 @@ impl JobQueuePort for MongoAdapter {
             "created_at": &now,
             "updated_at": &now
         };
-        
+
         if let Some(sess) = session {
             coll.insert_one_with_session(new_job, None, sess).await?;
         } else {
@@ -296,7 +360,7 @@ impl JobQueuePort for MongoAdapter {
         let jobs_coll = self.db.collection::<Document>("v2_engine_jobs");
         let _instances_coll = self.db.collection::<Document>("v2_process_instances");
         let now = Utc::now().to_rfc3339();
-        
+
         // MongoDB에서 lookup을 활용해 Stale Job 일괄 회수
         // 1) 고사 상태인(lock_until 이 현재 이전이거나 null인) 인스턴스 목록을 lookup
         let pipeline = vec![
@@ -322,9 +386,9 @@ impl JobQueuePort for MongoAdapter {
                         { "inst.lock_until": { "$lt": &now } }
                     ]
                 }
-            }
+            },
         ];
-        
+
         let mut cursor = jobs_coll.aggregate(pipeline, None).await?;
         let mut stale_ids = Vec::new();
         while cursor.advance().await? {
@@ -333,17 +397,19 @@ impl JobQueuePort for MongoAdapter {
                 stale_ids.push(id);
             }
         }
-        
+
         if stale_ids.is_empty() {
             return Ok(0);
         }
-        
-        let update_res = jobs_coll.update_many(
-            doc! { "_id": { "$in": &stale_ids } },
-            doc! { "$set": { "status": "QUEUED", "run_at": &now, "updated_at": &now } },
-            None
-        ).await?;
-        
+
+        let update_res = jobs_coll
+            .update_many(
+                doc! { "_id": { "$in": &stale_ids } },
+                doc! { "$set": { "status": "QUEUED", "run_at": &now, "updated_at": &now } },
+                None,
+            )
+            .await?;
+
         Ok(update_res.modified_count as i64)
     }
 }
@@ -353,13 +419,13 @@ impl InstanceLockPort for MongoAdapter {
     async fn try_advisory_lock(&self, instance_id: Uuid, tx: &mut dyn Tx) -> Result<bool> {
         let session = get_session_mut(tx)?;
         let coll = self.db.collection::<Document>("v2_advisory_locks");
-        
+
         let now = Utc::now().to_rfc3339();
         let new_lock = doc! {
             "_id": instance_id.to_string(),
             "created_at": now
         };
-        
+
         let insert_res = if let Some(sess) = session {
             coll.insert_one_with_session(new_lock, None, sess).await
         } else {
@@ -382,7 +448,8 @@ impl InstanceLockPort for MongoAdapter {
 
     async fn advisory_unlock(&self, instance_id: Uuid) -> Result<()> {
         let coll = self.db.collection::<Document>("v2_advisory_locks");
-        coll.delete_one(doc! { "_id": instance_id.to_string() }, None).await?;
+        coll.delete_one(doc! { "_id": instance_id.to_string() }, None)
+            .await?;
         Ok(())
     }
 
@@ -397,7 +464,7 @@ impl InstanceLockPort for MongoAdapter {
         let coll = self.db.collection::<Document>("v2_process_instances");
         let now = Utc::now();
         let lease_until = now + chrono::Duration::milliseconds((lease_seconds * 1000.0) as i64);
-        
+
         let filter = doc! {
             "_id": instance_id.to_string(),
             "$or": [
@@ -406,7 +473,7 @@ impl InstanceLockPort for MongoAdapter {
                 { "lock_owner": worker_id }
             ]
         };
-        
+
         let update = doc! {
             "$set": {
                 "lock_owner": worker_id,
@@ -415,9 +482,11 @@ impl InstanceLockPort for MongoAdapter {
                 "updated_at": now.to_rfc3339()
             }
         };
-        
+
         let modified = if let Some(sess) = session {
-            let res = coll.update_one_with_session(filter, update, None, sess).await?;
+            let res = coll
+                .update_one_with_session(filter, update, None, sess)
+                .await?;
             res.modified_count > 0
         } else {
             let res = coll.update_one(filter, update, None).await?;
@@ -426,11 +495,16 @@ impl InstanceLockPort for MongoAdapter {
         Ok(modified)
     }
 
-    async fn renew_lease(&self, instance_id: Uuid, worker_id: &str, lease_seconds: f64) -> Result<()> {
+    async fn renew_lease(
+        &self,
+        instance_id: Uuid,
+        worker_id: &str,
+        lease_seconds: f64,
+    ) -> Result<()> {
         let coll = self.db.collection::<Document>("v2_process_instances");
         let now = Utc::now();
         let lease_until = now + chrono::Duration::milliseconds((lease_seconds * 1000.0) as i64);
-        
+
         coll.update_one(
             doc! { "_id": instance_id.to_string(), "lock_owner": worker_id },
             doc! { "$set": { "lock_until": lease_until.to_rfc3339(), "heartbeat_at": now.to_rfc3339(), "updated_at": now.to_rfc3339() } },
@@ -442,7 +516,7 @@ impl InstanceLockPort for MongoAdapter {
     async fn release_lease(&self, instance_id: Uuid, worker_id: &str) -> Result<()> {
         let coll = self.db.collection::<Document>("v2_process_instances");
         let now = Utc::now().to_rfc3339();
-        
+
         coll.update_one(
             doc! { "_id": instance_id.to_string(), "lock_owner": worker_id },
             doc! { "$set": { "lock_owner": Bson::Null, "lock_until": Bson::Null, "updated_at": &now } },
@@ -458,7 +532,7 @@ impl TokenRepositoryPort for MongoAdapter {
         let session = get_session_mut(tx)?;
         let coll = self.db.collection::<Document>("v2_tokens");
         let filter = doc! { "instance_id": instance_id.to_string() };
-        
+
         let mut tokens = Vec::new();
         if let Some(sess) = session {
             let mut cursor = coll.find_with_session(filter, None, sess).await?;
@@ -473,7 +547,7 @@ impl TokenRepositoryPort for MongoAdapter {
                 tokens.push(doc_to_token(&doc)?);
             }
         }
-        
+
         Ok(tokens)
     }
 
@@ -495,7 +569,7 @@ impl TokenRepositoryPort for MongoAdapter {
     async fn update_tokens(&self, tokens: &[V2Token], tx: &mut dyn Tx) -> Result<()> {
         let mut session = get_session_mut(tx)?;
         let coll = self.db.collection::<Document>("v2_tokens");
-        
+
         for token in tokens {
             let now = Utc::now().to_rfc3339();
             let filter = doc! { "_id": token.id.to_string() };
@@ -509,7 +583,8 @@ impl TokenRepositoryPort for MongoAdapter {
                 }
             };
             if let Some(ref mut sess) = session {
-                coll.update_one_with_session(filter, update, None, sess).await?;
+                coll.update_one_with_session(filter, update, None, sess)
+                    .await?;
             } else {
                 coll.update_one(filter, update, None).await?;
             }
@@ -520,7 +595,7 @@ impl TokenRepositoryPort for MongoAdapter {
 
 #[async_trait]
 impl TaskRepositoryPort for MongoAdapter {
-    async fn create_task(
+    async fn find_or_create_task(
         &self,
         task_id: Uuid,
         instance_id: Uuid,
@@ -529,75 +604,53 @@ impl TaskRepositoryPort for MongoAdapter {
         assignee: &str,
         payload: Value,
         tx: &mut dyn Tx,
-    ) -> Result<()> {
-        let session = get_session_mut(tx)?;
+    ) -> Result<V2Task> {
+        let mut session = get_session_mut(tx)?;
         let coll = self.db.collection::<Document>("v2_tasks");
         let now = Utc::now().to_rfc3339();
-        
-        let new_task = doc! {
-            "_id": task_id.to_string(),
-            "instance_id": instance_id.to_string(),
-            "token_id": token_id.to_string(),
-            "node_id": node_id,
-            "assignee": assignee,
-            "status": "OPEN",
-            "payload": json_to_bson(&payload),
-            "created_at": &now,
-            "updated_at": &now
+
+        let filter = doc! { "token_id": token_id.to_string() };
+        let update = doc! {
+            "$setOnInsert": {
+                "_id": task_id.to_string(),
+                "instance_id": instance_id.to_string(),
+                "token_id": token_id.to_string(),
+                "node_id": node_id,
+                "assignee": assignee,
+                "status": "OPEN",
+                "payload": json_to_bson(&payload),
+                "created_at": &now,
+                "updated_at": &now
+            }
         };
-        
-        if let Some(sess) = session {
-            coll.insert_one_with_session(new_task, None, sess).await?;
+        let options = mongodb::options::FindOneAndUpdateOptions::builder()
+            .upsert(true)
+            .return_document(mongodb::options::ReturnDocument::After)
+            .build();
+
+        let doc = if let Some(ref mut sess) = session {
+            coll.find_one_and_update_with_session(filter, update, options, sess)
+                .await?
         } else {
-            coll.insert_one(new_task, None).await?;
+            coll.find_one_and_update(filter, update, options).await?
         }
-        Ok(())
+        .ok_or_else(|| anyhow::anyhow!("failed to create or load task for token {}", token_id))?;
+
+        doc_to_task(&doc)
     }
 
-    async fn find_task_by_node(
-        &self,
-        instance_id: Uuid,
-        node_id: &str,
-        tx: &mut dyn Tx,
-    ) -> Result<Option<V2Task>> {
+    async fn find_task_by_token(&self, token_id: Uuid, tx: &mut dyn Tx) -> Result<Option<V2Task>> {
         let session = get_session_mut(tx)?;
         let coll = self.db.collection::<Document>("v2_tasks");
-        
-        let options = mongodb::options::FindOneOptions::builder()
-            .sort(doc! { "created_at": -1 })
-            .build();
-            
-        let filter = doc! { "instance_id": instance_id.to_string(), "node_id": node_id };
+
+        let filter = doc! { "token_id": token_id.to_string() };
         let res = if let Some(sess) = session {
-            coll.find_one_with_session(filter, options, sess).await?
+            coll.find_one_with_session(filter, None, sess).await?
         } else {
-            coll.find_one(filter, options).await?
+            coll.find_one(filter, None).await?
         };
-        
-        if let Some(doc) = res {
-            let id = Uuid::parse_str(doc.get_str("_id")?)?;
-            let inst_id = Uuid::parse_str(doc.get_str("instance_id")?)?;
-            let tok_id = doc.get_str("token_id")
-                .ok()
-                .and_then(|s| Uuid::parse_str(s).ok())
-                .unwrap_or_else(Uuid::nil);
-            let node = doc.get_str("node_id")?.to_string();
-            let assignee = doc.get_str("assignee")?.to_string();
-            let status = doc.get_str("status")?.to_string();
-            let payload_bson = doc.get("payload").unwrap_or(&Bson::Null);
-            
-            Ok(Some(V2Task {
-                id,
-                instance_id: inst_id,
-                token_id: tok_id,
-                node_id: node,
-                assignee,
-                status,
-                payload: bson_to_json(payload_bson),
-            }))
-        } else {
-            Ok(None)
-        }
+
+        res.map(|doc| doc_to_task(&doc)).transpose()
     }
 }
 
@@ -615,7 +668,7 @@ impl ExecutionLogPort for MongoAdapter {
         let session = get_session_mut(tx)?;
         let coll = self.db.collection::<Document>("v2_execution_logs");
         let now = Utc::now().to_rfc3339();
-        
+
         let new_log = doc! {
             "instance_id": instance_id.to_string(),
             "token_id": token_id.map(|id| id.to_string()),
@@ -624,7 +677,7 @@ impl ExecutionLogPort for MongoAdapter {
             "payload": json_to_bson(&payload),
             "created_at": &now
         };
-        
+
         if let Some(sess) = session {
             coll.insert_one_with_session(new_log, None, sess).await?;
         } else {
@@ -648,7 +701,7 @@ impl OutboxPort for MongoAdapter {
         let session = get_session_mut(tx)?;
         let coll = self.db.collection::<Document>("v2_event_outbox");
         let now = Utc::now().to_rfc3339();
-        
+
         let new_event = doc! {
             "instance_id": instance_id.to_string(),
             "token_id": token_id.map(|id| id.to_string()),
@@ -657,7 +710,7 @@ impl OutboxPort for MongoAdapter {
             "payload": json_to_bson(&payload),
             "created_at": &now
         };
-        
+
         if let Some(sess) = session {
             coll.insert_one_with_session(new_event, None, sess).await?;
         } else {
@@ -674,12 +727,14 @@ impl ProcessDefinitionRepositoryPort for MongoAdapter {
         definition_id: Uuid,
     ) -> Result<(Vec<NodeDef>, Vec<EdgeRule>)> {
         let coll = self.db.collection::<Document>("v2_process_definitions");
-        
-        let doc_opt = coll.find_one(doc! { "_id": definition_id.to_string() }, None).await?;
+
+        let doc_opt = coll
+            .find_one(doc! { "_id": definition_id.to_string() }, None)
+            .await?;
         let Some(doc) = doc_opt else {
             anyhow::bail!("Process definition not found: {}", definition_id);
         };
-        
+
         let mut nodes = Vec::new();
         if let Some(nodes_arr) = doc.get_array("nodes").ok() {
             for node_val in nodes_arr {
@@ -695,12 +750,14 @@ impl ProcessDefinitionRepositoryPort for MongoAdapter {
                 }
             }
         }
-        
+
         let mut edges = Vec::new();
         if let Some(edges_arr) = doc.get_array("edges").ok() {
             for edge_val in edges_arr {
                 if let Some(edge_doc) = edge_val.as_document() {
-                    let id_bson = edge_doc.get("id").ok_or_else(|| anyhow::anyhow!("edge id missing"))?;
+                    let id_bson = edge_doc
+                        .get("id")
+                        .ok_or_else(|| anyhow::anyhow!("edge id missing"))?;
                     let id = if let Some(s) = id_bson.as_str() {
                         if let Some(num_str) = s.split('_').last() {
                             if let Ok(num) = num_str.parse::<i64>() {
@@ -716,21 +773,30 @@ impl ProcessDefinitionRepositoryPort for MongoAdapter {
                             0
                         }
                     } else {
-                        id_bson.as_i64()
+                        id_bson
+                            .as_i64()
                             .or_else(|| id_bson.as_i32().map(|i| i as i64))
                             .or_else(|| id_bson.as_f64().map(|f| f as i64))
                             .ok_or_else(|| anyhow::anyhow!("edge id is not a number or string"))?
                     };
-                        
+
                     let source_node_id = edge_doc.get_str("source_node_id")?.to_string();
                     let target_node_id = edge_doc.get_str("target_node_id")?.to_string();
-                    let condition_expr = edge_doc.get("condition_expr").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let condition_expr = edge_doc
+                        .get("condition_expr")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
                     let is_default = edge_doc.get_bool("is_default")?;
-                    
-                    let eval_order = edge_doc.get("eval_order")
-                        .and_then(|v| v.as_i32().or_else(|| v.as_i64().map(|i| i as i32)).or_else(|| v.as_f64().map(|f| f as i32)))
+
+                    let eval_order = edge_doc
+                        .get("eval_order")
+                        .and_then(|v| {
+                            v.as_i32()
+                                .or_else(|| v.as_i64().map(|i| i as i32))
+                                .or_else(|| v.as_f64().map(|f| f as i32))
+                        })
                         .unwrap_or(0);
-                    
+
                     edges.push(EdgeRule {
                         id,
                         source_node_id,
@@ -742,30 +808,34 @@ impl ProcessDefinitionRepositoryPort for MongoAdapter {
                 }
             }
         }
-        
+
         Ok((nodes, edges))
     }
 }
 
 #[async_trait]
 impl WorkflowInstanceRepositoryPort for MongoAdapter {
-    async fn load_instance(&self, instance_id: Uuid, tx: &mut dyn Tx) -> Result<Option<V2Instance>> {
+    async fn load_instance(
+        &self,
+        instance_id: Uuid,
+        tx: &mut dyn Tx,
+    ) -> Result<Option<V2Instance>> {
         let session = get_session_mut(tx)?;
         let coll = self.db.collection::<Document>("v2_process_instances");
         let filter = doc! { "_id": instance_id.to_string() };
-        
+
         let res = if let Some(sess) = session {
             coll.find_one_with_session(filter, None, sess).await?
         } else {
             coll.find_one(filter, None).await?
         };
-        
+
         if let Some(doc) = res {
             let id = Uuid::parse_str(doc.get_str("_id")?)?;
             let def_id = Uuid::parse_str(doc.get_str("process_definition_id")?)?;
             let state = doc.get_str("state")?.to_string();
             let context_bson = doc.get("context").unwrap_or(&Bson::Null);
-            
+
             Ok(Some(V2Instance {
                 id,
                 process_definition_id: def_id,
@@ -777,15 +847,22 @@ impl WorkflowInstanceRepositoryPort for MongoAdapter {
         }
     }
 
-    async fn update_instance(&self, instance_id: Uuid, state: &str, context: Value, tx: &mut dyn Tx) -> Result<()> {
+    async fn update_instance(
+        &self,
+        instance_id: Uuid,
+        state: &str,
+        context: Value,
+        tx: &mut dyn Tx,
+    ) -> Result<()> {
         let session = get_session_mut(tx)?;
         let coll = self.db.collection::<Document>("v2_process_instances");
         let now = Utc::now().to_rfc3339();
         let filter = doc! { "_id": instance_id.to_string() };
         let update = doc! { "$set": { "state": state, "context": json_to_bson(&context), "updated_at": &now } };
-        
+
         if let Some(sess) = session {
-            coll.update_one_with_session(filter, update, None, sess).await?;
+            coll.update_one_with_session(filter, update, None, sess)
+                .await?;
         } else {
             coll.update_one(filter, update, None).await?;
         }

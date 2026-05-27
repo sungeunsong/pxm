@@ -1,14 +1,16 @@
-use std::any::Any;
-use anyhow::Result;
-use uuid::Uuid;
-use serde_json::Value;
-use sqlx::{Postgres, Transaction, PgPool, Row};
-use crate::v2::types::{V2Job, V2Token, NodeDef, EdgeRule, TokenStatus, JobType, V2Instance, V2Task};
 use crate::v2::ports::{
-    Tx, TransactionManagerPort, JobQueuePort, InstanceLockPort,
-    TokenRepositoryPort, TaskRepositoryPort, ExecutionLogPort, OutboxPort,
-    ProcessDefinitionRepositoryPort, WorkflowInstanceRepositoryPort
+    ExecutionLogPort, InstanceLockPort, JobQueuePort, OutboxPort, ProcessDefinitionRepositoryPort,
+    TaskRepositoryPort, TokenRepositoryPort, TransactionManagerPort, Tx,
+    WorkflowInstanceRepositoryPort,
 };
+use crate::v2::types::{
+    EdgeRule, JobType, NodeDef, TokenStatus, V2Instance, V2Job, V2Task, V2Token,
+};
+use anyhow::Result;
+use serde_json::Value;
+use sqlx::{PgPool, Postgres, Row, Transaction};
+use std::any::Any;
+use uuid::Uuid;
 
 use async_trait::async_trait;
 
@@ -41,7 +43,9 @@ impl PostgresAdapter {
 
 /// internal 헬퍼: Tx에서 sqlx Transaction을 안전하게 추출
 fn get_tx_mut<'a>(tx: &'a mut dyn Tx) -> Result<&'a mut Transaction<'static, Postgres>> {
-    let concrete = tx.as_any_mut().downcast_mut::<PostgresTx>()
+    let concrete = tx
+        .as_any_mut()
+        .downcast_mut::<PostgresTx>()
         .ok_or_else(|| anyhow::anyhow!("Failed to downcast Tx to PostgresTx"))?;
     Ok(&mut concrete.tx)
 }
@@ -54,14 +58,18 @@ impl TransactionManagerPort for PostgresAdapter {
     }
 
     async fn commit(&self, tx: Box<dyn Tx>) -> Result<()> {
-        let concrete_tx = tx.into_any().downcast::<PostgresTx>()
+        let concrete_tx = tx
+            .into_any()
+            .downcast::<PostgresTx>()
             .map_err(|_| anyhow::anyhow!("Failed to downcast Tx to PostgresTx"))?;
         concrete_tx.tx.commit().await?;
         Ok(())
     }
 
     async fn rollback(&self, tx: Box<dyn Tx>) -> Result<()> {
-        let concrete_tx = tx.into_any().downcast::<PostgresTx>()
+        let concrete_tx = tx
+            .into_any()
+            .downcast::<PostgresTx>()
             .map_err(|_| anyhow::anyhow!("Failed to downcast Tx to PostgresTx"))?;
         concrete_tx.tx.rollback().await?;
         Ok(())
@@ -72,7 +80,7 @@ impl TransactionManagerPort for PostgresAdapter {
 impl JobQueuePort for PostgresAdapter {
     async fn fetch_and_mark_running(&self, worker_id: &str) -> Result<Option<V2Job>> {
         let mut tx = self.pool.begin().await?;
-        
+
         let row = sqlx::query(
             r#"
             select id, instance_id, token_id, type as "job_type", attempt, payload
@@ -81,7 +89,7 @@ impl JobQueuePort for PostgresAdapter {
             order by id asc
             for update skip locked
             limit 1
-            "#
+            "#,
         )
         .fetch_optional(&mut *tx)
         .await?;
@@ -98,7 +106,7 @@ impl JobQueuePort for PostgresAdapter {
             update v2_engine_jobs
             set status = 'RUNNING', lock_owner = $2, updated_at = now()
             where id = $1
-            "#
+            "#,
         )
         .bind(job_id)
         .bind(worker_id)
@@ -120,7 +128,7 @@ impl JobQueuePort for PostgresAdapter {
     async fn mark_job_completed(&self, job_id: i64, tx: &mut dyn Tx) -> Result<()> {
         let sqlx_tx = get_tx_mut(tx)?;
         sqlx::query(
-            r#"update v2_engine_jobs set status='COMPLETED', updated_at=now() where id=$1"#
+            r#"update v2_engine_jobs set status='COMPLETED', updated_at=now() where id=$1"#,
         )
         .bind(job_id)
         .execute(&mut **sqlx_tx)
@@ -130,12 +138,10 @@ impl JobQueuePort for PostgresAdapter {
 
     async fn mark_job_failed(&self, job_id: i64, tx: &mut dyn Tx) -> Result<()> {
         let sqlx_tx = get_tx_mut(tx)?;
-        sqlx::query(
-            r#"update v2_engine_jobs set status='FAILED', updated_at=now() where id=$1"#
-        )
-        .bind(job_id)
-        .execute(&mut **sqlx_tx)
-        .await?;
+        sqlx::query(r#"update v2_engine_jobs set status='FAILED', updated_at=now() where id=$1"#)
+            .bind(job_id)
+            .execute(&mut **sqlx_tx)
+            .await?;
         Ok(())
     }
 
@@ -178,7 +184,7 @@ impl JobQueuePort for PostgresAdapter {
             where j.instance_id = i.id
               and j.status = 'RUNNING'
               and (i.lock_until is null or i.lock_until < now())
-            "#
+            "#,
         )
         .execute(&self.pool)
         .await?;
@@ -191,24 +197,16 @@ impl InstanceLockPort for PostgresAdapter {
     async fn try_advisory_lock(&self, instance_id: Uuid, tx: &mut dyn Tx) -> Result<bool> {
         let sqlx_tx = get_tx_mut(tx)?;
         let instance_key = instance_id.to_string();
-        let r = sqlx::query(
-            r#"select pg_try_advisory_lock(hashtext($1)) as "locked""#
-        )
-        .bind(instance_key)
-        .fetch_one(&mut **sqlx_tx)
-        .await?;
+        let r = sqlx::query(r#"select pg_try_advisory_xact_lock(hashtext($1)) as "locked""#)
+            .bind(instance_key)
+            .fetch_one(&mut **sqlx_tx)
+            .await?;
         let locked: bool = r.get("locked");
         Ok(locked)
     }
 
     async fn advisory_unlock(&self, instance_id: Uuid) -> Result<()> {
-        let instance_key = instance_id.to_string();
-        sqlx::query(
-            r#"select pg_advisory_unlock(hashtext($1))"#
-        )
-        .bind(instance_key)
-        .fetch_one(&self.pool)
-        .await?;
+        let _ = instance_id;
         Ok(())
     }
 
@@ -233,7 +231,7 @@ impl InstanceLockPort for PostgresAdapter {
                 or lock_until < now()
                 or lock_owner = $2
               )
-            "#
+            "#,
         )
         .bind(instance_id)
         .bind(worker_id)
@@ -243,7 +241,12 @@ impl InstanceLockPort for PostgresAdapter {
         Ok(r.rows_affected() > 0)
     }
 
-    async fn renew_lease(&self, instance_id: Uuid, worker_id: &str, lease_seconds: f64) -> Result<()> {
+    async fn renew_lease(
+        &self,
+        instance_id: Uuid,
+        worker_id: &str,
+        lease_seconds: f64,
+    ) -> Result<()> {
         sqlx::query(
             r#"
             update v2_process_instances
@@ -251,7 +254,7 @@ impl InstanceLockPort for PostgresAdapter {
                 heartbeat_at = now(),
                 updated_at = now()
             where id = $1 and lock_owner = $3
-            "#
+            "#,
         )
         .bind(instance_id)
         .bind(lease_seconds)
@@ -269,7 +272,7 @@ impl InstanceLockPort for PostgresAdapter {
                 lock_until = null,
                 updated_at = now()
             where id = $1 and lock_owner = $2
-            "#
+            "#,
         )
         .bind(instance_id)
         .bind(worker_id)
@@ -294,16 +297,19 @@ impl TokenRepositoryPort for PostgresAdapter {
         .fetch_all(&mut **sqlx_tx)
         .await?;
 
-        let tokens = rows.into_iter().map(|r| V2Token {
-            id: r.get("id"),
-            instance_id: r.get("instance_id"),
-            node_id: r.get("node_id"),
-            status: TokenStatus::from_str(&r.get::<String, _>("status")),
-            parent_token_id: r.get("parent_token_id"),
-            scope_key: r.get("scope_key"),
-            created_at: r.get("created_at"),
-            updated_at: r.get("updated_at"),
-        }).collect();
+        let tokens = rows
+            .into_iter()
+            .map(|r| V2Token {
+                id: r.get("id"),
+                instance_id: r.get("instance_id"),
+                node_id: r.get("node_id"),
+                status: TokenStatus::from_str(&r.get::<String, _>("status")),
+                parent_token_id: r.get("parent_token_id"),
+                scope_key: r.get("scope_key"),
+                created_at: r.get("created_at"),
+                updated_at: r.get("updated_at"),
+            })
+            .collect();
 
         Ok(tokens)
     }
@@ -355,7 +361,7 @@ impl TokenRepositoryPort for PostgresAdapter {
 
 #[async_trait]
 impl TaskRepositoryPort for PostgresAdapter {
-    async fn create_task(
+    async fn find_or_create_task(
         &self,
         task_id: Uuid,
         instance_id: Uuid,
@@ -364,12 +370,14 @@ impl TaskRepositoryPort for PostgresAdapter {
         assignee: &str,
         payload: Value,
         tx: &mut dyn Tx,
-    ) -> Result<()> {
+    ) -> Result<V2Task> {
         let sqlx_tx = get_tx_mut(tx)?;
-        sqlx::query(
+        let row = sqlx::query(
             r#"
             insert into v2_tasks (id, instance_id, token_id, node_id, assignee, status, payload, created_at, updated_at)
             values ($1, $2, $3, $4, $5, 'OPEN', $6, now(), now())
+            on conflict (token_id) where token_id is not null do nothing
+            returning id, instance_id, token_id, node_id, assignee, status, payload
             "#
         )
         .bind(task_id)
@@ -378,29 +386,45 @@ impl TaskRepositoryPort for PostgresAdapter {
         .bind(node_id)
         .bind(assignee)
         .bind(payload)
-        .execute(&mut **sqlx_tx)
+        .fetch_optional(&mut **sqlx_tx)
         .await?;
-        Ok(())
+
+        let row = if let Some(row) = row {
+            row
+        } else {
+            sqlx::query(
+                r#"
+                select id, instance_id, token_id, node_id, assignee, status, payload
+                from v2_tasks
+                where token_id = $1
+                "#,
+            )
+            .bind(token_id)
+            .fetch_one(&mut **sqlx_tx)
+            .await?
+        };
+
+        Ok(V2Task {
+            id: row.get("id"),
+            instance_id: row.get("instance_id"),
+            token_id: row.get("token_id"),
+            node_id: row.get("node_id"),
+            assignee: row.get("assignee"),
+            status: row.get("status"),
+            payload: row.get("payload"),
+        })
     }
 
-    async fn find_task_by_node(
-        &self,
-        instance_id: Uuid,
-        node_id: &str,
-        tx: &mut dyn Tx,
-    ) -> Result<Option<V2Task>> {
+    async fn find_task_by_token(&self, token_id: Uuid, tx: &mut dyn Tx) -> Result<Option<V2Task>> {
         let sqlx_tx = get_tx_mut(tx)?;
         let row = sqlx::query(
             r#"
             select id, instance_id, token_id, node_id, assignee, status, payload
             from v2_tasks
-            where instance_id = $1 and node_id = $2
-            order by created_at desc
-            limit 1
-            "#
+            where token_id = $1
+            "#,
         )
-        .bind(instance_id)
-        .bind(node_id)
+        .bind(token_id)
         .fetch_optional(&mut **sqlx_tx)
         .await?;
 
@@ -419,7 +443,6 @@ impl TaskRepositoryPort for PostgresAdapter {
         }))
     }
 }
-
 
 #[async_trait]
 impl ExecutionLogPort for PostgresAdapter {
@@ -490,7 +513,7 @@ impl ProcessDefinitionRepositoryPort for PostgresAdapter {
             select node_id, node_type, config
             from v2_definition_nodes
             where definition_id = $1
-            "#
+            "#,
         )
         .bind(definition_id)
         .fetch_all(&self.pool)
@@ -502,26 +525,32 @@ impl ProcessDefinitionRepositoryPort for PostgresAdapter {
             from v2_definition_edges
             where definition_id = $1
             order by eval_order asc
-            "#
+            "#,
         )
         .bind(definition_id)
         .fetch_all(&self.pool)
         .await?;
 
-        let nodes = nodes_raw.into_iter().map(|n| NodeDef {
-            node_id: n.get("node_id"),
-            node_type: n.get("node_type"),
-            config: n.get("config"),
-        }).collect();
+        let nodes = nodes_raw
+            .into_iter()
+            .map(|n| NodeDef {
+                node_id: n.get("node_id"),
+                node_type: n.get("node_type"),
+                config: n.get("config"),
+            })
+            .collect();
 
-        let edges = edges_raw.into_iter().map(|e| EdgeRule {
-            id: e.get("id"),
-            source_node_id: e.get("source_node_id"),
-            target_node_id: e.get("target_node_id"),
-            condition_expr: e.get("condition_expr"),
-            is_default: e.get("is_default"),
-            eval_order: e.get("eval_order"),
-        }).collect();
+        let edges = edges_raw
+            .into_iter()
+            .map(|e| EdgeRule {
+                id: e.get("id"),
+                source_node_id: e.get("source_node_id"),
+                target_node_id: e.get("target_node_id"),
+                condition_expr: e.get("condition_expr"),
+                is_default: e.get("is_default"),
+                eval_order: e.get("eval_order"),
+            })
+            .collect();
 
         Ok((nodes, edges))
     }
@@ -529,14 +558,18 @@ impl ProcessDefinitionRepositoryPort for PostgresAdapter {
 
 #[async_trait]
 impl WorkflowInstanceRepositoryPort for PostgresAdapter {
-    async fn load_instance(&self, instance_id: Uuid, tx: &mut dyn Tx) -> Result<Option<V2Instance>> {
+    async fn load_instance(
+        &self,
+        instance_id: Uuid,
+        tx: &mut dyn Tx,
+    ) -> Result<Option<V2Instance>> {
         let sqlx_tx = get_tx_mut(tx)?;
         let row = sqlx::query(
             r#"
             select id, process_definition_id, state, context
             from v2_process_instances
             where id = $1
-            "#
+            "#,
         )
         .bind(instance_id)
         .fetch_optional(&mut **sqlx_tx)
@@ -554,14 +587,20 @@ impl WorkflowInstanceRepositoryPort for PostgresAdapter {
         }))
     }
 
-    async fn update_instance(&self, instance_id: Uuid, state: &str, context: Value, tx: &mut dyn Tx) -> Result<()> {
+    async fn update_instance(
+        &self,
+        instance_id: Uuid,
+        state: &str,
+        context: Value,
+        tx: &mut dyn Tx,
+    ) -> Result<()> {
         let sqlx_tx = get_tx_mut(tx)?;
         sqlx::query(
             r#"
             update v2_process_instances
             set state = $2, context = $3, updated_at = now()
             where id = $1
-            "#
+            "#,
         )
         .bind(instance_id)
         .bind(state)
@@ -571,4 +610,3 @@ impl WorkflowInstanceRepositoryPort for PostgresAdapter {
         Ok(())
     }
 }
-

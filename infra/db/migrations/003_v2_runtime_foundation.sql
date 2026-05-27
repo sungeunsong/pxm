@@ -144,6 +144,10 @@ create index if not exists idx_v2_tasks_assignee_open
 create index if not exists idx_v2_tasks_instance
   on v2_tasks (instance_id, created_at);
 
+create unique index if not exists ux_v2_tasks_token
+  on v2_tasks (token_id)
+  where token_id is not null;
+
 -- ============================================================
 -- Internal execution log (detailed)
 -- ============================================================

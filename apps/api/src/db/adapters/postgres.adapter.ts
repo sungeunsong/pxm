@@ -205,14 +205,21 @@ export class PostgresAdapter
 
   async createJob(job: {
     instanceId: string;
+    tokenId?: string | null;
     type: string;
     runAt: Date;
     payload: any;
   }): Promise<void> {
     await this.pool.query(
-      `INSERT INTO v2_engine_jobs (instance_id, type, run_at, attempt, status, payload, created_at, updated_at)
-       VALUES ($1::uuid, $2, $3, 0, 'READY', $4::jsonb, NOW(), NOW())`,
-      [job.instanceId, job.type, job.runAt, JSON.stringify(job.payload)],
+      `INSERT INTO v2_engine_jobs (instance_id, token_id, type, run_at, attempt, status, payload, created_at, updated_at)
+       VALUES ($1::uuid, $2::uuid, $3, $4, 0, 'QUEUED', $5::jsonb, NOW(), NOW())`,
+      [
+        job.instanceId,
+        job.tokenId || null,
+        job.type,
+        job.runAt,
+        JSON.stringify(job.payload),
+      ],
     );
   }
 

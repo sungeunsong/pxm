@@ -30,6 +30,7 @@ export abstract class WorkflowInstanceRepositoryPort {
   }): Promise<void>;
   abstract createJob(job: {
     instanceId: string;
+    tokenId?: string | null;
     type: string;
     runAt: Date;
     payload: any;
@@ -63,4 +64,3 @@ export abstract class OutboxRepositoryPort {
     payload: any,
   ): Promise<any>;
 }
-

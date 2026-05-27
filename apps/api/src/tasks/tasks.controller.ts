@@ -45,6 +45,7 @@ export class TasksController {
     // 3. 엔진 재개 (RESUME Job 생성)
     await this.instanceRepo.createJob({
       instanceId,
+      tokenId: task.token_id || null,
       type: 'RESUME',
       runAt: new Date(),
       payload: { action, completed_node_id: nodeId },

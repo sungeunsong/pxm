@@ -30,7 +30,10 @@ export class MongodbAdapter
     const formattedNodes = nodes.map((n) => ({
       node_id: n.id,
       node_type: n.data?.nodeType || 'task',
-      config: n,
+      config: {
+        ...(n.data || {}),
+        ui_node: n,
+      },
     }));
 
     const formattedEdges = edges.map((e, idx) => ({
@@ -40,6 +43,7 @@ export class MongodbAdapter
       condition_expr: e.data?.condition || null,
       is_default: e.data?.isDefault || false,
       eval_order: idx,
+      ui_edge: e,
     }));
 
     const now = new Date().toISOString();
@@ -88,16 +92,25 @@ export class MongodbAdapter
       name: doc.name,
       created_at: doc.created_at,
       updated_at: doc.updated_at,
-      nodes: (doc.nodes || []).map((n: any) => n.config),
-      edges: (doc.edges || []).map((e: any) => ({
-        id: e.id,
-        source: e.source_node_id,
-        target: e.target_node_id,
-        data: {
-          condition: e.condition_expr,
-          isDefault: e.is_default,
-        },
-      })),
+      nodes: (doc.nodes || []).map(
+        (n: any) =>
+          n.config?.ui_node || {
+            id: n.node_id,
+            data: n.config || {},
+          },
+      ),
+      edges: (doc.edges || []).map(
+        (e: any) =>
+          e.ui_edge || {
+            id: e.id,
+            source: e.source_node_id,
+            target: e.target_node_id,
+            data: {
+              condition: e.condition_expr,
+              isDefault: e.is_default,
+            },
+          },
+      ),
     };
   }
 
@@ -221,7 +234,7 @@ export class MongodbAdapter
       _id: token.id,
       instance_id: token.instanceId,
       node_id: token.nodeId,
-      status: token.status,
+      status: token.status === 'READY' ? 'ACTIVE' : token.status,
       parent_token_id: token.parentTokenId || null,
       scope_key: token.scopeKey || null,
       created_at: now,
@@ -231,6 +244,7 @@ export class MongodbAdapter
 
   async createJob(job: {
     instanceId: string;
+    tokenId?: string | null;
     type: string;
     runAt: Date;
     payload: any;
@@ -257,7 +271,7 @@ export class MongodbAdapter
     await this.db.collection<any>('v2_engine_jobs').insertOne({
       _id: seq,
       instance_id: job.instanceId,
-      token_id: null,
+      token_id: job.tokenId || null,
       job_type: job.type,
       run_at: job.runAt.toISOString(),
       attempt: 0,

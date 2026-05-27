@@ -1,11 +1,10 @@
-use std::any::Any;
+use crate::v2::types::{EdgeRule, JobType, NodeDef, V2Instance, V2Job, V2Task, V2Token};
 use anyhow::Result;
-use uuid::Uuid;
 use serde_json::Value;
-use crate::v2::types::{V2Job, V2Token, NodeDef, EdgeRule, TokenStatus, JobType, V2Instance, V2Task};
+use std::any::Any;
+use uuid::Uuid;
 
 use async_trait::async_trait;
-
 
 /// 데이터베이스 트랜잭션 세션을 추상화하는 Opaque 트레이트
 pub trait Tx: Send + Sync {
@@ -13,16 +12,15 @@ pub trait Tx: Send + Sync {
     fn into_any(self: Box<Self>) -> Box<dyn Any>;
 }
 
-
 /// 트랜잭션 수명 주기를 관리하는 포트
 #[async_trait]
 pub trait TransactionManagerPort: Send + Sync {
     /// 새로운 트랜잭션을 시작합니다.
     async fn begin(&self) -> Result<Box<dyn Tx>>;
-    
+
     /// 트랜잭션을 커밋합니다.
     async fn commit(&self, tx: Box<dyn Tx>) -> Result<()>;
-    
+
     /// 트랜잭션을 롤백합니다.
     async fn rollback(&self, tx: Box<dyn Tx>) -> Result<()>;
 }
@@ -61,7 +59,7 @@ pub trait InstanceLockPort: Send + Sync {
     /// 인스턴스에 대한 Advisory Lock을 획득하려고 시도합니다.
     async fn try_advisory_lock(&self, instance_id: Uuid, tx: &mut dyn Tx) -> Result<bool>;
 
-    /// 인스턴스에 대한 Advisory Lock을 해제합니다.
+    /// 인스턴스에 대한 Advisory Lock을 해제합니다. Transaction-scoped lock 구현에서는 no-op일 수 있습니다.
     async fn advisory_unlock(&self, instance_id: Uuid) -> Result<()>;
 
     /// 인스턴스에 대한 Lease Lock을 획득하거나 갱신을 시도합니다.
@@ -74,7 +72,12 @@ pub trait InstanceLockPort: Send + Sync {
     ) -> Result<bool>;
 
     /// 임대 시간(Lease)을 연장(Heartbeat)합니다.
-    async fn renew_lease(&self, instance_id: Uuid, worker_id: &str, lease_seconds: f64) -> Result<()>;
+    async fn renew_lease(
+        &self,
+        instance_id: Uuid,
+        worker_id: &str,
+        lease_seconds: f64,
+    ) -> Result<()>;
 
     /// 임대를 해제하여 다른 워커가 처리할 수 있도록 반납합니다.
     async fn release_lease(&self, instance_id: Uuid, worker_id: &str) -> Result<()>;
@@ -96,8 +99,8 @@ pub trait TokenRepositoryPort: Send + Sync {
 /// 승인 태스크의 영속성을 처리하는 포트
 #[async_trait]
 pub trait TaskRepositoryPort: Send + Sync {
-    /// 신규 승인 태스크를 생성하여 등록합니다.
-    async fn create_task(
+    /// token_id 기준으로 승인 태스크를 재사용하거나 생성합니다.
+    async fn find_or_create_task(
         &self,
         task_id: Uuid,
         instance_id: Uuid,
@@ -106,17 +109,11 @@ pub trait TaskRepositoryPort: Send + Sync {
         assignee: &str,
         payload: Value,
         tx: &mut dyn Tx,
-    ) -> Result<()>;
+    ) -> Result<V2Task>;
 
-    /// 특정 인스턴스와 노드에 할당된 최근 태스크를 조회합니다.
-    async fn find_task_by_node(
-        &self,
-        instance_id: Uuid,
-        node_id: &str,
-        tx: &mut dyn Tx,
-    ) -> Result<Option<V2Task>>;
+    /// 특정 토큰에 연결된 승인 태스크를 조회합니다.
+    async fn find_task_by_token(&self, token_id: Uuid, tx: &mut dyn Tx) -> Result<Option<V2Task>>;
 }
-
 
 /// 엔진 상세 실행 로그 적재를 위한 포트
 #[async_trait]
@@ -162,9 +159,38 @@ pub trait ProcessDefinitionRepositoryPort: Send + Sync {
 #[async_trait]
 pub trait WorkflowInstanceRepositoryPort: Send + Sync {
     /// 인스턴스 정보 (process_definition_id, state, context)를 로드합니다.
-    async fn load_instance(&self, instance_id: Uuid, tx: &mut dyn Tx) -> Result<Option<V2Instance>>;
-    
+    async fn load_instance(&self, instance_id: Uuid, tx: &mut dyn Tx)
+        -> Result<Option<V2Instance>>;
+
     /// 인스턴스의 상태(state), 컨텍스트(context) 등을 업데이트합니다.
-    async fn update_instance(&self, instance_id: Uuid, state: &str, context: Value, tx: &mut dyn Tx) -> Result<()>;
+    async fn update_instance(
+        &self,
+        instance_id: Uuid,
+        state: &str,
+        context: Value,
+        tx: &mut dyn Tx,
+    ) -> Result<()>;
 }
 
+#[derive(Debug, Clone)]
+pub struct PluginInvocation {
+    pub plugin_id: String,
+    pub instance_id: Uuid,
+    pub token_id: Uuid,
+    pub node_id: String,
+    pub config: Value,
+    pub context: Value,
+    pub attempt: i32,
+}
+
+#[derive(Debug, Clone)]
+pub struct PluginExecutionResult {
+    pub status_code: u16,
+    pub output: Value,
+}
+
+/// SERVICE 노드의 실제 외부 연동 실행을 엔진 코어에서 분리하기 위한 포트
+#[async_trait]
+pub trait PluginExecutorPort: Send + Sync {
+    async fn execute(&self, invocation: PluginInvocation) -> Result<PluginExecutionResult>;
+}
