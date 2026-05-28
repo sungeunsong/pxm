@@ -80,3 +80,27 @@ pnpm dev:api:mongo
 ```
 
 Use the same `MONGODB_URL` and `MONGO_DB_NAME` for `pnpm db:mongo:init` and `pnpm dev:engine:mongo`.
+
+## Connector secret refs
+
+SERVICE node configs can reference secrets without storing raw values:
+
+```json
+{
+  "secrets_ref": {
+    "api_token": "secret://acra/api_token@1"
+  }
+}
+```
+
+For local development, the engine resolves `secret://acra/api_token@1` from:
+
+```bash
+PXM_SECRET_ACRA_API_TOKEN=...
+```
+
+Explicit environment refs are also supported:
+
+```json
+{ "token": "env://SLACK_BOT_TOKEN" }
+```

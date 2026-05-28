@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import { CheckCircle, Circle, AlertCircle, Loader, Clock, X } from 'lucide-react';
 import type { FormSchema } from './form-types';
 import { FormRenderer } from './FormRenderer';
@@ -6,6 +6,8 @@ import { RetryScheduledCard, NodeFailedCard } from './RetryCards';
 import './ExecutionPanel.css';
 
 export interface ExecutionEvent {
+  id?: string | number;
+  source?: string;
   type: string;
   instance_id: string;
   status?: string;
@@ -14,6 +16,26 @@ export interface ExecutionEvent {
   timestamp: string;
   payload?: any;
 }
+
+const toExecutionEvent = (data: any): ExecutionEvent => ({
+  id: data.id || data.source_id,
+  source: data.source || (data.id ? 'outbox' : undefined),
+  type: data.type || data.event_type || 'UNKNOWN',
+  instance_id: data.instance_id,
+  status: data.status || data.payload?.status,
+  node_id: data.node_id || data.payload?.node_id,
+  node_label: data.node_label || data.payload?.node_label,
+  timestamp: data.created_at || data.timestamp || new Date().toISOString(),
+  payload: data.payload || {},
+});
+
+const deriveInstanceStatus = (event: ExecutionEvent): string | null => {
+  if (event.type === 'INSTANCE_WAITING') return 'WAITING';
+  if (event.type === 'INSTANCE_RUNNING') return 'RUNNING';
+  if (event.type === 'INSTANCE_COMPLETED') return 'COMPLETED';
+  if (event.type === 'INSTANCE_FAILED') return 'FAILED';
+  return event.status || null;
+};
 
 export interface ExecutionPanelProps {
   instanceId: string | null;
@@ -35,10 +57,40 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
   const [error, setError] = useState<string | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
 
+  const loadTrace = useCallback(async () => {
+    if (!instanceId) {
+      return;
+    }
+
+    const response = await fetch(`/api/instances/${instanceId}/trace`);
+    if (!response.ok) {
+      throw new Error(`trace api failed: ${response.status}`);
+    }
+
+    const rows = await response.json();
+    const nextEvents = (Array.isArray(rows) ? rows : []).map(toExecutionEvent);
+    setEvents(nextEvents);
+
+    const latestStatus = [...nextEvents]
+      .reverse()
+      .map(deriveInstanceStatus)
+      .find(Boolean);
+    if (latestStatus) {
+      setStatus(latestStatus);
+    }
+  }, [instanceId]);
+
   useEffect(() => {
     if (!instanceId) {
       return;
     }
+
+    setEvents([]);
+    setStatus('RUNNING');
+    setError(null);
+    loadTrace().catch((err) => {
+      console.error('Failed to load trace:', err);
+    });
 
     // SSE 연결
     const eventSource = new EventSource(`/api/instances/${instanceId}/stream`);
@@ -50,30 +102,21 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
         const data = JSON.parse(event.data);
         console.log('SSE Event (Panel):', data);
 
-        // event_type과 payload를 사용하여 이벤트 생성
-        const executionEvent: ExecutionEvent = {
-          type: data.type || 'UNKNOWN',
-          instance_id: data.instance_id,
-          status: data.payload?.status,
-          node_id: data.payload?.node_id,
-          node_label: data.payload?.node_label,
-          timestamp: data.created_at || new Date().toISOString(),
-          payload: data.payload,
-        };
+        const executionEvent = toExecutionEvent(data);
 
-        setEvents((prev) => [...prev, executionEvent]);
+        setEvents((prev) => {
+          const eventKey = `${executionEvent.source || 'sse'}:${executionEvent.id || executionEvent.timestamp}:${executionEvent.type}`;
+          const exists = prev.some((item) => {
+            const itemKey = `${item.source || 'sse'}:${item.id || item.timestamp}:${item.type}`;
+            return itemKey === eventKey;
+          });
+          return exists ? prev : [...prev, executionEvent];
+        });
 
         // 상태 업데이트
-        if (executionEvent.type === 'INSTANCE_WAITING') {
-          setStatus('WAITING');
-        } else if (executionEvent.type === 'INSTANCE_RUNNING') {
-          setStatus('RUNNING');
-        } else if (executionEvent.type === 'INSTANCE_COMPLETED') {
-          setStatus('COMPLETED');
-        } else if (executionEvent.type === 'INSTANCE_FAILED') {
-          setStatus('FAILED');
-        } else if (executionEvent.status) {
-          setStatus(executionEvent.status);
+        const nextStatus = deriveInstanceStatus(executionEvent);
+        if (nextStatus) {
+          setStatus(nextStatus);
         }
 
         // 완료 또는 실패 시 연결 종료
@@ -113,14 +156,17 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
 
     eventSource.onerror = (err) => {
       console.error('SSE Error:', err);
-      setError('실시간 연결이 끊어졌습니다.');
+      setError('실시간 연결이 끊어져 저장된 실행 로그를 표시합니다.');
+      loadTrace().catch((traceErr) => {
+        console.error('Failed to load trace after SSE error:', traceErr);
+      });
       eventSource.close();
     };
 
     return () => {
       eventSource.close();
     };
-  }, [instanceId]);
+  }, [instanceId, loadTrace]);
 
   const getActivityStatus = (type: string) => {
     if (type.includes('COMPLETED')) return 'COMPLETED';

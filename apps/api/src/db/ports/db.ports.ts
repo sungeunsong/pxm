@@ -63,4 +63,6 @@ export abstract class OutboxRepositoryPort {
     eventType: string,
     payload: any,
   ): Promise<any>;
+
+  abstract fetchTrace(instanceId: string, limit?: number): Promise<any[]>;
 }

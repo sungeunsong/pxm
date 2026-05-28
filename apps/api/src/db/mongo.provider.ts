@@ -12,6 +12,15 @@ export const mongoDbProvider: Provider = {
     console.log(`[BFF] Connecting to MongoDB at ${mongoUrl} (DB: ${dbName})...`);
     const client = new MongoClient(mongoUrl);
     await client.connect();
+
+    const admin = client.db('admin');
+    const hello = await admin.command({ hello: 1 }).catch(() => null);
+    if (!hello?.setName && process.env.ALLOW_MONGO_STANDALONE !== 'true') {
+      console.warn(
+        '[BFF] MongoDB is not running as a replica set. Engine runtime transactions require replica set or managed cluster mode.',
+      );
+    }
+
     return client.db(dbName);
   },
 };

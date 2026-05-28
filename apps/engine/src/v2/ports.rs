@@ -37,6 +37,9 @@ pub trait JobQueuePort: Send + Sync {
     /// 잡을 실패(FAILED) 처리합니다.
     async fn mark_job_failed(&self, job_id: i64, tx: &mut dyn Tx) -> Result<()>;
 
+    /// 선점했지만 현재 인스턴스 락을 얻지 못한 잡을 다시 대기열로 되돌립니다.
+    async fn release_job(&self, job_id: i64, run_after_sec: f64, tx: &mut dyn Tx) -> Result<()>;
+
     /// 재시도 또는 타이머 등의 새로운 잡을 스케줄링하여 삽입합니다.
     async fn enqueue_job(
         &self,

@@ -23,41 +23,25 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
   const fetchInstances = async () => {
     setLoading(true);
     try {
-      // API의 DB adapter 우회조회 또는 mock 보완을 위한 임시 호출
-      await fetch('/api/tasks?assignee=admin').catch(() => {});
-      await fetch('/api/templates').catch(() => {});
+      const response = await fetch('/api/instances');
+      if (!response.ok) {
+        throw new Error(`instances api failed: ${response.status}`);
+      }
 
-      // 실감 나는 인스턴스 목록 제공
-      const mockInstances: Instance[] = [
-        {
-          id: '6d1719fb-75b0-4a01-8006-5d035dd1bbbd',
-          template_id: 'demo-1',
-          template_name: 'HR Onboarding Process',
-          state: 'COMPLETED',
-          created_at: new Date(Date.now() - 3600000).toISOString(),
-          updated_at: new Date(Date.now() - 3500000).toISOString(),
-        },
-        {
-          id: '040ff8e6-d2ef-4114-90e8-c48487210d4e',
-          template_id: 'demo-2',
-          template_name: 'IT Access & VM Allocation',
-          state: 'WAITING',
-          created_at: new Date(Date.now() - 1200000).toISOString(),
-          updated_at: new Date(Date.now() - 1200000).toISOString(),
-        },
-        {
-          id: 'a4f5003a-f48c-48a7-9ac2-49cd6c49a6fa',
-          template_id: 'demo-1',
-          template_name: 'HR Onboarding Process',
-          state: 'FAILED',
-          created_at: new Date(Date.now() - 7200000).toISOString(),
-          updated_at: new Date(Date.now() - 7000000).toISOString(),
-        }
-      ];
-
-      setInstances(mockInstances);
+      const rows = await response.json();
+      setInstances(
+        (Array.isArray(rows) ? rows : []).map((row: any) => ({
+          id: String(row.id),
+          template_id: String(row.template_id || row.definition_id || ''),
+          template_name: row.template_name || row.definition_name || 'Untitled Workflow',
+          state: String(row.state || row.status || 'RUNNING').toUpperCase(),
+          created_at: row.created_at || new Date().toISOString(),
+          updated_at: row.updated_at || row.created_at || new Date().toISOString(),
+        })),
+      );
     } catch (error) {
       console.error('Failed to load instances:', error);
+      setInstances([]);
     } finally {
       setLoading(false);
     }
@@ -147,7 +131,7 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
                     <td className="inst-id-cell" title={inst.id}>
                       <code>{inst.id.slice(0, 18)}...</code>
                     </td>
-                    <td className="inst-name-cell">{inst.template_name || 'HR Onboarding'}</td>
+                    <td className="inst-name-cell">{inst.template_name || 'Untitled Workflow'}</td>
                     <td className="inst-status-cell">
                       <div className={`status-badge-wrapper ${inst.state.toLowerCase()}`}>
                         {getStatusIcon(inst.state)}

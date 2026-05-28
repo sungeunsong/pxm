@@ -33,8 +33,8 @@ export class PostgresAdapter
 
       // 1. v2_process_definitions 삽입
       await client.query(
-        `INSERT INTO v2_process_definitions (id, name, created_at, updated_at)
-         VALUES ($1::uuid, $2, NOW(), NOW())
+        `INSERT INTO v2_process_definitions (id, definition_key, version, name, status, created_at, updated_at)
+         VALUES ($1::uuid, $1, 1, $2, 'ACTIVE', NOW(), NOW())
          ON CONFLICT (id) DO UPDATE SET name = $2, updated_at = NOW()`,
         [id, name],
       );
@@ -46,9 +46,18 @@ export class PostgresAdapter
       );
       for (const node of nodes) {
         await client.query(
-          `INSERT INTO v2_definition_nodes (definition_id, node_id, node_type, config)
-           VALUES ($1::uuid, $2, $3, $4::jsonb)`,
-          [id, node.id, node.data?.nodeType || 'task', JSON.stringify(node)],
+          `INSERT INTO v2_definition_nodes (definition_id, node_id, node_type, label, config)
+           VALUES ($1::uuid, $2, $3, $4, $5::jsonb)`,
+          [
+            id,
+            node.id,
+            node.data?.nodeType || 'task',
+            node.data?.label || null,
+            JSON.stringify({
+              ...(node.data || {}),
+              ui_node: node,
+            }),
+          ],
         );
       }
 
@@ -60,16 +69,16 @@ export class PostgresAdapter
       for (let i = 0; i < edges.length; i++) {
         const edge = edges[i];
         await client.query(
-          `INSERT INTO v2_definition_edges (id, definition_id, source_node_id, target_node_id, condition_expr, is_default, eval_order)
-           VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7)`,
+          `INSERT INTO v2_definition_edges (definition_id, source_node_id, target_node_id, condition_expr, is_default, eval_order, metadata)
+           VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::jsonb)`,
           [
-            edge.id || crypto.randomUUID(),
             id,
             edge.source,
             edge.target,
             edge.data?.condition || null,
             edge.data?.isDefault || false,
             i,
+            JSON.stringify({ ui_edge: edge }),
           ],
         );
       }
@@ -132,8 +141,8 @@ export class PostgresAdapter
     ctx: any,
   ): Promise<void> {
     await this.pool.query(
-      `INSERT INTO v2_process_instances (id, definition_id, status, context, created_at, updated_at)
-       VALUES ($1::uuid, $2::uuid, $3, $4::jsonb, NOW(), NOW())`,
+      `INSERT INTO v2_process_instances (id, process_definition_id, state, context, started_at, created_at, updated_at)
+       VALUES ($1::uuid, $2::uuid, $3, $4::jsonb, NOW(), NOW(), NOW())`,
       [id, definitionId, status, JSON.stringify(ctx)],
     );
   }
@@ -142,13 +151,15 @@ export class PostgresAdapter
     const { rows } = await this.pool.query(
       `SELECT i.*, d.name as template_name
        FROM v2_process_instances i
-       LEFT JOIN v2_process_definitions d ON i.definition_id = d.id
+       LEFT JOIN v2_process_definitions d ON i.process_definition_id = d.id
        ORDER BY i.created_at DESC LIMIT 50`,
     );
     return rows.map((r) => ({
       ...r,
       // V1 하위 호환성 필드 매핑
-      template_id: r.definition_id,
+      template_id: r.process_definition_id,
+      definition_id: r.process_definition_id,
+      status: r.state,
       ctx: r.context,
     }));
   }
@@ -162,14 +173,16 @@ export class PostgresAdapter
     return {
       ...rows[0],
       // V1 호환 필드 매핑
-      template_id: rows[0].definition_id,
+      template_id: rows[0].process_definition_id,
+      definition_id: rows[0].process_definition_id,
+      status: rows[0].state,
       ctx: rows[0].context,
     };
   }
 
   async updateInstanceStatus(id: string, status: string): Promise<void> {
     await this.pool.query(
-      `UPDATE v2_process_instances SET status = $1, updated_at = NOW() WHERE id = $2`,
+      `UPDATE v2_process_instances SET state = $1, updated_at = NOW() WHERE id = $2`,
       [status, id],
     );
   }
@@ -280,10 +293,10 @@ export class PostgresAdapter
       SELECT
         id,
         instance_id,
-        type as event_type,
+        event_type,
         payload,
         created_at
-      FROM event_outbox
+      FROM v2_event_outbox
       WHERE instance_id = $1::uuid
         AND id > $2
       ORDER BY id ASC
@@ -294,6 +307,57 @@ export class PostgresAdapter
     return rows;
   }
 
+  async fetchTrace(instanceId: string, limit = 200): Promise<any[]> {
+    const { rows } = await this.pool.query(
+      `
+      SELECT *
+      FROM (
+        SELECT
+          id::text as source_id,
+          'execution_log' as source,
+          instance_id,
+          token_id,
+          node_id,
+          event_type,
+          payload,
+          created_at
+        FROM v2_execution_logs
+        WHERE instance_id = $1::uuid
+
+        UNION ALL
+
+        SELECT
+          id::text as source_id,
+          'outbox' as source,
+          instance_id,
+          token_id,
+          node_id,
+          event_type,
+          payload,
+          created_at
+        FROM v2_event_outbox
+        WHERE instance_id = $1::uuid
+      ) trace
+      ORDER BY created_at ASC
+      LIMIT $2
+      `,
+      [instanceId, limit],
+    );
+
+    return rows.map((row, idx) => ({
+      id: idx + 1,
+      source_id: row.source_id,
+      source: row.source,
+      instance_id: row.instance_id,
+      token_id: row.token_id,
+      node_id: row.node_id,
+      event_type: row.event_type,
+      type: row.event_type,
+      payload: row.payload || {},
+      created_at: row.created_at,
+    }));
+  }
+
   async appendEvent(
     instanceId: string,
     eventType: string,
@@ -301,7 +365,7 @@ export class PostgresAdapter
   ): Promise<any> {
     const { rows } = await this.pool.query(
       `
-      INSERT INTO event_outbox (instance_id, type, payload)
+      INSERT INTO v2_event_outbox (instance_id, event_type, payload)
       VALUES ($1::uuid, $2, $3::jsonb)
       RETURNING id
       `,

@@ -1,6 +1,6 @@
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GatewayType {
@@ -152,5 +152,3 @@ pub struct V2Task {
     pub status: String,
     pub payload: Value,
 }
-
-

@@ -145,6 +145,25 @@ impl JobQueuePort for PostgresAdapter {
         Ok(())
     }
 
+    async fn release_job(&self, job_id: i64, run_after_sec: f64, tx: &mut dyn Tx) -> Result<()> {
+        let sqlx_tx = get_tx_mut(tx)?;
+        sqlx::query(
+            r#"
+            update v2_engine_jobs
+            set status = 'QUEUED',
+                run_at = now() + ($2::double precision * interval '1 second'),
+                lock_owner = null,
+                updated_at = now()
+            where id = $1 and status = 'RUNNING'
+            "#,
+        )
+        .bind(job_id)
+        .bind(run_after_sec)
+        .execute(&mut **sqlx_tx)
+        .await?;
+        Ok(())
+    }
+
     async fn enqueue_job(
         &self,
         instance_id: Uuid,

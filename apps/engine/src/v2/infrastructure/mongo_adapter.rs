@@ -313,6 +313,29 @@ impl JobQueuePort for MongoAdapter {
         Ok(())
     }
 
+    async fn release_job(&self, job_id: i64, run_after_sec: f64, tx: &mut dyn Tx) -> Result<()> {
+        let session = get_session_mut(tx)?;
+        let coll = self.db.collection::<Document>("v2_engine_jobs");
+        let run_at = Utc::now() + chrono::Duration::milliseconds((run_after_sec * 1000.0) as i64);
+        let now = Utc::now().to_rfc3339();
+        let filter = doc! { "_id": job_id, "status": "RUNNING" };
+        let update = doc! {
+            "$set": {
+                "status": "QUEUED",
+                "run_at": run_at.to_rfc3339(),
+                "lock_owner": Bson::Null,
+                "updated_at": &now
+            }
+        };
+        if let Some(sess) = session {
+            coll.update_one_with_session(filter, update, None, sess)
+                .await?;
+        } else {
+            coll.update_one(filter, update, None).await?;
+        }
+        Ok(())
+    }
+
     async fn enqueue_job(
         &self,
         instance_id: Uuid,
@@ -417,10 +440,27 @@ impl JobQueuePort for MongoAdapter {
 #[async_trait]
 impl InstanceLockPort for MongoAdapter {
     async fn try_advisory_lock(&self, instance_id: Uuid, tx: &mut dyn Tx) -> Result<bool> {
-        let session = get_session_mut(tx)?;
+        let mut session = get_session_mut(tx)?;
         let coll = self.db.collection::<Document>("v2_advisory_locks");
 
-        let now = Utc::now().to_rfc3339();
+        let now_dt = Utc::now();
+        let now = now_dt.to_rfc3339();
+        let stale_before = (now_dt - chrono::Duration::seconds(60)).to_rfc3339();
+        if let Some(ref mut sess) = session {
+            coll.delete_one_with_session(
+                doc! { "_id": instance_id.to_string(), "created_at": { "$lt": stale_before } },
+                None,
+                &mut **sess,
+            )
+            .await?;
+        } else {
+            coll.delete_one(
+                doc! { "_id": instance_id.to_string(), "created_at": { "$lt": stale_before } },
+                None,
+            )
+            .await?;
+        }
+
         let new_lock = doc! {
             "_id": instance_id.to_string(),
             "created_at": now

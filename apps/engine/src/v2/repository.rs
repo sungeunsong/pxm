@@ -22,12 +22,20 @@ pub async fn load_definition_graph(
     Ok((Vec::new(), Vec::new()))
 }
 
-pub async fn append_execution_log(_pool: &PgPool, _instance_id: &str, _event_type: &str) -> Result<()> {
+pub async fn append_execution_log(
+    _pool: &PgPool,
+    _instance_id: &str,
+    _event_type: &str,
+) -> Result<()> {
     // TODO: insert into v2_execution_logs
     Ok(())
 }
 
-pub async fn append_outbox_event(_pool: &PgPool, _instance_id: &str, _event_type: &str) -> Result<()> {
+pub async fn append_outbox_event(
+    _pool: &PgPool,
+    _instance_id: &str,
+    _event_type: &str,
+) -> Result<()> {
     // TODO: insert into v2_event_outbox
     Ok(())
 }

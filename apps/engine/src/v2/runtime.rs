@@ -9,7 +9,7 @@ use crate::v2::ports::{
     PluginInvocation, ProcessDefinitionRepositoryPort, TaskRepositoryPort, TokenRepositoryPort,
     TransactionManagerPort, Tx, WorkflowInstanceRepositoryPort,
 };
-use crate::v2::types::{EdgeRule, JobType, NodeDef, TokenStatus, V2Instance, V2Token};
+use crate::v2::types::{EdgeRule, GatewayType, JobType, NodeDef, TokenStatus, V2Instance, V2Token};
 
 pub struct V2RuntimeContext {
     pub tx_manager: Box<dyn TransactionManagerPort>,
@@ -118,6 +118,257 @@ fn evaluate_condition(condition: &str, context: &Value) -> bool {
     false
 }
 
+fn gateway_type(node: &NodeDef) -> GatewayType {
+    let raw = node
+        .config
+        .get("gatewayType")
+        .or_else(|| node.config.get("gateway_type"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("exclusive")
+        .to_ascii_lowercase();
+
+    match raw.as_str() {
+        "parallel" | "and" => GatewayType::Parallel,
+        "inclusive" | "or" => GatewayType::Inclusive,
+        _ => GatewayType::Exclusive,
+    }
+}
+
+fn select_gateway_edges<'a>(
+    gateway_type: GatewayType,
+    outgoing_edges: &'a [&'a EdgeRule],
+    context: &Value,
+) -> Vec<&'a EdgeRule> {
+    match gateway_type {
+        GatewayType::Parallel => outgoing_edges.to_vec(),
+        GatewayType::Exclusive => {
+            let mut default_edge = None;
+            for edge in outgoing_edges {
+                if edge.is_default {
+                    default_edge = Some(*edge);
+                } else if edge
+                    .condition_expr
+                    .as_deref()
+                    .map(|expr| evaluate_condition(expr, context))
+                    .unwrap_or(false)
+                {
+                    return vec![*edge];
+                }
+            }
+            default_edge.into_iter().collect()
+        }
+        GatewayType::Inclusive => {
+            let mut matched = Vec::new();
+            let mut default_edge = None;
+            let mut has_condition = false;
+
+            for edge in outgoing_edges {
+                if edge.is_default {
+                    default_edge = Some(*edge);
+                } else if let Some(expr) = edge.condition_expr.as_deref() {
+                    has_condition = true;
+                    if evaluate_condition(expr, context) {
+                        matched.push(*edge);
+                    }
+                } else if !has_condition {
+                    matched.push(*edge);
+                }
+            }
+
+            if matched.is_empty() {
+                if let Some(edge) = default_edge {
+                    matched.push(edge);
+                }
+            }
+            matched
+        }
+    }
+}
+
+fn fork_scope(parent_token: &V2Token, selected_count: usize) -> Option<String> {
+    if selected_count > 1 {
+        Some(format!("fork:{}:count:{}", parent_token.id, selected_count))
+    } else {
+        parent_token.scope_key.clone()
+    }
+}
+
+fn expected_join_count(scope_key: Option<&str>, fallback: usize) -> usize {
+    scope_key
+        .and_then(|scope| scope.rsplit_once(":count:"))
+        .and_then(|(_, count)| count.parse::<usize>().ok())
+        .unwrap_or(fallback)
+        .max(1)
+}
+
+fn resolve_approval_assignment(node: &NodeDef, context: &Value) -> (String, Value) {
+    let approval_line = node.config.get("approvalLine").unwrap_or(&Value::Null);
+    let model = approval_line
+        .get("mode")
+        .or_else(|| approval_line.get("type"))
+        .or_else(|| node.config.get("approvalLineType"))
+        .or_else(|| node.config.get("approvalType"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("fixed")
+        .to_ascii_lowercase();
+
+    match model.as_str() {
+        "condition" | "condition_based" | "conditional" => {
+            let rules = approval_line
+                .get("rules")
+                .or_else(|| node.config.get("approvalRules"))
+                .and_then(|v| v.as_array());
+            if let Some(rules) = rules {
+                for rule in rules {
+                    let condition = rule.get("condition").and_then(|v| v.as_str());
+                    let assignee = rule.get("assignee").and_then(|v| v.as_str());
+                    if let (Some(condition), Some(assignee)) = (condition, assignee) {
+                        if evaluate_condition(condition, context) {
+                            return (
+                                assignee.to_string(),
+                                json!({
+                                    "approval_model": "condition",
+                                    "matched_condition": condition,
+                                    "assignee": assignee
+                                }),
+                            );
+                        }
+                    }
+                }
+            }
+
+            let assignee = approval_line
+                .get("defaultAssignee")
+                .or_else(|| approval_line.get("default_assignee"))
+                .or_else(|| node.config.get("assignee"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("admin");
+            (
+                assignee.to_string(),
+                json!({"approval_model": "condition", "matched_condition": null, "assignee": assignee}),
+            )
+        }
+        "requester_selected" | "requester-selected" | "requester" => {
+            let candidate_field = approval_line
+                .get("candidateField")
+                .or_else(|| approval_line.get("candidate_field"))
+                .or_else(|| node.config.get("requesterSelectedField"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("approver");
+            let selected = context
+                .get("formData")
+                .and_then(|v| v.get(candidate_field))
+                .and_then(|v| v.as_str());
+            let candidates: Vec<String> = approval_line
+                .get("candidates")
+                .or_else(|| node.config.get("approvalCandidates"))
+                .and_then(|v| v.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str().map(ToString::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let default_assignee = approval_line
+                .get("defaultAssignee")
+                .or_else(|| approval_line.get("default_assignee"))
+                .or_else(|| node.config.get("assignee"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("admin");
+            let assignee = selected
+                .filter(|value| {
+                    candidates.is_empty() || candidates.iter().any(|item| item == value)
+                })
+                .unwrap_or(default_assignee);
+
+            (
+                assignee.to_string(),
+                json!({
+                    "approval_model": "requester_selected",
+                    "candidate_field": candidate_field,
+                    "candidates": candidates,
+                    "assignee": assignee
+                }),
+            )
+        }
+        _ => {
+            let assignee = approval_line
+                .get("assignee")
+                .or_else(|| node.config.get("assignee"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("admin");
+            (
+                assignee.to_string(),
+                json!({"approval_model": "fixed", "assignee": assignee}),
+            )
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_approval_assignment;
+    use crate::v2::types::NodeDef;
+    use serde_json::json;
+
+    #[test]
+    fn resolves_fixed_approval_assignee() {
+        let node = NodeDef {
+            node_id: "approval".to_string(),
+            node_type: "approval".to_string(),
+            config: json!({"approvalLine": {"mode": "fixed", "assignee": "manager"}}),
+        };
+
+        let (assignee, payload) = resolve_approval_assignment(&node, &json!({}));
+        assert_eq!(assignee, "manager");
+        assert_eq!(payload["approval_model"], "fixed");
+    }
+
+    #[test]
+    fn resolves_condition_based_approval_assignee() {
+        let node = NodeDef {
+            node_id: "approval".to_string(),
+            node_type: "approval".to_string(),
+            config: json!({
+                "approvalLine": {
+                    "mode": "condition",
+                    "rules": [
+                        {"condition": "amount > 100", "assignee": "finance"}
+                    ],
+                    "defaultAssignee": "manager"
+                }
+            }),
+        };
+
+        let (assignee, payload) =
+            resolve_approval_assignment(&node, &json!({"formData": {"amount": 150}}));
+        assert_eq!(assignee, "finance");
+        assert_eq!(payload["matched_condition"], "amount > 100");
+    }
+
+    #[test]
+    fn resolves_requester_selected_candidate() {
+        let node = NodeDef {
+            node_id: "approval".to_string(),
+            node_type: "approval".to_string(),
+            config: json!({
+                "approvalLine": {
+                    "mode": "requester_selected",
+                    "candidateField": "approver",
+                    "candidates": ["lead", "director"],
+                    "defaultAssignee": "lead"
+                }
+            }),
+        };
+
+        let (assignee, payload) =
+            resolve_approval_assignment(&node, &json!({"formData": {"approver": "director"}}));
+        assert_eq!(assignee, "director");
+        assert_eq!(payload["approval_model"], "requester_selected");
+    }
+}
+
 // ============================================================
 // V2 Engine Main Loop Entry
 // ============================================================
@@ -147,7 +398,8 @@ pub async fn run_v2_once(ctx: &V2RuntimeContext, worker_id: &str) -> Result<bool
                 "[v2_engine] failed to acquire advisory lock for instance {}",
                 job.instance_id
             );
-            return Ok((false, false));
+            ctx.job_queue.release_job(job.id, 1.0, tx.as_mut()).await?;
+            return Ok((false, true));
         }
 
         lease_acquired = ctx
@@ -159,7 +411,8 @@ pub async fn run_v2_once(ctx: &V2RuntimeContext, worker_id: &str) -> Result<bool
                 "[v2_engine] failed to acquire lease for instance {}",
                 job.instance_id
             );
-            return Ok((false, false));
+            ctx.job_queue.release_job(job.id, 1.0, tx.as_mut()).await?;
+            return Ok((false, true));
         }
 
         let maybe_instance = ctx
@@ -469,69 +722,120 @@ async fn execute_token_flow(
             }
 
             "gateway" => {
+                let gateway_type = gateway_type(node);
+                let incoming_edges: Vec<&EdgeRule> = edges
+                    .iter()
+                    .filter(|e| e.target_node_id == token.node_id)
+                    .collect();
+                let is_join = incoming_edges.len() > 1;
+
                 ctx.exec_log
                     .append_log(
                         instance.id,
                         Some(token.id),
                         Some(&token.node_id),
                         "NODE_STARTED",
-                        json!({}),
+                        json!({"gateway_type": format!("{:?}", gateway_type), "is_join": is_join}),
                         tx,
                     )
                     .await?;
 
-                // Gateway 분기 조건 평가
+                if is_join {
+                    let all_tokens = ctx.token_repo.load_tokens(instance.id, tx).await?;
+                    let arrived_tokens: Vec<V2Token> = all_tokens
+                        .into_iter()
+                        .filter(|candidate| {
+                            candidate.node_id == token.node_id
+                                && (candidate.status == TokenStatus::Active
+                                    || candidate.status == TokenStatus::Waiting)
+                                && candidate.scope_key == token.scope_key
+                        })
+                        .collect();
+                    let expected_count =
+                        expected_join_count(token.scope_key.as_deref(), incoming_edges.len());
+
+                    if arrived_tokens.len() < expected_count {
+                        token.status = TokenStatus::Waiting;
+                        token.updated_at = Utc::now();
+                        ctx.token_repo.update_tokens(&[token.clone()], tx).await?;
+                        ctx.exec_log
+                            .append_log(
+                                instance.id,
+                                Some(token.id),
+                                Some(&token.node_id),
+                                "GATEWAY_JOIN_WAITING",
+                                json!({
+                                    "gateway_type": format!("{:?}", gateway_type),
+                                    "arrived": arrived_tokens.len(),
+                                    "expected": expected_count
+                                }),
+                                tx,
+                            )
+                            .await?;
+                        continue;
+                    }
+
+                    let mut tokens_to_consume = arrived_tokens;
+                    for arrived in &mut tokens_to_consume {
+                        arrived.status = TokenStatus::Consumed;
+                        arrived.updated_at = Utc::now();
+                    }
+                    ctx.token_repo.update_tokens(&tokens_to_consume, tx).await?;
+                } else {
+                    token.status = TokenStatus::Consumed;
+                    token.updated_at = Utc::now();
+                    ctx.token_repo.update_tokens(&[token.clone()], tx).await?;
+                }
+
                 let next_edges: Vec<&EdgeRule> = edges
                     .iter()
                     .filter(|e| e.source_node_id == token.node_id)
                     .collect();
+                let selected_edges =
+                    select_gateway_edges(gateway_type, &next_edges, &instance.context);
 
-                let mut matched_target: Option<String> = None;
-                let mut default_target: Option<String> = None;
-
-                for edge in &next_edges {
-                    if edge.is_default {
-                        default_target = Some(edge.target_node_id.clone());
-                    } else if let Some(ref expr) = edge.condition_expr {
-                        if evaluate_condition(expr, &instance.context) {
-                            matched_target = Some(edge.target_node_id.clone());
-                            break;
-                        }
-                    }
-                }
-
-                let final_target = matched_target.or(default_target);
-
-                if let Some(target) = final_target {
+                if !selected_edges.is_empty() {
+                    let selected_targets: Vec<String> = selected_edges
+                        .iter()
+                        .map(|edge| edge.target_node_id.clone())
+                        .collect();
                     ctx.exec_log
                         .append_log(
                             instance.id,
                             Some(token.id),
                             Some(&token.node_id),
                             "NODE_COMPLETED",
-                            json!({"decision_target": target}),
+                            json!({
+                                "gateway_type": format!("{:?}", gateway_type),
+                                "decision_targets": selected_targets,
+                                "is_join": is_join
+                            }),
                             tx,
                         )
                         .await?;
 
-                    token.status = TokenStatus::Consumed;
-                    token.updated_at = Utc::now();
-                    ctx.token_repo.update_tokens(&[token.clone()], tx).await?;
-
-                    let new_token = V2Token {
-                        id: Uuid::new_v4(),
-                        instance_id: instance.id,
-                        node_id: target,
-                        status: TokenStatus::Active,
-                        parent_token_id: Some(token.id),
-                        scope_key: token.scope_key.clone(),
-                        created_at: Utc::now(),
-                        updated_at: Utc::now(),
+                    let next_scope = if is_join {
+                        None
+                    } else {
+                        fork_scope(&token, selected_edges.len())
                     };
-                    ctx.token_repo
-                        .create_tokens(&[new_token.clone()], tx)
-                        .await?;
-                    active_tokens.push(new_token);
+
+                    for edge in selected_edges {
+                        let new_token = V2Token {
+                            id: Uuid::new_v4(),
+                            instance_id: instance.id,
+                            node_id: edge.target_node_id.clone(),
+                            status: TokenStatus::Active,
+                            parent_token_id: Some(token.id),
+                            scope_key: next_scope.clone(),
+                            created_at: Utc::now(),
+                            updated_at: Utc::now(),
+                        };
+                        ctx.token_repo
+                            .create_tokens(&[new_token.clone()], tx)
+                            .await?;
+                        active_tokens.push(new_token);
+                    }
                 } else {
                     println!("[v2_engine] Gateway failed to find any matching edge, stopping flow");
                     token.status = TokenStatus::Failed;
@@ -647,11 +951,8 @@ async fn execute_token_flow(
                     .await?;
 
                 let task_id = Uuid::new_v4();
-                let assignee = node
-                    .config
-                    .get("assignee")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("admin");
+                let (assignee, approval_payload) =
+                    resolve_approval_assignment(node, &instance.context);
 
                 let task = ctx
                     .task_repo
@@ -660,8 +961,8 @@ async fn execute_token_flow(
                         instance.id,
                         token.id,
                         &token.node_id,
-                        assignee,
-                        json!({}),
+                        &assignee,
+                        approval_payload.clone(),
                         tx,
                     )
                     .await?;
@@ -685,7 +986,8 @@ async fn execute_token_flow(
                         "TASK_CREATED",
                         json!({
                             "task_id": task.id,
-                            "assignee": assignee
+                            "assignee": assignee,
+                            "approval": approval_payload
                         }),
                         tx,
                     )

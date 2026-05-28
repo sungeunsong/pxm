@@ -391,6 +391,41 @@ export class MongodbAdapter
     return mapped.filter((item) => item.id > afterId).slice(0, limit);
   }
 
+  async fetchTrace(instanceId: string, limit = 200): Promise<any[]> {
+    const [logs, outbox] = await Promise.all([
+      this.db
+        .collection<any>('v2_execution_logs')
+        .find({ instance_id: instanceId })
+        .sort({ created_at: 1 })
+        .limit(limit)
+        .toArray(),
+      this.db
+        .collection<any>('v2_event_outbox')
+        .find({ instance_id: instanceId })
+        .sort({ created_at: 1 })
+        .limit(limit)
+        .toArray(),
+    ]);
+
+    return [
+      ...logs.map((doc) => ({ ...doc, source: 'execution_log' })),
+      ...outbox.map((doc) => ({ ...doc, source: 'outbox' })),
+    ]
+      .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
+      .slice(0, limit)
+      .map((doc, idx) => ({
+        id: idx + 1,
+        source: doc.source,
+        instance_id: doc.instance_id,
+        token_id: doc.token_id || null,
+        node_id: doc.node_id || null,
+        event_type: doc.event_type,
+        type: doc.event_type,
+        payload: doc.payload || {},
+        created_at: doc.created_at,
+      }));
+  }
+
   async appendEvent(
     instanceId: string,
     eventType: string,

@@ -36,6 +36,11 @@ export class InstancesController {
     return this.instances.findOne(id);
   }
 
+  @Get('/instances/:id/trace')
+  async trace(@Param('id') id: string) {
+    return this.outbox.fetchTrace(id, 200);
+  }
+
   @Sse('/instances/:id/stream')
   stream(
     @Param('id') instanceId: string,

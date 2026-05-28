@@ -9,6 +9,7 @@ async function main() {
   await client.connect();
   const db = client.db(dbName);
 
+  await ensureValidators(db);
   await db.collection('v2_process_definitions').createIndex({ created_at: -1 });
   await db.collection('v2_process_instances').createIndex({ state: 1, created_at: -1 });
   await db.collection('v2_process_instances').createIndex({ process_definition_id: 1 });
@@ -20,9 +21,162 @@ async function main() {
   await db.collection('v2_tasks').createIndex({ token_id: 1 }, { unique: true, sparse: true });
   await db.collection('v2_event_outbox').createIndex({ instance_id: 1, created_at: 1 });
   await db.collection('v2_execution_logs').createIndex({ instance_id: 1, created_at: 1 });
-  await db.collection('v2_advisory_locks').createIndex({ created_at: 1 }, { expireAfterSeconds: 3600 });
+  await ensureAdvisoryLockIndexes(db);
+  await pruneExpiredAdvisoryLocks(db);
 
   console.log(`[mongo:init] indexes ready: ${dbName}`);
+}
+
+async function ensureValidators(db) {
+  await upsertValidator(db, 'v2_process_definitions', {
+    bsonType: 'object',
+    required: ['_id', 'name', 'nodes', 'edges', 'created_at', 'updated_at'],
+    properties: {
+      _id: { bsonType: 'string' },
+      name: { bsonType: 'string' },
+      nodes: { bsonType: 'array' },
+      edges: { bsonType: 'array' },
+      created_at: { bsonType: 'string' },
+      updated_at: { bsonType: 'string' },
+    },
+  });
+
+  await upsertValidator(db, 'v2_process_instances', {
+    bsonType: 'object',
+    required: ['_id', 'process_definition_id', 'state', 'context', 'created_at', 'updated_at'],
+    properties: {
+      _id: { bsonType: 'string' },
+      process_definition_id: { bsonType: 'string' },
+      state: { enum: ['CREATED', 'RUNNING', 'WAITING', 'COMPLETED', 'FAILED', 'TERMINATED'] },
+      context: { bsonType: 'object' },
+      lock_owner: { bsonType: ['string', 'null'] },
+      lock_until: { bsonType: ['string', 'null'] },
+      heartbeat_at: { bsonType: ['string', 'null'] },
+      created_at: { bsonType: 'string' },
+      updated_at: { bsonType: 'string' },
+    },
+  });
+
+  await upsertValidator(db, 'v2_tokens', {
+    bsonType: 'object',
+    required: ['_id', 'instance_id', 'node_id', 'status', 'created_at', 'updated_at'],
+    properties: {
+      _id: { bsonType: 'string' },
+      instance_id: { bsonType: 'string' },
+      node_id: { bsonType: 'string' },
+      status: { enum: ['ACTIVE', 'WAITING', 'COMPLETED', 'CONSUMED', 'FAILED'] },
+      parent_token_id: { bsonType: ['string', 'null'] },
+      scope_key: { bsonType: ['string', 'null'] },
+      created_at: { bsonType: 'string' },
+      updated_at: { bsonType: 'string' },
+    },
+  });
+
+  await upsertValidator(db, 'v2_engine_jobs', {
+    bsonType: 'object',
+    required: ['_id', 'instance_id', 'job_type', 'run_at', 'attempt', 'status', 'payload', 'created_at', 'updated_at'],
+    properties: {
+      _id: { bsonType: ['long', 'int', 'double'] },
+      instance_id: { bsonType: 'string' },
+      token_id: { bsonType: ['string', 'null'] },
+      job_type: { enum: ['START', 'RESUME', 'RETRY', 'TIMER', 'REMINDER', 'ESCALATION'] },
+      run_at: { bsonType: 'string' },
+      attempt: { bsonType: ['int', 'long', 'double'] },
+      status: { enum: ['QUEUED', 'RUNNING', 'COMPLETED', 'FAILED'] },
+      payload: { bsonType: 'object' },
+      created_at: { bsonType: 'string' },
+      updated_at: { bsonType: 'string' },
+    },
+  });
+
+  await upsertValidator(db, 'v2_tasks', {
+    bsonType: 'object',
+    required: ['_id', 'instance_id', 'token_id', 'node_id', 'assignee', 'status', 'payload', 'created_at', 'updated_at'],
+    properties: {
+      _id: { bsonType: 'string' },
+      instance_id: { bsonType: 'string' },
+      token_id: { bsonType: ['string', 'null'] },
+      node_id: { bsonType: 'string' },
+      assignee: { bsonType: 'string' },
+      status: { enum: ['OPEN', 'APPROVED', 'REJECTED', 'CANCELED'] },
+      payload: { bsonType: 'object' },
+      created_at: { bsonType: 'string' },
+      updated_at: { bsonType: 'string' },
+    },
+  });
+
+  await upsertValidator(db, 'v2_execution_logs', {
+    bsonType: 'object',
+    required: ['instance_id', 'event_type', 'payload', 'created_at'],
+    properties: {
+      instance_id: { bsonType: 'string' },
+      token_id: { bsonType: ['string', 'null'] },
+      node_id: { bsonType: ['string', 'null'] },
+      event_type: { bsonType: 'string' },
+      payload: { bsonType: 'object' },
+      created_at: { bsonType: 'string' },
+    },
+  });
+
+  await upsertValidator(db, 'v2_event_outbox', {
+    bsonType: 'object',
+    required: ['instance_id', 'event_type', 'payload', 'created_at'],
+    properties: {
+      instance_id: { bsonType: 'string' },
+      token_id: { bsonType: ['string', 'null'] },
+      node_id: { bsonType: ['string', 'null'] },
+      event_type: { bsonType: 'string' },
+      payload: { bsonType: 'object' },
+      created_at: { bsonType: 'string' },
+    },
+  });
+
+  await upsertValidator(db, 'v2_advisory_locks', {
+    bsonType: 'object',
+    required: ['_id', 'created_at'],
+    properties: {
+      _id: { bsonType: 'string' },
+      created_at: { bsonType: 'string' },
+    },
+  });
+}
+
+async function upsertValidator(db, collectionName, jsonSchema) {
+  const validator = { $jsonSchema: jsonSchema };
+  try {
+    await db.createCollection(collectionName, {
+      validator,
+      validationLevel: 'moderate',
+      validationAction: 'error',
+    });
+  } catch (err) {
+    if (err?.codeName !== 'NamespaceExists' && err?.code !== 48) {
+      throw err;
+    }
+    await db.command({
+      collMod: collectionName,
+      validator,
+      validationLevel: 'moderate',
+      validationAction: 'error',
+    });
+  }
+}
+
+async function ensureAdvisoryLockIndexes(db) {
+  const collection = db.collection('v2_advisory_locks');
+  const indexes = await collection.indexes();
+  const conflictingIndex = indexes.find(
+    (index) => index.name === 'created_at_1' && index.expireAfterSeconds !== undefined,
+  );
+  if (conflictingIndex) {
+    await collection.dropIndex(conflictingIndex.name);
+  }
+  await collection.createIndex({ created_at: 1 });
+}
+
+async function pruneExpiredAdvisoryLocks(db) {
+  const staleBefore = new Date(Date.now() - 60_000).toISOString();
+  await db.collection('v2_advisory_locks').deleteMany({ created_at: { $lt: staleBefore } });
 }
 
 main()

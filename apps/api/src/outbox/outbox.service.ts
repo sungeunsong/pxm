@@ -20,4 +20,8 @@ export class OutboxService {
   ): Promise<OutboxRow[]> {
     return this.outboxRepo.fetchAfter(instanceId, afterId, limit);
   }
+
+  async fetchTrace(instanceId: string, limit = 200): Promise<OutboxRow[]> {
+    return this.outboxRepo.fetchTrace(instanceId, limit);
+  }
 }

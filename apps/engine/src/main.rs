@@ -46,7 +46,7 @@ async fn main() -> Result<()> {
 
         let adapter =
             v2::infrastructure::mongo_adapter::MongoAdapter::new(client, &db_name, is_replica_set);
-        let plugin_executor = v2::plugin_executor::BuiltinPluginExecutor::new()?;
+        let plugin_executor = v2::plugin_executor::PluginExecutorRegistry::new_default()?;
 
         v2::runtime::V2RuntimeContext {
             tx_manager: Box::new(adapter.clone()),
@@ -70,7 +70,7 @@ async fn main() -> Result<()> {
             .await?;
 
         let adapter = v2::infrastructure::postgres_adapter::PostgresAdapter::new(pool);
-        let plugin_executor = v2::plugin_executor::BuiltinPluginExecutor::new()?;
+        let plugin_executor = v2::plugin_executor::PluginExecutorRegistry::new_default()?;
 
         v2::runtime::V2RuntimeContext {
             tx_manager: Box::new(adapter.clone()),
