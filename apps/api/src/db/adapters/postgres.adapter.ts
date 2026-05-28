@@ -18,6 +18,28 @@ export class PostgresAdapter
 {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
 
+  private async loadNodeLabels(instanceId: string): Promise<Map<string, string>> {
+    const { rows } = await this.pool.query(
+      `
+      SELECT n.node_id, n.label, n.config
+      FROM v2_process_instances i
+      JOIN v2_definition_nodes n ON n.definition_id = i.process_definition_id
+      WHERE i.id = $1::uuid
+      `,
+      [instanceId],
+    );
+
+    return new Map(
+      rows.map((row) => [
+        row.node_id,
+        row.label ||
+          row.config?.label ||
+          row.config?.ui_node?.data?.label ||
+          row.node_id,
+      ]),
+    );
+  }
+
   // ==========================================
   // WorkflowRepositoryPort 구현 (V2 정의 대응)
   // ==========================================
@@ -288,11 +310,14 @@ export class PostgresAdapter
     afterId: number,
     limit = 100,
   ): Promise<any[]> {
+    const nodeLabels = await this.loadNodeLabels(instanceId);
     const { rows } = await this.pool.query(
       `
       SELECT
         id,
         instance_id,
+        token_id,
+        node_id,
         event_type,
         payload,
         created_at
@@ -304,10 +329,15 @@ export class PostgresAdapter
       `,
       [instanceId, afterId, limit],
     );
-    return rows;
+    return rows.map((row) => ({
+      ...row,
+      node_label: row.node_id ? nodeLabels.get(row.node_id) || row.node_id : null,
+      type: row.event_type,
+    }));
   }
 
   async fetchTrace(instanceId: string, limit = 200): Promise<any[]> {
+    const nodeLabels = await this.loadNodeLabels(instanceId);
     const { rows } = await this.pool.query(
       `
       SELECT *
@@ -351,6 +381,7 @@ export class PostgresAdapter
       instance_id: row.instance_id,
       token_id: row.token_id,
       node_id: row.node_id,
+      node_label: row.node_id ? nodeLabels.get(row.node_id) || row.node_id : null,
       event_type: row.event_type,
       type: row.event_type,
       payload: row.payload || {},

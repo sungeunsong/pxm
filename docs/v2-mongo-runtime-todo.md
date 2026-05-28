@@ -8,7 +8,7 @@
 - [x] Run API -> Engine smoke E2E on Mongo and verify `start -> end` completes.
 - [x] Run API -> Engine smoke E2E on Mongo and verify mock service connector completes.
 - [x] Run API -> Engine smoke E2E on Mongo and verify approval task -> approve -> RESUME completes.
-- [ ] Run full Web -> API -> Engine E2E on Mongo from the browser.
+- [ ] Run full Web -> API -> Engine E2E on Mongo from the browser. See `docs/web-mongo-e2e-test-guide.md`.
   - [ ] Start API, Engine, and Web with the Mongo scripts.
   - [ ] Save a template from Flow Designer.
   - [ ] Launch the saved template from Request Portal.

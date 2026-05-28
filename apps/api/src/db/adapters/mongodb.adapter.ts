@@ -18,6 +18,29 @@ export class MongodbAdapter
 {
   constructor(@Inject(MONGO_DB) private readonly db: Db) {}
 
+  private async loadNodeLabels(instanceId: string): Promise<Map<string, string>> {
+    const inst = await this.db
+      .collection<any>('v2_process_instances')
+      .findOne({ _id: instanceId });
+    if (!inst?.process_definition_id) {
+      return new Map();
+    }
+
+    const def = await this.db
+      .collection<any>('v2_process_definitions')
+      .findOne({ _id: inst.process_definition_id });
+
+    return new Map(
+      (def?.nodes || []).map((node: any) => [
+        node.node_id,
+        node.config?.label ||
+          node.config?.ui_node?.data?.label ||
+          node.label ||
+          node.node_id,
+      ]),
+    );
+  }
+
   // ==========================================
   // WorkflowRepositoryPort 구현 (V2 정의 대응)
   // ==========================================
@@ -371,6 +394,7 @@ export class MongodbAdapter
     afterId: number,
     limit = 100,
   ): Promise<any[]> {
+    const nodeLabels = await this.loadNodeLabels(instanceId);
     const docs = await this.db
       .collection<any>('v2_event_outbox')
       .find({ instance_id: instanceId })
@@ -379,10 +403,15 @@ export class MongodbAdapter
 
     const mapped = docs.map((doc, idx) => {
       const virtualId = idx + 1;
+      const nodeId = doc.node_id || doc.payload?.node_id || null;
       return {
         id: virtualId,
         instance_id: doc.instance_id,
+        token_id: doc.token_id || null,
+        node_id: nodeId,
+        node_label: nodeId ? nodeLabels.get(nodeId) || nodeId : null,
         event_type: doc.event_type,
+        type: doc.event_type,
         payload: doc.payload,
         created_at: doc.created_at,
       };
@@ -392,6 +421,7 @@ export class MongodbAdapter
   }
 
   async fetchTrace(instanceId: string, limit = 200): Promise<any[]> {
+    const nodeLabels = await this.loadNodeLabels(instanceId);
     const [logs, outbox] = await Promise.all([
       this.db
         .collection<any>('v2_execution_logs')
@@ -413,17 +443,21 @@ export class MongodbAdapter
     ]
       .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
       .slice(0, limit)
-      .map((doc, idx) => ({
-        id: idx + 1,
-        source: doc.source,
-        instance_id: doc.instance_id,
-        token_id: doc.token_id || null,
-        node_id: doc.node_id || null,
-        event_type: doc.event_type,
-        type: doc.event_type,
-        payload: doc.payload || {},
-        created_at: doc.created_at,
-      }));
+      .map((doc, idx) => {
+        const nodeId = doc.node_id || doc.payload?.node_id || null;
+        return {
+          id: idx + 1,
+          source: doc.source,
+          instance_id: doc.instance_id,
+          token_id: doc.token_id || null,
+          node_id: nodeId,
+          node_label: nodeId ? nodeLabels.get(nodeId) || nodeId : null,
+          event_type: doc.event_type,
+          type: doc.event_type,
+          payload: doc.payload || {},
+          created_at: doc.created_at,
+        };
+      });
   }
 
   async appendEvent(

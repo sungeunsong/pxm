@@ -37,6 +37,67 @@ const deriveInstanceStatus = (event: ExecutionEvent): string | null => {
   return event.status || null;
 };
 
+const internalEventTypes = new Set(['V2_JOB_PROCESSED']);
+
+const getNodeName = (event: ExecutionEvent) =>
+  event.node_label || event.node_id || event.payload?.node_id || '워크플로우';
+
+const getEventTitle = (event: ExecutionEvent) => {
+  const nodeName = getNodeName(event);
+  switch (event.type) {
+    case 'INSTANCE_RUNNING':
+      return '워크플로우 실행 시작';
+    case 'INSTANCE_WAITING':
+      return '사용자 승인 대기';
+    case 'INSTANCE_COMPLETED':
+      return '워크플로우 완료';
+    case 'INSTANCE_FAILED':
+      return '워크플로우 실패';
+    case 'NODE_STARTED':
+      return `${nodeName} 시작`;
+    case 'NODE_COMPLETED':
+      return `${nodeName} 완료`;
+    case 'NODE_FAILED':
+      return `${nodeName} 실패`;
+    case 'TASK_CREATED':
+      return `${nodeName} 승인 요청 생성`;
+    case 'TIMER_SCHEDULED':
+      return `${nodeName} 타이머 예약`;
+    case 'GATEWAY_JOIN_WAITING':
+      return `${nodeName} 병렬 합류 대기`;
+    default:
+      return event.type;
+  }
+};
+
+const getEventDescription = (event: ExecutionEvent) => {
+  switch (event.type) {
+    case 'NODE_STARTED':
+      return '해당 노드 실행을 시작했습니다.';
+    case 'NODE_COMPLETED':
+      return '해당 노드 실행이 정상 완료됐습니다.';
+    case 'TASK_CREATED':
+      return `담당자 ${event.payload?.assignee || 'admin'}에게 승인 작업이 생성됐습니다.`;
+    case 'INSTANCE_WAITING':
+      return '승인 또는 외부 입력을 기다리는 상태입니다.';
+    case 'INSTANCE_COMPLETED':
+      return '모든 토큰이 종료되어 인스턴스가 완료됐습니다.';
+    case 'GATEWAY_JOIN_WAITING':
+      return `${event.payload?.arrived || 0}/${event.payload?.expected || '?'}개 분기가 도착했습니다.`;
+    default:
+      return event.node_id ? `노드 ID: ${event.node_id}` : '';
+  }
+};
+
+const getEventCategory = (event: ExecutionEvent) => {
+  if (event.type.startsWith('INSTANCE_')) return '인스턴스';
+  if (event.type.startsWith('NODE_')) return '노드';
+  if (event.type.startsWith('TASK_')) return '승인';
+  if (event.type.startsWith('TIMER_')) return '타이머';
+  if (event.type.startsWith('GATEWAY_')) return '게이트웨이';
+  return '시스템';
+};
+
 export interface ExecutionPanelProps {
   instanceId: string | null;
   templateName: string;
@@ -210,6 +271,9 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
     }
   };
 
+  const visibleEvents = events.filter((event) => !internalEventTypes.has(event.type));
+  const hiddenInternalCount = events.length - visibleEvents.length;
+
   return (
     <div className="execution-panel">
       <div className="execution-panel-header">
@@ -256,14 +320,19 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
             {/* 이벤트 타임라인 */}
             <div className="execution-timeline">
               <h4 className="timeline-title">실행 로그</h4>
-              {events.length === 0 ? (
+              {hiddenInternalCount > 0 && (
+                <div className="timeline-internal-note">
+                  내부 엔진 처리 이벤트 {hiddenInternalCount}건은 숨겼습니다.
+                </div>
+              )}
+              {visibleEvents.length === 0 ? (
                 <div className="timeline-empty">
                   <Loader size={20} className="spinning" />
                   <p>이벤트를 기다리는 중...</p>
                 </div>
               ) : (
                 <div className="timeline-events">
-                  {events.map((event, index) => {
+                  {visibleEvents.map((event, index) => {
                     // RETRY_SCHEDULED 이벤트 특별 처리
                     if (event.type === 'RETRY_SCHEDULED' && event.payload?.retry_info) {
                       return (
@@ -300,7 +369,10 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
                       </div>
                       <div className="timeline-event-content">
                         <div className="timeline-event-header">
-                          <span className="timeline-event-type">{event.type}</span>
+                          <div className="timeline-event-title-group">
+                            <span className="timeline-event-title">{getEventTitle(event)}</span>
+                            <span className="timeline-event-category">{getEventCategory(event)}</span>
+                          </div>
                           <span className="timeline-event-time">
                             {new Date(event.timestamp).toLocaleTimeString('ko-KR', { 
                               hour: '2-digit', 
@@ -309,9 +381,13 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
                             })}
                           </span>
                         </div>
-                        {event.node_label && (
+                        <div className="timeline-event-meta">
+                          <span className="timeline-event-type">{event.type}</span>
+                          {event.node_id && <span className="timeline-event-node">node: {event.node_id}</span>}
+                        </div>
+                        {getEventDescription(event) && (
                           <div className="timeline-event-detail">
-                            {event.node_label}
+                            {getEventDescription(event)}
                           </div>
                         )}
                         {/* 상세 정보 */}
