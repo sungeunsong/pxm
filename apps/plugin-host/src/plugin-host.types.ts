@@ -18,6 +18,14 @@ export interface PluginInvokeRequest {
     max_attempts?: number;
     backoff_ms?: number;
   };
+  isolation?: {
+    mode?: 'shared_process' | 'external_process';
+    network?: 'default' | 'restricted';
+  };
+  resource_limits?: {
+    timeout_ms?: number;
+    max_payload_bytes?: number;
+  };
 }
 
 export interface PluginInvokeResponse {

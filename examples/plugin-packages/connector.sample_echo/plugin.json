@@ -1,0 +1,47 @@
+{
+  "plugin_id": "connector.sample_echo",
+  "version": "1.0.0",
+  "display_name": "Sample Echo",
+  "description": "Echoes config and workflow metadata for hosted executor development.",
+  "category": "Samples",
+  "node_type": "service",
+  "icon": "message-square",
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "message": {
+        "type": "string",
+        "title": "Message",
+        "default": "hello"
+      }
+    },
+    "required": ["message"]
+  },
+  "executor_type": "hosted",
+  "executor_ref": "pxm-plugin-host:connector.sample_echo",
+  "trusted_source": "local",
+  "secrets_policy": {},
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "connector": { "type": "string" },
+      "message": { "type": "string" },
+      "instance_id": { "type": "string" },
+      "node_id": { "type": "string" }
+    }
+  },
+  "timeout_ms": 5000,
+  "isolation_policy": {
+    "mode": "shared_process",
+    "network": "default"
+  },
+  "resource_limits": {
+    "timeout_ms": 5000,
+    "max_payload_bytes": 262144
+  },
+  "retry_policy": {
+    "max_attempts": 1,
+    "backoff_ms": 0
+  },
+  "tags": ["sample", "hosted", "echo"]
+}

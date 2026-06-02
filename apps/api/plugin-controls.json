@@ -1,0 +1,12 @@
+{
+  "default_enabled": true,
+  "enabled_plugins": [],
+  "disabled_plugins": [],
+  "version_pins": {},
+  "workspace_allowlists": {
+    "default": ["*"]
+  },
+  "trusted_sources": ["local", "official", "customer"],
+  "require_trusted_source": true,
+  "audit_log_path": "../../logs/plugin-audit.jsonl"
+}

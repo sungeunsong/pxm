@@ -1,0 +1,46 @@
+{
+  "plugin_id": "connector.external_echo",
+  "version": "1.0.0",
+  "display_name": "External Echo",
+  "description": "Sample third-party external HTTP plugin service.",
+  "category": "Samples",
+  "node_type": "service",
+  "icon": "globe",
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "message": {
+        "type": "string",
+        "title": "Message",
+        "default": "hello from external"
+      }
+    },
+    "required": ["message"]
+  },
+  "executor_type": "external_http",
+  "executor_ref": "http://127.0.0.1:3020/invoke",
+  "trusted_source": "local",
+  "secrets_policy": {},
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "connector": { "type": "string" },
+      "plugin_id": { "type": "string" },
+      "message": { "type": "string" }
+    }
+  },
+  "timeout_ms": 5000,
+  "isolation_policy": {
+    "mode": "external_process",
+    "network": "default"
+  },
+  "resource_limits": {
+    "timeout_ms": 5000,
+    "max_payload_bytes": 262144
+  },
+  "retry_policy": {
+    "max_attempts": 1,
+    "backoff_ms": 0
+  },
+  "tags": ["sample", "external_http", "echo"]
+}

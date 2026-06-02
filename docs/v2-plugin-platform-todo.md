@@ -63,20 +63,20 @@ Goal: allow new plugins to be added without patching the running core API/Engine
 
 ## P3 - third-party plugin developer experience
 
-- [ ] Write a Plugin SDK guide with manifest format, hosted executor contract, external HTTP contract, examples, and local test flow.
-- [ ] Add a sample `pxm-plugin-host` executor module.
-- [ ] Add a sample third-party external HTTP plugin service.
-- [ ] Add a manifest packaging format.
-- [ ] Add plugin install/register command or API.
-- [ ] Add plugin conformance tests that third-party plugins can run locally.
-- [ ] Document on-premise deployment flow: rebuild/redeploy `pxm-plugin-host` for hosted executor changes, without rebuilding Engine.
+- [x] Write a Plugin SDK guide with manifest format, hosted executor contract, external HTTP contract, examples, and local test flow.
+- [x] Add a sample `pxm-plugin-host` executor module.
+- [x] Add a sample third-party external HTTP plugin service.
+- [x] Add a manifest packaging format.
+- [x] Add plugin install/register command or API.
+- [x] Add plugin conformance tests that third-party plugins can run locally.
+- [x] Document on-premise deployment flow: rebuild/redeploy `pxm-plugin-host` for hosted executor changes, without rebuilding Engine.
 
 ## P4 - production controls
 
-- [ ] Add plugin enable/disable and version pinning.
-- [ ] Add workspace/customer-level plugin allowlist.
-- [ ] Add secret store integration beyond local environment variables.
-- [ ] Add audit logs for plugin install, update, enable, disable, and execution.
-- [ ] Add plugin signature or trusted source checks before installation.
-- [ ] Add execution isolation policy for hosted and external plugins.
-- [ ] Add plugin-host resource limits, timeout boundaries, and failure containment.
+- [x] Add plugin enable/disable and version pinning.
+- [x] Add workspace/customer-level plugin allowlist.
+- [x] Add secret store integration beyond local environment variables.
+- [x] Add audit logs for plugin install, update, enable, disable, and execution.
+- [x] Add plugin signature or trusted source checks before installation.
+- [x] Add execution isolation policy for hosted and external plugins.
+- [x] Add plugin-host resource limits, timeout boundaries, and failure containment.

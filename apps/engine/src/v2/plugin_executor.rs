@@ -1,7 +1,9 @@
 use std::{
     collections::HashMap,
-    fs,
+    fs::{self, OpenOptions},
+    io::Write,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -15,6 +17,7 @@ use crate::v2::ports::{PluginExecutionResult, PluginExecutorPort, PluginInvocati
 
 pub struct PluginExecutorRegistry {
     handlers: HashMap<String, ConnectorHandler>,
+    audit: PluginAuditLogger,
 }
 
 impl PluginExecutorRegistry {
@@ -22,12 +25,14 @@ impl PluginExecutorRegistry {
         let plugin_host_url = std::env::var("PXM_PLUGIN_HOST_URL")
             .unwrap_or_else(|_| "http://127.0.0.1:3010".to_string());
         let manifests = PluginManifestRegistry::load_default()?;
+        let controls = manifests.controls.clone();
 
         let mut registry = Self {
             handlers: HashMap::new(),
+            audit: PluginAuditLogger::new(controls.audit_log_path.clone()),
         };
 
-        for manifest in manifests.latest_manifests() {
+        for manifest in manifests.active_manifests() {
             registry.register_manifest(manifest, &plugin_host_url)?;
         }
 
@@ -107,9 +112,10 @@ impl PluginExecutorRegistry {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 struct PluginManifestRegistry {
     manifests: HashMap<String, Vec<PluginManifest>>,
+    controls: Arc<PluginControls>,
 }
 
 impl PluginManifestRegistry {
@@ -120,6 +126,7 @@ impl PluginManifestRegistry {
 
     fn load_from_dir(manifest_dir: &Path) -> Result<Self> {
         let mut manifests: HashMap<String, Vec<PluginManifest>> = HashMap::new();
+        let controls = Arc::new(PluginControls::load(manifest_dir)?);
         let mut files = fs::read_dir(manifest_dir)?
             .filter_map(|entry| entry.ok())
             .map(|entry| entry.path())
@@ -129,9 +136,10 @@ impl PluginManifestRegistry {
 
         for file in files {
             let raw = fs::read_to_string(&file)?;
-            let manifest: PluginManifest = serde_json::from_str(&raw)
+            let mut manifest: PluginManifest = serde_json::from_str(&raw)
                 .map_err(|err| anyhow!("{}: invalid plugin manifest: {}", file.display(), err))?;
-            manifest.validate(&file)?;
+            manifest.apply_controls(&controls);
+            manifest.validate(&file, &controls)?;
             manifests
                 .entry(manifest.plugin_id.clone())
                 .or_default()
@@ -142,14 +150,37 @@ impl PluginManifestRegistry {
             versions.sort_by(|a, b| compare_semver_desc(&a.version, &b.version));
         }
 
-        Ok(Self { manifests })
+        Ok(Self {
+            manifests,
+            controls,
+        })
     }
 
-    fn latest_manifests(&self) -> Vec<PluginManifest> {
+    fn active_manifests(&self) -> Vec<PluginManifest> {
         self.manifests
             .values()
-            .filter_map(|versions| versions.first().cloned())
+            .filter_map(|versions| self.selected_version(versions))
+            .filter(|manifest| {
+                manifest.enabled && self.controls.is_allowed_for_workspace(&manifest.plugin_id)
+            })
             .collect()
+    }
+
+    #[cfg(test)]
+    fn latest_manifests(&self) -> Vec<PluginManifest> {
+        self.active_manifests()
+    }
+
+    fn selected_version(&self, versions: &[PluginManifest]) -> Option<PluginManifest> {
+        let plugin_id = versions.first()?.plugin_id.as_str();
+        if let Some(pinned_version) = self.controls.version_pins.get(plugin_id) {
+            return versions
+                .iter()
+                .find(|manifest| manifest.version == *pinned_version)
+                .cloned()
+                .or_else(|| versions.first().cloned());
+        }
+        versions.first().cloned()
     }
 }
 
@@ -159,6 +190,13 @@ struct PluginManifest {
     version: String,
     executor_type: String,
     executor_ref: String,
+    #[serde(default = "default_enabled")]
+    enabled: bool,
+    #[serde(default = "default_trusted_source")]
+    trusted_source: String,
+    signature: Option<String>,
+    isolation_policy: Option<PluginIsolationPolicy>,
+    resource_limits: Option<PluginResourceLimits>,
     #[serde(default)]
     secrets_policy: PluginSecretsPolicy,
     timeout_ms: Option<u64>,
@@ -166,7 +204,28 @@ struct PluginManifest {
 }
 
 impl PluginManifest {
-    fn validate(&self, file: &Path) -> Result<()> {
+    fn apply_controls(&mut self, controls: &PluginControls) {
+        if !controls.default_enabled {
+            self.enabled = false;
+        }
+        if controls.enabled_plugins.contains(&self.plugin_id) {
+            self.enabled = true;
+        }
+        if controls.disabled_plugins.contains(&self.plugin_id) {
+            self.enabled = false;
+        }
+        if self.isolation_policy.is_none() {
+            self.isolation_policy = Some(PluginIsolationPolicy::for_executor(&self.executor_type));
+        }
+        if self.resource_limits.is_none() {
+            self.resource_limits = Some(PluginResourceLimits {
+                timeout_ms: self.timeout_ms,
+                max_payload_bytes: Some(262_144),
+            });
+        }
+    }
+
+    fn validate(&self, file: &Path, controls: &PluginControls) -> Result<()> {
         if self.plugin_id.trim().is_empty() {
             return Err(anyhow!("{}: plugin_id must not be empty", file.display()));
         }
@@ -185,11 +244,50 @@ impl PluginManifest {
                 file.display()
             ));
         }
+        if controls.require_trusted_source && !controls.trusted_sources.contains(&self.trusted_source)
+        {
+            return Err(anyhow!(
+                "{}: untrusted plugin source {}",
+                file.display(),
+                self.trusted_source
+            ));
+        }
+        if matches!(self.executor_type.as_str(), "hosted")
+            && self
+                .isolation_policy
+                .as_ref()
+                .and_then(|policy| policy.mode.as_deref())
+                == Some("external_process")
+        {
+            return Err(anyhow!(
+                "{}: hosted plugins must use shared_process isolation",
+                file.display()
+            ));
+        }
+        if matches!(self.executor_type.as_str(), "external_http")
+            && self
+                .isolation_policy
+                .as_ref()
+                .and_then(|policy| policy.mode.as_deref())
+                == Some("shared_process")
+        {
+            return Err(anyhow!(
+                "{}: external_http plugins must use external_process isolation",
+                file.display()
+            ));
+        }
         Ok(())
     }
 
     fn timeout(&self) -> Duration {
-        Duration::from_millis(self.timeout_ms.unwrap_or(5_000).max(1))
+        Duration::from_millis(
+            self.resource_limits
+                .as_ref()
+                .and_then(|limits| limits.timeout_ms)
+                .or(self.timeout_ms)
+                .unwrap_or(5_000)
+                .max(1),
+        )
     }
 
     fn legacy_mock(plugin_id: &str) -> Self {
@@ -198,11 +296,47 @@ impl PluginManifest {
             version: "0.0.0".to_string(),
             executor_type: "mock".to_string(),
             executor_ref: plugin_id.to_string(),
+            enabled: true,
+            trusted_source: "local".to_string(),
+            signature: None,
+            isolation_policy: Some(PluginIsolationPolicy::for_executor("mock")),
+            resource_limits: Some(PluginResourceLimits {
+                timeout_ms: Some(5_000),
+                max_payload_bytes: Some(262_144),
+            }),
             secrets_policy: PluginSecretsPolicy::default(),
             timeout_ms: Some(5_000),
             retry_policy: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct PluginIsolationPolicy {
+    mode: Option<String>,
+    network: Option<String>,
+}
+
+impl PluginIsolationPolicy {
+    fn for_executor(executor_type: &str) -> Self {
+        Self {
+            mode: Some(
+                if executor_type == "external_http" {
+                    "external_process"
+                } else {
+                    "shared_process"
+                }
+                .to_string(),
+            ),
+            network: Some("default".to_string()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct PluginResourceLimits {
+    timeout_ms: Option<u64>,
+    max_payload_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -230,7 +364,10 @@ impl PluginExecutorPort for PluginExecutorRegistry {
         })?;
 
         invocation.config = handler.prepare_config(&invocation.config)?;
-        handler.execute(invocation).await
+        let audit_context = PluginAuditContext::from_invocation(&invocation, handler);
+        let result = handler.execute(invocation).await;
+        self.audit.write_execution(&audit_context, &result);
+        result
     }
 }
 
@@ -243,23 +380,21 @@ enum ConnectorHandler {
 }
 
 impl ConnectorHandler {
-    fn plugin_id(&self) -> &str {
+    fn manifest(&self) -> &PluginManifest {
         match self {
-            Self::HttpRequest(executor) => &executor.manifest.plugin_id,
-            Self::Hosted(executor) => &executor.manifest.plugin_id,
-            Self::ExternalHttp(executor) => &executor.manifest.plugin_id,
-            Self::Mock(executor) => &executor.manifest.plugin_id,
-        }
-    }
-
-    fn prepare_config(&self, config: &Value) -> Result<Value> {
-        let manifest = match self {
             Self::HttpRequest(executor) => &executor.manifest,
             Self::Hosted(executor) => &executor.manifest,
             Self::ExternalHttp(executor) => &executor.manifest,
             Self::Mock(executor) => &executor.manifest,
-        };
-        prepare_config(config, manifest)
+        }
+    }
+
+    fn plugin_id(&self) -> &str {
+        &self.manifest().plugin_id
+    }
+
+    fn prepare_config(&self, config: &Value) -> Result<Value> {
+        prepare_config(config, self.manifest())
     }
 
     async fn execute(&self, invocation: PluginInvocation) -> Result<PluginExecutionResult> {
@@ -353,6 +488,8 @@ impl HostedPluginExecutor {
                 "secrets": secrets,
                 "attempt": invocation.attempt,
                 "retry": self.manifest.retry_policy,
+                "isolation": self.manifest.isolation_policy,
+                "resource_limits": self.manifest.resource_limits,
             }))
             .send()
             .await?;
@@ -398,6 +535,8 @@ impl ExternalHttpPluginExecutor {
                 "secrets": secrets,
                 "attempt": invocation.attempt,
                 "retry": self.manifest.retry_policy,
+                "isolation": self.manifest.isolation_policy,
+                "resource_limits": self.manifest.resource_limits,
             }))
             .send()
             .await?;
@@ -637,6 +776,17 @@ fn resolve_secret_values(value: &Value) -> Result<Value> {
 }
 
 fn resolve_secret_ref(secret_ref: &str) -> Result<String> {
+    if let Some(file_path) = secret_ref.strip_prefix("file://") {
+        let value = fs::read_to_string(file_path).map_err(|err| {
+            anyhow!(
+                "secret reference '{}' could not be resolved from file: {}",
+                secret_ref,
+                err
+            )
+        })?;
+        return Ok(value.trim_end_matches(['\r', '\n']).to_string());
+    }
+
     let env_name = secret_ref_to_env_name(secret_ref)?;
     std::env::var(&env_name).map_err(|_| {
         anyhow!(
@@ -694,7 +844,184 @@ fn secret_ref_to_env_name(secret_ref: &str) -> Result<String> {
 }
 
 fn is_secret_ref(value: &str) -> bool {
-    value.starts_with("secret://") || value.starts_with("env://")
+    value.starts_with("secret://") || value.starts_with("env://") || value.starts_with("file://")
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct PluginControls {
+    #[serde(default = "default_enabled")]
+    default_enabled: bool,
+    #[serde(default)]
+    enabled_plugins: Vec<String>,
+    #[serde(default)]
+    disabled_plugins: Vec<String>,
+    #[serde(default)]
+    version_pins: HashMap<String, String>,
+    #[serde(default = "default_workspace_allowlists")]
+    workspace_allowlists: HashMap<String, Vec<String>>,
+    #[serde(default = "default_trusted_sources")]
+    trusted_sources: Vec<String>,
+    #[serde(default)]
+    require_trusted_source: bool,
+    audit_log_path: Option<String>,
+}
+
+impl Default for PluginControls {
+    fn default() -> Self {
+        Self {
+            default_enabled: true,
+            enabled_plugins: vec![],
+            disabled_plugins: vec![],
+            version_pins: HashMap::new(),
+            workspace_allowlists: default_workspace_allowlists(),
+            trusted_sources: default_trusted_sources(),
+            require_trusted_source: false,
+            audit_log_path: None,
+        }
+    }
+}
+
+impl PluginControls {
+    fn load(manifest_dir: &Path) -> Result<Self> {
+        let controls_path = manifest_dir.join("../plugin-controls.json");
+        if !controls_path.is_file() {
+            return Ok(Self::default());
+        }
+        let raw = fs::read_to_string(&controls_path)?;
+        let mut controls: Self = serde_json::from_str(&raw).map_err(|err| {
+            anyhow!(
+                "{}: invalid plugin controls: {}",
+                controls_path.display(),
+                err
+            )
+        })?;
+        if let Some(path) = &controls.audit_log_path {
+            let path = PathBuf::from(path);
+            if path.is_relative() {
+                controls.audit_log_path = controls_path
+                    .parent()
+                    .map(|parent| parent.join(path).to_string_lossy().to_string());
+            }
+        }
+        Ok(controls)
+    }
+
+    fn is_allowed_for_workspace(&self, plugin_id: &str) -> bool {
+        let workspace_id =
+            std::env::var("PXM_WORKSPACE_ID").unwrap_or_else(|_| "default".to_string());
+        let Some(allowlist) = self
+            .workspace_allowlists
+            .get(&workspace_id)
+            .or_else(|| self.workspace_allowlists.get("default"))
+        else {
+            return true;
+        };
+
+        allowlist.iter().any(|item| item == "*" || item == plugin_id)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PluginAuditLogger {
+    path: Option<PathBuf>,
+}
+
+impl PluginAuditLogger {
+    fn new(path: Option<String>) -> Self {
+        let path = std::env::var("PXM_PLUGIN_AUDIT_LOG")
+            .ok()
+            .or(path)
+            .map(PathBuf::from);
+        Self { path }
+    }
+
+    fn write_execution(
+        &self,
+        context: &PluginAuditContext,
+        result: &Result<PluginExecutionResult>,
+    ) {
+        let Some(path) = &self.path else {
+            return;
+        };
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let event = json!({
+            "ts_unix_ms": unix_timestamp_ms(),
+            "action": "execute",
+            "plugin_id": context.plugin_id,
+            "plugin_version": context.plugin_version,
+            "executor_type": context.executor_type,
+            "trusted_source": context.trusted_source,
+            "signed": context.signed,
+            "instance_id": context.instance_id,
+            "node_id": context.node_id,
+            "token_id": context.token_id,
+            "attempt": context.attempt,
+            "success": result.is_ok(),
+            "status_code": result.as_ref().ok().map(|value| value.status_code),
+            "error": result.as_ref().err().map(|err| err.to_string()),
+        });
+
+        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(file, "{}", event);
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PluginAuditContext {
+    plugin_id: String,
+    plugin_version: String,
+    executor_type: String,
+    trusted_source: String,
+    signed: bool,
+    instance_id: String,
+    node_id: String,
+    token_id: String,
+    attempt: i32,
+}
+
+impl PluginAuditContext {
+    fn from_invocation(invocation: &PluginInvocation, handler: &ConnectorHandler) -> Self {
+        let manifest = handler.manifest();
+        Self {
+            plugin_id: invocation.plugin_id.clone(),
+            plugin_version: manifest.version.clone(),
+            executor_type: manifest.executor_type.clone(),
+            trusted_source: manifest.trusted_source.clone(),
+            signed: manifest.signature.is_some(),
+            instance_id: invocation.instance_id.to_string(),
+            node_id: invocation.node_id.to_string(),
+            token_id: invocation.token_id.to_string(),
+            attempt: invocation.attempt,
+        }
+    }
+}
+
+fn unix_timestamp_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0)
+}
+
+fn default_enabled() -> bool {
+    true
+}
+
+fn default_trusted_source() -> String {
+    "local".to_string()
+}
+
+fn default_trusted_sources() -> Vec<String> {
+    vec!["local".to_string()]
+}
+
+fn default_workspace_allowlists() -> HashMap<String, Vec<String>> {
+    [("default".to_string(), vec!["*".to_string()])]
+        .into_iter()
+        .collect()
 }
 
 fn resolve_manifest_dir() -> Result<PathBuf> {
@@ -795,6 +1122,14 @@ mod tests {
             version: "1.0.0".to_string(),
             executor_type: "hosted".to_string(),
             executor_ref: "pxm-plugin-host:connector.acra.grant_permission".to_string(),
+            enabled: true,
+            trusted_source: "local".to_string(),
+            signature: None,
+            isolation_policy: Some(super::PluginIsolationPolicy::for_executor("hosted")),
+            resource_limits: Some(super::PluginResourceLimits {
+                timeout_ms: Some(5_000),
+                max_payload_bytes: Some(262_144),
+            }),
             secrets_policy: PluginSecretsPolicy {
                 required: [(
                     "api_token".to_string(),

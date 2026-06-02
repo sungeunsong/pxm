@@ -1,11 +1,12 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
-import { readdirSync, readFileSync } from 'fs';
+import { existsSync, readdirSync, readFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { PluginManifestDto } from './dto/plugin-manifest.dto';
 
 @Injectable()
 export class PluginsService implements OnModuleInit {
   private manifests = new Map<string, PluginManifestDto[]>();
+  private controls: PluginControls = defaultPluginControls();
 
   onModuleInit() {
     this.loadManifests();
@@ -14,12 +15,16 @@ export class PluginsService implements OnModuleInit {
   findAll(): PluginManifestDto[] {
     return [...this.manifests.values()]
       .map((versions) => this.latestVersion(versions))
+      .filter((manifest) => this.isAllowedForWorkspace(manifest.plugin_id))
       .sort((a, b) => a.display_name.localeCompare(b.display_name));
   }
 
   findOne(pluginId: string): PluginManifestDto | null {
     const versions = this.manifests.get(pluginId);
-    return versions ? this.latestVersion(versions) : null;
+    if (!versions || !this.isAllowedForWorkspace(pluginId)) {
+      return null;
+    }
+    return this.latestVersion(versions);
   }
 
   findVersions(pluginId: string): PluginManifestDto[] {
@@ -28,6 +33,7 @@ export class PluginsService implements OnModuleInit {
 
   private loadManifests() {
     const manifestDir = resolve(process.cwd(), 'plugin-manifests');
+    this.controls = this.loadControls(manifestDir);
     const files = readdirSync(manifestDir)
       .filter((file) => file.endsWith('.json'))
       .sort();
@@ -54,6 +60,14 @@ export class PluginsService implements OnModuleInit {
   }
 
   private latestVersion(versions: PluginManifestDto[]): PluginManifestDto {
+    const pluginId = versions[0]?.plugin_id;
+    const pinnedVersion = pluginId ? this.controls.version_pins[pluginId] : undefined;
+    if (pinnedVersion) {
+      return (
+        versions.find((manifest) => manifest.version === pinnedVersion) ??
+        versions[0]
+      );
+    }
     return versions[0];
   }
 
@@ -114,7 +128,113 @@ export class PluginsService implements OnModuleInit {
       throw new Error(`${file}: retry_policy must be an object`);
     }
 
+    if (raw.enabled === undefined) {
+      raw.enabled = this.controls.default_enabled;
+    }
+    if (typeof raw.enabled !== 'boolean') {
+      throw new Error(`${file}: enabled must be a boolean`);
+    }
+
+    if (this.controls.enabled_plugins.includes(raw.plugin_id)) {
+      raw.enabled = true;
+    }
+    if (this.controls.disabled_plugins.includes(raw.plugin_id)) {
+      raw.enabled = false;
+    }
+
+    if (raw.trusted_source === undefined) {
+      raw.trusted_source = 'local';
+    }
+    if (typeof raw.trusted_source !== 'string' || raw.trusted_source.trim() === '') {
+      throw new Error(`${file}: trusted_source must be a non-empty string`);
+    }
+    if (
+      this.controls.require_trusted_source &&
+      !this.controls.trusted_sources.includes(raw.trusted_source)
+    ) {
+      throw new Error(`${file}: untrusted plugin source ${raw.trusted_source}`);
+    }
+
+    if (raw.signature !== undefined && typeof raw.signature !== 'string') {
+      throw new Error(`${file}: signature must be a string`);
+    }
+
+    if (raw.isolation_policy === undefined) {
+      raw.isolation_policy = defaultIsolationPolicy(raw.executor_type);
+    }
+    if (!isPlainObject(raw.isolation_policy)) {
+      throw new Error(`${file}: isolation_policy must be an object`);
+    }
+    validateIsolationPolicy(raw.executor_type, raw.isolation_policy, file);
+
+    if (raw.resource_limits === undefined) {
+      raw.resource_limits = {
+        timeout_ms: raw.timeout_ms ?? 5000,
+        max_payload_bytes: 262144,
+      };
+    }
+    if (!isPlainObject(raw.resource_limits)) {
+      throw new Error(`${file}: resource_limits must be an object`);
+    }
+    if (
+      raw.resource_limits.timeout_ms !== undefined &&
+      !Number.isInteger(raw.resource_limits.timeout_ms)
+    ) {
+      throw new Error(`${file}: resource_limits.timeout_ms must be an integer`);
+    }
+    if (
+      raw.resource_limits.max_payload_bytes !== undefined &&
+      !Number.isInteger(raw.resource_limits.max_payload_bytes)
+    ) {
+      throw new Error(`${file}: resource_limits.max_payload_bytes must be an integer`);
+    }
+
     return raw as PluginManifestDto;
+  }
+
+  private isAllowedForWorkspace(pluginId: string): boolean {
+    const workspaceId = process.env.PXM_WORKSPACE_ID || 'default';
+    const allowlist =
+      this.controls.workspace_allowlists[workspaceId] ??
+      this.controls.workspace_allowlists.default;
+    if (!allowlist || allowlist.includes('*')) {
+      return true;
+    }
+    return allowlist.includes(pluginId);
+  }
+
+  private loadControls(manifestDir: string): PluginControls {
+    const controlsPath = resolve(manifestDir, '../plugin-controls.json');
+    if (!existsSync(controlsPath)) {
+      return defaultPluginControls();
+    }
+
+    const raw = JSON.parse(readFileSync(controlsPath, 'utf8'));
+    const controls = {
+      ...defaultPluginControls(),
+      ...raw,
+      version_pins: raw.version_pins ?? {},
+      workspace_allowlists: raw.workspace_allowlists ?? { default: ['*'] },
+      trusted_sources: raw.trusted_sources ?? ['local'],
+    };
+
+    if (!Array.isArray(controls.enabled_plugins)) {
+      throw new Error('plugin-controls.json: enabled_plugins must be an array');
+    }
+    if (!Array.isArray(controls.disabled_plugins)) {
+      throw new Error('plugin-controls.json: disabled_plugins must be an array');
+    }
+    if (!isPlainObject(controls.version_pins)) {
+      throw new Error('plugin-controls.json: version_pins must be an object');
+    }
+    if (!isPlainObject(controls.workspace_allowlists)) {
+      throw new Error('plugin-controls.json: workspace_allowlists must be an object');
+    }
+    if (!Array.isArray(controls.trusted_sources)) {
+      throw new Error('plugin-controls.json: trusted_sources must be an array');
+    }
+
+    return controls;
   }
 
   private validateObjectSchema(schema: any, label: string) {
@@ -134,6 +254,56 @@ export class PluginsService implements OnModuleInit {
     ) {
       throw new Error(`${label}.required must be a string array`);
     }
+  }
+}
+
+interface PluginControls {
+  default_enabled: boolean;
+  enabled_plugins: string[];
+  disabled_plugins: string[];
+  version_pins: Record<string, string>;
+  workspace_allowlists: Record<string, string[]>;
+  trusted_sources: string[];
+  require_trusted_source: boolean;
+  audit_log_path?: string;
+}
+
+function defaultPluginControls(): PluginControls {
+  return {
+    default_enabled: true,
+    enabled_plugins: [],
+    disabled_plugins: [],
+    version_pins: {},
+    workspace_allowlists: { default: ['*'] },
+    trusted_sources: ['local'],
+    require_trusted_source: false,
+  };
+}
+
+function defaultIsolationPolicy(executorType: string) {
+  return {
+    mode: executorType === 'external_http' ? 'external_process' : 'shared_process',
+    network: 'default',
+  };
+}
+
+function validateIsolationPolicy(
+  executorType: string,
+  policy: Record<string, unknown>,
+  file: string,
+) {
+  if (
+    policy.mode !== undefined &&
+    policy.mode !== 'shared_process' &&
+    policy.mode !== 'external_process'
+  ) {
+    throw new Error(`${file}: isolation_policy.mode is unsupported`);
+  }
+  if (executorType === 'hosted' && policy.mode === 'external_process') {
+    throw new Error(`${file}: hosted plugins must use shared_process isolation`);
+  }
+  if (executorType === 'external_http' && policy.mode === 'shared_process') {
+    throw new Error(`${file}: external_http plugins must use external_process isolation`);
   }
 }
 
