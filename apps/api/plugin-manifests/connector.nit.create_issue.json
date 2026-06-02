@@ -1,0 +1,38 @@
+{
+  "plugin_id": "connector.nit.create_issue",
+  "version": "1.0.0",
+  "display_name": "NIT Create Issue",
+  "description": "Create an NIT issue for a workflow request or failure.",
+  "category": "Issue Management",
+  "node_type": "service",
+  "icon": "ticket",
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "projectKey": { "type": "string", "title": "Project Key" },
+      "titleTemplate": { "type": "string", "title": "Title Template" },
+      "priority": {
+        "type": "string",
+        "title": "Priority",
+        "enum": ["LOW", "MEDIUM", "HIGH"],
+        "default": "MEDIUM"
+      }
+    },
+    "required": ["projectKey", "titleTemplate"]
+  },
+  "executor_type": "hosted",
+  "executor_ref": "pxm-plugin-host:connector.nit.create_issue",
+  "secrets_policy": {},
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "ticket": { "type": "string" }
+    }
+  },
+  "timeout_ms": 5000,
+  "retry_policy": {
+    "max_attempts": 3,
+    "backoff_ms": 1000
+  },
+  "tags": ["nit", "issue", "ticket"]
+}

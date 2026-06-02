@@ -7,11 +7,13 @@
     "db:mongo:reset": "docker compose -f infra/docker-compose.yml down -v && docker compose -f infra/docker-compose.yml up -d mongodb",
     "db:mongo:init": "cd apps/api && MONGODB_URL=${MONGODB_URL:-mongodb://127.0.0.1:27017/?replicaSet=rs0} MONGO_DB_NAME=${MONGO_DB_NAME:-pxm_db} node scripts/init-mongo-indexes.mjs",
     "db:mongo:check": "cd apps/api && MONGODB_URL=${MONGODB_URL:-mongodb://127.0.0.1:27017/?replicaSet=rs0} MONGO_DB_NAME=${MONGO_DB_NAME:-pxm_db} node scripts/check-mongo-runtime-contracts.mjs",
+    "db:mongo:seed:plugins": "cd apps/api && MONGODB_URL=${MONGODB_URL:-mongodb://127.0.0.1:27017/?replicaSet=rs0} MONGO_DB_NAME=${MONGO_DB_NAME:-pxm_db} node scripts/seed-plugin-demo-templates.mjs",
     "smoke:mongo:approval": "cd apps/api && API_BASE_URL=${API_BASE_URL:-http://localhost:3000/api} MONGODB_URL=${MONGODB_URL:-mongodb://127.0.0.1:27017/?replicaSet=rs0} MONGO_DB_NAME=${MONGO_DB_NAME:-pxm_db} node scripts/smoke-mongo-approval.mjs",
     "smoke:mongo:gateway": "cd apps/api && API_BASE_URL=${API_BASE_URL:-http://localhost:3000/api} MONGODB_URL=${MONGODB_URL:-mongodb://127.0.0.1:27017/?replicaSet=rs0} MONGO_DB_NAME=${MONGO_DB_NAME:-pxm_db} node scripts/smoke-mongo-gateway.mjs",
     "dev": "pnpm -r --parallel dev",
     "dev:api:mongo": "cd apps/api && DB_TYPE=mongodb MONGODB_URL=${MONGODB_URL:-mongodb://127.0.0.1:27017/?replicaSet=rs0} MONGO_DB_NAME=${MONGO_DB_NAME:-pxm_db} pnpm dev",
     "dev:engine:mongo": "cd apps/engine && DB_TYPE=mongodb MONGODB_URL=${MONGODB_URL:-mongodb://127.0.0.1:27017/?replicaSet=rs0} MONGO_DB_NAME=${MONGO_DB_NAME:-pxm_db} cargo run",
+    "dev:plugin-host": "cd apps/plugin-host && PORT=${PORT:-3010} pnpm dev",
     "dev:web": "cd apps/web && pnpm dev",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint"

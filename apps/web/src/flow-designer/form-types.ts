@@ -51,6 +51,8 @@ export interface CustomNodeData {
   nodeType: 'start' | 'service' | 'timer' | 'gateway' | 'approval' | 'end';
   label: string;
   description?: string;
+  icon?: string;
+  category?: string;
   
   // 실행 상태 (실시간 추적용)
   executionStatus?: 'pending' | 'running' | 'completed' | 'failed';
@@ -62,6 +64,9 @@ export interface CustomNodeData {
   url?: string;
   method?: string;
   headers?: string;
+  body?: any;
+  plugin_id?: string;
+  plugin_version?: string;
   timeout?: number;
   retryCount?: number;
   enableRetry?: boolean;
@@ -88,4 +93,3 @@ export interface ValidationResult {
 
 // 폼 데이터 (브라우저 내장 FormData와 충돌 방지를 위해 FormValues로 명명)
 export type FormValues = Record<string, any>;
-

@@ -1,6 +1,6 @@
-import React, { useState, useRef } from 'react';
+import React, { useMemo, useState, useRef } from 'react';
 import type { Node } from 'reactflow';
-import { Inbox } from 'lucide-react';
+import { CheckSquare, Clock, Diamond, Inbox, Play, Search, Square, Star } from 'lucide-react';
 import { Button } from '../components/Button';
 import { Header } from '../components/Header';
 import { FlowCanvas } from './FlowCanvas';
@@ -13,6 +13,9 @@ import { ExecutionPanel } from './ExecutionPanel';
 import { HistoryListModal } from './HistoryListModal';
 import { templatesApi } from '../api/templates';
 import type { WorkflowTemplate } from '../api/templates';
+import { pluginsApi } from '../api/plugins';
+import type { PluginManifest } from '../api/plugins';
+import { PluginIcon } from './plugin-icons';
 import './FlowDesigner.css';
 
 export interface FlowDesignerProps {
@@ -32,6 +35,15 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [executionInstanceId, setExecutionInstanceId] = useState<string | null>(null);
   const [executionFormSchema, setExecutionFormSchema] = useState<FormSchema | undefined>(undefined);
+  const [plugins, setPlugins] = useState<PluginManifest[]>([]);
+  const [pluginSearch, setPluginSearch] = useState('');
+  const [favoritePluginIds, setFavoritePluginIds] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('pxm.favoritePlugins') || '[]');
+    } catch {
+      return [];
+    }
+  });
   const flowCanvasRef = useRef<FlowCanvasRef>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const eventQueueRef = useRef<Array<{nodeId: string, status: 'pending' | 'running' | 'completed' | 'failed'}>>([]); 
@@ -43,6 +55,23 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
       }
+    };
+  }, []);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    pluginsApi
+      .list()
+      .then((items) => {
+        if (!cancelled) {
+          setPlugins(items);
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to load plugins:', error);
+      });
+    return () => {
+      cancelled = true;
     };
   }, []);
 
@@ -325,15 +354,74 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
     flowCanvasRef.current?.updateNodeData(nodeId, data);
   };
 
-  const onDragStart = (event: React.DragEvent, nodeType: string, label: string) => {
+  const onDragStart = (event: React.DragEvent, nodeType: string, label: string, extraData?: Partial<CustomNodeData>) => {
     const nodeData: CustomNodeData = {
       label,
       nodeType: nodeType as CustomNodeData['nodeType'],
       description: `${label} 노드`,
+      ...extraData,
     };
     event.dataTransfer.setData('application/reactflow', JSON.stringify(nodeData));
     event.dataTransfer.effectAllowed = 'move';
   };
+
+  const onPluginDragStart = (event: React.DragEvent, plugin: PluginManifest) => {
+    const defaults = getPluginConfigDefaults(plugin);
+    onDragStart(event, 'service', plugin.display_name, {
+      ...defaults,
+      description: plugin.description || plugin.category,
+      plugin_id: plugin.plugin_id,
+      plugin_version: plugin.version,
+      icon: plugin.icon,
+      category: plugin.category,
+      timeout: plugin.timeout_ms,
+      retryCount: plugin.retry_policy?.max_attempts,
+      enableRetry: !!plugin.retry_policy?.max_attempts,
+    });
+  };
+
+  const toggleFavoritePlugin = (pluginId: string) => {
+    setFavoritePluginIds((current) => {
+      const next = current.includes(pluginId)
+        ? current.filter((id) => id !== pluginId)
+        : [...current, pluginId];
+      localStorage.setItem('pxm.favoritePlugins', JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const filteredPlugins = useMemo(() => {
+    const query = pluginSearch.trim().toLowerCase();
+    return plugins.filter((plugin) => {
+      if (!query) return true;
+      return [
+        plugin.display_name,
+        plugin.plugin_id,
+        plugin.category,
+        ...(plugin.tags || []),
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(query);
+    });
+  }, [plugins, pluginSearch]);
+
+  const favoritePlugins = useMemo(
+    () => filteredPlugins.filter((plugin) => plugin.plugin_id !== CORE_PLUGIN_ID && favoritePluginIds.includes(plugin.plugin_id)),
+    [filteredPlugins, favoritePluginIds],
+  );
+
+  const pluginsByCategory = useMemo(() => {
+    return filteredPlugins.reduce<Record<string, PluginManifest[]>>((groups, plugin) => {
+      if (plugin.plugin_id === CORE_PLUGIN_ID || favoritePluginIds.includes(plugin.plugin_id)) {
+        return groups;
+      }
+      const category = plugin.category || 'Other';
+      groups[category] = groups[category] || [];
+      groups[category].push(plugin);
+      return groups;
+    }, {});
+  }, [filteredPlugins, favoritePluginIds]);
 
   return (
     <div className="flow-designer">
@@ -363,30 +451,64 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
               <h4 className="palette-section-title">기본 노드</h4>
               <div className="palette-nodes">
                 <div className="palette-node" draggable onDragStart={(e) => onDragStart(e, 'start', 'Start')}>
-                  <div className="palette-node-icon" style={{ background: 'var(--node-start)' }}><span>▶</span></div>
+                  <div className="palette-node-icon" style={{ background: 'var(--node-start)' }}><Play size={16} fill="currentColor" /></div>
                   <span className="palette-node-label">Start</span>
                 </div>
-                <div className="palette-node" draggable onDragStart={(e) => onDragStart(e, 'service', 'Service')}>
-                  <div className="palette-node-icon" style={{ background: 'var(--node-service)' }}><span>⚙</span></div>
-                  <span className="palette-node-label">Service</span>
-                </div>
                 <div className="palette-node" draggable onDragStart={(e) => onDragStart(e, 'timer', 'Timer')}>
-                  <div className="palette-node-icon" style={{ background: 'var(--node-timer)' }}><span>⏱</span></div>
+                  <div className="palette-node-icon" style={{ background: 'var(--node-timer)' }}><Clock size={16} /></div>
                   <span className="palette-node-label">Timer</span>
                 </div>
                 <div className="palette-node" draggable onDragStart={(e) => onDragStart(e, 'gateway', 'Gateway')}>
-                  <div className="palette-node-icon" style={{ background: 'var(--node-gateway)' }}><span>◆</span></div>
+                  <div className="palette-node-icon" style={{ background: 'var(--node-gateway)' }}><Diamond size={16} fill="currentColor" /></div>
                   <span className="palette-node-label">Gateway</span>
                 </div>
                 <div className="palette-node" draggable onDragStart={(e) => onDragStart(e, 'approval', 'Approval')}>
-                  <div className="palette-node-icon" style={{ background: 'var(--node-approval)' }}><span>✓</span></div>
+                  <div className="palette-node-icon" style={{ background: 'var(--node-approval)' }}><CheckSquare size={16} /></div>
                   <span className="palette-node-label">Approval</span>
                 </div>
                 <div className="palette-node" draggable onDragStart={(e) => onDragStart(e, 'end', 'End')}>
-                  <div className="palette-node-icon" style={{ background: 'var(--node-end)' }}><span>■</span></div>
+                  <div className="palette-node-icon" style={{ background: 'var(--node-end)' }}><Square size={16} fill="currentColor" /></div>
                   <span className="palette-node-label">End</span>
                 </div>
               </div>
+            </div>
+
+            <div className="palette-section">
+              <h4 className="palette-section-title">플러그인 노드</h4>
+              <div className="palette-search">
+                <Search size={14} />
+                <input
+                  value={pluginSearch}
+                  onChange={(event) => setPluginSearch(event.target.value)}
+                  placeholder="Search plugins"
+                />
+              </div>
+              {favoritePlugins.length > 0 && (
+                <PluginPaletteSection
+                  title="Favorites"
+                  plugins={favoritePlugins}
+                  favoritePluginIds={favoritePluginIds}
+                  onDragStart={onPluginDragStart}
+                  onToggleFavorite={toggleFavoritePlugin}
+                />
+              )}
+              <PluginPaletteSection
+                title="Core"
+                plugins={getCorePlugins(filteredPlugins)}
+                favoritePluginIds={favoritePluginIds}
+                onDragStart={onPluginDragStart}
+                onToggleFavorite={toggleFavoritePlugin}
+              />
+              {Object.entries(pluginsByCategory).map(([category, categoryPlugins]) => (
+                <PluginPaletteSection
+                  key={category}
+                  title={category}
+                  plugins={categoryPlugins}
+                  favoritePluginIds={favoritePluginIds}
+                  onDragStart={onPluginDragStart}
+                  onToggleFavorite={toggleFavoritePlugin}
+                />
+              ))}
             </div>
           </div>
         </aside>
@@ -418,6 +540,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
                   <NodePropertiesForm
                     node={selectedNode}
                     onUpdate={handleNodeUpdate}
+                    plugins={plugins}
                   />
                 ) : (
                   <div className="properties-placeholder">
@@ -455,3 +578,71 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
     </div>
   );
 };
+
+const CORE_PLUGIN_ID = 'builtin.http_request';
+
+function getCorePlugins(plugins: PluginManifest[]) {
+  return plugins.filter((plugin) => plugin.plugin_id === CORE_PLUGIN_ID);
+}
+
+function getPluginConfigDefaults(plugin: PluginManifest): Partial<CustomNodeData> {
+  const defaults: Record<string, unknown> = {};
+  Object.entries(plugin.config_schema.properties || {}).forEach(([key, property]) => {
+    if (property.default !== undefined) {
+      defaults[key] = property.default;
+    }
+  });
+  return defaults as Partial<CustomNodeData>;
+}
+
+function PluginPaletteSection({
+  title,
+  plugins,
+  favoritePluginIds,
+  onDragStart,
+  onToggleFavorite,
+}: {
+  title: string;
+  plugins: PluginManifest[];
+  favoritePluginIds: string[];
+  onDragStart: (event: React.DragEvent, plugin: PluginManifest) => void;
+  onToggleFavorite: (pluginId: string) => void;
+}) {
+  return (
+    <div className="plugin-category">
+      <h5 className="plugin-category-title">{title}</h5>
+      <div className="palette-nodes">
+        {plugins.map((plugin) => {
+          const isFavorite = favoritePluginIds.includes(plugin.plugin_id);
+          return (
+            <div
+              key={plugin.plugin_id}
+              className="palette-node plugin-palette-node"
+              draggable
+              onDragStart={(event) => onDragStart(event, plugin)}
+            >
+              <div className="palette-node-icon plugin-node-icon">
+                <PluginIcon icon={plugin.icon} size={16} />
+              </div>
+              <div className="palette-node-text">
+                <span className="palette-node-label">{plugin.display_name}</span>
+                <span className="palette-node-caption">{plugin.executor_type}</span>
+              </div>
+              <button
+                type="button"
+                className={`favorite-plugin-button ${isFavorite ? 'active' : ''}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onToggleFavorite(plugin.plugin_id);
+                }}
+                title={isFavorite ? 'Remove favorite' : 'Add favorite'}
+              >
+                <Star size={13} fill={isFavorite ? 'currentColor' : 'none'} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}

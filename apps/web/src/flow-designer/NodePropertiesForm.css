@@ -53,3 +53,58 @@
   border-radius: var(--radius-sm);
   font-family: 'Courier New', monospace;
 }
+
+.selected-plugin-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.selected-plugin-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  color: white;
+  background: var(--node-service);
+  border-radius: var(--radius-sm);
+}
+
+.selected-plugin-name {
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.selected-plugin-meta {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+.property-textarea {
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
+  padding: var(--space-sm);
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-family: 'Courier New', monospace;
+}
+
+.property-textarea:focus {
+  outline: none;
+  border-color: var(--border-strong);
+}
+
+.property-helper-text {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+}

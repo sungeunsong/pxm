@@ -1,0 +1,37 @@
+{
+  "plugin_id": "connector.acra.grant_permission",
+  "version": "1.0.0",
+  "display_name": "ACRA Grant Permission",
+  "description": "Grant a permission code in ACRA after an approval flow.",
+  "category": "Access",
+  "node_type": "service",
+  "icon": "shield-check",
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "targetSystem": { "type": "string", "title": "Target System" },
+      "permissionCode": { "type": "string", "title": "Permission Code" },
+      "subjectTemplate": { "type": "string", "title": "Subject Template" }
+    },
+    "required": ["targetSystem", "permissionCode"]
+  },
+  "executor_type": "hosted",
+  "executor_ref": "pxm-plugin-host:connector.acra.grant_permission",
+  "secrets_policy": {
+    "required": {
+      "api_token": "secret://acra/api_token"
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "decision": { "type": "string" }
+    }
+  },
+  "timeout_ms": 5000,
+  "retry_policy": {
+    "max_attempts": 3,
+    "backoff_ms": 1000
+  },
+  "tags": ["acra", "permission", "access"]
+}

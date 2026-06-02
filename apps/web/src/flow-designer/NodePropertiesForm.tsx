@@ -2,15 +2,18 @@ import React from 'react';
 import type { Node } from 'reactflow';
 import { Input, Select, Checkbox } from '../components';
 import type { CustomNodeData, FormSchema } from './form-types';
+import type { PluginManifest, PluginJsonSchemaProperty } from '../api/plugins';
 import { FormSchemaEditor } from './FormSchemaEditor';
+import { PluginIcon } from './plugin-icons';
 import './NodePropertiesForm.css';
 
 export interface NodePropertiesFormProps {
   node: Node<CustomNodeData>;
   onUpdate: (nodeId: string, data: Partial<CustomNodeData>) => void;
+  plugins?: PluginManifest[];
 }
 
-export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({ node, onUpdate }) => {
+export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({ node, onUpdate, plugins = [] }) => {
   const handleLabelChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onUpdate(node.id, { label: e.target.value });
   };
@@ -23,85 +26,59 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({ node, on
   const renderServiceProperties = () => {
     const data = node.data as any;
     const pluginId = data.plugin_id || 'builtin.http_request';
+    const selectedPlugin = findPluginManifest(plugins, pluginId);
     return (
       <>
         <div className="property-section">
-          <h4 className="property-section-title">플러그인 선택</h4>
+          <h4 className="property-section-title">플러그인</h4>
+          {selectedPlugin && (
+            <div className="selected-plugin-summary">
+              <div className="selected-plugin-icon">
+                <PluginIcon icon={selectedPlugin.icon} size={18} />
+              </div>
+              <div>
+                <div className="selected-plugin-name">{selectedPlugin.display_name}</div>
+                <div className="selected-plugin-meta">{selectedPlugin.category}</div>
+              </div>
+            </div>
+          )}
           <Select
-            label="Connector Type"
+            label="호환 선택"
             value={pluginId}
-            onChange={(e) => onUpdate(node.id, { ...data, plugin_id: e.target.value })}
-            options={[
-              { value: 'builtin.http_request', label: 'HTTP Request (Built-in)' },
-              { value: 'connector.slack', label: 'Slack Alerter (Mock)' },
-              { value: 'connector.acra', label: 'ACRA Security Assessor (Mock)' },
-              { value: 'connector.nit', label: 'NIT VM Provisioner (Mock)' },
-            ]}
+            onChange={(e) => {
+              const nextPlugin = findPluginManifest(plugins, e.target.value);
+              onUpdate(node.id, {
+                ...data,
+                ...getPluginConfigDefaults(nextPlugin),
+                label: nextPlugin?.display_name || data.label,
+                description: nextPlugin?.description || data.description,
+                icon: nextPlugin?.icon || data.icon,
+                category: nextPlugin?.category || data.category,
+                plugin_id: e.target.value,
+                plugin_version: nextPlugin?.version || data.plugin_version,
+                timeout: nextPlugin?.timeout_ms || data.timeout,
+                retryCount: nextPlugin?.retry_policy?.max_attempts || data.retryCount,
+              });
+            }}
+            options={buildPluginOptions(plugins)}
             fullWidth
           />
         </div>
 
-        {pluginId === 'builtin.http_request' && (
+        {selectedPlugin ? (
           <div className="property-section">
-            <h4 className="property-section-title">HTTP 설정</h4>
-            <Input
-              label="URL"
-              placeholder="https://api.example.com/endpoint"
-              value={data.url || ''}
-              onChange={(e) => onUpdate(node.id, { ...data, url: e.target.value })}
-              fullWidth
-            />
-            <Select
-              label="HTTP Method"
-              value={data.method || 'GET'}
-              onChange={(e) => onUpdate(node.id, { ...data, method: e.target.value })}
-              options={[
-                { value: 'GET', label: 'GET' },
-                { value: 'POST', label: 'POST' },
-                { value: 'PUT', label: 'PUT' },
-                { value: 'PATCH', label: 'PATCH' },
-                { value: 'DELETE', label: 'DELETE' },
-              ]}
-              fullWidth
-            />
-            <Input
-              label="Headers (JSON)"
-              placeholder='{"Content-Type": "application/json"}'
-              value={data.headers || ''}
-              onChange={(e) => onUpdate(node.id, { ...data, headers: e.target.value })}
-              fullWidth
-            />
+            <h4 className="property-section-title">플러그인 설정</h4>
+            {renderPluginConfigFields(selectedPlugin, data, (nextData) => onUpdate(node.id, nextData))}
           </div>
-        )}
-
-        {pluginId === 'connector.slack' && (
+        ) : (
           <div className="property-section">
-            <h4 className="property-section-title">Slack Alerter 설정</h4>
+            <h4 className="property-section-title">레거시 설정</h4>
             <Input
               label="Message"
-              placeholder="보낼 알림 메시지"
               value={data.message || ''}
               onChange={(e) => onUpdate(node.id, { ...data, message: e.target.value })}
               fullWidth
             />
-          </div>
-        )}
-
-        {pluginId === 'connector.acra' && (
-          <div className="property-section">
-            <h4 className="property-section-title">ACRA Assessor 설정</h4>
-            <div style={{ fontSize: '11px', color: 'var(--text-secondary)', padding: '10px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
-              🛡️ ACRA 보안 등급 검수 및 취약점 검증을 수행합니다. (자동 Mock 승인)
-            </div>
-          </div>
-        )}
-
-        {pluginId === 'connector.nit' && (
-          <div className="property-section">
-            <h4 className="property-section-title">NIT Provisioner 설정</h4>
-            <div style={{ fontSize: '11px', color: 'var(--text-secondary)', padding: '10px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
-              💻 사내 IT 클라우드에 신규 가상 환경 및 리소스를 생성합니다. (자동 Mock 할당)
-            </div>
           </div>
         )}
 
@@ -285,3 +262,131 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({ node, on
     </div>
   );
 };
+
+function findPluginManifest(plugins: PluginManifest[], pluginId: string) {
+  const legacyAliases: Record<string, string> = {
+    'connector.slack': 'connector.slack.send_message',
+    'connector.acra': 'connector.acra.grant_permission',
+    'connector.nit': 'connector.nit.create_issue',
+  };
+  return plugins.find((plugin) => plugin.plugin_id === (legacyAliases[pluginId] || pluginId));
+}
+
+function buildPluginOptions(plugins: PluginManifest[]) {
+  const options = plugins.map((plugin) => ({
+    value: plugin.plugin_id,
+    label: plugin.display_name,
+  }));
+
+  return [
+    ...options,
+    { value: 'connector.slack', label: 'Slack Alerter (Legacy Mock)' },
+    { value: 'connector.acra', label: 'ACRA Security Assessor (Legacy Mock)' },
+    { value: 'connector.nit', label: 'NIT VM Provisioner (Legacy Mock)' },
+  ];
+}
+
+function renderPluginConfigFields(
+  plugin: PluginManifest,
+  data: Record<string, any>,
+  onUpdate: (data: Partial<CustomNodeData>) => void,
+) {
+  const required = new Set(plugin.config_schema.required || []);
+  const entries = Object.entries(plugin.config_schema.properties || {});
+
+  if (entries.length === 0) {
+    return <div className="property-value-readonly">No configuration</div>;
+  }
+
+  return entries.map(([key, property]) => {
+    const value = data[key] ?? property.default ?? '';
+    const label = property.title || key;
+    const isRequired = required.has(key);
+    const helperText = property.description;
+
+    if (property.enum?.length) {
+      return (
+        <Select
+          key={key}
+          label={label}
+          value={String(value)}
+          onChange={(e) => onUpdate({ ...data, [key]: e.target.value })}
+          options={property.enum.map((item) => ({ value: item, label: item }))}
+          helperText={helperText}
+          required={isRequired}
+          fullWidth
+        />
+      );
+    }
+
+    if (property.type === 'boolean') {
+      return (
+        <Checkbox
+          key={key}
+          label={label}
+          checked={Boolean(value)}
+          onChange={(e) => onUpdate({ ...data, [key]: e.target.checked })}
+        />
+      );
+    }
+
+    if (property.type === 'object' || property.type === 'array') {
+      return (
+        <div className="property-group" key={key}>
+          <label className="property-label">
+            {label}
+            {isRequired && <span className="input-required">*</span>}
+          </label>
+          <textarea
+            className="property-textarea"
+            value={typeof value === 'string' ? value : JSON.stringify(value || {}, null, 2)}
+            onChange={(e) => onUpdate({ ...data, [key]: parseJsonLoose(e.target.value) })}
+          />
+          {helperText && <div className="property-helper-text">{helperText}</div>}
+        </div>
+      );
+    }
+
+    return (
+      <Input
+        key={key}
+        label={label}
+        type={property.type === 'integer' || property.type === 'number' ? 'number' : 'text'}
+        value={value}
+        onChange={(e) => onUpdate({ ...data, [key]: normalizeInputValue(e.target.value, property) })}
+        helperText={helperText}
+        required={isRequired}
+        fullWidth
+      />
+    );
+  });
+}
+
+function normalizeInputValue(value: string, property: PluginJsonSchemaProperty) {
+  if (property.type === 'integer') {
+    return value === '' ? '' : Number.parseInt(value, 10);
+  }
+  if (property.type === 'number') {
+    return value === '' ? '' : Number.parseFloat(value);
+  }
+  return value;
+}
+
+function parseJsonLoose(value: string) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function getPluginConfigDefaults(plugin?: PluginManifest): Partial<CustomNodeData> {
+  if (!plugin) return {};
+  const defaults: Record<string, unknown> = {};
+  Object.entries(plugin.config_schema.properties || {}).forEach(([key, property]) => {
+    if (property.default !== undefined) {
+      defaults[key] = property.default;
+    }
+  });
+  return defaults as Partial<CustomNodeData>;
+}

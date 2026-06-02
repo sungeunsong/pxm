@@ -4,6 +4,7 @@ import { InstancesModule } from './instances/instances.module';
 import { DebugModule } from './debug/debug.module';
 import { TemplatesModule } from './templates/templates.module';
 import { TasksModule } from './tasks/tasks.module';
+import { PluginsModule } from './plugins/plugins.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { TasksModule } from './tasks/tasks.module';
     DebugModule,
     TemplatesModule,
     TasksModule,
+    PluginsModule,
   ],
 })
 export class AppModule {}

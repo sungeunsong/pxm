@@ -1,0 +1,37 @@
+{
+  "plugin_id": "connector.hr.lookup_user",
+  "version": "1.0.0",
+  "display_name": "HR Lookup User",
+  "description": "Look up user profile and approval-line metadata from HR.",
+  "category": "People",
+  "node_type": "service",
+  "icon": "user-search",
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "userTemplate": { "type": "string", "title": "User Template" },
+      "includeManager": { "type": "boolean", "title": "Include Manager", "default": true }
+    },
+    "required": ["userTemplate"]
+  },
+  "executor_type": "hosted",
+  "executor_ref": "pxm-plugin-host:connector.hr.lookup_user",
+  "secrets_policy": {
+    "required": {
+      "api_token": "secret://hr/api_token"
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "department": { "type": "string" },
+      "manager": { "type": "string" }
+    }
+  },
+  "timeout_ms": 5000,
+  "retry_policy": {
+    "max_attempts": 2,
+    "backoff_ms": 1000
+  },
+  "tags": ["hr", "people", "lookup"]
+}

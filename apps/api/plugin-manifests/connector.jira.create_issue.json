@@ -1,0 +1,37 @@
+{
+  "plugin_id": "connector.jira.create_issue",
+  "version": "1.0.0",
+  "display_name": "Jira Create Issue",
+  "description": "Create a Jira issue from workflow context.",
+  "category": "Collaboration",
+  "node_type": "service",
+  "icon": "clipboard-list",
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "projectKey": { "type": "string", "title": "Project Key" },
+      "issueType": { "type": "string", "title": "Issue Type", "default": "Task" },
+      "summaryTemplate": { "type": "string", "title": "Summary Template" }
+    },
+    "required": ["projectKey", "summaryTemplate"]
+  },
+  "executor_type": "hosted",
+  "executor_ref": "pxm-plugin-host:connector.jira.create_issue",
+  "secrets_policy": {
+    "required": {
+      "api_token": "secret://jira/api_token"
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "issueKey": { "type": "string" }
+    }
+  },
+  "timeout_ms": 7000,
+  "retry_policy": {
+    "max_attempts": 3,
+    "backoff_ms": 2000
+  },
+  "tags": ["jira", "issue", "collaboration"]
+}

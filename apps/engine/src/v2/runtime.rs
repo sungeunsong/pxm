@@ -87,6 +87,55 @@ impl V2RetryPolicy {
         let jitter: f64 = rand::thread_rng().gen_range(-jitter_range..=jitter_range);
         ((capped + jitter).max(100.0)) as u64
     }
+
+    pub fn from_node_config(config: &Value) -> Self {
+        let mut policy = Self::from_env();
+
+        if let Some(max_attempts) = config
+            .get("retryCount")
+            .or_else(|| config.get("retry_count"))
+            .or_else(|| {
+                config
+                    .get("retry_policy")
+                    .and_then(|retry| retry.get("max_attempts"))
+            })
+            .or_else(|| {
+                config
+                    .get("retryPolicy")
+                    .and_then(|retry| retry.get("max_attempts"))
+            })
+            .and_then(|value| value.as_i64())
+        {
+            policy.max_attempts = max_attempts.max(0) as i32;
+        }
+
+        if let Some(backoff_ms) = config
+            .get("retryDelay")
+            .or_else(|| config.get("retry_delay_ms"))
+            .or_else(|| {
+                config
+                    .get("retry_policy")
+                    .and_then(|retry| retry.get("backoff_ms"))
+            })
+            .or_else(|| {
+                config
+                    .get("retryPolicy")
+                    .and_then(|retry| retry.get("backoff_ms"))
+            })
+            .and_then(|value| value.as_u64())
+        {
+            policy.initial_delay_ms = backoff_ms;
+        }
+
+        if matches!(
+            config.get("enableRetry").and_then(|value| value.as_bool()),
+            Some(false)
+        ) {
+            policy.max_attempts = 0;
+        }
+
+        policy
+    }
 }
 
 // ============================================================
@@ -308,7 +357,7 @@ fn resolve_approval_assignment(node: &NodeDef, context: &Value) -> (String, Valu
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_approval_assignment;
+    use super::{resolve_approval_assignment, V2RetryPolicy};
     use crate::v2::types::NodeDef;
     use serde_json::json;
 
@@ -366,6 +415,29 @@ mod tests {
             resolve_approval_assignment(&node, &json!({"formData": {"approver": "director"}}));
         assert_eq!(assignee, "director");
         assert_eq!(payload["approval_model"], "requester_selected");
+    }
+
+    #[test]
+    fn resolves_retry_policy_from_plugin_node_config() {
+        let policy = V2RetryPolicy::from_node_config(&json!({
+            "retryCount": 2,
+            "retry_policy": {
+                "backoff_ms": 250
+            }
+        }));
+
+        assert_eq!(policy.max_attempts, 2);
+        assert_eq!(policy.initial_delay_ms, 250);
+    }
+
+    #[test]
+    fn disables_retry_from_plugin_node_config() {
+        let policy = V2RetryPolicy::from_node_config(&json!({
+            "enableRetry": false,
+            "retryCount": 3
+        }));
+
+        assert_eq!(policy.max_attempts, 0);
     }
 }
 
@@ -1132,7 +1204,7 @@ async fn execute_token_flow(
                         }
                     }
                     Err(err) => {
-                        let retry_policy = V2RetryPolicy::from_env();
+                        let retry_policy = V2RetryPolicy::from_node_config(&node.config);
                         if attempt < retry_policy.max_attempts {
                             let delay_ms = retry_policy.calculate_backoff(attempt);
                             let delay_sec = delay_ms as f64 / 1000.0;

@@ -110,6 +110,91 @@
   color: var(--text-primary);
 }
 
+.palette-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  height: 34px;
+  padding: 0 var(--space-sm);
+  margin-bottom: var(--space-md);
+  color: var(--text-tertiary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.palette-search input {
+  width: 100%;
+  min-width: 0;
+  color: var(--text-primary);
+  background: transparent;
+  border: 0;
+  outline: 0;
+  font-size: var(--font-size-sm);
+}
+
+.plugin-category {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+.plugin-category-title {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+}
+
+.plugin-palette-node {
+  position: relative;
+  min-height: 54px;
+  padding-right: 34px;
+}
+
+.plugin-node-icon {
+  background: var(--node-service);
+}
+
+.palette-node-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+
+.palette-node-caption {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.favorite-plugin-button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.favorite-plugin-button:hover,
+.favorite-plugin-button.active {
+  color: var(--color-warning);
+  background: var(--bg-elevated);
+}
+
 /* ============================================
    Canvas (Center)
    ============================================ */

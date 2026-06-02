@@ -1,0 +1,36 @@
+{
+  "plugin_id": "connector.slack.send_message",
+  "version": "1.0.0",
+  "display_name": "Slack Send Message",
+  "description": "Send a Slack message using workflow context.",
+  "category": "Collaboration",
+  "node_type": "service",
+  "icon": "message-square",
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "channel": { "type": "string", "title": "Channel" },
+      "message": { "type": "string", "title": "Message" }
+    },
+    "required": ["message"]
+  },
+  "executor_type": "hosted",
+  "executor_ref": "pxm-plugin-host:connector.slack.send_message",
+  "secrets_policy": {
+    "optional": {
+      "bot_token": "secret://slack/bot_token"
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "message_ts": { "type": "string" }
+    }
+  },
+  "timeout_ms": 5000,
+  "retry_policy": {
+    "max_attempts": 3,
+    "backoff_ms": 1000
+  },
+  "tags": ["slack", "message", "notification"]
+}
