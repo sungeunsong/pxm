@@ -108,3 +108,72 @@
   color: var(--text-tertiary);
   font-size: var(--font-size-xs);
 }
+
+.gateway-rule-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.gateway-rule-list-title {
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.gateway-rule-note,
+.gateway-rule-empty {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+}
+
+.gateway-rule-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-sm);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.gateway-rule-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.gateway-rule-label {
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.gateway-rule-badge {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-success) 30%, transparent);
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+}
+
+.gateway-rule-target,
+.gateway-rule-condition {
+  color: var(--text-secondary);
+  font-family: 'Courier New', monospace;
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}

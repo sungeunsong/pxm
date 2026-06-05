@@ -95,7 +95,11 @@ export class InstancesController {
               event: r.event_type, // NODE_STARTED 같은 타입이 event명이 됨
               data: {
                 id: r.id,
+                source: r.source,
                 instance_id: r.instance_id,
+                token_id: r.token_id,
+                node_id: r.node_id,
+                node_label: r.node_label,
                 type: r.event_type,  // type으로 통일
                 payload: r.payload,
                 created_at: r.created_at,
@@ -125,7 +129,11 @@ export class InstancesController {
               event: r.event_type,
               data: {
                 id: r.id,
+                source: r.source,
                 instance_id: r.instance_id,
+                token_id: r.token_id,
+                node_id: r.node_id,
+                node_label: r.node_label,
                 type: r.event_type,  // type으로 통일
                 payload: r.payload,
                 created_at: r.created_at,

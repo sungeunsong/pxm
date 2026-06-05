@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useRef } from 'react';
 import type { Node } from 'reactflow';
-import { CheckSquare, Clock, Diamond, Inbox, Play, Search, Square, Star } from 'lucide-react';
+import type { Edge } from 'reactflow';
+import { CheckSquare, CircleCheck, Clock, Diamond, Inbox, Play, Search, Star } from 'lucide-react';
 import { Button } from '../components/Button';
 import { Header } from '../components/Header';
 import { FlowCanvas } from './FlowCanvas';
@@ -27,6 +28,7 @@ export interface FlowDesignerProps {
 export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, initialMonitorInstanceId }) => {
   const [darkMode, setDarkMode] = useState(true);
   const [selectedNode, setSelectedNode] = useState<Node<CustomNodeData> | null>(null);
+  const [canvasEdges, setCanvasEdges] = useState<Edge[]>([]);
   const [currentTemplateId, setCurrentTemplateId] = useState<string | null>(null);
   const [currentTemplateName, setCurrentTemplateName] = useState<string>('');
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
@@ -150,7 +152,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
         console.log('SSE Event (Canvas):', data);
 
         const nodes = flowCanvasRef.current?.getNodes() || [];
-        let targetNodeId = data.payload?.node_id;
+        let targetNodeId = data.node_id || data.payload?.node_id;
 
         // ID 불일치 대응: 이벤트의 노드 ID가 캔버스에 없으면, 실행 중인 노드를 찾아 매핑
         if (targetNodeId && !nodes.find(n => n.id === targetNodeId)) {
@@ -354,6 +356,10 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
     flowCanvasRef.current?.updateNodeData(nodeId, data);
   };
 
+  const handleGatewayEdgeUpdate = (edgeId: string, data: Partial<Edge>) => {
+    flowCanvasRef.current?.updateEdgeData(edgeId, data);
+  };
+
   const onDragStart = (event: React.DragEvent, nodeType: string, label: string, extraData?: Partial<CustomNodeData>) => {
     const nodeData: CustomNodeData = {
       label,
@@ -423,6 +429,13 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
     }, {});
   }, [filteredPlugins, favoritePluginIds]);
 
+  const selectedGatewayEdges = useMemo(() => {
+    if (!selectedNode || selectedNode.data.nodeType !== 'gateway') {
+      return [];
+    }
+    return canvasEdges.filter((edge) => edge.source === selectedNode.id);
+  }, [canvasEdges, selectedNode]);
+
   return (
     <div className="flow-designer">
       <Header
@@ -467,7 +480,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
                   <span className="palette-node-label">Approval</span>
                 </div>
                 <div className="palette-node" draggable onDragStart={(e) => onDragStart(e, 'end', 'End')}>
-                  <div className="palette-node-icon" style={{ background: 'var(--node-end)' }}><Square size={16} fill="currentColor" /></div>
+                  <div className="palette-node-icon" style={{ background: 'var(--node-end)' }}><CircleCheck size={16} /></div>
                   <span className="palette-node-label">End</span>
                 </div>
               </div>
@@ -514,7 +527,11 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
         </aside>
 
         <main className="canvas">
-          <FlowCanvas ref={flowCanvasRef} onNodeSelect={handleNodeSelect} />
+          <FlowCanvas
+            ref={flowCanvasRef}
+            onNodeSelect={handleNodeSelect}
+            onEdgesChange={setCanvasEdges}
+          />
         </main>
 
         <aside className="properties-panel">
@@ -541,6 +558,8 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
                     node={selectedNode}
                     onUpdate={handleNodeUpdate}
                     plugins={plugins}
+                    gatewayEdges={selectedGatewayEdges}
+                    onGatewayEdgeUpdate={handleGatewayEdgeUpdate}
                   />
                 ) : (
                   <div className="properties-placeholder">

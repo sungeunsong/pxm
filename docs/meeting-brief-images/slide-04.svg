@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#64748b"/>
+    </marker>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8fafc"/>
+      <stop offset="1" stop-color="#eef4ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <rect x="42" y="38" width="1516" height="824" rx="30" fill="#ffffff" stroke="#dbe4f0"/>
+  <text x="96" y="112" font-size="24" font-weight="800" fill="#2563eb">PXM BPM PLATFORM</text>
+  <text x="96" y="184" font-size="54" font-weight="900" fill="#0f172a">BPM 실행 흐름</text>
+  <text x="98" y="229" font-size="28" font-weight="600" fill="#64748b">Start -&gt; Approval -&gt; Service Plugin -&gt; End</text>
+  
+        <circle cx="168" cy="220" r="26" fill="#2563eb"/>
+        <text x="168" y="230" text-anchor="middle" font-size="24" font-weight="900" fill="#ffffff">1</text>
+        <text x="218" y="230" font-size="31" font-weight="700" fill="#1e293b">Web에서 workflow template 설계</text>
+      
+
+        <circle cx="168" cy="296" r="26" fill="#2563eb"/>
+        <text x="168" y="306" text-anchor="middle" font-size="24" font-weight="900" fill="#ffffff">2</text>
+        <text x="218" y="306" font-size="31" font-weight="700" fill="#1e293b">API가 template 저장 및 instance 생성</text>
+      
+
+        <circle cx="168" cy="372" r="26" fill="#2563eb"/>
+        <text x="168" y="382" text-anchor="middle" font-size="24" font-weight="900" fill="#ffffff">3</text>
+        <text x="218" y="382" font-size="31" font-weight="700" fill="#1e293b">Engine이 job polling 후 token 실행</text>
+      
+
+        <circle cx="168" cy="448" r="26" fill="#2563eb"/>
+        <text x="168" y="458" text-anchor="middle" font-size="24" font-weight="900" fill="#ffffff">4</text>
+        <text x="218" y="458" font-size="31" font-weight="700" fill="#1e293b">Approval node에서 task 생성 후 대기</text>
+      
+
+        <circle cx="168" cy="524" r="26" fill="#2563eb"/>
+        <text x="168" y="534" text-anchor="middle" font-size="24" font-weight="900" fill="#ffffff">5</text>
+        <text x="218" y="534" font-size="31" font-weight="700" fill="#1e293b">승인 완료 시 resume job 처리</text>
+      
+
+        <circle cx="168" cy="600" r="26" fill="#2563eb"/>
+        <text x="168" y="610" text-anchor="middle" font-size="24" font-weight="900" fill="#ffffff">6</text>
+        <text x="218" y="610" font-size="31" font-weight="700" fill="#1e293b">Service node에서 plugin_id 기반 executor 호출</text>
+      
+
+        <circle cx="168" cy="676" r="26" fill="#2563eb"/>
+        <text x="168" y="686" text-anchor="middle" font-size="24" font-weight="900" fill="#ffffff">7</text>
+        <text x="218" y="686" font-size="31" font-weight="700" fill="#1e293b">모든 node 완료 시 instance COMPLETED</text>
+      
+  <text x="1460" y="820" font-size="22" font-weight="800" fill="#94a3b8">04 / 10</text>
+</svg>

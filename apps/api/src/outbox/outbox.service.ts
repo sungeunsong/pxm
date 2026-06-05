@@ -3,7 +3,11 @@ import { OutboxRepositoryPort } from '../db/ports/db.ports';
 
 export type OutboxRow = {
   id: number;
+  source?: string;
   instance_id: string;
+  token_id?: string | null;
+  node_id?: string | null;
+  node_label?: string | null;
   event_type: string;
   payload: any;
   created_at: string;

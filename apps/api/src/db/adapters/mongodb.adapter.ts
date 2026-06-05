@@ -351,9 +351,12 @@ export class MongodbAdapter
         assignee: t.assignee,
         status: t.status,
         payload: t.payload,
+        process_definition_id: inst?.process_definition_id || null,
+        template_name: inst?.context?.template_name || null,
+        instance_status: inst?.status || null,
         created_at: t.created_at,
         updated_at: t.updated_at,
-        form_data: inst?.context?.formData || null,
+        form_data: inst?.context?.formData || {},
       });
     }
 
@@ -395,29 +398,41 @@ export class MongodbAdapter
     limit = 100,
   ): Promise<any[]> {
     const nodeLabels = await this.loadNodeLabels(instanceId);
-    const docs = await this.db
-      .collection<any>('v2_event_outbox')
-      .find({ instance_id: instanceId })
-      .sort({ created_at: 1 })
-      .toArray();
+    const [logs, outbox] = await Promise.all([
+      this.db
+        .collection<any>('v2_execution_logs')
+        .find({ instance_id: instanceId })
+        .sort({ created_at: 1 })
+        .toArray(),
+      this.db
+        .collection<any>('v2_event_outbox')
+        .find({ instance_id: instanceId })
+        .sort({ created_at: 1 })
+        .toArray(),
+    ]);
 
-    const mapped = docs.map((doc, idx) => {
-      const virtualId = idx + 1;
-      const nodeId = doc.node_id || doc.payload?.node_id || null;
-      return {
-        id: virtualId,
-        instance_id: doc.instance_id,
-        token_id: doc.token_id || null,
-        node_id: nodeId,
-        node_label: nodeId ? nodeLabels.get(nodeId) || nodeId : null,
-        event_type: doc.event_type,
-        type: doc.event_type,
-        payload: doc.payload,
-        created_at: doc.created_at,
-      };
-    });
-
-    return mapped.filter((item) => item.id > afterId).slice(0, limit);
+    return [
+      ...logs.map((doc) => ({ ...doc, source: 'execution_log' })),
+      ...outbox.map((doc) => ({ ...doc, source: 'outbox' })),
+    ]
+      .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
+      .map((doc, idx) => {
+        const nodeId = doc.node_id || doc.payload?.node_id || null;
+        return {
+          id: idx + 1,
+          source: doc.source,
+          instance_id: doc.instance_id,
+          token_id: doc.token_id || null,
+          node_id: nodeId,
+          node_label: nodeId ? nodeLabels.get(nodeId) || nodeId : null,
+          event_type: doc.event_type,
+          type: doc.event_type,
+          payload: doc.payload || {},
+          created_at: doc.created_at,
+        };
+      })
+      .filter((item) => item.id > afterId)
+      .slice(0, limit);
   }
 
   async fetchTrace(instanceId: string, limit = 200): Promise<any[]> {

@@ -1,5 +1,6 @@
 import React from 'react';
 import type { Node } from 'reactflow';
+import type { Edge } from 'reactflow';
 import { Input, Select, Checkbox } from '../components';
 import type { CustomNodeData, FormSchema } from './form-types';
 import type { PluginManifest, PluginJsonSchemaProperty } from '../api/plugins';
@@ -11,9 +12,17 @@ export interface NodePropertiesFormProps {
   node: Node<CustomNodeData>;
   onUpdate: (nodeId: string, data: Partial<CustomNodeData>) => void;
   plugins?: PluginManifest[];
+  gatewayEdges?: Edge[];
+  onGatewayEdgeUpdate?: (edgeId: string, data: Partial<Edge>) => void;
 }
 
-export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({ node, onUpdate, plugins = [] }) => {
+export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
+  node,
+  onUpdate,
+  plugins = [],
+  gatewayEdges = [],
+  onGatewayEdgeUpdate,
+}) => {
   const handleLabelChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onUpdate(node.id, { label: e.target.value });
   };
@@ -143,12 +152,13 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({ node, on
   // Gateway 노드 속성
   const renderGatewayProperties = () => {
     const data = node.data as any;
+    const gatewayType = data.gatewayType || 'exclusive';
     return (
       <div className="property-section">
         <h4 className="property-section-title">게이트웨이 설정</h4>
         <Select
           label="Gateway Type"
-          value={data.gatewayType || 'exclusive'}
+          value={gatewayType}
           onChange={(e) => onUpdate(node.id, { ...data, gatewayType: e.target.value })}
           options={[
             { value: 'exclusive', label: 'Exclusive (XOR)' },
@@ -157,14 +167,7 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({ node, on
           ]}
           fullWidth
         />
-        <Input
-          label="Condition Expression"
-          placeholder="status === 'approved'"
-          value={data.condition || ''}
-          onChange={(e) => onUpdate(node.id, { ...data, condition: e.target.value })}
-          helperText="JavaScript 표현식"
-          fullWidth
-        />
+        {renderGatewayEdgeRules(gatewayType, gatewayEdges, onGatewayEdgeUpdate)}
       </div>
     );
   };
@@ -270,6 +273,104 @@ function findPluginManifest(plugins: PluginManifest[], pluginId: string) {
     'connector.nit': 'connector.nit.create_issue',
   };
   return plugins.find((plugin) => plugin.plugin_id === (legacyAliases[pluginId] || pluginId));
+}
+
+function renderGatewayEdgeRules(
+  gatewayType: string,
+  gatewayEdges: Edge[],
+  onGatewayEdgeUpdate?: (edgeId: string, data: Partial<Edge>) => void,
+) {
+  const isParallel = gatewayType === 'parallel';
+  return (
+    <div className="gateway-rule-list">
+      <div className="gateway-rule-list-title">Outgoing Edge Rules</div>
+      <div className="gateway-rule-note">
+        {isParallel
+          ? 'AND 게이트웨이는 조건을 평가하지 않고 모든 outgoing edge를 실행합니다.'
+          : 'XOR/OR 조건은 나가는 엣지별로 입력합니다. 값은 edge.data.condition에 저장됩니다.'}
+      </div>
+      {gatewayEdges.length === 0 ? (
+        <div className="gateway-rule-empty">연결된 outgoing edge가 없습니다.</div>
+      ) : (
+        gatewayEdges.map((edge, index) => {
+          const condition = getEdgeCondition(edge);
+          const isDefault = Boolean((edge.data as any)?.isDefault);
+          const label = getEdgeLabel(edge, index);
+          return (
+            <div className="gateway-rule-item" key={edge.id}>
+              <div className="gateway-rule-header">
+                <span className="gateway-rule-label">{label}</span>
+                {isDefault && <span className="gateway-rule-badge">default</span>}
+              </div>
+              <div className="gateway-rule-target">to: {edge.target}</div>
+              <Input
+                label="Edge Label"
+                value={label}
+                onChange={(event) =>
+                  onGatewayEdgeUpdate?.(edge.id, {
+                    label: event.target.value,
+                    data: { label: event.target.value },
+                  })
+                }
+                fullWidth
+              />
+              {isParallel ? (
+                <div className="gateway-rule-condition">condition: not used</div>
+              ) : (
+                <>
+                  <Input
+                    label="Condition Expression"
+                    placeholder="amount > 1000"
+                    value={condition}
+                    disabled={isDefault}
+                    onChange={(event) =>
+                      onGatewayEdgeUpdate?.(edge.id, {
+                        data: { condition: event.target.value },
+                      })
+                    }
+                    helperText={
+                      isDefault
+                        ? 'Default path는 조건식 없이 사용됩니다.'
+                        : '예: amount > 1000, status == approved'
+                    }
+                    fullWidth
+                  />
+                  <Checkbox
+                    label="Default path"
+                    checked={isDefault}
+                    onChange={(event) =>
+                      onGatewayEdgeUpdate?.(edge.id, {
+                        data: {
+                          isDefault: event.target.checked,
+                          condition: event.target.checked ? '' : condition,
+                        },
+                      })
+                    }
+                  />
+                </>
+              )}
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+}
+
+function getEdgeLabel(edge: Edge, index: number): string {
+  const dataLabel = (edge.data as any)?.label;
+  if (typeof edge.label === 'string' && edge.label.trim()) {
+    return edge.label;
+  }
+  if (typeof dataLabel === 'string' && dataLabel.trim()) {
+    return dataLabel;
+  }
+  return `Edge ${index + 1}`;
+}
+
+function getEdgeCondition(edge: Edge): string {
+  const condition = (edge.data as any)?.condition;
+  return typeof condition === 'string' ? condition : '';
 }
 
 function buildPluginOptions(plugins: PluginManifest[]) {

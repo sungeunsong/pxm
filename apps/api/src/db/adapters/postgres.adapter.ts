@@ -280,7 +280,10 @@ export class PostgresAdapter
     const { rows } = await this.pool.query(
       `SELECT t.*, 
               i.id as instance_id, 
-              (i.context->'formData')::jsonb as form_data 
+              i.process_definition_id,
+              i.status as instance_status,
+              i.context->>'template_name' as template_name,
+              COALESCE((i.context->'formData')::jsonb, '{}'::jsonb) as form_data
        FROM v2_tasks t
        JOIN v2_process_instances i ON t.instance_id = i.id
        WHERE t.assignee = $1 AND t.status = 'OPEN'
@@ -313,26 +316,58 @@ export class PostgresAdapter
     const nodeLabels = await this.loadNodeLabels(instanceId);
     const { rows } = await this.pool.query(
       `
-      SELECT
-        id,
-        instance_id,
-        token_id,
-        node_id,
-        event_type,
-        payload,
-        created_at
-      FROM v2_event_outbox
-      WHERE instance_id = $1::uuid
-        AND id > $2
+      SELECT *
+      FROM (
+        SELECT
+          row_number() OVER (ORDER BY created_at ASC, source ASC, source_id ASC)::int as id,
+          source,
+          source_id,
+          instance_id,
+          token_id,
+          node_id,
+          event_type,
+          payload,
+          created_at
+        FROM (
+          SELECT
+            id::text as source_id,
+            'execution_log' as source,
+            instance_id,
+            token_id,
+            node_id,
+            event_type,
+            payload,
+            created_at
+          FROM v2_execution_logs
+          WHERE instance_id = $1::uuid
+
+          UNION ALL
+
+          SELECT
+            id::text as source_id,
+            'outbox' as source,
+            instance_id,
+            token_id,
+            node_id,
+            event_type,
+            payload,
+            created_at
+          FROM v2_event_outbox
+          WHERE instance_id = $1::uuid
+        ) events
+      ) trace
+      WHERE id > $2
       ORDER BY id ASC
       LIMIT $3
       `,
       [instanceId, afterId, limit],
     );
+
     return rows.map((row) => ({
       ...row,
       node_label: row.node_id ? nodeLabels.get(row.node_id) || row.node_id : null,
       type: row.event_type,
+      payload: row.payload || {},
     }));
   }
 

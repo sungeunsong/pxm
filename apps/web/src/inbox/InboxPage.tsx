@@ -1,13 +1,13 @@
-import React, { useEffect, useState } from 'react';
-import { 
-  Check, 
-  X, 
-  Pause, 
-  RotateCcw, 
-  Search as SearchIcon, 
-  Filter, 
-  Download, 
-  FileText
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  ArrowLeft,
+  Check,
+  FileText,
+  Filter,
+  Pause,
+  RotateCcw,
+  Search as SearchIcon,
+  X,
 } from 'lucide-react';
 import { Button } from '../components/Button';
 import './InboxPage.css';
@@ -15,9 +15,13 @@ import './InboxPage.css';
 interface Task {
   id: string;
   instance_id: string;
+  process_definition_id?: string | null;
+  template_name?: string | null;
+  instance_status?: string | null;
   node_id: string;
   status: string;
-  form_data: Record<string, any>;
+  assignee?: string;
+  form_data?: Record<string, any>;
   created_at: string;
 }
 
@@ -31,25 +35,56 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
   const [loading, setLoading] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState<'pending' | 'completed' | 'rejected'>('pending');
   const [searchTerm, setSearchTerm] = useState('');
-  
-  // 의사 결정/처리 선택 상태
+  const [screen, setScreen] = useState<'list' | 'detail'>('list');
   const [decision, setDecision] = useState<'approve' | 'reject' | 'hold'>('approve');
   const [comment, setComment] = useState('요청 내용을 확인하였습니다. 승인합니다.');
   const [rejectReasonChecked, setRejectReasonChecked] = useState(false);
 
-  // 실시간 폴링 및 Task 갱신
+  const formatDate = (value?: string) => {
+    if (!value) return '-';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
+  };
+
+  const formatDateTime = (value?: string) => {
+    if (!value) return '-';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  };
+
+  const readField = (task: Task | null, keys: string[], fallback = '-') => {
+    if (!task) return fallback;
+    for (const key of keys) {
+      const value = task.form_data?.[key];
+      if (value !== undefined && value !== null && String(value).trim() !== '') {
+        return String(value);
+      }
+    }
+    return fallback;
+  };
+
+  const getTaskTitle = (task: Task | null) => {
+    if (!task) return '승인 요청';
+    return (
+      task.template_name ||
+      readField(task, ['요청 프로세스', 'processName', 'title', 'requestTitle'], '') ||
+      task.node_id ||
+      '승인 요청'
+    );
+  };
+
+  const getRequester = (task: Task | null) =>
+    readField(task, ['신청자', 'requester', 'requesterName', 'applicant'], task?.assignee || '-');
+
+  const getProcessLabel = (task: Task | null) =>
+    task?.template_name || readField(task, ['요청 프로세스', 'processName'], task?.process_definition_id || '-');
+
   const fetchTasks = async () => {
     setLoading(true);
     try {
       const res = await fetch('/api/tasks?assignee=admin');
-      if (!res.ok) throw new Error('Failed to fetch');
-      const data = await res.json();
-      setTasks(data);
-      
-      // 첫 번째 Task 자동 선택
-      if (data.length > 0 && !selectedTask) {
-        setSelectedTask(data[0]);
-      }
+      if (!res.ok) throw new Error('Failed to fetch tasks');
+      setTasks(await res.json());
     } catch (error) {
       console.error('Failed to fetch tasks:', error);
     } finally {
@@ -63,603 +98,427 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
     return () => clearInterval(interval);
   }, []);
 
-  // 처리 제출
+  const visibleTasks = useMemo(() => {
+    if (activeSubTab !== 'pending') return [];
+    const q = searchTerm.trim().toLowerCase();
+    if (!q) return tasks;
+    return tasks.filter((task) =>
+      [getTaskTitle(task), getRequester(task), task.instance_id, task.node_id]
+        .join(' ')
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [activeSubTab, searchTerm, tasks]);
+
+  useEffect(() => {
+    if (!selectedTask) return;
+    const refreshedTask = tasks.find((task) => task.id === selectedTask.id);
+    if (refreshedTask) {
+      setSelectedTask(refreshedTask);
+      return;
+    }
+    setSelectedTask(null);
+    setScreen('list');
+  }, [tasks]);
+
+  const openTask = (task: Task) => {
+    setSelectedTask(task);
+    setDecision('approve');
+    setComment('요청 내용을 확인하였습니다. 승인합니다.');
+    setRejectReasonChecked(false);
+    setScreen('detail');
+  };
+
   const handleProcessDecision = async () => {
     if (!selectedTask) return;
-    
-    const action = decision === 'hold' ? 'approve' : (decision === 'reject' ? 'reject' : 'approve');
+
+    const action = decision === 'reject' ? 'reject' : 'approve';
     const displayActionText = decision === 'approve' ? '승인' : decision === 'reject' ? '반려' : '보류';
 
-    try {
-      if (!confirm(`선택한 문서를 [${displayActionText}] 처리하시겠습니까?\n의견: ${comment}`)) return;
+    if (!confirm(`선택한 문서를 [${displayActionText}] 처리하시겠습니까?\n의견: ${comment}`)) return;
 
+    try {
       const res = await fetch(`/api/tasks/${selectedTask.id}/complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          action,
-          comment: comment 
-        }),
+        body: JSON.stringify({ action, comment }),
       });
 
-      if (res.ok) {
-        alert(`성공적으로 [${displayActionText}] 처리되었습니다.`);
-        setSelectedTask(null);
-        fetchTasks();
-      } else {
-        alert('처리 중 오류가 발생했습니다.');
-      }
+      if (!res.ok) throw new Error('Failed to complete task');
+
+      alert(`성공적으로 [${displayActionText}] 처리되었습니다.`);
+      setSelectedTask(null);
+      setScreen('list');
+      fetchTasks();
     } catch (error) {
       console.error('Failed to process task:', error);
+      alert('처리 중 오류가 발생했습니다.');
     }
   };
 
-  // 대기 중인 Task가 없을 때 보여줄 프리미엄 목 데이터 생성
-  const dummyTask: Task = {
-    id: "dummy-req-20250520",
-    instance_id: "REQ-20250520-0001",
-    node_id: "approval_node_final",
-    status: "WAITING",
-    form_data: {
-      "신청자": "이철훈 사원 (IT운영팀)",
-      "신청일시": "2025-05-20 10:15",
-      "요청 프로세스": "권한 신청 프로세스 v1.3",
-      "요청 ID": "REQ-20250520-0001",
-      "요청 시스템": "ERP DB (ERP-PROD)",
-      "요청 권한": "SELECT, INSERT, UPDATE (읽기/쓰기)",
-      "요청 사유": "월간 리포트 생성 및 데이터 분석을 위한 접근 권한이 필요합니다.",
-      "시스템명": "ERP DB (ERP-PROD)",
-      "접속 정보": "172.16.10.25:1521 / erpprod",
-      "시스템 구분": "데이터베이스",
-      "운영 환경": "운영 (PROD)"
-    },
-    created_at: "2026-05-22T01:15:00.000Z"
-  };
+  const renderList = () => (
+    <div className="inbox-list-page">
+      <div className="inbox-list-header">
+        <div>
+          <h2>내 결재함</h2>
+          <p>승인 대기 중인 작업을 확인하고 상세 화면에서 처리합니다.</p>
+        </div>
+        <button className="icon-action-btn" onClick={fetchTasks} title="새로고침">
+          <RotateCcw size={14} />
+        </button>
+      </div>
 
-  const currentActiveTask = selectedTask || (tasks.length > 0 ? tasks[0] : dummyTask);
+      <div className="sub-tabs">
+        <button
+          className={`sub-tab-btn ${activeSubTab === 'pending' ? 'active' : ''}`}
+          onClick={() => setActiveSubTab('pending')}
+        >
+          승인 대기 <span className="tab-count badge-pending">{tasks.length}</span>
+        </button>
+        <button
+          className={`sub-tab-btn ${activeSubTab === 'completed' ? 'active' : ''}`}
+          onClick={() => setActiveSubTab('completed')}
+        >
+          처리 완료 <span className="tab-count badge-completed">0</span>
+        </button>
+        <button
+          className={`sub-tab-btn ${activeSubTab === 'rejected' ? 'active' : ''}`}
+          onClick={() => setActiveSubTab('rejected')}
+        >
+          반려함 <span className="tab-count badge-rejected">0</span>
+        </button>
+      </div>
+
+      <div className="search-filter-bar">
+        <div className="select-wrapper">
+          <select className="form-select-sm">
+            <option>전체 프로세스</option>
+          </select>
+        </div>
+        <div className="search-input-wrap">
+          <SearchIcon size={13} className="search-icon-inside" />
+          <input
+            type="text"
+            placeholder="요청명, 신청자 검색"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </div>
+        <button className="icon-action-btn" title="필터">
+          <Filter size={13} />
+        </button>
+        {loading && <span className="loading-text">loading...</span>}
+      </div>
+
+      <div className="table-container">
+        <table className="inbox-table">
+          <thead>
+            <tr>
+              <th>요청명</th>
+              <th>신청자</th>
+              <th>요청일</th>
+              <th>담당 노드</th>
+              <th>상태</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visibleTasks.map((task) => (
+              <tr key={task.id} className="task-row-item" onClick={() => openTask(task)}>
+                <td>
+                  <div className="req-name-cell">
+                    <span className="req-tag">{task.node_id}</span>
+                    {getTaskTitle(task)}
+                  </div>
+                </td>
+                <td>{getRequester(task)}</td>
+                <td>{formatDate(task.created_at)}</td>
+                <td>{task.node_id}</td>
+                <td><span className="status-badge-outline pending">승인 대기</span></td>
+              </tr>
+            ))}
+
+            {visibleTasks.length === 0 && (
+              <tr>
+                <td colSpan={5} className="table-empty-cell">
+                  {activeSubTab === 'pending'
+                    ? '승인 대기 작업이 없습니다.'
+                    : '이 탭은 아직 실제 이력 API가 연결되지 않았습니다.'}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="pagination-bar">
+        <span>전체 {visibleTasks.length}건</span>
+        <div className="pagination-arrows">
+          <button disabled>&lt;</button>
+          <button className="active">1</button>
+          <button disabled>&gt;</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderDetail = () => {
+    if (!selectedTask) {
+      return (
+        <div className="no-task-selected-wrap">
+          <div className="no-task-selected-card">
+            <FileText size={44} className="empty-icon" />
+            <h4>선택된 결재 문서가 없습니다</h4>
+            <p>목록에서 결재할 대기 문서를 선택해 주세요.</p>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="inbox-detail-page">
+        <div className="inbox-detail-header">
+          <button className="back-to-list-btn" onClick={() => setScreen('list')}>
+            <ArrowLeft size={15} />
+            목록으로
+          </button>
+          <div>
+            <h2>{getTaskTitle(selectedTask)}</h2>
+            <p>{selectedTask.instance_id}</p>
+          </div>
+          <span className="status-badge-full orange">승인 대기</span>
+        </div>
+
+        <div className="detail-action-card">
+          <div className="inbox-section-compact detail-info-section">
+            <div className="section-title-wrap">
+              <h3>결재 상세</h3>
+              <span className="subtitle-desc">요청 내용을 검토합니다.</span>
+            </div>
+
+            <div className="details-card-body">
+              {onSwitchToDesigner && (
+                <button onClick={onSwitchToDesigner} className="view-designer-link">
+                  Flow Designer에서 템플릿 보기 &gt;
+                </button>
+              )}
+
+              <div className="info-block">
+                <h5>신청 정보</h5>
+                <div className="grid-info-2col">
+                  <div className="info-cell">
+                    <span className="info-label">신청자</span>
+                    <span className="info-val">{getRequester(selectedTask)}</span>
+                  </div>
+                  <div className="info-cell">
+                    <span className="info-label">신청일시</span>
+                    <span className="info-val">
+                      {readField(selectedTask, ['신청일시', 'requestedAt'], formatDateTime(selectedTask.created_at))}
+                    </span>
+                  </div>
+                  <div className="info-cell">
+                    <span className="info-label">프로세스</span>
+                    <span className="info-val">{getProcessLabel(selectedTask)}</span>
+                  </div>
+                  <div className="info-cell">
+                    <span className="info-label">요청 ID</span>
+                    <span className="info-val font-mono-style">{selectedTask.instance_id}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="info-block">
+                <h5>요청 내용</h5>
+                <div className="vertical-info-list">
+                  <div className="info-cell">
+                    <span className="info-label">요청 시스템</span>
+                    <span className="info-val">{readField(selectedTask, ['요청 시스템', 'system', 'targetSystem'])}</span>
+                  </div>
+                  <div className="info-cell">
+                    <span className="info-label">요청 권한</span>
+                    <span className="info-val highlighting-blue">
+                      {readField(selectedTask, ['요청 권한', 'permission', 'permissionScope'])}
+                    </span>
+                  </div>
+                  <div className="info-cell">
+                    <span className="info-label">요청 사유</span>
+                    <span className="info-val text-box-reason">
+                      {readField(selectedTask, ['요청 사유', 'purpose', 'reason', 'message'])}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="info-block">
+                <h5>대상 시스템</h5>
+                <div className="grid-info-2col">
+                  <div className="info-cell">
+                    <span className="info-label">시스템명</span>
+                    <span className="info-val">{readField(selectedTask, ['시스템명', 'systemName', 'targetSystem'])}</span>
+                  </div>
+                  <div className="info-cell">
+                    <span className="info-label">접속 정보</span>
+                    <span className="info-val font-mono-style">{readField(selectedTask, ['접속 정보', 'connectionInfo'])}</span>
+                  </div>
+                  <div className="info-cell">
+                    <span className="info-label">시스템 구분</span>
+                    <span className="info-val">{readField(selectedTask, ['시스템 구분', 'systemType'])}</span>
+                  </div>
+                  <div className="info-cell">
+                    <span className="info-label">운영 환경</span>
+                    <span className="info-val highlighting-green">{readField(selectedTask, ['운영 환경', 'environment'])}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="info-block">
+                <h5>첨부 파일</h5>
+                <div className="file-attachment-list">
+                  <div className="file-item empty-file-item">
+                    <FileText size={14} className="file-icon" />
+                    <span className="file-name">첨부 파일이 없습니다.</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="inbox-section-compact detail-action-section">
+            <div className="section-title-wrap">
+              <h3>승인 의사결정</h3>
+              <span className="subtitle-desc">검토 결과를 선택하고 처리합니다.</span>
+            </div>
+
+            <div className="action-card-body">
+              <div className="decision-btn-group">
+                <button
+                  className={`decision-btn btn-approve ${decision === 'approve' ? 'selected' : ''}`}
+                  onClick={() => {
+                    setDecision('approve');
+                    setComment('요청 내용을 확인하였습니다. 승인합니다.');
+                  }}
+                >
+                  <div className="circle-icon green"><Check size={18} /></div>
+                  <span>승인</span>
+                </button>
+                <button
+                  className={`decision-btn btn-reject ${decision === 'reject' ? 'selected' : ''}`}
+                  onClick={() => {
+                    setDecision('reject');
+                    setComment('검토 결과 반려합니다.');
+                  }}
+                >
+                  <div className="circle-icon red"><X size={18} /></div>
+                  <span>반려</span>
+                </button>
+                <button
+                  className={`decision-btn btn-hold ${decision === 'hold' ? 'selected' : ''}`}
+                  onClick={() => {
+                    setDecision('hold');
+                    setComment('추가 확인이 필요하여 보류합니다.');
+                  }}
+                >
+                  <div className="circle-icon grey"><Pause size={18} /></div>
+                  <span>보류</span>
+                </button>
+              </div>
+
+              <div className="comment-area-wrap">
+                <textarea
+                  className="form-textarea-comment"
+                  value={comment}
+                  onChange={(e) => setComment(e.target.value)}
+                  placeholder="처리 의견을 작성해주세요."
+                  maxLength={500}
+                />
+                <span className="char-counter">{comment.length} / 500</span>
+              </div>
+
+              {decision === 'reject' && (
+                <div className="checkbox-wrap">
+                  <input
+                    type="checkbox"
+                    id="chk-reject-reason"
+                    checked={rejectReasonChecked}
+                    onChange={(e) => setRejectReasonChecked(e.target.checked)}
+                  />
+                  <label htmlFor="chk-reject-reason" className="checkbox-lbl text-red-urgent">
+                    반려 사유를 확인했습니다.
+                  </label>
+                </div>
+              )}
+
+              <div className="decision-actions">
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setComment('요청 내용을 확인하였습니다. 승인합니다.');
+                    setDecision('approve');
+                    setRejectReasonChecked(false);
+                  }}
+                >
+                  초기화
+                </Button>
+                <div style={{ flex: 1, display: 'flex' }}>
+                  <Button
+                    variant={decision === 'reject' ? 'danger' : 'primary'}
+                    onClick={handleProcessDecision}
+                    disabled={decision === 'reject' && !rejectReasonChecked}
+                  >
+                    {decision === 'approve' ? '승인 완료하기' : decision === 'reject' ? '반려 처리하기' : '보류 적용하기'}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="inbox-section timeline-history-section">
+          <div className="section-title-wrap">
+            <h3>결재 처리 이력</h3>
+            <span className="subtitle-desc">현재 요청의 진행 상태를 확인합니다.</span>
+          </div>
+
+          <div className="timeline-flow-body">
+            <div className="horizontal-timeline">
+              <div className="t-node active">
+                <div className="t-node-dot">1</div>
+                <span className="t-node-name">인스턴스 시작</span>
+              </div>
+              <div className="t-line active" />
+              <div className="t-node processing">
+                <div className="t-node-dot">2</div>
+                <span className="t-node-name">승인 대기</span>
+              </div>
+              <div className="t-line" />
+              <div className="t-node">
+                <div className="t-node-dot">3</div>
+                <span className="t-node-name">후속 노드 진행</span>
+              </div>
+            </div>
+
+            <div className="timeline-vertical-logs">
+              <div className="v-log-item blue">
+                <div className="v-log-time">{formatDateTime(selectedTask.created_at)} (현재)</div>
+                <div className="v-log-content">
+                  <div className="v-log-header">
+                    <span className="v-log-actor">{getRequester(selectedTask)}</span>
+                    <span className="v-log-badge blue">진행 중</span>
+                  </div>
+                  <p className="v-log-comment">
+                    {selectedTask.node_id} 노드에서 승인 처리를 기다리고 있습니다.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="inbox-dashboard-layout">
-      {/* 1. 데스크탑 전용 2단 레이아웃 */}
-      <div className="inbox-desktop-view">
-        <div className="inbox-container">
-          
-          {/* ================= LEFT PANEL: 내 결재함 목록 (Section 1) ================= */}
-          <div className="inbox-left-panel">
-            <div className="section-title-wrap">
-              <span className="section-num">1</span>
-              <h3>내 결재함</h3>
-              <span className="subtitle-desc">승인해야 할 요청을 상태별로 확인하고 빠르게 처리합니다.</span>
-            </div>
-
-            {/* 서브 탭 분류 */}
-            <div className="sub-tabs">
-              <button 
-                className={`sub-tab-btn ${activeSubTab === 'pending' ? 'active' : ''}`}
-                onClick={() => setActiveSubTab('pending')}
-              >
-                승인 대기 <span className="tab-count badge-pending">{tasks.length > 0 ? tasks.length : 1}</span>
-              </button>
-              <button 
-                className={`sub-tab-btn ${activeSubTab === 'completed' ? 'active' : ''}`}
-                onClick={() => setActiveSubTab('completed')}
-              >
-                처리 완료 <span className="tab-count badge-completed">128</span>
-              </button>
-              <button 
-                className={`sub-tab-btn ${activeSubTab === 'rejected' ? 'active' : ''}`}
-                onClick={() => setActiveSubTab('rejected')}
-              >
-                반려함 <span className="tab-count badge-rejected">5</span>
-              </button>
-            </div>
-
-            {/* 검색 및 필터 헤더 */}
-            <div className="search-filter-bar">
-              <div className="select-wrapper">
-                <select className="form-select-sm">
-                  <option>전체 프로세스</option>
-                  <option>권한 신청 프로세스</option>
-                  <option>계정 생성 프로세스</option>
-                </select>
-              </div>
-              <div className="search-input-wrap">
-                <SearchIcon size={13} className="search-icon-inside" />
-                <input 
-                  type="text" 
-                  placeholder="요청명, 신청자 검색" 
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
-              </div>
-              <button className="icon-action-btn"><Filter size={13} /></button>
-              <button className="icon-action-btn" onClick={fetchTasks} title="새로고침">
-                <RotateCcw size={13} />
-              </button>
-              {loading && <span style={{ fontSize: '11px', color: '#3b82f6', marginLeft: '4px' }}>loading...</span>}
-            </div>
-
-            {/* 결재 문서 목록 테이블 */}
-            <div className="table-container">
-              <table className="inbox-table">
-                <thead>
-                  <tr>
-                    <th>요청명</th>
-                    <th>신청자</th>
-                    <th>요청일</th>
-                    <th>우선순위</th>
-                    <th>상태</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {/* 실데이터 렌더링 */}
-                  {tasks.map(task => (
-                    <tr 
-                      key={task.id} 
-                      className={`task-row-item ${currentActiveTask.id === task.id ? 'selected' : ''}`}
-                      onClick={() => setSelectedTask(task)}
-                    >
-                      <td>
-                        <div className="req-name-cell">
-                          <span className="req-tag">DB</span> 
-                          {task.form_data?.["요청 프로세스"] || "DB 권한 신청"}
-                        </div>
-                      </td>
-                      <td>{task.form_data?.["신청자"]?.split(" ")[0] || "이철훈"}</td>
-                      <td>{new Date(task.created_at).toLocaleDateString()}</td>
-                      <td><span className="priority-badge high">높음</span></td>
-                      <td><span className="status-badge-outline pending">승인 대기</span></td>
-                    </tr>
-                  ))}
-
-                  {/* 묵데이터 렌더링 (실데이터와 조화) */}
-                  <tr 
-                    className={`task-row-item ${currentActiveTask.id === dummyTask.id ? 'selected' : ''}`}
-                    onClick={() => setSelectedTask(dummyTask)}
-                  >
-                    <td>
-                      <div className="req-name-cell">
-                        <span className="req-tag">DB</span> DB 권한 신청
-                      </div>
-                    </td>
-                    <td>이철훈</td>
-                    <td>2025-05-20</td>
-                    <td><span className="priority-badge high">높음</span></td>
-                    <td><span className="status-badge-outline pending">승인 대기</span></td>
-                  </tr>
-
-                  <tr className="task-row-item opacity-75">
-                    <td>
-                      <div className="req-name-cell">
-                        <span className="req-tag tag-sys">SYS</span> 서버 계정 생성 요청
-                      </div>
-                    </td>
-                    <td>박지은</td>
-                    <td>2025-05-20</td>
-                    <td><span className="priority-badge normal">보통</span></td>
-                    <td><span className="status-badge-outline pending">승인 대기</span></td>
-                  </tr>
-
-                  <tr className="task-row-item opacity-75">
-                    <td>
-                      <div className="req-name-cell">
-                        <span className="req-tag tag-api">API</span> 시스템 접근 권한 요청
-                      </div>
-                    </td>
-                    <td>최인수</td>
-                    <td>2025-05-20</td>
-                    <td><span className="priority-badge low">낮음</span></td>
-                    <td><span className="status-badge-outline pending">승인 대기</span></td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-
-            <div className="pagination-bar">
-              <span>전체 15건</span>
-              <div className="pagination-arrows">
-                <button disabled>&lt;</button>
-                <button className="active">1</button>
-                <button>2</button>
-                <button>3</button>
-                <button>&gt;</button>
-              </div>
-              <select className="form-select-sm limit-select">
-                <option>5개씩 보기</option>
-                <option>10개씩 보기</option>
-              </select>
-            </div>
-          </div>
-
-          {/* ================= RIGHT PANEL: 결재 상세 & 제어 & 히스토리 통합 (Sections 2, 3, 5) ================= */}
-          <div className="inbox-right-panel">
-            {currentActiveTask ? (
-              <div className="right-panel-scroll-container">
-                
-                {/* 2단 구성: 상단 상세 정보 및 처리 반 (Section 2 & 3 결합) */}
-                <div className="detail-action-card">
-                  
-                  {/* Section 2: 결재 상세 */}
-                  <div className="inbox-section-compact detail-info-section">
-                    <div className="section-title-wrap">
-                      <span className="section-num">2</span>
-                      <h3>결재 상세</h3>
-                      <span className="subtitle-desc">요청 내용을 검토하고 결재를 진행합니다.</span>
-                    </div>
-
-                    <div className="details-card-body">
-                      <div className="details-header-title">
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                          <h4>{currentActiveTask.form_data?.["요청 프로세스"] || "DB 권한 신청"}</h4>
-                          {onSwitchToDesigner && (
-                            <button 
-                              onClick={onSwitchToDesigner}
-                              className="view-designer-link"
-                            >
-                              🎨 Flow Designer에서 템플릿 보기 &gt;
-                            </button>
-                          )}
-                        </div>
-                        <span className="status-badge-full orange">승인 대기</span>
-                      </div>
-
-                      {/* 신청 정보 */}
-                      <div className="info-block">
-                        <h5>신청 정보</h5>
-                        <div className="grid-info-2col">
-                          <div className="info-cell">
-                            <span className="info-label">신청자</span>
-                            <span className="info-val">{currentActiveTask.form_data?.["신청자"] || "이철훈 사원 (IT운영팀)"}</span>
-                          </div>
-                          <div className="info-cell">
-                            <span className="info-label">신청일시</span>
-                            <span className="info-val">{currentActiveTask.form_data?.["신청일시"] || "2025-05-20 10:15"}</span>
-                          </div>
-                          <div className="info-cell">
-                            <span className="info-label">프로세스</span>
-                            <span className="info-val">{currentActiveTask.form_data?.["요청 프로세스"] || "권한 신청 프로세스 v1.3"}</span>
-                          </div>
-                          <div className="info-cell">
-                            <span className="info-label">요청 ID</span>
-                            <span className="info-val font-mono-style">
-                              {currentActiveTask.instance_id || "REQ-20250520-0001"}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* 요청 내용 */}
-                      <div className="info-block">
-                        <h5>요청 내용</h5>
-                        <div className="vertical-info-list">
-                          <div className="info-cell">
-                            <span className="info-label">요청 시스템</span>
-                            <span className="info-val">{currentActiveTask.form_data?.["요청 시스템"] || "ERP DB (ERP-PROD)"}</span>
-                          </div>
-                          <div className="info-cell">
-                            <span className="info-label">요청 권한</span>
-                            <span className="info-val highlighting-blue">{currentActiveTask.form_data?.["요청 권한"] || "SELECT, INSERT, UPDATE"}</span>
-                          </div>
-                          <div className="info-cell">
-                            <span className="info-label">요청 사유</span>
-                            <span className="info-val text-box-reason">
-                              {currentActiveTask.form_data?.["요청 사유"] || "월간 리포트 생성 및 데이터 분석을 위한 접근 권한이 필요합니다."}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* 대상 시스템 */}
-                      <div className="info-block">
-                        <h5>대상 시스템</h5>
-                        <div className="grid-info-2col">
-                          <div className="info-cell">
-                            <span className="info-label">시스템명</span>
-                            <span className="info-val">{currentActiveTask.form_data?.["시스템명"] || "ERP DB (ERP-PROD)"}</span>
-                          </div>
-                          <div className="info-cell">
-                            <span className="info-label">접속 정보</span>
-                            <span className="info-val font-mono-style">{currentActiveTask.form_data?.["접속 정보"] || "172.16.10.25:1521 / erpprod"}</span>
-                          </div>
-                          <div className="info-cell">
-                            <span className="info-label">시스템 구분</span>
-                            <span className="info-val">{currentActiveTask.form_data?.["시스템 구분"] || "데이터베이스"}</span>
-                          </div>
-                          <div className="info-cell">
-                            <span className="info-label">운영 환경</span>
-                            <span className="info-val highlighting-green">{currentActiveTask.form_data?.["운영 환경"] || "운영 (PROD)"}</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* 첨부 파일 */}
-                      <div className="info-block">
-                        <h5>첨부 파일</h5>
-                        <div className="file-attachment-list">
-                          <div className="file-item">
-                            <FileText size={14} className="file-icon" />
-                            <span className="file-name">요청서_이철훈.pdf (225 KB)</span>
-                            <button className="btn-icon-download"><Download size={12} /></button>
-                          </div>
-                          <div className="file-item">
-                            <FileText size={14} className="file-icon" />
-                            <span className="file-name">쿼리_리스트.xlsx (48 KB)</span>
-                            <button className="btn-icon-download"><Download size={12} /></button>
-                          </div>
-                        </div>
-                      </div>
-
-                    </div>
-                  </div>
-
-                  {/* Section 3: 승인/반려 의사결정 제어반 (상세 하단에 수려하게 결합) */}
-                  <div className="inbox-section-compact detail-action-section">
-                    <div className="section-title-wrap">
-                      <span className="section-num">3</span>
-                      <h3>승인 의사결정</h3>
-                      <span className="subtitle-desc">요청 검토 결과를 선택하고 코멘트를 입력하여 처리를 완료합니다.</span>
-                    </div>
-
-                    <div className="action-card-body">
-                      <div className="decision-btn-group">
-                        <button 
-                          className={`decision-btn btn-approve ${decision === 'approve' ? 'selected' : ''}`}
-                          onClick={() => {
-                            setDecision('approve');
-                            setComment('요청 내용을 확인하였습니다. 승인합니다.');
-                          }}
-                        >
-                          <div className="circle-icon green">
-                            <Check size={18} />
-                          </div>
-                          <span>승인</span>
-                        </button>
-
-                        <button 
-                          className={`decision-btn btn-reject ${decision === 'reject' ? 'selected' : ''}`}
-                          onClick={() => {
-                            setDecision('reject');
-                            setComment('보안 지침 위반 우려 및 시스템 부하 가중 사유로 반려합니다.');
-                          }}
-                        >
-                          <div className="circle-icon red">
-                            <X size={18} />
-                          </div>
-                          <span>반려</span>
-                        </button>
-
-                        <button 
-                          className={`decision-btn btn-hold ${decision === 'hold' ? 'selected' : ''}`}
-                          onClick={() => {
-                            setDecision('hold');
-                            setComment('해당 리포트 추출의 타당성 조사를 위해 일시 보류합니다.');
-                          }}
-                        >
-                          <div className="circle-icon grey">
-                            <Pause size={18} />
-                          </div>
-                          <span>보류</span>
-                        </button>
-                      </div>
-
-                      {/* 코멘트 입력 */}
-                      <div className="comment-area-wrap">
-                        <textarea 
-                          className="form-textarea-comment"
-                          value={comment}
-                          onChange={(e) => setComment(e.target.value)}
-                          placeholder="요청 처리에 관한 의견을 작성해주세요."
-                          maxLength={500}
-                        />
-                        <span className="char-counter">{comment.length} / 500</span>
-                      </div>
-
-                      {/* 반려 시 필수 체크박스 */}
-                      {decision === 'reject' && (
-                        <div className="checkbox-wrap">
-                          <input 
-                            type="checkbox" 
-                            id="chk-reject-reason" 
-                            checked={rejectReasonChecked}
-                            onChange={(e) => setRejectReasonChecked(e.target.checked)}
-                          />
-                          <label htmlFor="chk-reject-reason" className="checkbox-lbl text-red-urgent">
-                            반려 사유 필수 확인 (반려 선택 시 필수 체크)
-                          </label>
-                        </div>
-                      )}
-
-                      {/* 하단 취소/처리하기 버튼 */}
-                      <div className="decision-actions">
-                        <Button 
-                          variant="secondary" 
-                          onClick={() => {
-                            setComment('요청 내용을 확인하였습니다. 승인합니다.');
-                            setDecision('approve');
-                          }}
-                        >
-                          초기화
-                        </Button>
-                        <div style={{ flex: 1, display: 'flex' }}>
-                          <Button 
-                            variant={decision === 'reject' ? 'danger' : 'primary'} 
-                            onClick={handleProcessDecision}
-                            disabled={decision === 'reject' && !rejectReasonChecked}
-                          >
-                            {decision === 'approve' ? '승인 완료하기' : decision === 'reject' ? '반려 처리하기' : '보류 적용하기'}
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                </div> {/* detail-action-card */}
-
-                {/* Section 5: 처리 이력 & 타임라인 (상세의 맨 아래 배치) */}
-                <div className="inbox-section timeline-history-section">
-                  <div className="section-title-wrap">
-                    <span className="section-num">4</span>
-                    <h3>결재 처리 이력</h3>
-                    <span className="subtitle-desc">해당 요청의 전체 처리 흐름과 코멘트를 타임라인으로 확인합니다.</span>
-                  </div>
-
-                  <div className="timeline-flow-body">
-                    {/* 가로형 결재 선 시각화 */}
-                    <div className="horizontal-timeline">
-                      <div className="t-node active">
-                        <div className="t-node-dot">1</div>
-                        <span className="t-node-name">1단계 팀장 승인</span>
-                      </div>
-                      <div className="t-line active" />
-                      <div className="t-node active">
-                        <div className="t-node-dot">2</div>
-                        <span className="t-node-name">2단계 보안 검토</span>
-                      </div>
-                      <div className="t-line active" />
-                      <div className="t-node processing">
-                        <div className="t-node-dot">3</div>
-                        <span className="t-node-name">3단계 최종 승인 (현재)</span>
-                      </div>
-                      <div className="t-line" />
-                      <div className="t-node">
-                        <div className="t-node-dot">4</div>
-                        <span className="t-node-name">4단계 시스템 적용</span>
-                      </div>
-                      <div className="t-line" />
-                      <div className="t-node">
-                        <div className="t-node-dot">5</div>
-                        <span className="t-node-name">5단계 완료</span>
-                      </div>
-                    </div>
-
-                    {/* 세로 상세 로그 리스트 */}
-                    <div className="timeline-vertical-logs">
-                      <div className="v-log-item green">
-                        <div className="v-log-time">2025-05-20 09:50</div>
-                        <div className="v-log-content">
-                          <div className="v-log-header">
-                            <span className="v-log-actor">박지은 팀장 (IT운영팀)</span>
-                            <span className="v-log-badge green">승인</span>
-                          </div>
-                          <p className="v-log-comment">요청 사유 및 범위 명확하여 최종 컨펌합니다.</p>
-                        </div>
-                      </div>
-
-                      <div className="v-log-item green">
-                        <div className="v-log-time">2025-05-20 10:00</div>
-                        <div className="v-log-content">
-                          <div className="v-log-header">
-                            <span className="v-log-actor">최한수 과장 (보안팀)</span>
-                            <span className="v-log-badge green">승인</span>
-                          </div>
-                          <p className="v-log-comment">보안성 검토 결과 이상 없음 판정 완료.</p>
-                        </div>
-                      </div>
-
-                      <div className="v-log-item blue">
-                        <div className="v-log-time">2026-05-22 13:24 (현재)</div>
-                        <div className="v-log-content">
-                          <div className="v-log-header">
-                            <span className="v-log-actor">김결재 부장 (경영지원본부)</span>
-                            <span className="v-log-badge blue">진행 중</span>
-                          </div>
-                          <p className="v-log-comment">대기 중 - 최종 권한 위임 및 실행 의사 결정을 기다리고 있습니다.</p>
-                        </div>
-                      </div>
-                    </div>
-
-                  </div>
-                </div>
-
-              </div>
-            ) : (
-              <div className="no-task-selected-wrap">
-                <div className="no-task-selected-card">
-                  <FileText size={48} className="empty-icon" />
-                  <h4>선택된 결재 문서가 없습니다</h4>
-                  <p>왼쪽 목록에서 결재할 대기 문서를 선택해 주세요.</p>
-                </div>
-              </div>
-            )}
-          </div>
-
-        </div>
-      </div>
-
-      {/* 2. 모바일 전용 반응형 원터치 승인 뷰 (데스크탑 스마트폰 하드웨어 껍데기 박싱 없이 전체화면 카드 제공) */}
-      <div className="inbox-mobile-view">
-        <div className="mobile-view-header">
-          <h3>내 결재함 <span className="mobile-badge">{tasks.length > 0 ? tasks.length : 1}</span></h3>
-          <span className="m-refresh-btn" onClick={fetchTasks}><RotateCcw size={14} /></span>
-        </div>
-
-        <div className="mobile-card-container">
-          <div className="phone-content-card">
-            <div className="phone-card-title">
-              <h5>{currentActiveTask.form_data?.["요청 프로세스"] || "DB 권한 신청"}</h5>
-              <span className="mini-badge-orange">승인 대기</span>
-            </div>
-            
-            <div className="phone-card-detail">
-              <div className="phone-detail-row">
-                <span className="p-lbl">신청자</span>
-                <span className="p-val">{currentActiveTask.form_data?.["신청자"] || "이철훈 사원"}</span>
-              </div>
-              <div className="phone-detail-row">
-                <span className="p-lbl">요청일</span>
-                <span className="p-val">{currentActiveTask.form_data?.["신청일시"]?.split(" ")[0] || "2025-05-20"}</span>
-              </div>
-              <div className="phone-detail-row">
-                <span className="p-lbl">시스템</span>
-                <span className="p-val">{currentActiveTask.form_data?.["요청 시스템"] || "ERP DB (ERP-PROD)"}</span>
-              </div>
-              <div className="phone-detail-row">
-                <span className="p-lbl">권한</span>
-                <span className="p-val">{currentActiveTask.form_data?.["요청 권한"] || "SELECT, INSERT, UPDATE"}</span>
-              </div>
-              <div className="phone-detail-row vertical">
-                <span className="p-lbl">사유</span>
-                <span className="p-val bg-box">{currentActiveTask.form_data?.["요청 사유"] || "월간 리포트 생성 및 데이터 분석을..."}</span>
-              </div>
-              <div className="phone-detail-row">
-                <span className="p-lbl">우선순위</span>
-                <span className="p-val text-red">높음</span>
-              </div>
-            </div>
-
-            {/* 원터치 승인 3버튼 */}
-            <div className="phone-action-btns">
-              <button className="phone-btn approve" onClick={() => {
-                setDecision('approve');
-                setComment('[모바일 간편 승인] 요청을 최종 확인하여 즉시 승인 처리합니다.');
-                handleProcessDecision();
-              }}>
-                승인
-              </button>
-              <button className="phone-btn reject" onClick={() => {
-                setDecision('reject');
-                setComment('[모바일 간편 반려] 보안 요건 미충족 사유로 즉시 반려합니다.');
-                setRejectReasonChecked(true);
-                setTimeout(handleProcessDecision, 100);
-              }}>
-                반려
-              </button>
-              <button className="phone-btn hold" onClick={() => {
-                setDecision('hold');
-                setComment('[모바일 간편 보류] 상세 추가 협의 필요로 보류합니다.');
-                handleProcessDecision();
-              }}>
-                보류
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="mobile-guide-info">
-          💡 모바일 환경에서는 1Depth 원터치 의사결정이 즉시 적용됩니다.
-        </div>
-      </div>
-
+      {screen === 'list' ? renderList() : renderDetail()}
     </div>
   );
 };

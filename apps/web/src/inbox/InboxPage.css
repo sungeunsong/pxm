@@ -4,12 +4,89 @@
    1. 전체 레이아웃 (데스크탑 2단 및 개별 스크롤 제어)
    ======================================================== */
 .inbox-dashboard-layout {
-  height: 100vh;
+  height: 100%;
   width: 100%;
   padding: 20px;
   background-color: var(--bg-primary, #f8fafc);
-  overflow: hidden; /* 레이아웃 자체 스크롤 방지, 내부 독립 스크롤 사용 */
+  overflow: auto;
   box-sizing: border-box;
+}
+
+.inbox-list-page,
+.inbox-detail-page {
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+.inbox-list-page {
+  background: var(--bg-secondary, #ffffff);
+  border: 1px solid var(--border-subtle, #e2e8f0);
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04);
+}
+
+.inbox-list-header,
+.inbox-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.inbox-list-header h2,
+.inbox-detail-header h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--text-primary, #0f172a);
+}
+
+.inbox-list-header p,
+.inbox-detail-header p {
+  margin: 4px 0 0 0;
+  font-size: 12px;
+  color: var(--text-tertiary, #64748b);
+}
+
+.inbox-detail-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.inbox-detail-header {
+  background: var(--bg-secondary, #ffffff);
+  border: 1px solid var(--border-subtle, #e2e8f0);
+  border-radius: 8px;
+  padding: 16px 18px;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04);
+}
+
+.back-to-list-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  border: 1px solid var(--border-subtle, #e2e8f0);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--text-secondary, #475569);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0 10px;
+}
+
+.back-to-list-btn:hover {
+  background: #f8fafc;
+}
+
+.loading-text {
+  font-size: 11px;
+  color: #3b82f6;
+  align-self: center;
 }
 
 /* 데스크탑 뷰 */
@@ -279,6 +356,13 @@
   color: var(--text-primary, #0f172a);
 }
 
+.table-empty-cell {
+  text-align: center;
+  color: var(--text-tertiary, #64748b) !important;
+  padding: 28px 12px !important;
+  font-size: 12px;
+}
+
 .task-row-item {
   cursor: pointer;
   transition: background-color 0.15s ease;
@@ -534,6 +618,10 @@
   border-radius: 6px;
   border: 1px solid var(--border-subtle, #e2e8f0);
   font-size: 11.5px;
+}
+
+.empty-file-item {
+  color: var(--text-tertiary, #64748b);
 }
 
 .file-name {
@@ -896,20 +984,62 @@
 }
 
 @media (max-width: 768px) {
-  /* 데스크탑 레이아웃 숨김 */
-  .inbox-desktop-view {
-    display: none;
+  .inbox-dashboard-layout {
+    padding: 12px;
   }
 
-  /* 모바일 풀스크린 원터치 승인 뷰 켬 */
-  .inbox-mobile-view {
-    display: flex;
+  .inbox-list-page,
+  .inbox-detail-header,
+  .inbox-section,
+  .inbox-section-compact {
+    border-radius: 8px;
+    padding: 14px;
+  }
+
+  .inbox-list-header,
+  .inbox-detail-header {
+    align-items: flex-start;
     flex-direction: column;
-    height: 100%;
-    width: 100%;
-    padding: 10px;
-    box-sizing: border-box;
-    overflow-y: auto;
+  }
+
+  .search-filter-bar {
+    flex-wrap: wrap;
+  }
+
+  .select-wrapper,
+  .search-input-wrap {
+    min-width: 100%;
+  }
+
+  .detail-action-card {
+    grid-template-columns: 1fr;
+  }
+
+  .grid-info-2col {
+    grid-template-columns: 1fr;
+  }
+
+  .horizontal-timeline {
+    align-items: flex-start;
+  }
+
+  .v-log-item {
+    flex-direction: column;
+    gap: 6px;
+    padding-left: 18px;
+  }
+
+  .v-log-time {
+    width: auto;
+    text-align: left;
+  }
+
+  .timeline-vertical-logs::before {
+    left: 14px;
+  }
+
+  .v-log-item::after {
+    left: 4px;
   }
 
   .mobile-view-header {

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#64748b"/>
+    </marker>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8fafc"/>
+      <stop offset="1" stop-color="#eef4ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <rect x="42" y="38" width="1516" height="824" rx="30" fill="#ffffff" stroke="#dbe4f0"/>
+  <text x="96" y="112" font-size="24" font-weight="800" fill="#2563eb">PXM BPM PLATFORM</text>
+  <text x="96" y="184" font-size="54" font-weight="900" fill="#0f172a">회의에서 결정할 항목</text>
+  <text x="98" y="229" font-size="28" font-weight="600" fill="#64748b">제품화 전에 정책 결정이 필요한 부분</text>
+  <circle cx="130" cy="240" r="6" fill="#2563eb"/>
+<text x="154" y="250" font-size="29" font-weight="600" fill="#1e293b">Web 사용자 인증을 SSO/OIDC/LDAP/AD 중 어디까지 지원할지</text>
+<circle cx="130" cy="299" r="6" fill="#2563eb"/>
+<text x="154" y="309" font-size="29" font-weight="600" fill="#1e293b">외부 API 인증을 API Key, OAuth2 Client Credentials, mTLS 중 무엇으로 시작할지</text>
+<circle cx="130" cy="358" r="6" fill="#2563eb"/>
+<text x="154" y="368" font-size="29" font-weight="600" fill="#1e293b">고객사별 plugin 배포를 hosted 중심으로 할지 external_http를 얼마나 허용할지</text>
+<circle cx="130" cy="417" r="6" fill="#2563eb"/>
+<text x="154" y="427" font-size="29" font-weight="600" fill="#1e293b">Plugin Registry를 파일 기반으로 유지할지 DB-backed registry로 확장할지</text>
+<circle cx="130" cy="476" r="6" fill="#2563eb"/>
+<text x="154" y="486" font-size="29" font-weight="600" fill="#1e293b">Secret store를 환경변수/file에서 Vault/KMS 계열로 확장할지</text>
+<circle cx="130" cy="535" r="6" fill="#2563eb"/>
+<text x="154" y="545" font-size="29" font-weight="600" fill="#1e293b">Plugin signature 검증을 cryptographic signature까지 강화할지</text>
+<circle cx="130" cy="594" r="6" fill="#2563eb"/>
+<text x="154" y="604" font-size="29" font-weight="600" fill="#1e293b">UI에서 plugin install/control 화면을 제공할지</text>
+
+      <rect x="130" y="705" width="1340" height="92" rx="18" fill="#0f172a"/>
+      <text x="170" y="758" font-size="28" font-weight="800" fill="#ffffff">PXM/BPM Core는 workflow runtime에 집중하고, 외부 시스템 연동은 plugin</text>
+<text x="170" y="794" font-size="28" font-weight="800" fill="#ffffff">registry와 plugin-host를 통해 확장한다.</text>
+    
+  <text x="1460" y="820" font-size="22" font-weight="800" fill="#94a3b8">10 / 10</text>
+</svg>

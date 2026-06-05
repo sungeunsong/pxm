@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#64748b"/>
+    </marker>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8fafc"/>
+      <stop offset="1" stop-color="#eef4ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <rect x="42" y="38" width="1516" height="824" rx="30" fill="#ffffff" stroke="#dbe4f0"/>
+  <text x="96" y="112" font-size="24" font-weight="800" fill="#2563eb">PXM BPM PLATFORM</text>
+  <text x="96" y="184" font-size="54" font-weight="900" fill="#0f172a">Plugin Executor 유형</text>
+  <text x="98" y="229" font-size="28" font-weight="600" fill="#64748b">연동 특성에 따라 실행 방식을 분리</text>
+  
+  <rect x="120" y="240" width="690" height="460" rx="18" fill="#ffffff" stroke="#dbe4f0"/>
+  <text x="154" y="298" font-size="34" font-weight="800" fill="#1d4ed8">builtin / mock</text>
+  <circle cx="160" cy="346" r="6" fill="#2563eb"/>
+<text x="184" y="356" font-size="29" font-weight="600" fill="#334155">builtin: Engine 내부 generic executor</text>
+<circle cx="160" cy="405" r="6" fill="#2563eb"/>
+<text x="184" y="415" font-size="29" font-weight="600" fill="#334155">예: builtin.http_request</text>
+<circle cx="160" cy="464" r="6" fill="#2563eb"/>
+<text x="184" y="474" font-size="29" font-weight="600" fill="#334155">업무 connector는 builtin에 넣지 않음</text>
+<circle cx="160" cy="523" r="6" fill="#2563eb"/>
+<text x="184" y="533" font-size="29" font-weight="600" fill="#334155">mock: 개발 및 테스트용 executor</text>
+  
+
+  <rect x="850" y="240" width="690" height="460" rx="18" fill="#ffffff" stroke="#dbe4f0"/>
+  <text x="884" y="298" font-size="34" font-weight="800" fill="#1d4ed8">hosted / external_http</text>
+  <circle cx="890" cy="346" r="6" fill="#2563eb"/>
+<text x="914" y="356" font-size="29" font-weight="600" fill="#334155">hosted: pxm-plugin-host에서 공식/고객사</text>
+<text x="914" y="395" font-size="29" font-weight="600" fill="#334155">connector 실행</text>
+<circle cx="890" cy="444" r="6" fill="#2563eb"/>
+<text x="914" y="454" font-size="29" font-weight="600" fill="#334155">on-prem 기본 모델에 적합</text>
+<circle cx="890" cy="503" r="6" fill="#2563eb"/>
+<text x="914" y="513" font-size="29" font-weight="600" fill="#334155">external_http: 별도 HTTP service로 격리 실행</text>
+<circle cx="890" cy="562" r="6" fill="#2563eb"/>
+<text x="914" y="572" font-size="29" font-weight="600" fill="#334155">무거운 연동 또는 별도 runtime이 필요한 경우 적합</text>
+  
+  <text x="1460" y="820" font-size="22" font-weight="800" fill="#94a3b8">08 / 10</text>
+</svg>

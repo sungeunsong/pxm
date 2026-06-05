@@ -1,9 +1,11 @@
 import React from 'react';
 import {
   CheckSquare,
+  CircleCheck,
   ClipboardList,
   Clock,
   Cpu,
+  Diamond,
   Globe,
   MessageSquare,
   Play,
@@ -12,15 +14,18 @@ import {
   Shuffle,
   Square,
   Ticket,
+  UserPlus,
   UserSearch,
   Users,
 } from 'lucide-react';
 
 const iconMap: Record<string, React.ComponentType<{ size?: number; fill?: string; style?: React.CSSProperties }>> = {
   'check-square': CheckSquare,
+  'circle-check': CircleCheck,
   'clipboard-list': ClipboardList,
   clock: Clock,
   cpu: Cpu,
+  diamond: Diamond,
   globe: Globe,
   'message-square': MessageSquare,
   play: Play,
@@ -29,6 +34,7 @@ const iconMap: Record<string, React.ComponentType<{ size?: number; fill?: string
   shuffle: Shuffle,
   square: Square,
   ticket: Ticket,
+  'user-plus': UserPlus,
   'user-search': UserSearch,
   users: Users,
 };
@@ -60,11 +66,11 @@ export function nodeTypeIcon(nodeType: string, icon?: string) {
     case 'timer':
       return <Clock size={15} />;
     case 'gateway':
-      return <Shuffle size={15} />;
+      return <Diamond size={15} fill="currentColor" />;
     case 'approval':
       return <CheckSquare size={15} />;
     case 'end':
-      return <Square size={15} fill="currentColor" />;
+      return <CircleCheck size={15} />;
     default:
       return null;
   }

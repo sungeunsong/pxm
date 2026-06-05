@@ -119,14 +119,14 @@ function App() {
               {activeTab === 'designer' && "설계자 / 관리자 상세 화면 구성"}
               {activeTab === 'request' && "업무 신청 런처"}
               {activeTab === 'tracker' && "운영자 / 모니터링 담당 상세 화면 구성"}
-              {activeTab === 'inbox' && "승인자 / 결재자 상세 화면 구성"}
+              {activeTab === 'inbox' && "내 결재함"}
             </h1>
             <p className="header-subtitle">
               {activeTab === 'dashboard' && "전체 워크플로우 실시간 상태 모니터링 및 주요 KPI 요약"}
               {activeTab === 'designer' && "프로세스 템플릿 설계, 배포, 관리 및 노드 속성 설정"}
               {activeTab === 'request' && "필요한 업무 프로세스를 신속하게 가동하고 요청을 전달합니다"}
               {activeTab === 'tracker' && "실행 모니터링, 실패 대응, 재시도/운영 조치 및 로그 분석"}
-              {activeTab === 'inbox' && "승인 대기 Task 처리 및 결재 이력 확인"}
+              {activeTab === 'inbox' && "승인 대기 Task 확인 및 처리"}
             </p>
           </div>
 

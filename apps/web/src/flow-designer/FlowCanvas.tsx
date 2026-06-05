@@ -40,10 +40,12 @@ const initialEdges: Edge[] = [];
 export interface FlowCanvasProps {
   onNodeSelect?: (node: Node | null) => void;
   onNodesChange?: (nodes: Node[]) => void;
+  onEdgesChange?: (edges: Edge[]) => void;
 }
 
 export interface FlowCanvasRef {
   updateNodeData: (nodeId: string, data: Partial<CustomNodeData>) => void;
+  updateEdgeData: (edgeId: string, data: Partial<Edge>) => void;
   getNodes: () => Node[];
   getEdges: () => Edge[];
   setNodesAndEdges: (nodes: Node[], edges: Edge[]) => void;
@@ -51,7 +53,7 @@ export interface FlowCanvasRef {
 }
 
 export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
-  ({ onNodeSelect, onNodesChange: onNodesChangeProp }, ref) => {
+  ({ onNodeSelect, onNodesChange: onNodesChangeProp, onEdgesChange: onEdgesChangeProp }, ref) => {
     const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
     const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
@@ -59,6 +61,10 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
     React.useEffect(() => {
       onNodesChangeProp?.(nodes);
     }, [nodes, onNodesChangeProp]);
+
+    React.useEffect(() => {
+      onEdgesChangeProp?.(edges);
+    }, [edges, onEdgesChangeProp]);
 
     // 노드 데이터 업데이트 핸들러
     const updateNodeData = useCallback(
@@ -79,6 +85,31 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
         );
       },
       [setNodes, onNodeSelect]
+    );
+
+    const updateEdgeData = useCallback(
+      (edgeId: string, data: Partial<Edge>) => {
+        setEdges((eds) =>
+          eds.map((edge) => {
+            if (edge.id !== edgeId) {
+              return edge;
+            }
+            return {
+              ...edge,
+              ...data,
+              data: {
+                ...(edge.data || {}),
+                ...(data.data || {}),
+              },
+              style: {
+                ...(edge.style || {}),
+                ...(data.style || {}),
+              },
+            };
+          })
+        );
+      },
+      [setEdges]
     );
 
     // 노드와 엣지 가져오기
@@ -181,12 +212,13 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
       ref,
       () => ({
         updateNodeData,
+        updateEdgeData,
         getNodes,
         getEdges,
         setNodesAndEdges,
         updateEdgesByNodeStatus,
       }),
-      [updateNodeData, getNodes, getEdges, setNodesAndEdges, updateEdgesByNodeStatus]
+      [updateNodeData, updateEdgeData, getNodes, getEdges, setNodesAndEdges, updateEdgesByNodeStatus]
     );
 
   const onConnect = useCallback(

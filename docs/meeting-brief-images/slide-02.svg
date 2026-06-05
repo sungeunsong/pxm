@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#64748b"/>
+    </marker>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8fafc"/>
+      <stop offset="1" stop-color="#eef4ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <rect x="42" y="38" width="1516" height="824" rx="30" fill="#ffffff" stroke="#dbe4f0"/>
+  <text x="96" y="112" font-size="24" font-weight="800" fill="#2563eb">PXM BPM PLATFORM</text>
+  <text x="96" y="184" font-size="54" font-weight="900" fill="#0f172a">두 가지 사용 방식</text>
+  <text x="98" y="229" font-size="28" font-weight="600" fill="#64748b">제품형 Web 사용과 플랫폼형 API 호출을 모두 지원</text>
+  
+  <rect x="120" y="240" width="690" height="460" rx="18" fill="#ffffff" stroke="#dbe4f0"/>
+  <text x="154" y="298" font-size="34" font-weight="800" fill="#1d4ed8">PXM Web 사용</text>
+  <circle cx="160" cy="346" r="6" fill="#2563eb"/>
+<text x="184" y="356" font-size="29" font-weight="600" fill="#334155">사용자가 Web에 로그인</text>
+<circle cx="160" cy="405" r="6" fill="#2563eb"/>
+<text x="184" y="415" font-size="29" font-weight="600" fill="#334155">관리자가 template 설계</text>
+<circle cx="160" cy="464" r="6" fill="#2563eb"/>
+<text x="184" y="474" font-size="29" font-weight="600" fill="#334155">요청자가 workflow 실행</text>
+<circle cx="160" cy="523" r="6" fill="#2563eb"/>
+<text x="184" y="533" font-size="29" font-weight="600" fill="#334155">승인자가 결재함에서 승인/반려</text>
+<circle cx="160" cy="582" r="6" fill="#2563eb"/>
+<text x="184" y="592" font-size="29" font-weight="600" fill="#334155">운영자가 trace와 실행 이력 확인</text>
+  
+
+  <rect x="850" y="240" width="690" height="460" rx="18" fill="#ffffff" stroke="#dbe4f0"/>
+  <text x="884" y="298" font-size="34" font-weight="800" fill="#1d4ed8">외부 솔루션 API 호출</text>
+  <circle cx="890" cy="346" r="6" fill="#2563eb"/>
+<text x="914" y="356" font-size="29" font-weight="600" fill="#334155">사내 포털, ITSM, HR 등에서 API 호출</text>
+<circle cx="890" cy="405" r="6" fill="#2563eb"/>
+<text x="914" y="415" font-size="29" font-weight="600" fill="#334155">PXM Web 없이 workflow runtime 사용</text>
+<circle cx="890" cy="464" r="6" fill="#2563eb"/>
+<text x="914" y="474" font-size="29" font-weight="600" fill="#334155">기존 업무 시스템에서 Task 조회/처리 가능</text>
+<circle cx="890" cy="523" r="6" fill="#2563eb"/>
+<text x="914" y="533" font-size="29" font-weight="600" fill="#334155">BPM backend platform 역할</text>
+  
+  <text x="1460" y="820" font-size="22" font-weight="800" fill="#94a3b8">02 / 10</text>
+</svg>

@@ -86,18 +86,167 @@ NODE
 
 목표: Engine이 hosted 플러그인을 `pxm-plugin-host`를 통해 디스패치하는지 확인한다.
 
+이 시나리오는 화면 조작 테스트가 아니라 자동 스모크 스크립트 테스트다. 스크립트가 다음 workflow를 직접 생성하고 실행한다.
+
+```text
+Start -> Manager Approval -> Slack Notice(service plugin) -> End
+```
+
+여기서 `Slack Notice` service 노드는 `connector.slack` 플러그인을 실행한다. 현재 Engine에는 legacy alias가 있어서 `connector.slack`이 Slack mock/hosted 실행 경로로 연결된다.
+
+사전 조건:
+
+- MongoDB가 실행 중이어야 한다.
+- API가 `http://localhost:3000/api`에서 실행 중이어야 한다.
+- Engine이 MongoDB runtime으로 실행 중이어야 한다.
+- Hosted plugin 경로를 확인하려면 plugin-host가 실행 중이어야 한다.
+
+권장 실행 순서:
+
+```bash
+pnpm db:mongo
+pnpm db:mongo:init
+PORT=3031 pnpm --dir apps/plugin-host dev
+DB_TYPE=mongodb pnpm dev:api:mongo
+DB_TYPE=mongodb PXM_PLUGIN_HOST_URL=http://127.0.0.1:3031 pnpm dev:engine:mongo
+```
+
 절차:
 
-1. `pnpm smoke:mongo:approval`을 실행한다.
-2. 인스턴스가 `COMPLETED` 상태에 도달하는지 확인한다.
-3. plugin-host 로그에서 `/invoke` 호출을 확인한다.
-4. Mongo `v2_execution_logs`에서 service 노드의 `NODE_COMPLETED` 로그를 확인한다.
+1. API와 plugin-host가 응답하는지 확인한다.
+
+```bash
+curl http://localhost:3000/api/plugins
+curl http://127.0.0.1:3031/health
+```
+
+2. approval smoke를 실행한다.
+
+```bash
+pnpm smoke:mongo:approval
+```
+
+3. 성공 출력이 나오는지 확인한다.
+
+```text
+[mongo:smoke:approval] passed instance=<instance_id> task=<task_id> template=<template_id>
+```
+
+4. Mongo에서 인스턴스 완료 상태를 확인한다.
+
+```bash
+cd apps/api
+node - <<'NODE'
+const { MongoClient } = require('mongodb');
+(async () => {
+  const client = new MongoClient('mongodb://127.0.0.1:27017/?replicaSet=rs0');
+  await client.connect();
+  const db = client.db('pxm_db');
+  const instance = await db.collection('v2_process_instances')
+    .find({'context.template_name': {$regex: '^Smoke Approval'}})
+    .sort({created_at: -1})
+    .limit(1)
+    .next();
+  console.log(instance && {
+    id: instance._id,
+    state: instance.state,
+    status: instance.status,
+    template: instance.context?.template_name,
+  });
+  await client.close();
+})();
+NODE
+```
+
+5. service 노드 완료 로그를 확인한다.
+
+```bash
+cd apps/api
+node - <<'NODE'
+const { MongoClient } = require('mongodb');
+(async () => {
+  const client = new MongoClient('mongodb://127.0.0.1:27017/?replicaSet=rs0');
+  await client.connect();
+  const db = client.db('pxm_db');
+  const instance = await db.collection('v2_process_instances')
+    .find({'context.template_name': {$regex: '^Smoke Approval'}})
+    .sort({created_at: -1})
+    .limit(1)
+    .next();
+  const logs = await db.collection('v2_execution_logs')
+    .find({instance_id: instance._id, node_id: 'svc'})
+    .sort({created_at: 1})
+    .toArray();
+  console.log(logs.map((log) => ({
+    event_type: log.event_type,
+    node_id: log.node_id,
+    payload: log.payload,
+  })));
+  await client.close();
+})();
+NODE
+```
+
+6. Engine 로그에서 service plugin 실행 문구를 확인한다.
+
+```text
+[v2_engine] Executing plugin: connector.slack
+```
+
+7. trace API로 workflow 진행 이력을 확인한다. `<instance_id>`는 3번 출력값을 사용한다.
+
+```bash
+curl http://localhost:3000/api/instances/<instance_id>/trace
+```
 
 기대 결과:
 
 - 승인 task가 생성되고 완료된다.
 - service 노드가 플러그인을 호출한 뒤 완료된다.
 - 인스턴스 trace에 `TASK_CREATED`, service `NODE_COMPLETED`, `INSTANCE_COMPLETED`가 포함된다.
+
+성공 여부 판단:
+
+- `pnpm smoke:mongo:approval` 명령이 exit code 0으로 끝나면 기본 통과다.
+- Mongo `v2_process_instances.state`가 `COMPLETED`이면 인스턴스 완료가 확인된 것이다.
+- Mongo `v2_execution_logs`에 `node_id = svc`, `event_type = NODE_COMPLETED` 로그가 있으면 service plugin 노드 실행이 확인된 것이다.
+
+주의:
+
+- 현재 smoke 스크립트는 `connector.slack` legacy alias를 사용한다.
+- `connector.slack.send_message` manifest 자체를 hosted 경로로 검증하려면 시나리오 4의 conformance 방식처럼 `/invoke` endpoint를 직접 확인하거나, smoke 스크립트의 `plugin_id`를 `connector.slack.send_message`로 바꾼 별도 테스트를 추가한다.
+
+### SSE 흐름을 콘솔에서 직접 보는 데모
+
+실제 workflow 실행 중 SSE 이벤트가 어떤 순서로 내려오는지 보고 싶으면 다음 명령을 사용한다.
+
+```bash
+pnpm demo:sse:approval
+```
+
+이 스크립트는 다음을 자동으로 수행한다.
+
+1. `Start -> Approval -> Slack Service -> End` template을 생성한다.
+2. template을 실행한다.
+3. `/api/instances/{instance_id}/stream`에 SSE로 연결한다.
+4. `TASK_CREATED` 이벤트를 받으면 task를 자동 승인한다.
+5. `NODE_STARTED`, `NODE_COMPLETED`, `INSTANCE_COMPLETED` 이벤트를 콘솔에 출력한다.
+6. `INSTANCE_COMPLETED`를 받으면 종료한다.
+
+출력 예시:
+
+```text
+[sse-demo] instance=<instance_id>
+[sse] #1 INSTANCE_RUNNING     node=-          payload={...}
+[sse] #2 TASK_CREATED         node=-          payload={"task_id":"...","assignee":"admin",...}
+[sse-demo] auto-approve task=<task_id> after 1200ms
+[sse] #3 INSTANCE_WAITING     node=-          payload={...}
+[sse-demo] approved task=<task_id>
+[sse] #4 NODE_COMPLETED       node=approval   payload={...}
+[sse] #5 NODE_STARTED         node=svc        payload={...}
+[sse] #6 NODE_COMPLETED       node=svc        payload={...}
+[sse] #7 INSTANCE_COMPLETED   node=-          payload={...}
+```
 
 ## 시나리오 3: 병렬 플러그인 분기
 
