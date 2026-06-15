@@ -336,6 +336,7 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
             switch (data.nodeType) {
               case 'start': return '#4caf50';
               case 'service': return '#2196f3';
+              case 'script': return '#14b8a6';
               case 'timer': return '#ff9800';
               case 'gateway': return '#9c27b0';
               case 'approval': return '#ffc107';

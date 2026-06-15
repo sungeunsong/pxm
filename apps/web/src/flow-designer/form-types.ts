@@ -48,7 +48,7 @@ export interface FormSchema {
 
 // CustomNodeData 확장
 export interface CustomNodeData {
-  nodeType: 'start' | 'service' | 'timer' | 'gateway' | 'approval' | 'end';
+  nodeType: 'start' | 'service' | 'script' | 'timer' | 'gateway' | 'approval' | 'end';
   label: string;
   description?: string;
   icon?: string;
@@ -70,6 +70,12 @@ export interface CustomNodeData {
   timeout?: number;
   retryCount?: number;
   enableRetry?: boolean;
+
+  // JS Script 노드 전용
+  scriptType?: 'javascript';
+  code?: string;
+  outputPath?: string;
+  scriptTimeoutMs?: number;
   
   // Timer 노드 전용
   durationMs?: string;

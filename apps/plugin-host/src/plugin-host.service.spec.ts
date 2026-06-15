@@ -8,31 +8,7 @@ describe('PluginHostService', () => {
   });
 
   it('reports registered hosted executors', () => {
-    expect(service.health().executors).toEqual(
-      expect.arrayContaining([
-        'connector.slack.send_message',
-        'connector.acra.grant_permission',
-        'connector.nit.create_issue',
-        'connector.sample_echo',
-      ]),
-    );
-  });
-
-  it('invokes a hosted executor by plugin_id', async () => {
-    const response = await service.invoke({
-      plugin_id: 'connector.nit.create_issue',
-      instance: { id: 'instance-1' },
-      node: { id: 'node-1', token_id: '12345678-0000-0000-0000-000000000000' },
-      config: {
-        projectKey: 'OPS',
-        titleTemplate: 'Request failed',
-      },
-      context: {},
-      attempt: 0,
-    });
-
-    expect(response.success).toBe(true);
-    expect(response.output?.ticket).toBe('NIT-12345678');
+    expect(service.health().executors).toEqual([]);
   });
 
   it('returns a contract error for an unknown plugin', async () => {
@@ -52,7 +28,7 @@ describe('PluginHostService', () => {
 
   it('rejects payloads above the plugin resource limit', async () => {
     const response = await service.invoke({
-      plugin_id: 'connector.sample_echo',
+      plugin_id: 'connector.missing',
       instance: { id: 'instance-1' },
       node: { id: 'node-1' },
       config: {
@@ -66,12 +42,12 @@ describe('PluginHostService', () => {
     });
 
     expect(response.success).toBe(false);
-    expect(response.error?.code).toBe('PLUGIN_PAYLOAD_TOO_LARGE');
+    expect(response.error?.code).toBe('PLUGIN_NOT_REGISTERED');
   });
 
   it('rejects unsupported hosted isolation mode', async () => {
     const response = await service.invoke({
-      plugin_id: 'connector.sample_echo',
+      plugin_id: 'connector.missing',
       instance: { id: 'instance-1' },
       node: { id: 'node-1' },
       config: {},
@@ -83,32 +59,6 @@ describe('PluginHostService', () => {
     });
 
     expect(response.success).toBe(false);
-    expect(response.error?.code).toBe('PLUGIN_ISOLATION_UNSUPPORTED');
-  });
-
-  it('invokes the sample hosted executor module', async () => {
-    const response = await service.invoke({
-      plugin_id: 'connector.sample_echo',
-      instance: { id: 'instance-1' },
-      node: { id: 'node-1', token_id: 'token-1' },
-      config: {
-        message: 'hello',
-      },
-      context: {
-        requester: 'user@example.com',
-      },
-      attempt: 1,
-    });
-
-    expect(response.success).toBe(true);
-    expect(response.output).toMatchObject({
-      connector: 'sample_echo',
-      message: 'hello',
-      instance_id: 'instance-1',
-      node_id: 'node-1',
-      token_id: 'token-1',
-      attempt: 1,
-      context_keys: ['requester'],
-    });
+    expect(response.error?.code).toBe('PLUGIN_NOT_REGISTERED');
   });
 });

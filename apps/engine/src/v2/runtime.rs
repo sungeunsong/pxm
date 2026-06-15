@@ -2,6 +2,8 @@ use anyhow::Result;
 use chrono::Utc;
 use rand::Rng;
 use serde_json::{json, Value};
+use std::io::Write;
+use std::process::{Command, Stdio};
 use uuid::Uuid;
 
 use crate::v2::ports::{
@@ -165,6 +167,153 @@ fn evaluate_condition(condition: &str, context: &Value) -> bool {
         }
     }
     false
+}
+
+fn execute_js_node(node: &NodeDef, context: &Value) -> Result<Value> {
+    let code = node
+        .config
+        .get("code")
+        .or_else(|| node.config.get("script"))
+        .or_else(|| node.config.get("jsCode"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let timeout_ms = node
+        .config
+        .get("scriptTimeoutMs")
+        .or_else(|| node.config.get("timeoutMs"))
+        .or_else(|| node.config.get("timeout"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1000)
+        .clamp(50, 5000);
+
+    let runner = r#"
+const vm = require('node:vm');
+
+let raw = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', chunk => raw += chunk);
+process.stdin.on('end', () => {
+  try {
+    const payload = JSON.parse(raw || '{}');
+    const sandbox = vm.createContext({
+      input: payload.context || {},
+      context: payload.context || {},
+    }, {
+      codeGeneration: { strings: false, wasm: false },
+    });
+    const wrapped = `(function(input, context) {
+      "use strict";
+      ${String(payload.code || '')}
+    })(input, context)`;
+    const script = new vm.Script(wrapped, { filename: 'pxm-js-node.vm' });
+    const output = script.runInContext(sandbox, {
+      timeout: Number(payload.timeout_ms) || 1000,
+      displayErrors: true,
+    });
+    process.stdout.write(JSON.stringify({ success: true, output: output === undefined ? null : output }));
+  } catch (error) {
+    process.stdout.write(JSON.stringify({
+      success: false,
+      error: {
+        name: error && error.name,
+        message: error && error.message ? error.message : String(error),
+      },
+    }));
+    process.exitCode = 1;
+  }
+});
+"#;
+
+    let payload = json!({
+        "code": code,
+        "context": context,
+        "timeout_ms": timeout_ms,
+    });
+
+    let mut child = Command::new("node")
+        .arg("-e")
+        .arg(runner)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin.write_all(payload.to_string().as_bytes())?;
+    }
+
+    let output = child.wait_with_output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let response: Value = serde_json::from_str(stdout.trim()).unwrap_or_else(|_| {
+        json!({
+            "success": false,
+            "error": {
+                "message": format!(
+                    "JS node returned invalid response. status={:?}, stderr={}",
+                    output.status.code(),
+                    String::from_utf8_lossy(&output.stderr)
+                )
+            }
+        })
+    });
+
+    if response
+        .get("success")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+    {
+        Ok(response.get("output").cloned().unwrap_or(Value::Null))
+    } else {
+        let message = response
+            .get("error")
+            .and_then(|error| error.get("message"))
+            .and_then(|value| value.as_str())
+            .unwrap_or("JS node execution failed");
+        anyhow::bail!(message.to_string())
+    }
+}
+
+fn set_context_value_at_path(context: &mut Value, output_path: &str, value: Value) {
+    let path = output_path
+        .trim()
+        .strip_prefix("context.")
+        .unwrap_or(output_path.trim());
+
+    if path.is_empty() {
+        *context = value;
+        return;
+    }
+
+    if !context.is_object() {
+        *context = json!({});
+    }
+
+    let parts: Vec<&str> = path.split('.').filter(|part| !part.is_empty()).collect();
+    if parts.is_empty() {
+        *context = value;
+        return;
+    }
+
+    let mut current = context;
+    for part in &parts[..parts.len() - 1] {
+        if !current.is_object() {
+            *current = json!({});
+        }
+        current = current
+            .as_object_mut()
+            .expect("context object")
+            .entry((*part).to_string())
+            .or_insert_with(|| json!({}));
+    }
+
+    if !current.is_object() {
+        *current = json!({});
+    }
+    current
+        .as_object_mut()
+        .expect("context object")
+        .insert(parts[parts.len() - 1].to_string(), value);
 }
 
 fn gateway_type(node: &NodeDef) -> GatewayType {
@@ -1165,6 +1314,28 @@ async fn execute_token_flow(
 
                 match call_result {
                     Ok(result) => {
+                        if let Some(output_path) = node
+                            .config
+                            .get("outputPath")
+                            .or_else(|| node.config.get("output_path"))
+                            .and_then(|value| value.as_str())
+                            .filter(|value| !value.trim().is_empty())
+                        {
+                            set_context_value_at_path(
+                                &mut instance.context,
+                                output_path,
+                                result.output.clone(),
+                            );
+                            ctx.instance_repo
+                                .update_instance(
+                                    instance.id,
+                                    &instance.state,
+                                    instance.context.clone(),
+                                    tx,
+                                )
+                                .await?;
+                        }
+
                         ctx.exec_log
                             .append_log(
                                 instance.id,
@@ -1260,6 +1431,127 @@ async fn execute_token_flow(
                                 )
                                 .await?;
                         }
+                    }
+                }
+            }
+
+            "script" => {
+                ctx.exec_log
+                    .append_log(
+                        instance.id,
+                        Some(token.id),
+                        Some(&token.node_id),
+                        "NODE_STARTED",
+                        json!({"script_type": "javascript"}),
+                        tx,
+                    )
+                    .await?;
+
+                match execute_js_node(node, &instance.context) {
+                    Ok(output) => {
+                        let output_path = node
+                            .config
+                            .get("outputPath")
+                            .or_else(|| node.config.get("output_path"))
+                            .and_then(|value| value.as_str())
+                            .filter(|value| !value.trim().is_empty())
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| format!("scriptResults.{}", token.node_id));
+
+                        set_context_value_at_path(
+                            &mut instance.context,
+                            &output_path,
+                            output.clone(),
+                        );
+                        ctx.instance_repo
+                            .update_instance(
+                                instance.id,
+                                &instance.state,
+                                instance.context.clone(),
+                                tx,
+                            )
+                            .await?;
+
+                        ctx.exec_log
+                            .append_log(
+                                instance.id,
+                                Some(token.id),
+                                Some(&token.node_id),
+                                "NODE_COMPLETED",
+                                json!({
+                                    "script_type": "javascript",
+                                    "output_path": output_path,
+                                    "output": output
+                                }),
+                                tx,
+                            )
+                            .await?;
+
+                        token.status = TokenStatus::Consumed;
+                        token.updated_at = Utc::now();
+                        ctx.token_repo.update_tokens(&[token.clone()], tx).await?;
+
+                        let next_edges: Vec<&EdgeRule> = edges
+                            .iter()
+                            .filter(|e| e.source_node_id == token.node_id)
+                            .collect();
+
+                        for edge in next_edges {
+                            let new_token = V2Token {
+                                id: Uuid::new_v4(),
+                                instance_id: instance.id,
+                                node_id: edge.target_node_id.clone(),
+                                status: TokenStatus::Active,
+                                parent_token_id: Some(token.id),
+                                scope_key: token.scope_key.clone(),
+                                created_at: Utc::now(),
+                                updated_at: Utc::now(),
+                            };
+                            ctx.token_repo
+                                .create_tokens(&[new_token.clone()], tx)
+                                .await?;
+                            active_tokens.push(new_token);
+                        }
+                    }
+                    Err(err) => {
+                        token.status = TokenStatus::Failed;
+                        token.updated_at = Utc::now();
+                        ctx.token_repo.update_tokens(&[token.clone()], tx).await?;
+
+                        instance.state = "FAILED".to_string();
+                        ctx.instance_repo
+                            .update_instance(
+                                instance.id,
+                                &instance.state,
+                                instance.context.clone(),
+                                tx,
+                            )
+                            .await?;
+
+                        ctx.exec_log
+                            .append_log(
+                                instance.id,
+                                Some(token.id),
+                                Some(&token.node_id),
+                                "NODE_FAILED",
+                                json!({
+                                    "script_type": "javascript",
+                                    "reason": err.to_string()
+                                }),
+                                tx,
+                            )
+                            .await?;
+
+                        ctx.outbox
+                            .append_event(
+                                instance.id,
+                                Some(token.id),
+                                Some(&token.node_id),
+                                "INSTANCE_FAILED",
+                                json!({"reason": "script_node_failed"}),
+                                tx,
+                            )
+                            .await?;
                     }
                 }
             }

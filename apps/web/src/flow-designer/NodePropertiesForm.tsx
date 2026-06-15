@@ -119,6 +119,57 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
     );
   };
 
+  // JS Script 노드 속성
+  const renderScriptProperties = () => {
+    const data = node.data as any;
+    return (
+      <div className="property-section">
+        <h4 className="property-section-title">JS 실행 설정</h4>
+        <div className="property-group">
+          <label className="property-label">JavaScript Code</label>
+          <textarea
+            className="property-textarea code-textarea"
+            value={data.code || ''}
+            onChange={(e) =>
+              onUpdate(node.id, {
+                ...data,
+                scriptType: 'javascript',
+                code: e.target.value,
+              })
+            }
+            placeholder="return { total: input.formData.price * input.formData.quantity };"
+            spellCheck={false}
+          />
+          <div className="property-helper-text">
+            `input`과 `context`를 읽고, `return` 값이 output path에 저장됩니다.
+          </div>
+        </div>
+        <Input
+          label="Output Path"
+          placeholder="scriptResults.jsNode"
+          value={data.outputPath || ''}
+          onChange={(e) => onUpdate(node.id, { ...data, outputPath: e.target.value })}
+          helperText="예: scriptResults.calculateAmount 또는 context.calculated"
+          fullWidth
+        />
+        <Input
+          label="Timeout (ms)"
+          type="number"
+          placeholder="1000"
+          value={data.scriptTimeoutMs || ''}
+          onChange={(e) =>
+            onUpdate(node.id, {
+              ...data,
+              scriptTimeoutMs: e.target.value === '' ? '' : Number(e.target.value),
+            })
+          }
+          helperText="Node.js vm 실행 제한 시간입니다."
+          fullWidth
+        />
+      </div>
+    );
+  };
+
   // Timer 노드 속성
   const renderTimerProperties = () => {
     const data = node.data as any;
@@ -248,6 +299,7 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
       {/* 노드별 속성 */}
       {node.data.nodeType === 'start' && renderStartProperties()}
       {node.data.nodeType === 'service' && renderServiceProperties()}
+      {node.data.nodeType === 'script' && renderScriptProperties()}
       {node.data.nodeType === 'timer' && renderTimerProperties()}
       {node.data.nodeType === 'gateway' && renderGatewayProperties()}
       {node.data.nodeType === 'approval' && renderApprovalProperties()}
@@ -267,12 +319,7 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
 };
 
 function findPluginManifest(plugins: PluginManifest[], pluginId: string) {
-  const legacyAliases: Record<string, string> = {
-    'connector.slack': 'connector.slack.send_message',
-    'connector.acra': 'connector.acra.grant_permission',
-    'connector.nit': 'connector.nit.create_issue',
-  };
-  return plugins.find((plugin) => plugin.plugin_id === (legacyAliases[pluginId] || pluginId));
+  return plugins.find((plugin) => plugin.plugin_id === pluginId);
 }
 
 function renderGatewayEdgeRules(
@@ -379,12 +426,7 @@ function buildPluginOptions(plugins: PluginManifest[]) {
     label: plugin.display_name,
   }));
 
-  return [
-    ...options,
-    { value: 'connector.slack', label: 'Slack Alerter (Legacy Mock)' },
-    { value: 'connector.acra', label: 'ACRA Security Assessor (Legacy Mock)' },
-    { value: 'connector.nit', label: 'NIT VM Provisioner (Legacy Mock)' },
-  ];
+  return options;
 }
 
 function renderPluginConfigFields(

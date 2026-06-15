@@ -31,10 +31,11 @@ async function main() {
         type: 'custom',
         position: { x: 440, y: 0 },
         data: {
-          label: 'Slack Notice',
+          label: 'HTTP Notice',
           nodeType: 'service',
-          plugin_id: 'connector.slack',
-          message: 'approval smoke passed',
+          plugin_id: 'builtin.http_request',
+          method: 'GET',
+          url: `${apiBaseUrl}/debug/flaky?key=approval-smoke&fail=0`,
         },
       },
       {

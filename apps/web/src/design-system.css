@@ -27,6 +27,7 @@
   /* ===== Node Colors ===== */
   --node-start: #10b981;
   --node-service: #3b82f6;
+  --node-script: #14b8a6;
   --node-timer: #f59e0b;
   --node-gateway: #8b5cf6;
   --node-approval: #ec4899;

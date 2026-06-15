@@ -1495,6 +1495,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "dotenvy",
+ "futures-util",
  "mongodb",
  "rand 0.8.5",
  "reqwest",

@@ -3,8 +3,10 @@ import {
   CheckSquare,
   CircleCheck,
   ClipboardList,
+  Braces,
   Clock,
   Cpu,
+  Database,
   Diamond,
   Globe,
   MessageSquare,
@@ -25,6 +27,7 @@ const iconMap: Record<string, React.ComponentType<{ size?: number; fill?: string
   'clipboard-list': ClipboardList,
   clock: Clock,
   cpu: Cpu,
+  database: Database,
   diamond: Diamond,
   globe: Globe,
   'message-square': MessageSquare,
@@ -37,6 +40,7 @@ const iconMap: Record<string, React.ComponentType<{ size?: number; fill?: string
   'user-plus': UserPlus,
   'user-search': UserSearch,
   users: Users,
+  braces: Braces,
 };
 
 export function PluginIcon({
@@ -63,6 +67,8 @@ export function nodeTypeIcon(nodeType: string, icon?: string) {
       return <Play size={15} fill="currentColor" style={{ marginLeft: '1px' }} />;
     case 'service':
       return <Cpu size={15} />;
+    case 'script':
+      return <Braces size={15} />;
     case 'timer':
       return <Clock size={15} />;
     case 'gateway':

@@ -9,6 +9,8 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use futures_util::TryStreamExt;
+use mongodb::bson::{self, Bson, Document};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -36,8 +38,6 @@ impl PluginExecutorRegistry {
             registry.register_manifest(manifest, &plugin_host_url)?;
         }
 
-        registry.register_dev_mock_aliases();
-
         Ok(registry)
     }
 
@@ -49,6 +49,9 @@ impl PluginExecutorRegistry {
                     http_client: reqwest::Client::builder().timeout(timeout).build()?,
                     manifest,
                 })
+            }
+            "builtin" if manifest.plugin_id == "connector.db.mongodb.query" => {
+                ConnectorHandler::MongoDbQuery(MongoDbQueryExecutor { manifest })
             }
             "builtin" => {
                 return Err(anyhow!(
@@ -65,7 +68,6 @@ impl PluginExecutorRegistry {
                 http_client: reqwest::Client::builder().timeout(timeout).build()?,
                 manifest,
             }),
-            "mock" => ConnectorHandler::Mock(MockConnectorExecutor::from_manifest(manifest)?),
             other => {
                 return Err(anyhow!(
                     "unsupported executor_type '{}' for plugin '{}'",
@@ -78,37 +80,6 @@ impl PluginExecutorRegistry {
         self.handlers
             .insert(handler.plugin_id().to_string(), handler);
         Ok(())
-    }
-
-    fn register_dev_mock_aliases(&mut self) {
-        self.register_aliases(
-            &["connector.slack"],
-            ConnectorHandler::Mock(MockConnectorExecutor::legacy(
-                "connector.slack",
-                MockConnectorKind::Slack,
-            )),
-        );
-        self.register_aliases(
-            &["connector.acra", "connector.acra.revoke_permission"],
-            ConnectorHandler::Mock(MockConnectorExecutor::legacy(
-                "connector.acra",
-                MockConnectorKind::Acra,
-            )),
-        );
-        self.register_aliases(
-            &["connector.nit", "connector.nit.register_wiki_candidate"],
-            ConnectorHandler::Mock(MockConnectorExecutor::legacy(
-                "connector.nit",
-                MockConnectorKind::Nit,
-            )),
-        );
-    }
-
-    fn register_aliases(&mut self, plugin_ids: &[&str], handler: ConnectorHandler) {
-        for plugin_id in plugin_ids {
-            self.handlers
-                .insert((*plugin_id).to_string(), handler.clone());
-        }
     }
 }
 
@@ -244,7 +215,8 @@ impl PluginManifest {
                 file.display()
             ));
         }
-        if controls.require_trusted_source && !controls.trusted_sources.contains(&self.trusted_source)
+        if controls.require_trusted_source
+            && !controls.trusted_sources.contains(&self.trusted_source)
         {
             return Err(anyhow!(
                 "{}: untrusted plugin source {}",
@@ -288,26 +260,6 @@ impl PluginManifest {
                 .unwrap_or(5_000)
                 .max(1),
         )
-    }
-
-    fn legacy_mock(plugin_id: &str) -> Self {
-        Self {
-            plugin_id: plugin_id.to_string(),
-            version: "0.0.0".to_string(),
-            executor_type: "mock".to_string(),
-            executor_ref: plugin_id.to_string(),
-            enabled: true,
-            trusted_source: "local".to_string(),
-            signature: None,
-            isolation_policy: Some(PluginIsolationPolicy::for_executor("mock")),
-            resource_limits: Some(PluginResourceLimits {
-                timeout_ms: Some(5_000),
-                max_payload_bytes: Some(262_144),
-            }),
-            secrets_policy: PluginSecretsPolicy::default(),
-            timeout_ms: Some(5_000),
-            retry_policy: None,
-        }
     }
 }
 
@@ -374,18 +326,18 @@ impl PluginExecutorPort for PluginExecutorRegistry {
 #[derive(Clone)]
 enum ConnectorHandler {
     HttpRequest(HttpRequestExecutor),
+    MongoDbQuery(MongoDbQueryExecutor),
     Hosted(HostedPluginExecutor),
     ExternalHttp(ExternalHttpPluginExecutor),
-    Mock(MockConnectorExecutor),
 }
 
 impl ConnectorHandler {
     fn manifest(&self) -> &PluginManifest {
         match self {
             Self::HttpRequest(executor) => &executor.manifest,
+            Self::MongoDbQuery(executor) => &executor.manifest,
             Self::Hosted(executor) => &executor.manifest,
             Self::ExternalHttp(executor) => &executor.manifest,
-            Self::Mock(executor) => &executor.manifest,
         }
     }
 
@@ -400,9 +352,9 @@ impl ConnectorHandler {
     async fn execute(&self, invocation: PluginInvocation) -> Result<PluginExecutionResult> {
         match self {
             Self::HttpRequest(executor) => executor.execute(invocation).await,
+            Self::MongoDbQuery(executor) => executor.execute(invocation).await,
             Self::Hosted(executor) => executor.execute(invocation).await,
             Self::ExternalHttp(executor) => executor.execute(invocation).await,
-            Self::Mock(executor) => executor.execute(invocation).await,
         }
     }
 }
@@ -455,6 +407,96 @@ impl HttpRequestExecutor {
             })
         } else {
             Err(anyhow!("plugin returned non-success status: {}", status))
+        }
+    }
+}
+
+#[derive(Clone)]
+struct MongoDbQueryExecutor {
+    manifest: PluginManifest,
+}
+
+impl MongoDbQueryExecutor {
+    async fn execute(&self, invocation: PluginInvocation) -> Result<PluginExecutionResult> {
+        let mongo_url = invocation
+            .config
+            .get("connection_uri")
+            .or_else(|| invocation.config.get("connectionUri"))
+            .or_else(|| invocation.config.get("connectionString"))
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| value.to_string())
+            .or_else(|| std::env::var("PXM_MONGODB_QUERY_URL").ok())
+            .ok_or_else(|| {
+                anyhow!(
+                    "connector.db.mongodb.query requires config.connection_uri or PXM_MONGODB_QUERY_URL"
+                )
+            })?;
+        let database = invocation
+            .config
+            .get("database")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| value.to_string())
+            .or_else(|| std::env::var("PXM_MONGODB_QUERY_DB_NAME").ok())
+            .or_else(|| std::env::var("MONGO_DB_NAME").ok())
+            .unwrap_or_else(|| "pxm_db".to_string());
+        let collection = invocation
+            .config
+            .get("collection")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| anyhow!("connector.db.mongodb.query requires config.collection"))?;
+        let operation = invocation
+            .config
+            .get("operation")
+            .and_then(|value| value.as_str())
+            .unwrap_or("find")
+            .to_ascii_lowercase();
+        let filter = value_to_document(invocation.config.get("filter"))?.unwrap_or_default();
+
+        let client = mongodb::Client::with_uri_str(&mongo_url).await?;
+        let collection = client
+            .database(&database)
+            .collection::<Document>(collection);
+
+        match operation.as_str() {
+            "find" => {
+                let mut cursor = collection.find(filter, None).await?;
+                let mut rows = Vec::new();
+                while let Some(document) = cursor.try_next().await? {
+                    rows.push(document_to_json(document)?);
+                }
+                Ok(PluginExecutionResult {
+                    status_code: 200,
+                    output: json!({
+                        "database": database,
+                        "operation": operation,
+                        "rows": rows,
+                        "row_count": rows.len()
+                    }),
+                })
+            }
+            "findone" | "find_one" => {
+                let row = collection.find_one(filter, None).await?;
+                let row = row.map(document_to_json).transpose()?;
+                let rows = row.clone().map(|value| vec![value]).unwrap_or_default();
+                let row_count = rows.len();
+                Ok(PluginExecutionResult {
+                    status_code: 200,
+                    output: json!({
+                        "database": database,
+                        "operation": "findOne",
+                        "row": row,
+                        "rows": rows,
+                        "row_count": row_count
+                    }),
+                })
+            }
+            other => Err(anyhow!(
+                "connector.db.mongodb.query unsupported operation '{}'",
+                other
+            )),
         }
     }
 }
@@ -545,89 +587,6 @@ impl ExternalHttpPluginExecutor {
     }
 }
 
-#[derive(Clone)]
-struct MockConnectorExecutor {
-    manifest: PluginManifest,
-    kind: MockConnectorKind,
-}
-
-impl MockConnectorExecutor {
-    fn from_manifest(manifest: PluginManifest) -> Result<Self> {
-        let kind = MockConnectorKind::from_plugin_id(&manifest.plugin_id).ok_or_else(|| {
-            anyhow!(
-                "mock plugin '{}' has no local mock executor",
-                manifest.plugin_id
-            )
-        })?;
-        Ok(Self { manifest, kind })
-    }
-
-    fn legacy(plugin_id: &str, kind: MockConnectorKind) -> Self {
-        Self {
-            manifest: PluginManifest::legacy_mock(plugin_id),
-            kind,
-        }
-    }
-
-    async fn execute(&self, invocation: PluginInvocation) -> Result<PluginExecutionResult> {
-        match self.kind {
-            MockConnectorKind::Slack => Ok(PluginExecutionResult {
-                status_code: 200,
-                output: json!({
-                    "mock": true,
-                    "connector": "slack",
-                    "message": invocation.config.get("message").cloned().unwrap_or(Value::Null),
-                    "instance_id": invocation.instance_id,
-                    "token_id": invocation.token_id,
-                    "attempt": invocation.attempt,
-                }),
-            }),
-            MockConnectorKind::Acra => Ok(PluginExecutionResult {
-                status_code: 200,
-                output: json!({
-                    "mock": true,
-                    "connector": "acra",
-                    "decision": "approved",
-                    "instance_id": invocation.instance_id,
-                    "token_id": invocation.token_id,
-                }),
-            }),
-            MockConnectorKind::Nit => Ok(PluginExecutionResult {
-                status_code: 200,
-                output: json!({
-                    "mock": true,
-                    "connector": "nit",
-                    "ticket": format!("NIT-{}", &invocation.token_id.to_string()[..8]),
-                    "instance_id": invocation.instance_id,
-                    "token_id": invocation.token_id,
-                }),
-            }),
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-enum MockConnectorKind {
-    Slack,
-    Acra,
-    Nit,
-}
-
-impl MockConnectorKind {
-    fn from_plugin_id(plugin_id: &str) -> Option<Self> {
-        match plugin_id {
-            "connector.slack" | "connector.slack.send_message" => Some(Self::Slack),
-            "connector.acra"
-            | "connector.acra.grant_permission"
-            | "connector.acra.revoke_permission" => Some(Self::Acra),
-            "connector.nit"
-            | "connector.nit.create_issue"
-            | "connector.nit.register_wiki_candidate" => Some(Self::Nit),
-            _ => None,
-        }
-    }
-}
-
 async fn parse_plugin_contract_response(
     plugin_id: &str,
     response: reqwest::Response,
@@ -690,6 +649,31 @@ fn parse_json_object(value: Option<&Value>) -> Result<Option<serde_json::Map<Str
     }
 
     Err(anyhow!("expected headers to be a JSON object"))
+}
+
+fn value_to_document(value: Option<&Value>) -> Result<Option<Document>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+
+    if value.is_null() {
+        return Ok(None);
+    }
+
+    if let Some(text) = value.as_str() {
+        if text.trim().is_empty() {
+            return Ok(None);
+        }
+        let parsed: Value = serde_json::from_str(text)?;
+        return value_to_document(Some(&parsed));
+    }
+
+    let document = bson::to_document(value)?;
+    Ok(Some(document))
+}
+
+fn document_to_json(document: Document) -> Result<Value> {
+    Ok(bson::from_bson::<Value>(Bson::Document(document))?)
 }
 
 fn split_resolved_secrets(mut config: Value) -> (Value, Value) {
@@ -917,7 +901,9 @@ impl PluginControls {
             return true;
         };
 
-        allowlist.iter().any(|item| item == "*" || item == plugin_id)
+        allowlist
+            .iter()
+            .any(|item| item == "*" || item == plugin_id)
     }
 }
 
@@ -1085,16 +1071,16 @@ mod tests {
     #[test]
     fn maps_secret_uri_to_prefixed_env_name() {
         assert_eq!(
-            secret_ref_to_env_name("secret://acra/api_token@1").unwrap(),
-            "PXM_SECRET_ACRA_API_TOKEN"
+            secret_ref_to_env_name("secret://db/mongodb/connection@1").unwrap(),
+            "PXM_SECRET_DB_MONGODB_CONNECTION"
         );
     }
 
     #[test]
     fn keeps_explicit_env_reference() {
         assert_eq!(
-            secret_ref_to_env_name("env://SLACK_BOT_TOKEN").unwrap(),
-            "SLACK_BOT_TOKEN"
+            secret_ref_to_env_name("env://OPTIONAL_DB_TOKEN").unwrap(),
+            "OPTIONAL_DB_TOKEN"
         );
     }
 
@@ -1109,37 +1095,40 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(plugin_ids.contains(&"builtin.http_request".to_string()));
-        assert!(plugin_ids.contains(&"connector.slack.send_message".to_string()));
+        assert!(plugin_ids.contains(&"connector.db.mongodb.query".to_string()));
     }
 
     #[test]
     fn prepares_manifest_secrets_without_leaking_refs_into_config() {
-        std::env::set_var("PXM_SECRET_ACRA_API_TOKEN", "required-token");
-        std::env::remove_var("SLACK_BOT_TOKEN");
+        std::env::set_var("PXM_SECRET_DB_MONGODB_CONNECTION", "required-token");
+        std::env::remove_var("OPTIONAL_DB_TOKEN");
 
         let manifest = PluginManifest {
-            plugin_id: "connector.acra.grant_permission".to_string(),
+            plugin_id: "connector.db.mongodb.query".to_string(),
             version: "1.0.0".to_string(),
-            executor_type: "hosted".to_string(),
-            executor_ref: "pxm-plugin-host:connector.acra.grant_permission".to_string(),
+            executor_type: "builtin".to_string(),
+            executor_ref: "builtin.mongodb_query".to_string(),
             enabled: true,
             trusted_source: "local".to_string(),
             signature: None,
-            isolation_policy: Some(super::PluginIsolationPolicy::for_executor("hosted")),
+            isolation_policy: Some(super::PluginIsolationPolicy::for_executor("builtin")),
             resource_limits: Some(super::PluginResourceLimits {
                 timeout_ms: Some(5_000),
                 max_payload_bytes: Some(262_144),
             }),
             secrets_policy: PluginSecretsPolicy {
                 required: [(
-                    "api_token".to_string(),
-                    "secret://acra/api_token".to_string(),
+                    "connection".to_string(),
+                    "secret://db/mongodb/connection".to_string(),
                 )]
                 .into_iter()
                 .collect(),
-                optional: [("bot_token".to_string(), "env://SLACK_BOT_TOKEN".to_string())]
-                    .into_iter()
-                    .collect(),
+                optional: [(
+                    "optional_token".to_string(),
+                    "env://OPTIONAL_DB_TOKEN".to_string(),
+                )]
+                .into_iter()
+                .collect(),
             },
             timeout_ms: Some(5_000),
             retry_policy: Some(PluginRetryPolicy {
@@ -1150,10 +1139,11 @@ mod tests {
 
         let prepared = prepare_config(
             &json!({
-                "targetSystem": "ACRA",
-                "permissionCode": "READ",
+                "collection": "v2_process_instances",
+                "operation": "find",
+                "filter": {},
                 "secrets_ref": {
-                    "override": "env://PXM_SECRET_ACRA_API_TOKEN"
+                    "override": "env://PXM_SECRET_DB_MONGODB_CONNECTION"
                 }
             }),
             &manifest,
@@ -1164,7 +1154,7 @@ mod tests {
         assert_eq!(
             prepared
                 .get("secrets")
-                .and_then(|secrets| secrets.get("api_token"))
+                .and_then(|secrets| secrets.get("connection"))
                 .and_then(|secret| secret.as_str()),
             Some("required-token")
         );
@@ -1178,7 +1168,7 @@ mod tests {
         assert_eq!(
             prepared
                 .get("secrets")
-                .and_then(|secrets| secrets.get("bot_token")),
+                .and_then(|secrets| secrets.get("optional_token")),
             None
         );
     }

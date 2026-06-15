@@ -14,18 +14,13 @@ describe('PluginsService', () => {
     expect(plugins.map((plugin) => plugin.plugin_id)).toEqual(
       expect.arrayContaining([
         'builtin.http_request',
-        'connector.slack.send_message',
-        'connector.acra.grant_permission',
-        'connector.nit.create_issue',
-        'connector.jira.create_issue',
-        'connector.hr.lookup_user',
-        'connector.ad.grant_group',
+        'connector.db.mongodb.query',
       ]),
     );
   });
 
   it('returns plugin versions newest first', () => {
-    const versions = service.findVersions('connector.slack.send_message');
+    const versions = service.findVersions('connector.db.mongodb.query');
 
     expect(versions).toHaveLength(1);
     expect(versions[0].version).toBe('1.0.0');

@@ -11,9 +11,10 @@ async function main() {
       node('approval', 'approval', 'Manager Approval', 220, {
         assignee: 'admin',
       }),
-      node('svc', 'service', 'Slack Notice', 440, {
-        plugin_id: 'connector.slack',
-        message: 'sse demo approval passed',
+      node('svc', 'service', 'HTTP Notice', 440, {
+        plugin_id: 'builtin.http_request',
+        method: 'GET',
+        url: `${apiBaseUrl}/debug/flaky?key=sse-demo&fail=0`,
       }),
       node('end', 'end', 'End', 660),
     ],

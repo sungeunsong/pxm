@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useRef } from 'react';
 import type { Node } from 'reactflow';
 import type { Edge } from 'reactflow';
-import { CheckSquare, CircleCheck, Clock, Diamond, Inbox, Play, Search, Star } from 'lucide-react';
+import { Braces, CheckSquare, CircleCheck, Clock, Diamond, Inbox, Play, Search, Star } from 'lucide-react';
 import { Button } from '../components/Button';
 import { Header } from '../components/Header';
 import { FlowCanvas } from './FlowCanvas';
@@ -470,6 +470,21 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
                 <div className="palette-node" draggable onDragStart={(e) => onDragStart(e, 'timer', 'Timer')}>
                   <div className="palette-node-icon" style={{ background: 'var(--node-timer)' }}><Clock size={16} /></div>
                   <span className="palette-node-label">Timer</span>
+                </div>
+                <div
+                  className="palette-node"
+                  draggable
+                  onDragStart={(e) =>
+                    onDragStart(e, 'script', 'JS Node', {
+                      scriptType: 'javascript',
+                      code: "return { message: 'hello from js node', formData: input.formData };",
+                      outputPath: 'scriptResults.jsNode',
+                      scriptTimeoutMs: 1000,
+                    })
+                  }
+                >
+                  <div className="palette-node-icon" style={{ background: 'var(--node-script)' }}><Braces size={16} /></div>
+                  <span className="palette-node-label">JS Node</span>
                 </div>
                 <div className="palette-node" draggable onDragStart={(e) => onDragStart(e, 'gateway', 'Gateway')}>
                   <div className="palette-node-icon" style={{ background: 'var(--node-gateway)' }}><Diamond size={16} fill="currentColor" /></div>

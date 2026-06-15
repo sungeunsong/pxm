@@ -1,0 +1,73 @@
+{
+  "plugin_id": "connector.db.mongodb.query",
+  "version": "1.0.0",
+  "display_name": "MongoDB Query",
+  "description": "Run a MongoDB find/findOne operation from a service node.",
+  "category": "Database",
+  "node_type": "service",
+  "icon": "database",
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "connection_id": {
+        "type": "string",
+        "title": "Connection ID",
+        "description": "Optional reference label for a saved connection profile."
+      },
+      "connection_uri": {
+        "type": "string",
+        "title": "Connection URI",
+        "description": "MongoDB URI for this node. For production, prefer connection_id plus a secret store."
+      },
+      "database": {
+        "type": "string",
+        "title": "Database",
+        "description": "Defaults to PXM_MONGODB_QUERY_DB_NAME, then MONGO_DB_NAME, when empty."
+      },
+      "collection": { "type": "string", "title": "Collection" },
+      "operation": {
+        "type": "string",
+        "title": "Operation",
+        "enum": ["find", "findOne"],
+        "default": "find"
+      },
+      "filter": { "type": "object", "title": "Filter" },
+      "output_path": {
+        "type": "string",
+        "title": "Output Path",
+        "default": "dbResults.mongodb"
+      }
+    },
+    "required": ["connection_uri", "collection", "operation"]
+  },
+  "executor_type": "builtin",
+  "executor_ref": "builtin.mongodb_query",
+  "trusted_source": "official",
+  "secrets_policy": {},
+  "input_schema": {
+    "type": "object",
+    "properties": {}
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "rows": { "type": "array" },
+      "row_count": { "type": "integer" },
+      "row": { "type": "object" }
+    }
+  },
+  "timeout_ms": 10000,
+  "retry_policy": {
+    "max_attempts": 2,
+    "backoff_ms": 1000
+  },
+  "isolation_policy": {
+    "mode": "shared_process",
+    "network": "restricted"
+  },
+  "resource_limits": {
+    "timeout_ms": 10000,
+    "max_payload_bytes": 524288
+  },
+  "tags": ["db", "database", "mongodb", "query"]
+}

@@ -104,6 +104,13 @@
   border-color: var(--border-strong);
 }
 
+.property-textarea.code-textarea {
+  min-height: 180px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .property-helper-text {
   color: var(--text-tertiary);
   font-size: var(--font-size-xs);

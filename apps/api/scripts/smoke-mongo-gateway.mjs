@@ -16,22 +16,25 @@ async function main() {
     nodes: [
       node('start', 'start', 'Start', 0),
       node('fork', 'gateway', 'Parallel Fork', 180, { gatewayType: 'parallel' }),
-      node('slack', 'service', 'Slack Notice', 380, {
-        plugin_id: 'connector.slack',
-        message: 'parallel branch one',
+      node('http_one', 'service', 'HTTP Branch One', 380, {
+        plugin_id: 'builtin.http_request',
+        method: 'GET',
+        url: `${apiBaseUrl}/debug/flaky?key=gateway-smoke-one&fail=0`,
       }),
-      node('nit', 'service', 'NIT Ticket', 380, {
-        plugin_id: 'connector.nit',
+      node('http_two', 'service', 'HTTP Branch Two', 380, {
+        plugin_id: 'builtin.http_request',
+        method: 'GET',
+        url: `${apiBaseUrl}/debug/flaky?key=gateway-smoke-two&fail=0`,
       }),
       node('join', 'gateway', 'Parallel Join', 620, { gatewayType: 'parallel' }),
       node('end', 'end', 'End', 820),
     ],
     edges: [
       edge('e-start-fork', 'start', 'fork'),
-      edge('e-fork-slack', 'fork', 'slack'),
-      edge('e-fork-nit', 'fork', 'nit'),
-      edge('e-slack-join', 'slack', 'join'),
-      edge('e-nit-join', 'nit', 'join'),
+      edge('e-fork-http-one', 'fork', 'http_one'),
+      edge('e-fork-http-two', 'fork', 'http_two'),
+      edge('e-http-one-join', 'http_one', 'join'),
+      edge('e-http-two-join', 'http_two', 'join'),
       edge('e-join-end', 'join', 'end'),
     ],
   });
@@ -47,7 +50,7 @@ async function main() {
     return instance?.state === 'COMPLETED' ? instance : null;
   }, `COMPLETED parallel gateway instance ${instanceId}`);
 
-  for (const nodeId of ['slack', 'nit', 'join', 'end']) {
+  for (const nodeId of ['http_one', 'http_two', 'join', 'end']) {
     const log = await db.collection('v2_execution_logs').findOne({
       instance_id: instanceId,
       node_id: nodeId,
@@ -72,7 +75,7 @@ function node(id, nodeType, label, x, extraData = {}) {
   return {
     id,
     type: 'custom',
-    position: { x, y: id === 'nit' ? 140 : 0 },
+    position: { x, y: id === 'http_two' ? 140 : 0 },
     data: { label, nodeType, ...extraData },
   };
 }

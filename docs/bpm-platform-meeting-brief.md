@@ -164,7 +164,42 @@ Start -> Approval -> Service Plugin -> End
 8. service node에서는 `plugin_id`를 기준으로 plugin executor를 호출한다.
 9. 모든 node가 완료되면 instance가 `COMPLETED`가 된다.
 
-## 5. DB 구조와 Mongo 우선 전략
+## 5. BPMN 기준 노드 매핑
+
+현재 PXM의 node palette는 BPMN 전체 요소를 모두 노출하는 방식이 아니라, 업무 승인/연동 workflow에 필요한 핵심 요소를 제품 노드로 단순화한 것이다.
+
+| PXM node | BPMN 기준 | 설명 |
+|---|---|---|
+| Start | Start Event | 프로세스 시작점 |
+| Approval | User Task | 사람이 승인/반려하는 작업 |
+| Gateway | Gateway | 조건에 따라 다음 경로 선택 |
+| Service | Service Task | 시스템/API/plugin 실행 |
+| End | End Event | 프로세스 종료점 |
+
+DB node는 별도 Engine primitive로 만들지 않고, BPMN의 Service Task에 해당하는 plugin connector로 제공한다.
+
+```text
+PXM DB Node
+  -> BPMN Service Task
+  -> node_type = service
+  -> plugin_id = connector.db.mongodb.query
+  -> connection_uri 또는 connection_id를 node config에서 읽음
+```
+
+PXM runtime DB의 `MONGODB_URL`은 workflow template, instance, task, token 저장용이다. DB Node가 조회할 업무 DB 연결 정보는 노드 설정의 `connection_uri` 또는 향후 connection registry의 `connection_id`로 분리한다. DB Node는 연결 정보가 없을 때 PXM runtime DB로 fallback하지 않고 실패해야 한다.
+
+Script 계열 노드는 Python 등 여러 언어를 지원하는 generic Script Node로 확장하지 않고, JavaScript만 지원하는 JS Node로 확정한다.
+
+```text
+PXM JS Node
+  -> BPMN Script Task
+  -> node_type = script
+  -> script_type = javascript
+```
+
+JS Node는 workflow context의 입력 데이터를 가공하고, 결과를 output/context에 기록해서 다음 노드로 넘기는 용도다. Python runtime은 dependency, sandbox, runtime version, package 관리 부담이 크므로 기본 제품 범위에 포함하지 않는다.
+
+## 6. DB 구조와 Mongo 우선 전략
 
 DB는 특정 구현에 Engine/API가 직접 묶이지 않도록 adapter 구조로 분리했다.
 
@@ -196,11 +231,11 @@ v2_advisory_locks
 
 테스트/운영 관점에서는 `v2_engine_jobs`, `v2_tokens`, `v2_tasks`, `v2_execution_logs`가 runtime 상태를 보는 핵심이다.
 
-## 6. 플러그인 방식으로 바꾼 이유
+## 7. 플러그인 방식으로 바꾼 이유
 
 기존 방식은 외부 시스템 연동이 Engine/API 코드 안에 하드코딩되기 쉽다.
 
-예를 들어 Slack, Jira, ACRA, NIT 같은 연동이 Engine 코드에 직접 들어가면 문제가 생긴다.
+예를 들어 HTTP 호출, DB 조회, 고객사 업무 시스템 연동 같은 기능이 Engine 코드에 직접 들어가면 문제가 생긴다.
 
 - 새 연동을 추가할 때 Engine을 수정해야 한다.
 - Engine 배포가 잦아진다.
@@ -211,12 +246,12 @@ v2_advisory_locks
 
 ```text
 node_type = service
-plugin_id = connector.slack.send_message
+plugin_id = connector.db.mongodb.query
 ```
 
-Engine은 `plugin_id`를 보고 plugin registry에서 실행 정보를 찾는다. Engine은 Slack/Jira/ACRA 같은 업무 의미를 몰라도 된다.
+Engine은 `plugin_id`를 보고 plugin registry에서 실행 정보를 찾는다. Engine은 MongoDB query node를 Service Task로 실행하며, PostgreSQL/MySQL 같은 DB 종류는 실제 executor를 구현한 뒤 하나씩 추가한다.
 
-## 7. Plugin Registry
+## 8. Plugin Registry
 
 Plugin Registry는 사용할 수 있는 plugin 목록과 실행 계약을 담는 manifest 저장소다.
 
@@ -241,13 +276,13 @@ manifest에는 다음 정보가 들어간다.
 
 ```json
 {
-  "plugin_id": "connector.slack.send_message",
+  "plugin_id": "connector.db.mongodb.query",
   "version": "1.0.0",
-  "display_name": "Slack Send Message",
-  "category": "Collaboration",
+  "display_name": "MongoDB Query",
+  "category": "Database",
   "node_type": "service",
-  "executor_type": "hosted",
-  "executor_ref": "pxm-plugin-host:connector.slack.send_message"
+  "executor_type": "builtin",
+  "executor_ref": "builtin.mongodb_query"
 }
 ```
 
@@ -261,20 +296,15 @@ GET /api/plugins/:plugin_id/versions
 
 Web은 이 manifest를 보고 plugin palette와 node 설정 form을 렌더링한다.
 
-## 8. Web에서 플러그인을 사용하는 방식
+## 9. Web에서 플러그인을 사용하는 방식
 
 Web Flow Designer에서는 plugin이 generic Service node의 dropdown 옵션이 아니라, 팔레트의 1급 노드로 보인다.
 
 예시:
 
 ```text
-Slack Send Message
-NIT Create Issue
-ACRA Grant Permission
-Jira Create Issue
-HR Lookup User
-AD Grant Group
 HTTP Request
+MongoDB Query
 ```
 
 사용 방식:
@@ -291,9 +321,9 @@ HTTP Request
 - 사용자가 어떤 업무 연동을 쓰는지 명확하다.
 - 새 plugin을 추가해도 Web 코드를 크게 바꾸지 않아도 된다.
 
-## 9. Plugin Executor 유형
+## 10. Plugin Executor 유형
 
-플러그인 실행 방식은 네 가지로 나뉜다.
+플러그인 실행 방식은 세 가지로 나뉜다.
 
 ### builtin
 
@@ -314,12 +344,8 @@ builtin.http_request
 예:
 
 ```text
-connector.slack.send_message
-connector.acra.grant_permission
-connector.nit.create_issue
-connector.jira.create_issue
-connector.hr.lookup_user
-connector.ad.grant_group
+connector.customer_hr.lookup_user
+connector.customer_iam.grant_permission
 ```
 
 on-prem 기본 모델은 hosted 방식이다.
@@ -337,16 +363,12 @@ on-prem 기본 모델은 hosted 방식이다.
 예:
 
 ```text
-connector.external_echo
+connector.db.mongodb.query
 ```
 
-무거운 연동, 격리가 필요한 연동, 별도 runtime이 필요한 연동에 적합하다.
+무거운 연동, 격리가 필요한 연동, 별도 runtime이 필요한 연동에 적합하다. 현재 실제 동작하는 DB node는 MongoDB Query 하나이며, 다른 DB connector는 executor 구현 후 추가한다.
 
-### mock
-
-개발/테스트용 executor다.
-
-## 10. 플러그인 실행 흐름
+## 11. 플러그인 실행 흐름
 
 Service node 실행 시 흐름:
 
@@ -366,7 +388,7 @@ Hosted plugin 호출 request:
 
 ```json
 {
-  "plugin_id": "connector.slack.send_message",
+  "plugin_id": "connector.db.mongodb.query",
   "instance": {
     "id": "instance-id"
   },
@@ -406,7 +428,7 @@ Plugin response:
 }
 ```
 
-## 11. 플러그인 추가 방식
+## 12. 플러그인 추가 방식
 
 새 hosted plugin을 추가하는 흐름:
 
@@ -435,7 +457,7 @@ pnpm plugin:conformance -- \
   --endpoint http://127.0.0.1:3020/invoke
 ```
 
-## 12. 운영 통제
+## 13. 운영 통제
 
 운영 통제는 `apps/api/plugin-controls.json`에서 관리한다.
 
@@ -467,13 +489,13 @@ pnpm plugin:conformance -- \
 명령 예시:
 
 ```bash
-pnpm plugin:control -- disable connector.slack.send_message
-pnpm plugin:control -- enable connector.slack.send_message
-pnpm plugin:control -- pin connector.slack.send_message 1.0.0
-pnpm plugin:control -- allow customer-a connector.slack.send_message
+pnpm plugin:control -- disable connector.db.mongodb.query
+pnpm plugin:control -- enable connector.db.mongodb.query
+pnpm plugin:control -- pin connector.db.mongodb.query 1.0.0
+pnpm plugin:control -- allow customer-a connector.db.mongodb.query
 ```
 
-## 13. 테스트 결과
+## 14. 테스트 결과
 
 현재 확인한 테스트:
 
@@ -498,10 +520,10 @@ task=e15ddeb3-0568-4538-aa94-cc0f7ad3c65d
 Engine 로그 예시:
 
 ```text
-[v2_engine] Executing plugin: connector.slack
+[v2_engine] Executing plugin: connector.db.mongodb.query
 ```
 
-## 14. 회의에서 강조할 포인트
+## 15. 회의에서 강조할 포인트
 
 핵심 메시지:
 
@@ -511,6 +533,7 @@ Engine 로그 예시:
 - Engine은 BPM 실행에 집중하고, connector는 plugin으로 확장한다.
 - Web은 registry 기반으로 plugin node를 렌더링한다.
 - DB는 adapter 구조로 여러 DB를 지원할 수 있게 했고, 현재는 MongoDB를 우선 적용했다.
+- DB node는 plugin 기반 Service Task로 제공하고, script 계열은 JS Node만 지원한다.
 - 플러그인 추가는 Engine 수정 없이 manifest와 executor 등록으로 처리할 수 있다.
 - 운영 환경을 위해 enable/disable, allowlist, trusted source, audit, resource limit을 넣었다.
 
@@ -520,7 +543,7 @@ Engine 로그 예시:
 PXM/BPM Core는 workflow runtime에 집중하고, 외부 시스템 연동은 plugin registry와 plugin-host를 통해 확장하는 구조로 만들었다.
 ```
 
-## 15. 남은 논의거리
+## 16. 남은 논의거리
 
 회의에서 결정이 필요한 항목:
 
