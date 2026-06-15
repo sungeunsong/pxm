@@ -88,6 +88,58 @@
   font-size: var(--font-size-xs);
 }
 
+.node-test-section {
+  gap: 12px;
+}
+
+.node-test-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.node-test-header .btn {
+  flex: 0 0 auto;
+}
+
+.node-test-result {
+  overflow: hidden;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.node-test-result.success {
+  border-color: color-mix(in srgb, var(--color-success) 36%, var(--border-subtle));
+}
+
+.node-test-result.error {
+  border-color: color-mix(in srgb, var(--color-error) 42%, var(--border-subtle));
+}
+
+.node-test-result-meta {
+  padding: 8px 10px;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.node-test-result pre {
+  max-height: 280px;
+  margin: 0;
+  overflow: auto;
+  padding: 10px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .property-textarea {
   width: 100%;
   min-height: 120px;

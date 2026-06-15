@@ -1,5 +1,7 @@
 # BPM/PXM 플랫폼 설명 자료
 
+구현 진행 상태는 `docs/bpm-platform-implementation-plan.md`에서 투두 형태로 관리한다.
+
 ## 1. 우리가 만든 것
 
 우리는 기존 PXM Engine의 workflow 실행 구조를 살리면서, 범용 BPM 플랫폼으로 확장할 수 있는 구조를 만들었다.
@@ -174,6 +176,7 @@ Start -> Approval -> Service Plugin -> End
 | Approval | User Task | 사람이 승인/반려하는 작업 |
 | Gateway | Gateway | 조건에 따라 다음 경로 선택 |
 | Service | Service Task | 시스템/API/plugin 실행 |
+| Executable / Command | Service Task 확장 | 서버/에이전트에 등록된 실행파일 또는 명령 실행 |
 | End | End Event | 프로세스 종료점 |
 
 DB node는 별도 Engine primitive로 만들지 않고, BPMN의 Service Task에 해당하는 plugin connector로 제공한다.
@@ -198,6 +201,18 @@ PXM JS Node
 ```
 
 JS Node는 workflow context의 입력 데이터를 가공하고, 결과를 output/context에 기록해서 다음 노드로 넘기는 용도다. Python runtime은 dependency, sandbox, runtime version, package 관리 부담이 크므로 기본 제품 범위에 포함하지 않는다.
+
+회의에서 나온 실행파일 실행 요구사항은 End Node가 아니라 Service Task 계열로 보는 것이 맞다. 예를 들어 "exe 실행 후 결과값을 받아 Slack/API로 전송"하는 흐름은 다음처럼 모델링한다.
+
+```text
+Start
+  -> Executable Node
+  -> JS Node
+  -> HTTP Request 또는 Slack Connector
+  -> End
+```
+
+Executable Node는 사용자가 임의 경로를 직접 입력해서 실행하는 방식이 아니라, 서버/에이전트에 사전 등록된 `command_id`를 선택하고 허용된 argument만 전달하는 방식으로 설계해야 한다. 실행 결과는 `exit_code`, `stdout`, `stderr`, `duration_ms` 형태로 다음 노드에 전달한다.
 
 ## 6. DB 구조와 Mongo 우선 전략
 
@@ -367,6 +382,25 @@ connector.db.mongodb.query
 ```
 
 무거운 연동, 격리가 필요한 연동, 별도 runtime이 필요한 연동에 적합하다. 현재 실제 동작하는 DB node는 MongoDB Query 하나이며, 다른 DB connector는 executor 구현 후 추가한다.
+
+### command / executable
+
+서버 또는 별도 agent 환경에서 사전 등록된 실행파일/명령을 실행하는 executor 유형이다.
+
+예:
+
+```text
+connector.command.exec
+connector.executable.run
+```
+
+주요 용도:
+
+- 기존 고객사 업무 도구가 `.exe` 또는 shell command 형태로만 제공되는 경우
+- 파일 변환, 레거시 배치, 사내 유틸리티 실행
+- 실행 결과를 stdout/stderr로 받고 다음 노드에서 JS로 가공하는 경우
+
+이 유형은 보안 위험이 크므로 임의 명령 실행을 허용하지 않는다. 운영 환경에서는 `command_id` 기반 allowlist, timeout, working directory 제한, argument schema, 동시 실행 제한, audit log, agent 격리가 필요하다.
 
 ## 11. 플러그인 실행 흐름
 
@@ -555,3 +589,328 @@ PXM/BPM Core는 workflow runtime에 집중하고, 외부 시스템 연동은 plu
 - plugin signature 검증을 실제 cryptographic signature까지 강화할지
 - workspace/customer-level allowlist 정책을 누가 관리할지
 - UI에서 plugin install/control 화면을 제공할지
+
+## 17. 회의 리뷰 기반 제품 요구사항과 실행 계획
+
+이번 회의에서 나온 요구사항을 반영하면 PXM/BPM 플랫폼의 제품 방향은 다음과 같다.
+
+```text
+PXM은 전체 업무 화면을 모두 제공하는 포털이 아니라,
+workflow 설계/실행/이력/운영을 API 중심으로 제공하는 BPM backend platform이다.
+Web은 디자이너, 대시보드, 이력/모니터링 중심으로 제공하고,
+요청/승인 화면은 샘플 또는 reference UI로 제공한다.
+```
+
+### 17.1 제품 범위
+
+핵심 화면:
+
+- Flow Designer
+- Dashboard
+- Execution History / Trace
+- Plugin / Connection 설정 화면
+
+샘플 화면:
+
+- 요청 화면
+- 승인 화면
+- 간단한 포털 연동 예시
+
+핵심 API:
+
+- workflow 실행 API
+- task 조회/처리 API
+- instance/result/trace 조회 API
+- export/import API
+- retry API
+- workflow 호출 API
+
+### 17.2 주요 요구사항 정리
+
+| 요구사항 | 판단 | 설계 방향 |
+|---|---|---|
+| exe 실행 후 결과 사용 | 필요 | Executable/Command Node로 제공 |
+| API 방식 중심 | 확정 방향 | Web은 디자이너/대시보드/이력 중심 |
+| Export/Import | 필요 | 정해진 JSON/YAML 포맷과 schema version 제공 |
+| 워크플로우 그룹화 | 필요 | group, namespace, tags 추가 |
+| 속도 | 최우선 | sync/async 실행 모드 분리, 빠른 instance 생성 |
+| 입력 -> DB 조회 -> JS 가공 -> output | 핵심 흐름 | MongoDB Query + JS Node + output path |
+| secret DB 관리 | 가능 | secret 원문은 workflow에 저장하지 않고 secret_ref 사용 |
+| 인사 데이터 추출 후 update/delete/post | Service Node에서 처리 | End 전 HTTP/DB/Command 노드에서 처리, End는 종료 의미 |
+| Start 스케줄링 | 필요 | Start Event type으로 schedule/webhook/api/manual 구분 |
+| DB watch | 후순위 | DB Watch Start Trigger로 검토 |
+| 이력 API | 필요 | 권한 기반 instance/trace/result 조회 |
+| 워크플로우 설명 | 필요 | description, tags, version note 추가 |
+| 워크플로우가 워크플로우 호출 | 필요 | Call Workflow Node 또는 workflow.call plugin |
+| 완료 데이터 반환 | 필요 | End가 실행하지 않고 resultPath로 완료 결과 지정 |
+| 대시보드 Retry | 필요 | 실패 노드 또는 instance 재시도 |
+| Start API 응답 방식 | 둘 다 필요 | sync는 완료 결과, async는 instance_id 반환 |
+
+### 17.3 End Node와 후속 작업 기준
+
+End Node는 외부 API 호출, DB update/delete, exe 실행 같은 작업을 수행하는 노드가 아니다. End는 프로세스 종료를 의미한다.
+
+따라서 다음 흐름이 맞다.
+
+```text
+Start
+  -> DB Query
+  -> JS Node
+  -> HTTP Request / DB Update / Executable Node
+  -> End
+```
+
+완료 데이터를 반환해야 하는 경우에도 End Node가 별도 작업을 수행하는 것이 아니라, End Node 또는 workflow 설정에 `resultPath`를 지정해서 context의 특정 값을 완료 결과로 노출한다.
+
+예:
+
+```text
+JS Node outputPath = result
+End Node resultPath = result
+```
+
+### 17.4 Executable / Command Node 설계
+
+회의에서 나온 "exe 실행" 요구사항은 별도 중요 기능으로 관리한다.
+
+초기 노드 형태:
+
+```json
+{
+  "node_type": "service",
+  "plugin_id": "connector.command.exec",
+  "command_id": "hr_export_tool",
+  "args": {
+    "date": "2026-06-15",
+    "department": "IT"
+  },
+  "timeout_ms": 30000,
+  "output_path": "execResults.hrExport"
+}
+```
+
+실행 결과:
+
+```json
+{
+  "exit_code": 0,
+  "stdout": "...",
+  "stderr": "",
+  "duration_ms": 1240
+}
+```
+
+운영 정책:
+
+- 사용자가 임의 실행 경로를 입력하지 못하게 한다.
+- 서버/에이전트에 등록된 `command_id`만 실행한다.
+- command별 argument schema를 둔다.
+- timeout은 필수다.
+- stdout/stderr 크기 제한을 둔다.
+- working directory와 environment variable을 제한한다.
+- 실행 이력을 audit log에 남긴다.
+- 고객사 on-prem 환경에서는 별도 agent 실행 모델을 검토한다.
+
+이 기능은 HTTP/DB/JS보다 보안 리스크가 크므로 MVP 즉시 범위보다는 2차 핵심 기능으로 둔다.
+
+### 17.5 Start Node 타입
+
+Start Node는 단순 시작점이 아니라 trigger type을 가져야 한다.
+
+초기 타입:
+
+```text
+api       외부 API 호출로 시작
+manual    디자이너/관리 화면에서 수동 시작
+schedule  cron 또는 interval 기반 시작
+webhook   외부 webhook 수신으로 시작
+```
+
+후속 타입:
+
+```text
+db_watch  Mongo Change Stream 또는 DB polling 기반 시작
+event     message queue/event bus 기반 시작
+```
+
+DB Watch는 DB Query Node가 아니라 Start Trigger에 가깝다. 예를 들어 HR DB에 직원 변경이 발생하면 workflow를 시작하는 구조다.
+
+### 17.6 실행 API 응답 모델
+
+속도가 중요하므로 실행 API는 sync와 async를 분리한다.
+
+Async:
+
+```http
+POST /api/workflows/:id/start?mode=async
+```
+
+응답:
+
+```json
+{
+  "instance_id": "instance-id",
+  "status": "RUNNING"
+}
+```
+
+Sync:
+
+```http
+POST /api/workflows/:id/start?mode=sync
+```
+
+응답:
+
+```json
+{
+  "instance_id": "instance-id",
+  "status": "COMPLETED",
+  "result": {}
+}
+```
+
+sync mode는 제한 시간이 필요하다. 제한 시간 안에 끝나지 않으면 `202 Accepted`와 `instance_id`를 반환하고, 호출자는 이력 API 또는 stream으로 추적한다.
+
+조회 API:
+
+```text
+GET /api/instances/:id
+GET /api/instances/:id/trace
+GET /api/instances/:id/result
+GET /api/instances/:id/stream
+```
+
+### 17.7 Export / Import 포맷
+
+워크플로우 export/import는 제품 핵심 기능으로 둔다.
+
+포맷에 포함할 정보:
+
+- `schema_version`
+- workflow id/name/description
+- group/namespace/tags
+- workflow version
+- nodes
+- edges
+- plugin dependencies
+- start trigger config
+- end result config
+- created/updated metadata
+
+예:
+
+```json
+{
+  "schema_version": "pxm.workflow/v1",
+  "name": "HR Sync",
+  "description": "인사 데이터 동기화 workflow",
+  "group": "LG.HR",
+  "tags": ["hr", "sync"],
+  "version": 3,
+  "nodes": [],
+  "edges": [],
+  "dependencies": {
+    "plugins": [
+      {
+        "plugin_id": "connector.db.mongodb.query",
+        "version": "1.0.0"
+      }
+    ]
+  }
+}
+```
+
+사람이 에디터로 수정 가능해야 하므로 JSON을 우선으로 하고, 추후 YAML export를 추가할 수 있다.
+
+### 17.8 Secret / Connection 관리
+
+초기 개발에서는 `connection_uri` 직접 입력을 허용할 수 있지만, 운영 모델은 `connection_id`와 `secret_ref` 기반이어야 한다.
+
+원칙:
+
+- workflow definition에 secret 원문을 저장하지 않는다.
+- export 파일에도 secret 원문을 포함하지 않는다.
+- node config에는 `connection_id` 또는 `secret_ref`만 저장한다.
+- runtime이 실행 시점에 secret store 또는 DB에서 resolve한다.
+- secret 조회/사용 이력을 audit log에 남긴다.
+
+### 17.9 이력과 권한
+
+이력 API는 필요하지만 모든 이력을 누구나 보는 구조는 안 된다.
+
+권한 기준:
+
+- admin/operator: 전체 또는 workspace 단위 조회
+- workflow owner: 본인이 관리하는 workflow 이력 조회
+- requester: 본인이 실행한 instance 조회
+- approver: 본인에게 배정된 task와 관련 instance 조회
+- API client: 권한이 부여된 workflow/instance 범위만 조회
+
+필요 API:
+
+```text
+GET /api/instances
+GET /api/instances/:id
+GET /api/instances/:id/trace
+GET /api/instances/:id/result
+GET /api/tasks
+GET /api/tasks/:id
+POST /api/tasks/:id/complete
+```
+
+### 17.10 Retry 정책
+
+대시보드에서 retry를 지원한다.
+
+초기 범위:
+
+- 실패한 instance 전체 재실행
+- 실패한 node부터 재시도
+- retry 전 이전 실패 원인과 input/context 표시
+
+주의사항:
+
+- 외부 API 호출이나 DB update 같은 side effect가 있는 노드는 중복 실행 위험이 있다.
+- plugin manifest에 idempotency 여부를 표현할 수 있어야 한다.
+- retry 시 이전 output을 재사용할지 다시 실행할지 정책이 필요하다.
+
+### 17.11 우선순위 로드맵
+
+1차:
+
+- workflow metadata 보강: description, group, tags
+- 외부 연동용 Workflow API 계약 정리
+- 실행 성능 기준 정의: sync timeout, async 응답 목표, trace 조회 기준
+- End resultPath 추가
+- workflow export/import JSON 포맷 정의
+- Start API sync/async 응답 모델 정리
+- node test UX 확장: 결과 JSON path 제안
+
+2차:
+
+- Connection/Secret 관리 화면과 API
+- Schedule Start
+- Dashboard retry
+- Workflow call node
+- 이력 API 권한 모델 정리
+
+3차:
+
+- Executable/Command Node
+- DB Watch Start
+- Plugin control UI
+- workflow version diff/rollback
+- external agent 실행 모델
+
+### 17.12 다음 결정 사항
+
+다음 회의 또는 설계 단계에서 결정해야 할 항목:
+
+- export/import 포맷을 JSON만 할지 YAML도 제공할지
+- workflow group을 단순 문자열로 할지 계층 namespace로 할지
+- Start API sync timeout 기본값
+- End resultPath를 End Node 속성으로 둘지 workflow 설정으로 둘지
+- secret store를 DB 기반으로 시작할지 Vault/KMS 연동까지 포함할지
+- Executable Node를 core 기능으로 둘지 restricted plugin으로 둘지
+- Retry를 instance 단위부터 할지 failed node 단위부터 할지

@@ -15,7 +15,7 @@ import { HistoryListModal } from './HistoryListModal';
 import { templatesApi } from '../api/templates';
 import type { WorkflowTemplate } from '../api/templates';
 import { pluginsApi } from '../api/plugins';
-import type { PluginManifest } from '../api/plugins';
+import type { PluginManifest, PluginTestResponse } from '../api/plugins';
 import { PluginIcon } from './plugin-icons';
 import './FlowDesigner.css';
 
@@ -40,6 +40,9 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
   const [executionFormSchema, setExecutionFormSchema] = useState<FormSchema | undefined>(undefined);
   const [plugins, setPlugins] = useState<PluginManifest[]>([]);
   const [pluginSearch, setPluginSearch] = useState('');
+  const [isNodeTestRunning, setIsNodeTestRunning] = useState(false);
+  const [nodeTestResult, setNodeTestResult] = useState<PluginTestResponse | null>(null);
+  const [nodeTestError, setNodeTestError] = useState<string | null>(null);
   const [favoritePluginIds, setFavoritePluginIds] = useState<string[]>(() => {
     try {
       return JSON.parse(localStorage.getItem('pxm.favoritePlugins') || '[]');
@@ -352,6 +355,10 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
   };
 
   const handleNodeSelect = (node: Node | null) => {
+    if (node?.id !== selectedNode?.id) {
+      setNodeTestResult(null);
+      setNodeTestError(null);
+    }
     setSelectedNode(node as Node<CustomNodeData> | null);
     if (node) {
       setIsPropertiesPanelOpen(true);
@@ -369,6 +376,34 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
 
   const handleGatewayEdgeUpdate = (edgeId: string, data: Partial<Edge>) => {
     flowCanvasRef.current?.updateEdgeData(edgeId, data);
+  };
+
+  const handleSelectedNodeTest = async () => {
+    if (!selectedNode || selectedNode.data.nodeType !== 'service') {
+      return;
+    }
+
+    const pluginId = selectedNode.data.plugin_id || CORE_PLUGIN_ID;
+    setIsNodeTestRunning(true);
+    setNodeTestResult(null);
+    setNodeTestError(null);
+
+    try {
+      const result = await pluginsApi.test({
+        plugin_id: pluginId,
+        node_id: selectedNode.id,
+        config: selectedNode.data as unknown as Record<string, unknown>,
+        input: {},
+      });
+      setNodeTestResult(result);
+      if (!result.ok) {
+        setNodeTestError(result.error || '테스트 실행에 실패했습니다.');
+      }
+    } catch (error) {
+      setNodeTestError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsNodeTestRunning(false);
+    }
   };
 
   const onDragStart = (event: React.DragEvent, nodeType: string, label: string, extraData?: Partial<CustomNodeData>) => {
@@ -598,10 +633,14 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
                     <NodePropertiesForm
                       node={selectedNode}
                       onUpdate={handleNodeUpdate}
-                      plugins={plugins}
-                      gatewayEdges={selectedGatewayEdges}
-                      onGatewayEdgeUpdate={handleGatewayEdgeUpdate}
-                    />
+                    plugins={plugins}
+                    gatewayEdges={selectedGatewayEdges}
+                    onGatewayEdgeUpdate={handleGatewayEdgeUpdate}
+                    onTestRun={handleSelectedNodeTest}
+                    testRunning={isNodeTestRunning}
+                    testResult={nodeTestResult}
+                    testError={nodeTestError}
+                  />
                   ) : (
                     <div className="properties-placeholder">
                       <p className="text-secondary">

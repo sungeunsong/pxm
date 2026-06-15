@@ -1,5 +1,6 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Injectable, OnModuleInit } from '@nestjs/common';
 import { existsSync, readdirSync, readFileSync } from 'fs';
+import { MongoClient } from 'mongodb';
 import { join, resolve } from 'path';
 import { PluginManifestDto } from './dto/plugin-manifest.dto';
 
@@ -29,6 +30,146 @@ export class PluginsService implements OnModuleInit {
 
   findVersions(pluginId: string): PluginManifestDto[] {
     return [...(this.manifests.get(pluginId) || [])];
+  }
+
+  async testPlugin(request: PluginTestRequest): Promise<PluginTestResponse> {
+    const pluginId = request?.plugin_id;
+    if (!pluginId) {
+      throw new BadRequestException('plugin_id is required');
+    }
+
+    const manifest = this.findOne(pluginId);
+    if (!manifest) {
+      throw new BadRequestException(`Plugin is not available: ${pluginId}`);
+    }
+
+    const startedAt = Date.now();
+    const config = request.config ?? {};
+
+    try {
+      const output =
+        pluginId === 'builtin.http_request'
+          ? await this.testHttpRequest(config)
+          : pluginId === 'connector.db.mongodb.query'
+            ? await this.testMongoDbQuery(config)
+            : null;
+
+      if (!output) {
+        throw new BadRequestException(`Plugin test is not supported yet: ${pluginId}`);
+      }
+
+      return {
+        ok: true,
+        plugin_id: pluginId,
+        node_id: request.node_id,
+        duration_ms: Date.now() - startedAt,
+        output,
+      };
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      return {
+        ok: false,
+        plugin_id: pluginId,
+        node_id: request.node_id,
+        duration_ms: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private async testHttpRequest(config: Record<string, unknown>) {
+    const url = stringValue(config.url);
+    if (!url) {
+      throw new BadRequestException('HTTP Request test requires url');
+    }
+
+    const method = stringValue(config.method) || 'GET';
+    const headers = objectValue(config.headers);
+    const timeoutMs = numberValue(config.timeout_ms ?? config.timeout) ?? 5000;
+    const response = await fetch(url, {
+      method,
+      headers: headers ? stringifyHeaders(headers) : undefined,
+      body:
+        method.toUpperCase() === 'GET' || config.body === undefined
+          ? undefined
+          : JSON.stringify(config.body),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+
+    const contentType = response.headers.get('content-type') || '';
+    const text = await response.text();
+    const body = contentType.includes('application/json') ? parseJsonLoose(text) : text;
+
+    return {
+      status_code: response.status,
+      ok: response.ok,
+      headers: Object.fromEntries(response.headers.entries()),
+      body,
+    };
+  }
+
+  private async testMongoDbQuery(config: Record<string, unknown>) {
+    const connectionUri =
+      stringValue(config.connection_uri) ||
+      stringValue(config.connectionUri) ||
+      stringValue(config.connectionString) ||
+      process.env.PXM_MONGODB_QUERY_URL;
+    if (!connectionUri) {
+      throw new BadRequestException(
+        'MongoDB Query test requires connection_uri or PXM_MONGODB_QUERY_URL',
+      );
+    }
+
+    const database =
+      stringValue(config.database) ||
+      process.env.PXM_MONGODB_QUERY_DB_NAME ||
+      process.env.MONGO_DB_NAME ||
+      'pxm_db';
+    const collectionName = stringValue(config.collection);
+    if (!collectionName) {
+      throw new BadRequestException('MongoDB Query test requires collection');
+    }
+
+    const operation = (stringValue(config.operation) || 'find').toLowerCase();
+    const filter = objectValue(config.filter) ?? {};
+    const client = new MongoClient(connectionUri);
+
+    try {
+      await client.connect();
+      const collection = client.db(database).collection(collectionName);
+
+      if (operation === 'findone' || operation === 'find_one') {
+        const row = await collection.findOne(filter);
+        const rows = row ? [sanitizeJson(row)] : [];
+        return {
+          database,
+          collection: collectionName,
+          operation: 'findOne',
+          row: row ? sanitizeJson(row) : null,
+          rows,
+          row_count: rows.length,
+        };
+      }
+
+      if (operation === 'find') {
+        const rows = await collection.find(filter).limit(20).toArray();
+        return {
+          database,
+          collection: collectionName,
+          operation: 'find',
+          rows: sanitizeJson(rows),
+          row_count: rows.length,
+          limited: true,
+          limit: 20,
+        };
+      }
+
+      throw new BadRequestException(`Unsupported MongoDB operation: ${operation}`);
+    } finally {
+      await client.close();
+    }
   }
 
   private loadManifests() {
@@ -268,6 +409,22 @@ interface PluginControls {
   audit_log_path?: string;
 }
 
+export interface PluginTestRequest {
+  plugin_id?: string;
+  node_id?: string;
+  config?: Record<string, unknown>;
+  input?: Record<string, unknown>;
+}
+
+export interface PluginTestResponse {
+  ok: boolean;
+  plugin_id: string;
+  node_id?: string;
+  duration_ms: number;
+  output?: unknown;
+  error?: string;
+}
+
 function defaultPluginControls(): PluginControls {
   return {
     default_enabled: true,
@@ -319,4 +476,50 @@ function compareSemverDesc(a: string, b: string): number {
     if (diff !== 0) return diff;
   }
   return 0;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function objectValue(value: unknown): Record<string, unknown> | undefined {
+  if (isPlainObject(value)) {
+    return value;
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = parseJsonLoose(value);
+    return isPlainObject(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function stringifyHeaders(headers: Record<string, unknown>) {
+  return Object.fromEntries(
+    Object.entries(headers)
+      .filter(([, value]) => value !== undefined && value !== null)
+      .map(([key, value]) => [key, String(value)]),
+  );
+}
+
+function parseJsonLoose(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function sanitizeJson(value: unknown): unknown {
+  return JSON.parse(JSON.stringify(value));
 }

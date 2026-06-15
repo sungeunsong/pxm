@@ -1,4 +1,4 @@
-import { Controller, Get, NotFoundException, Param } from '@nestjs/common';
+import { Body, Controller, Get, NotFoundException, Param, Post } from '@nestjs/common';
 import { PluginsService } from './plugins.service';
 
 @Controller('plugins')
@@ -8,6 +8,11 @@ export class PluginsController {
   @Get()
   findAll() {
     return this.pluginsService.findAll();
+  }
+
+  @Post('test')
+  async test(@Body() body: PluginTestRequest) {
+    return this.pluginsService.testPlugin(body);
   }
 
   @Get(':plugin_id/versions')
@@ -27,4 +32,11 @@ export class PluginsController {
     }
     return plugin;
   }
+}
+
+interface PluginTestRequest {
+  plugin_id?: string;
+  node_id?: string;
+  config?: Record<string, unknown>;
+  input?: Record<string, unknown>;
 }

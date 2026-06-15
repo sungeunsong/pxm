@@ -1,9 +1,9 @@
 import React from 'react';
 import type { Node } from 'reactflow';
 import type { Edge } from 'reactflow';
-import { Input, Select, Checkbox } from '../components';
+import { Button, Input, Select, Checkbox } from '../components';
 import type { CustomNodeData, FormSchema } from './form-types';
-import type { PluginManifest, PluginJsonSchemaProperty } from '../api/plugins';
+import type { PluginManifest, PluginJsonSchemaProperty, PluginTestResponse } from '../api/plugins';
 import { FormSchemaEditor } from './FormSchemaEditor';
 import { PluginIcon } from './plugin-icons';
 import './NodePropertiesForm.css';
@@ -14,6 +14,10 @@ export interface NodePropertiesFormProps {
   plugins?: PluginManifest[];
   gatewayEdges?: Edge[];
   onGatewayEdgeUpdate?: (edgeId: string, data: Partial<Edge>) => void;
+  onTestRun?: () => void;
+  testRunning?: boolean;
+  testResult?: PluginTestResponse | null;
+  testError?: string | null;
 }
 
 export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
@@ -22,6 +26,10 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
   plugins = [],
   gatewayEdges = [],
   onGatewayEdgeUpdate,
+  onTestRun,
+  testRunning = false,
+  testResult,
+  testError,
 }) => {
   const handleLabelChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onUpdate(node.id, { label: e.target.value });
@@ -38,6 +46,35 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
     const selectedPlugin = findPluginManifest(plugins, pluginId);
     return (
       <>
+        <div className="property-section node-test-section">
+          <div className="node-test-header">
+            <div>
+              <h4 className="property-section-title">노드 테스트</h4>
+              <div className="property-helper-text">
+                현재 설정값으로 이 노드만 실행하고 결과를 확인합니다.
+              </div>
+            </div>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={onTestRun}
+              disabled={!onTestRun || testRunning}
+            >
+              {testRunning ? '실행 중...' : '테스트 실행'}
+            </Button>
+          </div>
+          {(testResult || testError) && (
+            <div className={`node-test-result ${testResult?.ok ? 'success' : 'error'}`}>
+              <div className="node-test-result-meta">
+                {testResult
+                  ? `${testResult.ok ? '성공' : '실패'} · ${testResult.duration_ms}ms`
+                  : '실패'}
+              </div>
+              <pre>{formatTestResult(testResult, testError)}</pre>
+            </div>
+          )}
+        </div>
+
         <div className="property-section">
           <h4 className="property-section-title">플러그인</h4>
           {selectedPlugin && (
@@ -521,6 +558,13 @@ function parseJsonLoose(value: string) {
   } catch {
     return value;
   }
+}
+
+function formatTestResult(result?: PluginTestResponse | null, error?: string | null) {
+  if (error && !result?.output) {
+    return error;
+  }
+  return JSON.stringify(result?.output ?? { error }, null, 2);
 }
 
 function getPluginConfigDefaults(plugin?: PluginManifest): Partial<CustomNodeData> {
