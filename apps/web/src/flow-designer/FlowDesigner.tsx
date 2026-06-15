@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useRef } from 'react';
 import type { Node } from 'reactflow';
 import type { Edge } from 'reactflow';
-import { Braces, CheckSquare, CircleCheck, Clock, Diamond, Inbox, Play, Search, Star } from 'lucide-react';
+import { Braces, CheckSquare, CircleCheck, Clock, Diamond, Inbox, PanelRightClose, PanelRightOpen, Play, Search, Star } from 'lucide-react';
 import { Button } from '../components/Button';
 import { Header } from '../components/Header';
 import { FlowCanvas } from './FlowCanvas';
@@ -34,6 +34,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [isExecutionModalOpen, setIsExecutionModalOpen] = useState(false);
   const [isExecutionPanelOpen, setIsExecutionPanelOpen] = useState(false);
+  const [isPropertiesPanelOpen, setIsPropertiesPanelOpen] = useState(true);
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [executionInstanceId, setExecutionInstanceId] = useState<string | null>(null);
   const [executionFormSchema, setExecutionFormSchema] = useState<FormSchema | undefined>(undefined);
@@ -128,6 +129,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
       // 실행 시작 후에는 패널로 표시
       setIsExecutionModalOpen(false);
       setIsExecutionPanelOpen(true);
+      setIsPropertiesPanelOpen(true);
       
       connectSSE(result.instance_id);
       console.log('Workflow execution started:', result);
@@ -331,6 +333,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
       // 2. 실행 상태 패널 열기 및 SSE 연결
       setExecutionInstanceId(instanceId);
       setIsExecutionPanelOpen(true);
+      setIsPropertiesPanelOpen(true);
       connectSSE(instanceId);
       setIsHistoryModalOpen(false);
       
@@ -350,6 +353,14 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
 
   const handleNodeSelect = (node: Node | null) => {
     setSelectedNode(node as Node<CustomNodeData> | null);
+    if (node) {
+      setIsPropertiesPanelOpen(true);
+      return;
+    }
+
+    if (!isExecutionPanelOpen) {
+      setIsPropertiesPanelOpen(false);
+    }
   };
 
   const handleNodeUpdate = (nodeId: string, data: Partial<CustomNodeData>) => {
@@ -454,7 +465,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
         onToggleDarkMode={handleToggleDarkMode}
       />
 
-      <div className="flow-designer-content">
+      <div className={`flow-designer-content${isPropertiesPanelOpen ? '' : ' properties-collapsed'}`}>
         <aside className="node-palette">
           <div className="palette-header">
             <h3 className="palette-title">노드 팔레트</h3>
@@ -549,7 +560,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
           />
         </main>
 
-        <aside className="properties-panel">
+        <aside className={`properties-panel${isPropertiesPanelOpen ? '' : ' collapsed'}`}>
           {isExecutionPanelOpen ? (
             <ExecutionPanel
               instanceId={executionInstanceId}
@@ -565,25 +576,41 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
           ) : (
             <>
               <div className="properties-header">
-                <h3 className="properties-title">속성 패널</h3>
+                <div className="properties-title-group">
+                  <h3 className="properties-title">속성 패널</h3>
+                  {selectedNode && (
+                    <span className="properties-subtitle">{selectedNode.data.label}</span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="properties-toggle-button"
+                  onClick={() => setIsPropertiesPanelOpen((current) => !current)}
+                  aria-label={isPropertiesPanelOpen ? '속성 패널 접기' : '속성 패널 펼치기'}
+                  title={isPropertiesPanelOpen ? '속성 패널 접기' : '속성 패널 펼치기'}
+                >
+                  {isPropertiesPanelOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
+                </button>
               </div>
-              <div className="properties-content">
-                {selectedNode ? (
-                  <NodePropertiesForm
-                    node={selectedNode}
-                    onUpdate={handleNodeUpdate}
-                    plugins={plugins}
-                    gatewayEdges={selectedGatewayEdges}
-                    onGatewayEdgeUpdate={handleGatewayEdgeUpdate}
-                  />
-                ) : (
-                  <div className="properties-placeholder">
-                    <p className="text-secondary">
-                      노드를 선택하면 속성이 표시됩니다
-                    </p>
-                  </div>
-                )}
-              </div>
+              {isPropertiesPanelOpen && (
+                <div className="properties-content">
+                  {selectedNode ? (
+                    <NodePropertiesForm
+                      node={selectedNode}
+                      onUpdate={handleNodeUpdate}
+                      plugins={plugins}
+                      gatewayEdges={selectedGatewayEdges}
+                      onGatewayEdgeUpdate={handleGatewayEdgeUpdate}
+                    />
+                  ) : (
+                    <div className="properties-placeholder">
+                      <p className="text-secondary">
+                        노드를 선택하면 속성이 표시됩니다
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
             </>
           )}
         </aside>

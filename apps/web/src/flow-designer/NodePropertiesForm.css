@@ -5,15 +5,15 @@
 .node-properties-form {
   display: flex;
   flex-direction: column;
-  gap: var(--space-xl);
+  gap: 22px;
 }
 
 /* ===== Property Section ===== */
 .property-section {
   display: flex;
   flex-direction: column;
-  gap: var(--space-md);
-  padding-bottom: var(--space-lg);
+  gap: 14px;
+  padding-bottom: 22px;
   border-bottom: 1px solid var(--border-subtle);
 }
 
@@ -23,8 +23,8 @@
 }
 
 .property-section-title {
-  margin: 0 0 var(--space-sm) 0;
-  font-size: var(--font-size-sm);
+  margin: 0;
+  font-size: 15px;
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
 }
@@ -33,32 +33,34 @@
 .property-group {
   display: flex;
   flex-direction: column;
-  gap: var(--space-xs);
+  gap: 6px;
 }
 
 .property-label {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
+  font-size: 12px;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  text-transform: none;
+  letter-spacing: 0;
 }
 
 .property-value-readonly {
   font-size: var(--font-size-sm);
   color: var(--text-primary);
-  padding: var(--space-sm);
+  padding: 9px 10px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
-  font-family: 'Courier New', monospace;
+  font-family: var(--font-mono);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .selected-plugin-summary {
   display: flex;
   align-items: center;
   gap: var(--space-md);
-  padding: var(--space-md);
+  padding: 12px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
@@ -88,32 +90,35 @@
 
 .property-textarea {
   width: 100%;
-  min-height: 92px;
+  min-height: 120px;
   resize: vertical;
-  padding: var(--space-sm);
+  padding: 10px 11px;
   color: var(--text-primary);
   background: var(--bg-tertiary);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   font: inherit;
-  font-family: 'Courier New', monospace;
+  font-family: var(--font-mono);
+  line-height: 1.5;
 }
 
 .property-textarea:focus {
   outline: none;
-  border-color: var(--border-strong);
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--border-focus) 14%, transparent);
 }
 
 .property-textarea.code-textarea {
-  min-height: 180px;
+  min-height: 260px;
   font-family: var(--font-mono);
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.6;
 }
 
 .property-helper-text {
   color: var(--text-tertiary);
   font-size: var(--font-size-xs);
+  line-height: 1.45;
 }
 
 .gateway-rule-list {
