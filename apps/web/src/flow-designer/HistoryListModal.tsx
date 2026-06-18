@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { X, Clock, CheckCircle, AlertCircle, Loader } from 'lucide-react';
+import { X, Clock, CheckCircle, AlertCircle, Loader, Copy } from 'lucide-react';
 import './HistoryListModal.css';
 
 interface Instance {
@@ -67,6 +67,11 @@ export const HistoryListModal: React.FC<HistoryListModalProps> = ({
     });
   };
 
+  const handleCopyId = async (event: React.MouseEvent, id: string) => {
+    event.stopPropagation();
+    await navigator.clipboard.writeText(id);
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -102,7 +107,18 @@ export const HistoryListModal: React.FC<HistoryListModalProps> = ({
                 >
                   <div className="instance-info">
                     <span className="instance-name">{inst.template_name || '이름 없음'}</span>
-                    <span className="instance-id">{inst.id.slice(0, 8)}...</span>
+                    <span className="instance-id-row">
+                      <span className="instance-id">{inst.id}</span>
+                      <button
+                        type="button"
+                        className="history-id-copy-button"
+                        onClick={(event) => handleCopyId(event, inst.id)}
+                        title="Instance ID 복사"
+                        aria-label="Instance ID 복사"
+                      >
+                        <Copy size={13} />
+                      </button>
+                    </span>
                   </div>
                   <div className="instance-meta">
                     <span className={`status-badge status-${inst.status.toLowerCase()}`}>

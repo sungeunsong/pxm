@@ -186,7 +186,7 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
           placeholder="scriptResults.jsNode"
           value={data.outputPath || ''}
           onChange={(e) => onUpdate(node.id, { ...data, outputPath: e.target.value })}
-          helperText="예: scriptResults.calculateAmount 또는 context.calculated"
+          helperText="예: scriptResults.calculateAmount. 저장 위치는 data.outputs 하위입니다."
           fullWidth
         />
         <Input
@@ -306,6 +306,23 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
     );
   };
 
+  const renderEndProperties = () => {
+    const data = node.data as any;
+    return (
+      <div className="property-section">
+        <h4 className="property-section-title">완료 결과</h4>
+        <Input
+          label="Result Path"
+          placeholder="scriptResults.calculateAmount"
+          value={data.resultPath || ''}
+          onChange={(e) => onUpdate(node.id, { ...data, resultPath: e.target.value })}
+          helperText="비워두면 context.data만 result로 저장됩니다."
+          fullWidth
+        />
+      </div>
+    );
+  };
+
   return (
     <div className="node-properties-form">
       {/* 기본 속성 */}
@@ -340,6 +357,7 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
       {node.data.nodeType === 'timer' && renderTimerProperties()}
       {node.data.nodeType === 'gateway' && renderGatewayProperties()}
       {node.data.nodeType === 'approval' && renderApprovalProperties()}
+      {node.data.nodeType === 'end' && renderEndProperties()}
 
       {/* 위치 정보 */}
       <div className="property-section">

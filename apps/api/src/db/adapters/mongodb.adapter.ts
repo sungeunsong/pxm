@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Db } from 'mongodb';
 import { MONGO_DB } from '../mongo.provider';
 import {
+  WorkflowDefinitionMetadata,
   WorkflowRepositoryPort,
   WorkflowInstanceRepositoryPort,
   WorkflowTaskRepositoryPort,
@@ -49,6 +50,7 @@ export class MongodbAdapter
     name: string,
     nodes: any[],
     edges: any[],
+    metadata: WorkflowDefinitionMetadata = {},
   ): Promise<void> {
     const formattedNodes = nodes.map((n) => ({
       node_id: n.id,
@@ -76,6 +78,11 @@ export class MongodbAdapter
       {
         $set: {
           name,
+          description: metadata.description || '',
+          group: metadata.group || '',
+          tags: metadata.tags || [],
+          version_note: metadata.version_note || '',
+          metadata,
           nodes: formattedNodes,
           edges: formattedEdges,
           updated_at: now,
@@ -98,6 +105,11 @@ export class MongodbAdapter
     return docs.map((doc) => ({
       id: doc._id,
       name: doc.name,
+      description: doc.description || doc.metadata?.description || '',
+      group: doc.group || doc.metadata?.group || '',
+      tags: doc.tags || doc.metadata?.tags || [],
+      version_note: doc.version_note || doc.metadata?.version_note || '',
+      metadata: doc.metadata || {},
       created_at: doc.created_at,
       updated_at: doc.updated_at,
     }));
@@ -113,6 +125,11 @@ export class MongodbAdapter
     return {
       id: doc._id,
       name: doc.name,
+      description: doc.description || doc.metadata?.description || '',
+      group: doc.group || doc.metadata?.group || '',
+      tags: doc.tags || doc.metadata?.tags || [],
+      version_note: doc.version_note || doc.metadata?.version_note || '',
+      metadata: doc.metadata || {},
       created_at: doc.created_at,
       updated_at: doc.updated_at,
       nodes: (doc.nodes || []).map(
@@ -356,7 +373,7 @@ export class MongodbAdapter
         instance_status: inst?.status || null,
         created_at: t.created_at,
         updated_at: t.updated_at,
-        form_data: inst?.context?.formData || {},
+        form_data: inst?.context?.data?.formData || inst?.context?.formData || {},
       });
     }
 

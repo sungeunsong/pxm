@@ -4,6 +4,9 @@ export interface WorkflowTemplate {
   id: string;
   name: string;
   description?: string;
+  group?: string;
+  tags: string[];
+  version_note?: string;
   nodes: Node[];
   edges: Edge[];
   version: number;
@@ -17,6 +20,9 @@ export interface WorkflowTemplate {
 export interface CreateTemplateRequest {
   name: string;
   description?: string;
+  group?: string;
+  tags?: string[];
+  version_note?: string;
   nodes: Node[];
   edges: Edge[];
 }
@@ -24,6 +30,9 @@ export interface CreateTemplateRequest {
 export interface UpdateTemplateRequest {
   name?: string;
   description?: string;
+  group?: string;
+  tags?: string[];
+  version_note?: string;
   nodes?: Node[];
   edges?: Edge[];
   is_active?: boolean;
@@ -34,7 +43,21 @@ export interface ExecuteTemplateResponse {
   template_id: string;
   template_name: string;
   status: string;
-  job_id: number;
+  mode?: 'async' | 'sync';
+  result_url?: string;
+  trace_url?: string;
+  stream_url?: string;
+  result?: unknown;
+  result_path?: string | null;
+  timed_out?: boolean;
+  completed_at?: string | null;
+}
+
+export interface StartTemplateRequest {
+  mode?: 'async' | 'sync';
+  sync_timeout_ms?: number;
+  input?: Record<string, any>;
+  formData?: Record<string, any>;
 }
 
 const API_BASE_URL = '/api';
@@ -122,6 +145,22 @@ export const templatesApi = {
 
     if (!response.ok) {
       throw new Error(`Failed to execute template: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  async start(id: string, data: StartTemplateRequest): Promise<ExecuteTemplateResponse> {
+    const response = await fetch(`${API_BASE_URL}/templates/${id}/start`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to start template: ${response.statusText}`);
     }
 
     return response.json();

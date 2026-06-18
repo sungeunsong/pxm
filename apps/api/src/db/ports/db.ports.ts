@@ -4,10 +4,18 @@ export abstract class WorkflowRepositoryPort {
     name: string,
     nodes: any[],
     edges: any[],
+    metadata?: WorkflowDefinitionMetadata,
   ): Promise<void>;
   abstract listDefinitions(): Promise<any[]>;
   abstract getDefinition(id: string): Promise<any>;
 }
+
+export type WorkflowDefinitionMetadata = {
+  description?: string;
+  group?: string;
+  tags?: string[];
+  version_note?: string;
+};
 
 export abstract class WorkflowInstanceRepositoryPort {
   abstract createInstance(

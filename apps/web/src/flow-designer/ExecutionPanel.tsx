@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState, useRef } from 'react';
-import { CheckCircle, Circle, AlertCircle, Loader, Clock, X } from 'lucide-react';
+import { CheckCircle, Circle, AlertCircle, Loader, Clock, X, Copy } from 'lucide-react';
 import type { FormSchema } from './form-types';
 import { FormRenderer } from './FormRenderer';
 import { RetryScheduledCard, NodeFailedCard } from './RetryCards';
@@ -273,6 +273,11 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
 
   const visibleEvents = events.filter((event) => !internalEventTypes.has(event.type));
   const hiddenInternalCount = events.length - visibleEvents.length;
+  const handleCopyInstanceId = async () => {
+    if (instanceId) {
+      await navigator.clipboard.writeText(instanceId);
+    }
+  };
 
   return (
     <div className="execution-panel">
@@ -308,6 +313,22 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
               {getStatusIcon(status)}
               <span className="execution-status-text">{status}</span>
             </div>
+
+            {instanceId && (
+              <div className="execution-instance-id-row">
+                <span className="execution-instance-id-label">Instance ID</span>
+                <code className="execution-instance-id-value">{instanceId}</code>
+                <button
+                  type="button"
+                  className="execution-id-copy-button"
+                  onClick={handleCopyInstanceId}
+                  title="Instance ID 복사"
+                  aria-label="Instance ID 복사"
+                >
+                  <Copy size={13} />
+                </button>
+              </div>
+            )}
 
             {/* 에러 메시지 */}
             {error && (

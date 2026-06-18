@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { templatesApi } from '../api/templates';
 import type { WorkflowTemplate } from '../api/templates';
 import { Button } from '../components/Button';
-import { X, FileText, Calendar, Hash } from 'lucide-react';
+import { X, FileText, Calendar, Hash, Copy } from 'lucide-react';
 import './TemplateListModal.css';
 
 export interface TemplateListModalProps {
@@ -59,6 +59,11 @@ export const TemplateListModal: React.FC<TemplateListModalProps> = ({
     }
   };
 
+  const handleCopyId = async (event: React.MouseEvent, id: string) => {
+    event.stopPropagation();
+    await navigator.clipboard.writeText(id);
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -107,6 +112,19 @@ export const TemplateListModal: React.FC<TemplateListModalProps> = ({
                     {template.description && (
                       <p className="template-description">{template.description}</p>
                     )}
+                    <div className="template-id-row">
+                      <span className="template-id-label">Template ID</span>
+                      <code className="template-id-value">{template.id}</code>
+                      <button
+                        type="button"
+                        className="id-copy-button"
+                        onClick={(event) => handleCopyId(event, template.id)}
+                        title="Template ID 복사"
+                        aria-label="Template ID 복사"
+                      >
+                        <Copy size={13} />
+                      </button>
+                    </div>
                     <div className="template-meta">
                       <span className="template-meta-item">
                         <Hash size={14} />

@@ -26,28 +26,28 @@
 
 ## Phase 1
 
-- [ ] Workflow metadata 보강
-  - [ ] description
-  - [ ] group
-  - [ ] tags
-  - [ ] version note
+- [x] Workflow metadata 보강
+  - [x] description
+  - [x] group
+  - [x] tags
+  - [x] version note
 
-- [ ] 외부 연동용 Workflow API 계약 정리
-  - [ ] start API endpoint 정리
-  - [ ] request payload schema 정리
-  - [ ] response payload schema 정리
-  - [ ] API authentication/permission 기준 초안
+- [x] 외부 연동용 Workflow API 계약 정리
+  - [x] start API endpoint 정리
+  - [x] request payload schema 정리
+  - [x] response payload schema 정리
+  - [x] API authentication/permission 기준 초안
 
-- [ ] 실행 성능 기준 정의
-  - [ ] sync timeout 기본값
-  - [ ] async instance 생성 응답 목표
-  - [ ] trace/result 조회 응답 기준
-  - [ ] 장기 실행 workflow 처리 기준
+- [x] 실행 성능 기준 정의
+  - [x] sync timeout 기본값
+  - [x] async instance 생성 응답 목표
+  - [x] trace/result 조회 응답 기준
+  - [x] 장기 실행 workflow 처리 기준
 
-- [ ] End resultPath 추가
-  - [ ] End Node 속성 UI 추가
-  - [ ] runtime completed result 저장
-  - [ ] `GET /api/instances/:id/result` API 추가
+- [x] End resultPath 추가
+  - [x] End Node 속성 UI 추가
+  - [x] runtime completed result 저장
+  - [x] `GET /api/instances/:id/result` API 추가
 
 - [ ] Workflow export/import JSON 포맷 정의
   - [ ] `schema_version` 정의
@@ -57,11 +57,11 @@
   - [ ] secret 원문 제외 정책 반영
   - [ ] import validation
 
-- [ ] Start API sync/async 응답 모델 정리
-  - [ ] async mode: 즉시 `instance_id` 반환
-  - [ ] sync mode: 제한 시간 내 완료 시 `result` 반환
-  - [ ] sync timeout 시 `202 Accepted + instance_id` 반환
-  - [ ] stream/trace/result 조회 흐름 정리
+- [x] Start API sync/async 응답 모델 정리
+  - [x] async mode: 즉시 `instance_id` 반환
+  - [x] sync mode: 제한 시간 내 완료 시 `result` 반환
+  - [x] sync timeout 시 `202 Accepted + instance_id` 반환
+  - [x] stream/trace/result 조회 흐름 정리
 
 - [~] Node test UX 확장
   - [x] 테스트 실행 버튼

@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Pool } from 'pg';
 import { PG_POOL } from '../pg.provider';
 import {
+  WorkflowDefinitionMetadata,
   WorkflowRepositoryPort,
   WorkflowInstanceRepositoryPort,
   WorkflowTaskRepositoryPort,
@@ -48,6 +49,7 @@ export class PostgresAdapter
     name: string,
     nodes: any[],
     edges: any[],
+    metadata: WorkflowDefinitionMetadata = {},
   ): Promise<void> {
     const client = await this.pool.connect();
     try {
@@ -55,10 +57,10 @@ export class PostgresAdapter
 
       // 1. v2_process_definitions 삽입
       await client.query(
-        `INSERT INTO v2_process_definitions (id, definition_key, version, name, status, created_at, updated_at)
-         VALUES ($1::uuid, $1, 1, $2, 'ACTIVE', NOW(), NOW())
-         ON CONFLICT (id) DO UPDATE SET name = $2, updated_at = NOW()`,
-        [id, name],
+        `INSERT INTO v2_process_definitions (id, definition_key, version, name, status, metadata, created_at, updated_at)
+         VALUES ($1::uuid, $1, 1, $2, 'ACTIVE', $3::jsonb, NOW(), NOW())
+         ON CONFLICT (id) DO UPDATE SET name = $2, metadata = $3::jsonb, updated_at = NOW()`,
+        [id, name, JSON.stringify(metadata)],
       );
 
       // 2. 기존 노드 삭제 후 재생성 (V2 배포 정규화 구조)
@@ -140,6 +142,10 @@ export class PostgresAdapter
 
     return {
       ...definition,
+      description: definition.metadata?.description || '',
+      group: definition.metadata?.group || '',
+      tags: definition.metadata?.tags || [],
+      version_note: definition.metadata?.version_note || '',
       nodes: nodesRes.rows.map((n) => n.config),
       edges: edgesRes.rows.map((e) => ({
         id: e.id,
@@ -283,7 +289,7 @@ export class PostgresAdapter
               i.process_definition_id,
               i.status as instance_status,
               i.context->>'template_name' as template_name,
-              COALESCE((i.context->'formData')::jsonb, '{}'::jsonb) as form_data
+              COALESCE((i.context->'data'->'formData')::jsonb, (i.context->'formData')::jsonb, '{}'::jsonb) as form_data
        FROM v2_tasks t
        JOIN v2_process_instances i ON t.instance_id = i.id
        WHERE t.assignee = $1 AND t.status = 'OPEN'

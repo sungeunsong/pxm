@@ -49,4 +49,22 @@ export class InstancesService {
   async findOne(id: string) {
     return this.instanceRepo.getInstance(id);
   }
+
+  async getResult(id: string) {
+    const instance = await this.instanceRepo.getInstance(id);
+    if (!instance) {
+      return null;
+    }
+
+    const context = instance.context ?? instance.ctx ?? {};
+    const result = context.result ?? context.data?.result ?? null;
+    return {
+      instance_id: id,
+      status: instance.state ?? instance.status,
+      result,
+      result_path: context.result_path ?? null,
+      completed_at: instance.completed_at ?? null,
+      updated_at: instance.updated_at ?? null,
+    };
+  }
 }

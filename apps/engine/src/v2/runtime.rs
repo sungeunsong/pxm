@@ -144,7 +144,7 @@ impl V2RetryPolicy {
 // 식 해석기 (Expression Evaluator)
 // ============================================================
 fn evaluate_condition(condition: &str, context: &Value) -> bool {
-    let form_data = context.get("formData");
+    let form_data = get_form_data(context);
     if let Some(data) = form_data {
         if let Some((field, rest)) = condition.split_once("==") {
             let field = field.trim();
@@ -167,6 +167,13 @@ fn evaluate_condition(condition: &str, context: &Value) -> bool {
         }
     }
     false
+}
+
+fn get_form_data(context: &Value) -> Option<&Value> {
+    context
+        .get("data")
+        .and_then(|data| data.get("formData"))
+        .or_else(|| context.get("formData"))
 }
 
 fn execute_js_node(node: &NodeDef, context: &Value) -> Result<Value> {
@@ -227,7 +234,7 @@ process.stdin.on('end', () => {
 
     let payload = json!({
         "code": code,
-        "context": context,
+        "context": external_execution_context(context),
         "timeout_ms": timeout_ms,
     });
 
@@ -275,10 +282,11 @@ process.stdin.on('end', () => {
 }
 
 fn set_context_value_at_path(context: &mut Value, output_path: &str, value: Value) {
-    let path = output_path
+    let raw_path = output_path
         .trim()
         .strip_prefix("context.")
         .unwrap_or(output_path.trim());
+    let path = normalize_context_write_path(raw_path);
 
     if path.is_empty() {
         *context = value;
@@ -314,6 +322,89 @@ fn set_context_value_at_path(context: &mut Value, output_path: &str, value: Valu
         .as_object_mut()
         .expect("context object")
         .insert(parts[parts.len() - 1].to_string(), value);
+}
+
+fn get_context_value_at_path(context: &Value, input_path: &str) -> Option<Value> {
+    let raw_path = input_path
+        .trim()
+        .strip_prefix("context.")
+        .unwrap_or(input_path.trim());
+
+    if raw_path.is_empty() {
+        return Some(context.clone());
+    }
+
+    for path in candidate_context_read_paths(raw_path) {
+        if let Some(value) = get_context_value_at_exact_path(context, &path) {
+            return Some(value);
+        }
+    }
+
+    None
+}
+
+fn get_context_value_at_exact_path(context: &Value, path: &str) -> Option<Value> {
+    let mut current = context;
+    for part in path.split('.').filter(|part| !part.is_empty()) {
+        current = current.get(part)?;
+    }
+    Some(current.clone())
+}
+
+fn normalize_context_write_path(path: &str) -> String {
+    if path.is_empty()
+        || path == "result"
+        || path == "result_path"
+        || path.starts_with("data.")
+        || path.starts_with("runtime.")
+    {
+        return path.to_string();
+    }
+
+    if path == "formData" || path.starts_with("formData.") {
+        return format!("data.{path}");
+    }
+
+    format!("data.outputs.{path}")
+}
+
+fn candidate_context_read_paths(path: &str) -> Vec<String> {
+    let mut paths = vec![path.to_string()];
+
+    if path == "formData" || path.starts_with("formData.") {
+        paths.push(format!("data.{path}"));
+    } else if !(path.starts_with("data.")
+        || path.starts_with("runtime.")
+        || path == "result"
+        || path == "result_path")
+    {
+        paths.push(format!("data.outputs.{path}"));
+    }
+
+    paths
+}
+
+fn external_result_default(context: &Value) -> Value {
+    context.get("data").cloned().unwrap_or_else(|| {
+        json!({
+            "formData": context.get("formData").cloned().unwrap_or_else(|| json!({})),
+            "outputs": context.get("outputs").cloned().unwrap_or_else(|| json!({}))
+        })
+    })
+}
+
+fn external_execution_context(context: &Value) -> Value {
+    let mut external = context.clone();
+
+    if let (Some(target), Some(data)) = (external.as_object_mut(), context.get("data")) {
+        if let Some(data_obj) = data.as_object() {
+            for (key, value) in data_obj {
+                target.entry(key.clone()).or_insert_with(|| value.clone());
+            }
+        }
+    }
+
+    external
 }
 
 fn gateway_type(node: &NodeDef) -> GatewayType {
@@ -453,8 +544,7 @@ fn resolve_approval_assignment(node: &NodeDef, context: &Value) -> (String, Valu
                 .or_else(|| node.config.get("requesterSelectedField"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("approver");
-            let selected = context
-                .get("formData")
+            let selected = get_form_data(context)
                 .and_then(|v| v.get(candidate_field))
                 .and_then(|v| v.as_str());
             let candidates: Vec<String> = approval_line
@@ -1306,7 +1396,7 @@ async fn execute_token_flow(
                     token_id: token.id,
                     node_id: token.node_id.clone(),
                     config: node.config.clone(),
-                    context: instance.context.clone(),
+                    context: external_execution_context(&instance.context),
                     attempt,
                 };
 
@@ -1557,6 +1647,31 @@ async fn execute_token_flow(
             }
 
             "end" => {
+                let result_path = node
+                    .config
+                    .get("resultPath")
+                    .or_else(|| node.config.get("result_path"))
+                    .and_then(|value| value.as_str())
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty());
+                let completed_result = result_path
+                    .as_ref()
+                    .and_then(|path| get_context_value_at_path(&instance.context, path))
+                    .unwrap_or_else(|| external_result_default(&instance.context));
+
+                set_context_value_at_path(
+                    &mut instance.context,
+                    "result",
+                    completed_result.clone(),
+                );
+                if let Some(path) = result_path.as_ref() {
+                    set_context_value_at_path(
+                        &mut instance.context,
+                        "result_path",
+                        Value::String(path.clone()),
+                    );
+                }
+
                 ctx.exec_log
                     .append_log(
                         instance.id,
@@ -1573,7 +1688,7 @@ async fn execute_token_flow(
                         Some(token.id),
                         Some(&token.node_id),
                         "NODE_COMPLETED",
-                        json!({}),
+                        json!({"result_path": result_path, "result": completed_result}),
                         tx,
                     )
                     .await?;

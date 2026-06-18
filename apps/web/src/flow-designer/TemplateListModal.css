@@ -146,6 +146,45 @@
   margin: 0 0 12px 0;
 }
 
+.template-id-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px 0;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.template-id-label {
+  font-weight: 600;
+}
+
+.template-id-value {
+  overflow: hidden;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.id-copy-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  color: var(--text-tertiary);
+  background: var(--surface-tertiary);
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.id-copy-button:hover {
+  color: var(--text-primary);
+  border-color: var(--primary);
+}
+
 .template-meta {
   display: flex;
   gap: 16px;

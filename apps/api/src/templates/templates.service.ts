@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { CreateTemplateDto, UpdateTemplateDto, TemplateResponseDto } from './dto/template.dto';
-import { WorkflowRepositoryPort } from '../db/ports/db.ports';
+import { WorkflowDefinitionMetadata, WorkflowRepositoryPort } from '../db/ports/db.ports';
 import { randomUUID } from 'crypto';
 
 @Injectable()
@@ -9,7 +9,13 @@ export class TemplatesService {
 
   async create(dto: CreateTemplateDto): Promise<TemplateResponseDto> {
     const id = randomUUID();
-    await this.workflowRepo.createDefinition(id, dto.name, dto.nodes || [], dto.edges || []);
+    await this.workflowRepo.createDefinition(
+      id,
+      dto.name,
+      dto.nodes || [],
+      dto.edges || [],
+      this.normalizeMetadata(dto),
+    );
     const result = await this.workflowRepo.getDefinition(id);
     return this.mapToDto(result);
   }
@@ -37,8 +43,14 @@ export class TemplatesService {
     const updatedName = dto.name !== undefined ? dto.name : current.name;
     const updatedNodes = dto.nodes !== undefined ? dto.nodes : current.nodes;
     const updatedEdges = dto.edges !== undefined ? dto.edges : current.edges;
+    const updatedMetadata = this.normalizeMetadata({
+      description: dto.description !== undefined ? dto.description : current.description,
+      group: dto.group !== undefined ? dto.group : current.group,
+      tags: dto.tags !== undefined ? dto.tags : current.tags,
+      version_note: dto.version_note !== undefined ? dto.version_note : current.version_note,
+    });
 
-    await this.workflowRepo.createDefinition(id, updatedName, updatedNodes, updatedEdges);
+    await this.workflowRepo.createDefinition(id, updatedName, updatedNodes, updatedEdges, updatedMetadata);
     const result = await this.workflowRepo.getDefinition(id);
     return result ? this.mapToDto(result) : null;
   }
@@ -50,10 +62,21 @@ export class TemplatesService {
   }
 
   private mapToDto(row: any): TemplateResponseDto {
+    const metadata = this.normalizeMetadata({
+      ...(row.metadata || {}),
+      description: row.description ?? row.metadata?.description,
+      group: row.group ?? row.metadata?.group,
+      tags: row.tags ?? row.metadata?.tags,
+      version_note: row.version_note ?? row.metadata?.version_note,
+    });
+
     return {
       id: row.id,
       name: row.name,
-      description: row.description || '',
+      description: metadata.description || '',
+      group: metadata.group || '',
+      tags: metadata.tags || [],
+      version_note: metadata.version_note || '',
       nodes: row.nodes || [],
       edges: row.edges || [],
       version: row.version || 1,
@@ -62,6 +85,19 @@ export class TemplatesService {
       updated_by: row.updated_by || 'admin',
       created_at: row.created_at || new Date(),
       updated_at: row.updated_at || new Date(),
+    };
+  }
+
+  private normalizeMetadata(input: Partial<WorkflowDefinitionMetadata> | any): WorkflowDefinitionMetadata {
+    return {
+      description: typeof input?.description === 'string' ? input.description : '',
+      group: typeof input?.group === 'string' ? input.group : '',
+      tags: Array.isArray(input?.tags)
+        ? input.tags.map((tag) => String(tag).trim()).filter(Boolean)
+        : typeof input?.tags === 'string'
+          ? input.tags.split(',').map((tag) => tag.trim()).filter(Boolean)
+          : [],
+      version_note: typeof input?.version_note === 'string' ? input.version_note : '',
     };
   }
 }

@@ -89,6 +89,9 @@ export interface CustomNodeData {
   assignee?: string;
   approvalType?: string;
   requireComment?: boolean;
+
+  // End 노드 전용
+  resultPath?: string;
 }
 
 // 폼 검증 결과

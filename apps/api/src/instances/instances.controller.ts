@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Req, Sse } from '@nestjs/common';
+import { Body, Controller, Get, NotFoundException, Param, Post, Req, Sse } from '@nestjs/common';
 import type { Request } from 'express';
 import { Observable } from 'rxjs';
 import { OutboxService } from '../outbox/outbox.service';
@@ -34,6 +34,15 @@ export class InstancesController {
   @Get('/instances/:id')
   async findOne(@Param('id') id: string) {
     return this.instances.findOne(id);
+  }
+
+  @Get('/instances/:id/result')
+  async result(@Param('id') id: string) {
+    const result = await this.instances.getResult(id);
+    if (!result) {
+      throw new NotFoundException('Instance not found');
+    }
+    return result;
   }
 
   @Get('/instances/:id/trace')

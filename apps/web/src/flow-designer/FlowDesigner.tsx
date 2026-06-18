@@ -4,6 +4,7 @@ import type { Edge } from 'reactflow';
 import { Braces, CheckSquare, CircleCheck, Clock, Diamond, Inbox, PanelRightClose, PanelRightOpen, Play, Search, Star } from 'lucide-react';
 import { Button } from '../components/Button';
 import { Header } from '../components/Header';
+import { Input } from '../components/Input';
 import { FlowCanvas } from './FlowCanvas';
 import type { FlowCanvasRef } from './FlowCanvas';
 import type { CustomNodeData, FormSchema } from './form-types';
@@ -31,6 +32,10 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
   const [canvasEdges, setCanvasEdges] = useState<Edge[]>([]);
   const [currentTemplateId, setCurrentTemplateId] = useState<string | null>(null);
   const [currentTemplateName, setCurrentTemplateName] = useState<string>('');
+  const [workflowDescription, setWorkflowDescription] = useState('');
+  const [workflowGroup, setWorkflowGroup] = useState('');
+  const [workflowTags, setWorkflowTags] = useState('');
+  const [workflowVersionNote, setWorkflowVersionNote] = useState('');
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [isExecutionModalOpen, setIsExecutionModalOpen] = useState(false);
   const [isExecutionPanelOpen, setIsExecutionPanelOpen] = useState(false);
@@ -278,6 +283,10 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
       if (currentTemplateId) {
         const updated = await templatesApi.update(currentTemplateId, {
           name: templateName,
+          description: workflowDescription,
+          group: workflowGroup,
+          tags: parseTagList(workflowTags),
+          version_note: workflowVersionNote,
           nodes,
           edges,
         });
@@ -286,7 +295,10 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
       } else {
         const created = await templatesApi.create({
           name: templateName,
-          description: '워크플로우 템플릿',
+          description: workflowDescription,
+          group: workflowGroup,
+          tags: parseTagList(workflowTags),
+          version_note: workflowVersionNote,
           nodes,
           edges,
         });
@@ -312,6 +324,10 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
     flowCanvasRef.current?.setNodesAndEdges(template.nodes, template.edges);
     setCurrentTemplateId(template.id);
     setCurrentTemplateName(template.name);
+    setWorkflowDescription(template.description || '');
+    setWorkflowGroup(template.group || '');
+    setWorkflowTags((template.tags || []).join(', '));
+    setWorkflowVersionNote(template.version_note || '');
     alert(`템플릿 "${template.name}"을 불러왔습니다.`);
   };
 
@@ -323,8 +339,9 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
       const instance = await res.json();
       
       // ctx에서 nodes/edges 복원
-      if (instance.ctx && instance.ctx.nodes && instance.ctx.edges) {
-        flowCanvasRef.current?.setNodesAndEdges(instance.ctx.nodes, instance.ctx.edges);
+      const runtimeContext = instance.ctx?.runtime || instance.context?.runtime || instance.ctx || instance.context;
+      if (runtimeContext && runtimeContext.nodes && runtimeContext.edges) {
+        flowCanvasRef.current?.setNodesAndEdges(runtimeContext.nodes, runtimeContext.edges);
         
         // 템플릿 정보도 업데이트 (선택 사항)
         if (instance.template_id) {
@@ -347,7 +364,9 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
   };
 
   const handleSettings = () => {
-    console.log('Open settings');
+    setSelectedNode(null);
+    setIsExecutionPanelOpen(false);
+    setIsPropertiesPanelOpen(true);
   };
 
   const handleToggleDarkMode = () => {
@@ -642,11 +661,16 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
                     testError={nodeTestError}
                   />
                   ) : (
-                    <div className="properties-placeholder">
-                      <p className="text-secondary">
-                        노드를 선택하면 속성이 표시됩니다
-                      </p>
-                    </div>
+                    <WorkflowMetadataForm
+                      description={workflowDescription}
+                      group={workflowGroup}
+                      tags={workflowTags}
+                      versionNote={workflowVersionNote}
+                      onDescriptionChange={setWorkflowDescription}
+                      onGroupChange={setWorkflowGroup}
+                      onTagsChange={setWorkflowTags}
+                      onVersionNoteChange={setWorkflowVersionNote}
+                    />
                   )}
                 </div>
               )}
@@ -693,6 +717,76 @@ function getPluginConfigDefaults(plugin: PluginManifest): Partial<CustomNodeData
     }
   });
   return defaults as Partial<CustomNodeData>;
+}
+
+function parseTagList(value: string): string[] {
+  return value
+    .split(',')
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+}
+
+function WorkflowMetadataForm({
+  description,
+  group,
+  tags,
+  versionNote,
+  onDescriptionChange,
+  onGroupChange,
+  onTagsChange,
+  onVersionNoteChange,
+}: {
+  description: string;
+  group: string;
+  tags: string;
+  versionNote: string;
+  onDescriptionChange: (value: string) => void;
+  onGroupChange: (value: string) => void;
+  onTagsChange: (value: string) => void;
+  onVersionNoteChange: (value: string) => void;
+}) {
+  return (
+    <div className="workflow-metadata-form">
+      <div className="property-section">
+        <h4 className="property-section-title">워크플로우 메타데이터</h4>
+        <div className="property-group">
+          <label className="property-label">Description</label>
+          <textarea
+            className="property-textarea"
+            value={description}
+            onChange={(event) => onDescriptionChange(event.target.value)}
+            placeholder="워크플로우 목적과 사용 조건"
+            rows={4}
+          />
+        </div>
+        <Input
+          label="Group"
+          value={group}
+          onChange={(event) => onGroupChange(event.target.value)}
+          placeholder="예: HR, IT, Finance"
+          fullWidth
+        />
+        <Input
+          label="Tags"
+          value={tags}
+          onChange={(event) => onTagsChange(event.target.value)}
+          placeholder="approval, onboarding, account"
+          helperText="쉼표로 구분합니다."
+          fullWidth
+        />
+        <div className="property-group">
+          <label className="property-label">Version Note</label>
+          <textarea
+            className="property-textarea"
+            value={versionNote}
+            onChange={(event) => onVersionNoteChange(event.target.value)}
+            placeholder="이번 버전의 변경 내용"
+            rows={3}
+          />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function PluginPaletteSection({

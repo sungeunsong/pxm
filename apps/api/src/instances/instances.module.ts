@@ -8,5 +8,6 @@ import { InstancesService } from './instances.service';
   imports: [DbModule], // <-- 중요
   controllers: [InstancesController],
   providers: [OutboxService, InstancesService],
+  exports: [InstancesService],
 })
 export class InstancesModule {}

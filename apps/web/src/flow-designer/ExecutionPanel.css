@@ -122,6 +122,51 @@
   letter-spacing: 0.5px;
 }
 
+.execution-instance-id-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 26px;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.execution-instance-id-label {
+  color: var(--text-tertiary);
+  font-weight: 700;
+}
+
+.execution-instance-id-value {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-family: monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.execution-id-copy-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  color: var(--text-tertiary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.execution-id-copy-button:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
 /* 상태 아이콘 */
 .status-icon {
   flex-shrink: 0;
