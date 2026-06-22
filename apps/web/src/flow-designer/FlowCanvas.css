@@ -88,6 +88,10 @@
   stroke: var(--color-success);
 }
 
+.react-flow__edge {
+  cursor: pointer;
+}
+
 /* ===== Selection ===== */
 .react-flow__nodesselection-rect,
 .react-flow__selection {

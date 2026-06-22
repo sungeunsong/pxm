@@ -35,3 +35,28 @@ export class TemplateResponseDto {
   created_at: Date;
   updated_at: Date;
 }
+
+export type WorkflowExportDocument = {
+  schema_version: 'pxm.workflow.v1';
+  exported_at: string;
+  workflow: {
+    name: string;
+    metadata: {
+      description?: string;
+      group?: string;
+      tags: string[];
+      version_note?: string;
+    };
+    nodes: any[];
+    edges: any[];
+    plugin_dependencies: Array<{
+      plugin_id: string;
+      version?: string;
+      node_ids: string[];
+    }>;
+  };
+  security: {
+    secrets_policy: 'redacted';
+    redacted_paths: string[];
+  };
+};

@@ -11,6 +11,10 @@
   overflow: hidden;
 }
 
+.workflow-import-input {
+  display: none;
+}
+
 /* ===== Content Area (3-Column Layout) ===== */
 .flow-designer-content {
   display: grid;

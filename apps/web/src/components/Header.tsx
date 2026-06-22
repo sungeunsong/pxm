@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, Save, FolderOpen, Settings, Moon, Sun, Clock } from 'lucide-react';
+import { Play, Save, FolderOpen, Settings, Moon, Sun, Clock, Download, Upload } from 'lucide-react';
 import { Button } from './Button';
 import './Header.css';
 
@@ -8,6 +8,8 @@ export interface HeaderProps {
   onRun?: () => void;
   onSave?: () => void;
   onLoad?: () => void;
+  onImport?: () => void;
+  onExport?: () => void;
   onHistory?: () => void;
   onSettings?: () => void;
   darkMode?: boolean;
@@ -20,6 +22,8 @@ export const Header: React.FC<HeaderProps> = ({
   onRun,
   onSave,
   onLoad,
+  onImport,
+  onExport,
   onHistory,
   onSettings,
   darkMode = true,
@@ -62,6 +66,24 @@ export const Header: React.FC<HeaderProps> = ({
             onClick={onLoad}
           >
             Load
+          </Button>
+        )}
+        {onImport && (
+          <Button
+            variant="secondary"
+            icon={<Upload />}
+            onClick={onImport}
+          >
+            Import
+          </Button>
+        )}
+        {onExport && (
+          <Button
+            variant="secondary"
+            icon={<Download />}
+            onClick={onExport}
+          >
+            Export
           </Button>
         )}
         {onHistory && (

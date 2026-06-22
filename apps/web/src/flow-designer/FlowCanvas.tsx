@@ -265,6 +265,16 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
     onNodeSelect?.(null);
   }, [onNodeSelect]);
 
+  const onEdgeDoubleClick = useCallback(
+    (event: React.MouseEvent, edge: Edge) => {
+      event.stopPropagation();
+      if (confirm('이 연결을 삭제하시겠습니까?')) {
+        setEdges((eds) => eds.filter((item) => item.id !== edge.id));
+      }
+    },
+    [setEdges]
+  );
+
   // 드래그 앤 드롭 핸들러
   const onDragOver = useCallback((event: React.DragEvent) => {
     event.preventDefault();
@@ -312,8 +322,10 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
         onConnect={onConnect}
         onNodeClick={onNodeClick}
         onPaneClick={onPaneClick}
+        onEdgeDoubleClick={onEdgeDoubleClick}
         onDrop={onDrop}
         onDragOver={onDragOver}
+        deleteKeyCode={['Backspace', 'Delete']}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         fitView

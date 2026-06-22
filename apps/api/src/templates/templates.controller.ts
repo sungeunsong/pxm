@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpStatus, Param, Post, Put, Query, Res } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, HttpStatus, NotFoundException, Param, Post, Put, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { TemplatesService } from './templates.service';
 import { CreateTemplateDto, UpdateTemplateDto } from './dto/template.dto';
@@ -23,6 +23,24 @@ export class TemplatesController {
   async findAll(@Query('activeOnly') activeOnly?: string) {
     const active = activeOnly !== 'false';
     return this.templatesService.findAll(active);
+  }
+
+  @Post('import')
+  async import(@Body() body: any) {
+    try {
+      return await this.templatesService.import(body);
+    } catch (error) {
+      throw new BadRequestException(error instanceof Error ? error.message : 'Invalid workflow import document');
+    }
+  }
+
+  @Get(':id/export')
+  async export(@Param('id') id: string) {
+    const document = await this.templatesService.export(id);
+    if (!document) {
+      throw new NotFoundException('Template not found');
+    }
+    return document;
   }
 
   @Get(':id')

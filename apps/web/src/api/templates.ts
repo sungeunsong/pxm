@@ -60,6 +60,31 @@ export interface StartTemplateRequest {
   formData?: Record<string, any>;
 }
 
+export interface WorkflowExportDocument {
+  schema_version: 'pxm.workflow.v1';
+  exported_at: string;
+  workflow: {
+    name: string;
+    metadata: {
+      description?: string;
+      group?: string;
+      tags: string[];
+      version_note?: string;
+    };
+    nodes: Node[];
+    edges: Edge[];
+    plugin_dependencies: Array<{
+      plugin_id: string;
+      version?: string;
+      node_ids: string[];
+    }>;
+  };
+  security: {
+    secrets_policy: 'redacted';
+    redacted_paths: string[];
+  };
+}
+
 const API_BASE_URL = '/api';
 
 export const templatesApi = {
@@ -161,6 +186,32 @@ export const templatesApi = {
 
     if (!response.ok) {
       throw new Error(`Failed to start template: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  async export(id: string): Promise<WorkflowExportDocument> {
+    const response = await fetch(`${API_BASE_URL}/templates/${id}/export`);
+
+    if (!response.ok) {
+      throw new Error(`Failed to export template: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  async import(data: WorkflowExportDocument): Promise<WorkflowTemplate> {
+    const response = await fetch(`${API_BASE_URL}/templates/import`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to import template: ${response.statusText}`);
     }
 
     return response.json();

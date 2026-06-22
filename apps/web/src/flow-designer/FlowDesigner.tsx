@@ -9,6 +9,7 @@ import { FlowCanvas } from './FlowCanvas';
 import type { FlowCanvasRef } from './FlowCanvas';
 import type { CustomNodeData, FormSchema } from './form-types';
 import { NodePropertiesForm } from './NodePropertiesForm';
+import type { NodePathSuggestion } from './NodePropertiesForm';
 import { TemplateListModal } from './TemplateListModal';
 import { ExecutionModal } from './ExecutionModal';
 import { ExecutionPanel } from './ExecutionPanel';
@@ -29,6 +30,7 @@ export interface FlowDesignerProps {
 export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, initialMonitorInstanceId }) => {
   const [darkMode, setDarkMode] = useState(true);
   const [selectedNode, setSelectedNode] = useState<Node<CustomNodeData> | null>(null);
+  const [canvasNodes, setCanvasNodes] = useState<Node<CustomNodeData>[]>([]);
   const [canvasEdges, setCanvasEdges] = useState<Edge[]>([]);
   const [currentTemplateId, setCurrentTemplateId] = useState<string | null>(null);
   const [currentTemplateName, setCurrentTemplateName] = useState<string>('');
@@ -56,6 +58,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
     }
   });
   const flowCanvasRef = useRef<FlowCanvasRef>(null);
+  const importFileInputRef = useRef<HTMLInputElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const eventQueueRef = useRef<Array<{nodeId: string, status: 'pending' | 'running' | 'completed' | 'failed'}>>([]); 
   const isProcessingRef = useRef(false);
@@ -316,6 +319,42 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
     setIsTemplateModalOpen(true);
   };
 
+  const handleExport = async () => {
+    if (!currentTemplateId) {
+      alert('먼저 템플릿을 저장하거나 불러와주세요.');
+      return;
+    }
+
+    try {
+      const document = await templatesApi.export(currentTemplateId);
+      downloadJson(document, `${safeFileName(document.workflow.name)}.pxm-workflow.json`);
+    } catch (error) {
+      console.error('Failed to export workflow:', error);
+      alert('워크플로우 내보내기에 실패했습니다.');
+    }
+  };
+
+  const handleImport = () => {
+    importFileInputRef.current?.click();
+  };
+
+  const handleImportFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const document = JSON.parse(text);
+      const imported = await templatesApi.import(document);
+      handleTemplateSelect(imported);
+      alert(`워크플로우를 가져왔습니다: ${imported.name}`);
+    } catch (error) {
+      console.error('Failed to import workflow:', error);
+      alert(error instanceof Error ? `워크플로우 가져오기에 실패했습니다: ${error.message}` : '워크플로우 가져오기에 실패했습니다.');
+    }
+  };
+
   const handleHistory = () => {
     setIsHistoryModalOpen(true);
   };
@@ -501,6 +540,13 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
     return canvasEdges.filter((edge) => edge.source === selectedNode.id);
   }, [canvasEdges, selectedNode]);
 
+  const selectedNodePathSuggestions = useMemo(() => {
+    if (!selectedNode) {
+      return [];
+    }
+    return buildPreviousNodePathSuggestions(selectedNode, canvasNodes, canvasEdges, plugins);
+  }, [canvasEdges, canvasNodes, plugins, selectedNode]);
+
   return (
     <div className="flow-designer">
       <Header
@@ -513,10 +559,19 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
         onRun={() => handleRun()}
         onSave={handleSave}
         onLoad={handleLoad}
+        onImport={handleImport}
+        onExport={handleExport}
         onHistory={handleHistory}
         onSettings={handleSettings}
         darkMode={darkMode}
         onToggleDarkMode={handleToggleDarkMode}
+      />
+      <input
+        ref={importFileInputRef}
+        type="file"
+        accept="application/json,.json,.pxm-workflow.json"
+        className="workflow-import-input"
+        onChange={handleImportFileChange}
       />
 
       <div className={`flow-designer-content${isPropertiesPanelOpen ? '' : ' properties-collapsed'}`}>
@@ -610,6 +665,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
           <FlowCanvas
             ref={flowCanvasRef}
             onNodeSelect={handleNodeSelect}
+            onNodesChange={(nodes) => setCanvasNodes(nodes as Node<CustomNodeData>[])}
             onEdgesChange={setCanvasEdges}
           />
         </main>
@@ -654,6 +710,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
                       onUpdate={handleNodeUpdate}
                     plugins={plugins}
                     gatewayEdges={selectedGatewayEdges}
+                    pathSuggestions={selectedNodePathSuggestions}
                     onGatewayEdgeUpdate={handleGatewayEdgeUpdate}
                     onTestRun={handleSelectedNodeTest}
                     testRunning={isNodeTestRunning}
@@ -719,11 +776,119 @@ function getPluginConfigDefaults(plugin: PluginManifest): Partial<CustomNodeData
   return defaults as Partial<CustomNodeData>;
 }
 
+function buildPreviousNodePathSuggestions(
+  selectedNode: Node<CustomNodeData>,
+  nodes: Node<CustomNodeData>[],
+  edges: Edge[],
+  plugins: PluginManifest[],
+): NodePathSuggestion[] {
+  const incomingEdges = edges.filter((edge) => edge.target === selectedNode.id);
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const suggestions: NodePathSuggestion[] = [];
+
+  for (const edge of incomingEdges) {
+    const sourceNode = nodeById.get(edge.source);
+    if (!sourceNode) {
+      continue;
+    }
+    suggestions.push(...buildNodeOutputSuggestions(sourceNode, plugins));
+  }
+
+  const seen = new Set<string>();
+  return suggestions.filter((suggestion) => {
+    const key = `${suggestion.sourceNodeId}:${suggestion.path}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function buildNodeOutputSuggestions(
+  node: Node<CustomNodeData>,
+  plugins: PluginManifest[],
+): NodePathSuggestion[] {
+  const data = node.data as Record<string, any>;
+  const sourceNodeLabel = node.data.label || node.id;
+
+  if (node.data.nodeType === 'start') {
+    const fields = node.data.formSchema?.fields || [];
+    return fields.map((field) => ({
+      label: `${sourceNodeLabel} · ${field.label || field.id}`,
+      path: `data.formData.${field.id}`,
+      sourceNodeId: node.id,
+      sourceNodeLabel,
+    }));
+  }
+
+  const outputPath = getConfiguredOutputPath(data, node);
+  if (!outputPath) {
+    return [];
+  }
+
+  const baseSuggestion: NodePathSuggestion = {
+    label: `${sourceNodeLabel} · output`,
+    path: outputPath,
+    sourceNodeId: node.id,
+    sourceNodeLabel,
+  };
+
+  if (node.data.nodeType === 'script') {
+    return [baseSuggestion];
+  }
+
+  if (node.data.nodeType !== 'service') {
+    return [];
+  }
+
+  const plugin = plugins.find((item) => item.plugin_id === data.plugin_id);
+  const schemaProperties = plugin?.output_schema?.properties || {};
+  const schemaPaths = Object.keys(schemaProperties).map((key) => ({
+    label: `${sourceNodeLabel} · ${key}`,
+    path: `${outputPath}.${key}`,
+    sourceNodeId: node.id,
+    sourceNodeLabel,
+  }));
+
+  return [baseSuggestion, ...schemaPaths];
+}
+
+function getConfiguredOutputPath(data: Record<string, any>, node: Node<CustomNodeData>) {
+  const value = data.outputPath || data.output_path;
+  if (typeof value === 'string' && value.trim()) {
+    return normalizeContextPath(value);
+  }
+  if (node.data.nodeType === 'script') {
+    return `scriptResults.${node.id}`;
+  }
+  return '';
+}
+
+function normalizeContextPath(path: string) {
+  return path.trim().replace(/^context\./, '');
+}
+
 function parseTagList(value: string): string[] {
   return value
     .split(',')
     .map((tag) => tag.trim())
     .filter(Boolean);
+}
+
+function downloadJson(data: unknown, filename: string) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function safeFileName(value: string) {
+  const trimmed = value.trim().replace(/[^a-zA-Z0-9가-힣._-]+/g, '-').replace(/^-+|-+$/g, '');
+  return trimmed || 'workflow';
 }
 
 function WorkflowMetadataForm({

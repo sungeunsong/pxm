@@ -106,6 +106,60 @@ End node의 `resultPath`가 비어 있으면 `context.data`만 result로 저장�
 - `GET /api/instances/:instance_id/trace`: 최근 trace/event 목록 조회.
 - `GET /api/instances/:instance_id/stream`: SSE 기반 실행 이벤트 스트림.
 
+## Export Workflow
+
+`GET /api/templates/:template_id/export`
+
+저장된 workflow를 이식 가능한 JSON 문서로 반환한다. Export에는 원본 template id를 포함하지 않으며, import 시 새 template id를 발급한다.
+
+```json
+{
+  "schema_version": "pxm.workflow.v1",
+  "exported_at": "2026-06-18T04:31:00.000Z",
+  "workflow": {
+    "name": "Workflow Name",
+    "metadata": {
+      "description": "",
+      "group": "QA",
+      "tags": ["phase1"],
+      "version_note": ""
+    },
+    "nodes": [],
+    "edges": [],
+    "plugin_dependencies": [
+      {
+        "plugin_id": "builtin.http_request",
+        "version": "1.0.0",
+        "node_ids": ["svc"]
+      }
+    ]
+  },
+  "security": {
+    "secrets_policy": "redacted",
+    "redacted_paths": ["workflow.nodes[1].data.api_key"]
+  }
+}
+```
+
+Secret성 key는 export 시 `null`로 제거하고 `security.redacted_paths`에 경로를 기록한다. 현재 redaction 대상 key 패턴은 `password`, `secret`, `token`, `api_key`, `access_key`, `private_key`, `connection_uri`, `authorization`, `credential` 계열이다.
+
+## Import Workflow
+
+`POST /api/templates/import`
+
+`schema_version: pxm.workflow.v1` 문서를 검증한 뒤 새 workflow template을 생성한다.
+
+검증 기준:
+
+- `workflow.name` 필수
+- `workflow.nodes` 배열 필수
+- `workflow.edges` 배열 필수
+- 모든 node는 `id`, `data.nodeType` 필수
+- 모든 edge는 존재하는 source/target node를 참조해야 함
+- import는 export 문서 안의 원본 id를 재사용하지 않고 새 template id를 발급함
+
+응답은 일반 template 생성 응답과 동일하다.
+
 ## Performance Baseline
 
 - Sync timeout default: 10000ms.
