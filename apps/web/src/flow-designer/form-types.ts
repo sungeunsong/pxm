@@ -67,6 +67,13 @@ export interface CustomNodeData {
   body?: any;
   plugin_id?: string;
   plugin_version?: string;
+  credential_id?: string;
+  credential_binding?: {
+    target: 'connection_uri' | 'authorization_header' | 'api_key_header' | 'basic_auth_header';
+    field?: string;
+    headerName?: string;
+    scheme?: string;
+  };
   timeout?: number;
   retryCount?: number;
   enableRetry?: boolean;

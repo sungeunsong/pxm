@@ -2,12 +2,15 @@ import { BadRequestException, Injectable, OnModuleInit } from '@nestjs/common';
 import { existsSync, readdirSync, readFileSync } from 'fs';
 import { MongoClient } from 'mongodb';
 import { join, resolve } from 'path';
+import { CredentialsService } from '../credentials/credentials.service';
 import { PluginManifestDto } from './dto/plugin-manifest.dto';
 
 @Injectable()
 export class PluginsService implements OnModuleInit {
   private manifests = new Map<string, PluginManifestDto[]>();
   private controls: PluginControls = defaultPluginControls();
+
+  constructor(private readonly credentialsService?: CredentialsService) {}
 
   onModuleInit() {
     this.loadManifests();
@@ -44,7 +47,11 @@ export class PluginsService implements OnModuleInit {
     }
 
     const startedAt = Date.now();
-    const config = request.config ?? {};
+    const config = await this.resolveCredentialConfig(
+      request.config ?? {},
+      manifest.plugin_id,
+      request.node_id,
+    );
 
     try {
       const output =
@@ -108,6 +115,52 @@ export class PluginsService implements OnModuleInit {
       headers: Object.fromEntries(response.headers.entries()),
       body,
     };
+  }
+
+  private async resolveCredentialConfig(
+    config: Record<string, unknown>,
+    pluginId: string,
+    nodeId?: string,
+  ): Promise<Record<string, unknown>> {
+    const credentialId = stringValue(config.credential_id);
+    if (!credentialId) {
+      return config;
+    }
+    if (!this.credentialsService) {
+      throw new BadRequestException('Credential service is not available');
+    }
+
+    const secret = await this.credentialsService.resolveSecret(credentialId, {
+      actor: 'plugin-test',
+      node_id: nodeId,
+    });
+    const binding = objectValue(config.credential_binding);
+    const target = stringValue(binding?.target) || inferCredentialTarget(pluginId);
+    const resolved = { ...config };
+
+    if (target === 'connection_uri') {
+      resolved.connection_uri = secret;
+      return resolved;
+    }
+
+    if (
+      target === 'authorization_header' ||
+      target === 'basic_auth_header' ||
+      target === 'api_key_header'
+    ) {
+      const headers = {
+        ...(objectValue(config.headers) || {}),
+      };
+      const headerName =
+        stringValue(binding?.headerName) ||
+        (target === 'api_key_header' ? 'x-api-key' : 'Authorization');
+      const scheme = stringValue(binding?.scheme);
+      headers[headerName] = scheme ? `${scheme} ${secret}` : secret;
+      resolved.headers = headers;
+      return resolved;
+    }
+
+    throw new BadRequestException(`Unsupported credential binding target: ${target}`);
   }
 
   private async testMongoDbQuery(config: Record<string, unknown>) {
@@ -396,6 +449,16 @@ export class PluginsService implements OnModuleInit {
       throw new Error(`${label}.required must be a string array`);
     }
   }
+}
+
+function inferCredentialTarget(pluginId: string) {
+  if (pluginId === 'connector.db.mongodb.query') {
+    return 'connection_uri';
+  }
+  if (pluginId === 'builtin.http_request') {
+    return 'authorization_header';
+  }
+  return '';
 }
 
 interface PluginControls {

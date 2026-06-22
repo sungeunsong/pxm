@@ -9,6 +9,7 @@ import {
   WorkflowTaskRepositoryPort,
   OutboxRepositoryPort,
 } from './ports/db.ports';
+import { MONGO_DB } from './mongo.provider';
 
 const dbType = process.env.DB_TYPE || 'postgres';
 const isMongo = dbType === 'mongodb';
@@ -35,6 +36,7 @@ const isMongo = dbType === 'mongodb';
     },
   ],
   exports: [
+    MONGO_DB,
     WorkflowRepositoryPort,
     WorkflowInstanceRepositoryPort,
     WorkflowTaskRepositoryPort,

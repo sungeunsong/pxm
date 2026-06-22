@@ -4,6 +4,7 @@ import type { Edge } from 'reactflow';
 import { Button, Input, Select, Checkbox } from '../components';
 import type { CustomNodeData, FormSchema } from './form-types';
 import type { PluginManifest, PluginJsonSchemaProperty, PluginTestResponse } from '../api/plugins';
+import { credentialsApi, type CredentialProfile } from '../api/credentials';
 import { FormSchemaEditor } from './FormSchemaEditor';
 import { PluginIcon } from './plugin-icons';
 import './NodePropertiesForm.css';
@@ -13,6 +14,7 @@ export interface NodePropertiesFormProps {
   onUpdate: (nodeId: string, data: Partial<CustomNodeData>) => void;
   plugins?: PluginManifest[];
   gatewayEdges?: Edge[];
+  pathSuggestions?: NodePathSuggestion[];
   onGatewayEdgeUpdate?: (edgeId: string, data: Partial<Edge>) => void;
   onTestRun?: () => void;
   testRunning?: boolean;
@@ -20,17 +22,57 @@ export interface NodePropertiesFormProps {
   testError?: string | null;
 }
 
+export interface NodePathSuggestion {
+  label: string;
+  path: string;
+  sourceNodeId: string;
+  sourceNodeLabel: string;
+}
+
 export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
   node,
   onUpdate,
   plugins = [],
   gatewayEdges = [],
+  pathSuggestions = [],
   onGatewayEdgeUpdate,
   onTestRun,
   testRunning = false,
   testResult,
   testError,
 }) => {
+  const scriptTextareaRef = React.useRef<HTMLTextAreaElement | null>(null);
+  const [credentials, setCredentials] = React.useState<CredentialProfile[]>([]);
+  const [credentialsLoading, setCredentialsLoading] = React.useState(false);
+  const [credentialsError, setCredentialsError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setCredentialsLoading(true);
+    credentialsApi
+      .list(true)
+      .then((items) => {
+        if (!cancelled) {
+          setCredentials(items);
+          setCredentialsError(null);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setCredentialsError(error instanceof Error ? error.message : 'Credential load failed');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setCredentialsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const handleLabelChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onUpdate(node.id, { label: e.target.value });
   };
@@ -39,11 +81,56 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
     onUpdate(node.id, { description: e.target.value });
   };
 
+  const handleCopyPath = (path: string) => {
+    void navigator.clipboard?.writeText(path).catch(() => undefined);
+  };
+
+  const handleInsertScriptPath = (path: string) => {
+    const data = node.data as any;
+    const code = data.code || '';
+    const reference = `context.${path}`;
+    const textarea = scriptTextareaRef.current;
+    const start = textarea?.selectionStart ?? code.length;
+    const end = textarea?.selectionEnd ?? code.length;
+    const nextCode = `${code.slice(0, start)}${reference}${code.slice(end)}`;
+
+    onUpdate(node.id, {
+      ...data,
+      scriptType: 'javascript',
+      code: nextCode,
+    });
+
+    requestAnimationFrame(() => {
+      textarea?.focus();
+      const cursor = start + reference.length;
+      textarea?.setSelectionRange(cursor, cursor);
+    });
+  };
+
   // Service 노드 속성
   const renderServiceProperties = () => {
     const data = node.data as any;
     const pluginId = data.plugin_id || 'builtin.http_request';
     const selectedPlugin = findPluginManifest(plugins, pluginId);
+    const credentialPolicy = getCredentialPolicy(selectedPlugin);
+    const compatibleCredentials = credentials.filter((credential) =>
+      isCredentialCompatible(credential, credentialPolicy),
+    );
+    const selectedCredential = credentials.find((credential) => credential.id === data.credential_id);
+    const selectedCredentialCompatible = selectedCredential
+      ? isCredentialCompatible(selectedCredential, credentialPolicy)
+      : false;
+
+    if (selectedCredential && !selectedCredentialCompatible) {
+      queueMicrotask(() => {
+        onUpdate(node.id, {
+          ...data,
+          credential_id: undefined,
+          credential_binding: undefined,
+        });
+      });
+    }
+
     return (
       <>
         <div className="property-section node-test-section">
@@ -70,7 +157,10 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
                   ? `${testResult.ok ? '성공' : '실패'} · ${testResult.duration_ms}ms`
                   : '실패'}
               </div>
-              <pre>{formatTestResult(testResult, testError)}</pre>
+              <JsonTreeView
+                value={getTestResultValue(testResult, testError)}
+                onPathClick={handleCopyPath}
+              />
             </div>
           )}
         </div>
@@ -93,6 +183,9 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
             value={pluginId}
             onChange={(e) => {
               const nextPlugin = findPluginManifest(plugins, e.target.value);
+              const nextPolicy = getCredentialPolicy(nextPlugin);
+              const keepCredential =
+                selectedCredential && isCredentialCompatible(selectedCredential, nextPolicy);
               onUpdate(node.id, {
                 ...data,
                 ...getPluginConfigDefaults(nextPlugin),
@@ -102,6 +195,10 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
                 category: nextPlugin?.category || data.category,
                 plugin_id: e.target.value,
                 plugin_version: nextPlugin?.version || data.plugin_version,
+                credential_id: keepCredential ? data.credential_id : undefined,
+                credential_binding: keepCredential
+                  ? buildCredentialBinding(selectedCredential, nextPolicy)
+                  : undefined,
                 timeout: nextPlugin?.timeout_ms || data.timeout,
                 retryCount: nextPlugin?.retry_policy?.max_attempts || data.retryCount,
               });
@@ -109,12 +206,46 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
             options={buildPluginOptions(plugins)}
             fullWidth
           />
+          <Select
+            label="Credential"
+            value={data.credential_id || ''}
+            onChange={(e) => {
+              const credential = credentials.find((item) => item.id === e.target.value);
+              onUpdate(node.id, {
+                ...data,
+                credential_id: credential?.id,
+                credential_binding: credential
+                  ? buildCredentialBinding(credential, credentialPolicy)
+                  : undefined,
+              });
+            }}
+            options={buildCredentialOptions(compatibleCredentials, credentialPolicy)}
+            helperText={
+              credentialsError ||
+              (credentialsLoading
+                ? 'Credential 목록을 불러오는 중입니다.'
+                : credentialPolicy.helperText)
+            }
+            fullWidth
+          />
+          {selectedCredential && selectedCredentialCompatible && (
+            <CredentialBindingSummary
+              credential={selectedCredential}
+              binding={buildCredentialBinding(selectedCredential, credentialPolicy)}
+              policy={credentialPolicy}
+            />
+          )}
         </div>
 
         {selectedPlugin ? (
           <div className="property-section">
             <h4 className="property-section-title">플러그인 설정</h4>
-            {renderPluginConfigFields(selectedPlugin, data, (nextData) => onUpdate(node.id, nextData))}
+            {renderPluginConfigFields(
+              selectedPlugin,
+              data,
+              (nextData) => onUpdate(node.id, nextData),
+              selectedCredentialCompatible ? credentialPolicy : undefined,
+            )}
           </div>
         ) : (
           <div className="property-section">
@@ -130,6 +261,14 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
 
         <div className="property-section">
           <h4 className="property-section-title">고급 설정</h4>
+          <Input
+            label="Output Path"
+            placeholder="outputs.serviceNode"
+            value={data.outputPath || data.output_path || ''}
+            onChange={(e) => onUpdate(node.id, { ...data, outputPath: e.target.value })}
+            helperText="테스트/실행 결과를 저장할 context path입니다. 예: httpResults.userLookup"
+            fullWidth
+          />
           <Input
             label="Timeout (ms)"
             type="number"
@@ -165,6 +304,7 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
         <div className="property-group">
           <label className="property-label">JavaScript Code</label>
           <textarea
+            ref={scriptTextareaRef}
             className="property-textarea code-textarea"
             value={data.code || ''}
             onChange={(e) =>
@@ -181,6 +321,12 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
             `input`과 `context`를 읽고, `return` 값이 output path에 저장됩니다.
           </div>
         </div>
+        <PathSuggestionList
+          suggestions={pathSuggestions}
+          emptyText="연결된 이전 노드의 output path가 없습니다."
+          actionLabel="삽입"
+          onSelect={handleInsertScriptPath}
+        />
         <Input
           label="Output Path"
           placeholder="scriptResults.jsNode"
@@ -484,10 +630,153 @@ function buildPluginOptions(plugins: PluginManifest[]) {
   return options;
 }
 
+type CredentialPolicy = {
+  mode: 'none' | 'mongodb_connection' | 'http_auth';
+  title: string;
+  helperText: string;
+  handledFields: string[];
+  allowedTypes: CredentialProfile['type'][];
+  preferredScopes: string[];
+};
+
+function buildCredentialOptions(credentials: CredentialProfile[], policy: CredentialPolicy) {
+  if (policy.mode === 'none') {
+    return [{ value: '', label: '이 노드는 credential을 사용하지 않음' }];
+  }
+
+  return [
+    { value: '', label: 'Credential 미사용' },
+    ...credentials.map((credential) => ({
+      value: credential.id,
+      label: `${credential.name} (${credential.type})`,
+    })),
+  ];
+}
+
+function getCredentialPolicy(plugin?: PluginManifest): CredentialPolicy {
+  const pluginId = plugin?.plugin_id || '';
+  const tags = plugin?.tags || [];
+
+  if (pluginId === 'connector.db.mongodb.query' || tags.includes('mongodb')) {
+    return {
+      mode: 'mongodb_connection',
+      title: 'MongoDB connection URI',
+      helperText: 'Connection String 타입이며 mongo/mongodb/db/database 계열 scope가 있는 credential만 표시됩니다. 선택하면 Connection URI를 대신합니다.',
+      handledFields: ['connection_uri'],
+      allowedTypes: ['connection_string'],
+      preferredScopes: ['mongo', 'mongodb', 'mongo-db', 'mongo_db', 'db', 'database'],
+    };
+  }
+
+  if (pluginId === 'builtin.http_request' || tags.includes('http') || tags.includes('webhook')) {
+    return {
+      mode: 'http_auth',
+      title: 'HTTP authentication',
+      helperText: 'API Key, Bearer Token, Basic Auth credential만 표시됩니다. 선택하면 요청 인증 헤더로 사용됩니다.',
+      handledFields: [],
+      allowedTypes: ['api_key', 'bearer_token', 'basic_auth', 'custom'],
+      preferredScopes: ['http', 'api', 'webhook'],
+    };
+  }
+
+  return {
+    mode: 'none',
+    title: 'Credential',
+    helperText: '현재 선택한 플러그인은 credential binding 규칙이 없습니다.',
+    handledFields: [],
+    allowedTypes: [],
+    preferredScopes: [],
+  };
+}
+
+function isCredentialCompatible(credential: CredentialProfile, policy: CredentialPolicy) {
+  if (policy.mode === 'none') return false;
+  if (!credential.active) return false;
+  if (!policy.allowedTypes.includes(credential.type)) return false;
+
+  if (policy.mode === 'mongodb_connection') {
+    return credential.scopes.some((scope) => {
+      const normalized = normalizeScope(scope);
+      return policy.preferredScopes.some((allowed) => normalizeScope(allowed) === normalized);
+    });
+  }
+
+  return true;
+}
+
+function normalizeScope(scope: string) {
+  return scope.trim().toLowerCase().replace(/[\s_-]+/g, '');
+}
+
+function buildCredentialBinding(credential: CredentialProfile, policy: CredentialPolicy) {
+  if (policy.mode === 'mongodb_connection') {
+    return {
+      target: 'connection_uri' as const,
+      field: 'connection_uri',
+    };
+  }
+
+  if (credential.type === 'bearer_token') {
+    return {
+      target: 'authorization_header' as const,
+      headerName: 'Authorization',
+      scheme: 'Bearer',
+    };
+  }
+
+  if (credential.type === 'basic_auth') {
+    return {
+      target: 'basic_auth_header' as const,
+      headerName: 'Authorization',
+      scheme: 'Basic',
+    };
+  }
+
+  return {
+    target: 'api_key_header' as const,
+    headerName: typeof credential.metadata?.headerName === 'string'
+      ? credential.metadata.headerName
+      : 'x-api-key',
+  };
+}
+
+function CredentialBindingSummary({
+  credential,
+  binding,
+  policy,
+}: {
+  credential: CredentialProfile;
+  binding: ReturnType<typeof buildCredentialBinding>;
+  policy: CredentialPolicy;
+}) {
+  const destination =
+    binding.target === 'connection_uri'
+      ? 'Connection URI 필드'
+      : `${binding.headerName}${binding.scheme ? ` (${binding.scheme})` : ''} 헤더`;
+
+  return (
+    <div className="credential-binding-summary">
+      <div className="credential-binding-title">{policy.title}</div>
+      <div className="credential-binding-row">
+        <span>선택됨</span>
+        <strong>{credential.name}</strong>
+      </div>
+      <div className="credential-binding-row">
+        <span>사용 위치</span>
+        <strong>{destination}</strong>
+      </div>
+      <div className="credential-binding-note">
+        Secret 원문은 노드에 저장되지 않고 실행 시 credential store에서 읽습니다.
+      </div>
+    </div>
+  );
+}
+
 function renderPluginConfigFields(
   plugin: PluginManifest,
   data: Record<string, any>,
   onUpdate: (data: Partial<CustomNodeData>) => void,
+  credentialPolicy?: CredentialPolicy,
 ) {
   const required = new Set(plugin.config_schema.required || []);
   const entries = Object.entries(plugin.config_schema.properties || {});
@@ -497,6 +786,17 @@ function renderPluginConfigFields(
   }
 
   return entries.map(([key, property]) => {
+    if (credentialPolicy?.handledFields.includes(key)) {
+      return (
+        <CredentialManagedFieldNotice
+          key={key}
+          label={property.title || key}
+          field={key}
+          policy={credentialPolicy}
+        />
+      );
+    }
+
     const value = data[key] ?? property.default ?? '';
     const label = property.title || key;
     const isRequired = required.has(key);
@@ -560,6 +860,29 @@ function renderPluginConfigFields(
   });
 }
 
+function CredentialManagedFieldNotice({
+  label,
+  field,
+  policy,
+}: {
+  label: string;
+  field: string;
+  policy: CredentialPolicy;
+}) {
+  return (
+    <div className="credential-managed-field">
+      <div>
+        <div className="credential-managed-label">{label}</div>
+        <div className="credential-managed-helper">
+          이 값은 선택한 credential secret으로 제공됩니다.
+        </div>
+      </div>
+      <code>{field}</code>
+      <span>{policy.title}</span>
+    </div>
+  );
+}
+
 function normalizeInputValue(value: string, property: PluginJsonSchemaProperty) {
   if (property.type === 'integer') {
     return value === '' ? '' : Number.parseInt(value, 10);
@@ -578,11 +901,11 @@ function parseJsonLoose(value: string) {
   }
 }
 
-function formatTestResult(result?: PluginTestResponse | null, error?: string | null) {
+function getTestResultValue(result?: PluginTestResponse | null, error?: string | null) {
   if (error && !result?.output) {
-    return error;
+    return { error };
   }
-  return JSON.stringify(result?.output ?? { error }, null, 2);
+  return result?.output ?? { error };
 }
 
 function getPluginConfigDefaults(plugin?: PluginManifest): Partial<CustomNodeData> {
@@ -594,4 +917,118 @@ function getPluginConfigDefaults(plugin?: PluginManifest): Partial<CustomNodeDat
     }
   });
   return defaults as Partial<CustomNodeData>;
+}
+
+function PathSuggestionList({
+  suggestions,
+  emptyText,
+  actionLabel,
+  onSelect,
+}: {
+  suggestions: NodePathSuggestion[];
+  emptyText: string;
+  actionLabel: string;
+  onSelect: (path: string) => void;
+}) {
+  return (
+    <div className="path-suggestion-panel">
+      <div className="path-suggestion-title">이전 노드 output path</div>
+      {suggestions.length === 0 ? (
+        <div className="path-suggestion-empty">{emptyText}</div>
+      ) : (
+        <div className="path-suggestion-list">
+          {suggestions.map((suggestion) => (
+            <button
+              type="button"
+              className="path-suggestion-item"
+              key={`${suggestion.sourceNodeId}:${suggestion.path}`}
+              onClick={() => onSelect(suggestion.path)}
+              title={`${suggestion.sourceNodeLabel}: ${suggestion.path}`}
+            >
+              <span className="path-suggestion-label">{suggestion.label}</span>
+              <code>{suggestion.path}</code>
+              <span className="path-suggestion-action">{actionLabel}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function JsonTreeView({
+  value,
+  onPathClick,
+}: {
+  value: unknown;
+  onPathClick: (path: string) => void;
+}) {
+  return (
+    <div className="json-tree-view">
+      <JsonTreeNode name="output" value={value} path="output" depth={0} onPathClick={onPathClick} />
+    </div>
+  );
+}
+
+function JsonTreeNode({
+  name,
+  value,
+  path,
+  depth,
+  onPathClick,
+}: {
+  name: string;
+  value: unknown;
+  path: string;
+  depth: number;
+  onPathClick: (path: string) => void;
+}) {
+  const isObjectLike = value !== null && typeof value === 'object';
+  const entries = isObjectLike
+    ? Array.isArray(value)
+      ? value.map((item, index) => [String(index), item] as const)
+      : Object.entries(value as Record<string, unknown>)
+    : [];
+  const preview = formatJsonLeaf(value);
+
+  return (
+    <div className="json-tree-node">
+      <button
+        type="button"
+        className={`json-tree-row${isObjectLike ? ' parent' : ' leaf'}`}
+        style={{ paddingLeft: 10 + depth * 14 }}
+        onClick={() => onPathClick(path)}
+        title={`Copy JSON path: ${path}`}
+      >
+        <span className="json-tree-key">{name}</span>
+        <span className="json-tree-path">{path}</span>
+        {!isObjectLike && <span className="json-tree-value">{preview}</span>}
+        {isObjectLike && <span className="json-tree-count">{entries.length} items</span>}
+      </button>
+      {entries.map(([key, child]) => (
+        <JsonTreeNode
+          key={`${path}.${key}`}
+          name={key}
+          value={child}
+          path={appendJsonPath(path, key)}
+          depth={depth + 1}
+          onPathClick={onPathClick}
+        />
+      ))}
+    </div>
+  );
+}
+
+function appendJsonPath(path: string, key: string) {
+  return /^\d+$/.test(key) ? `${path}[${key}]` : `${path}.${key}`;
+}
+
+function formatJsonLeaf(value: unknown) {
+  if (typeof value === 'string') {
+    return JSON.stringify(value.length > 80 ? `${value.slice(0, 77)}...` : value);
+  }
+  if (value === null) return 'null';
+  if (value === undefined) return 'undefined';
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return JSON.stringify(value);
 }

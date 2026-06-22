@@ -5,9 +5,9 @@ import {
   Rocket, 
   Search, 
   Inbox, 
-  Settings, 
   FileText, 
-  Bell, 
+  Bell,
+  KeyRound,
   HelpCircle
 } from 'lucide-react';
 import { DashboardPage } from './dashboard/DashboardPage';
@@ -15,10 +15,11 @@ import { FlowDesigner } from './flow-designer/FlowDesigner';
 import { RequestPortal } from './request-portal/RequestPortal';
 import { InstanceTracker } from './instance-tracker/InstanceTracker';
 import { InboxPage } from './inbox/InboxPage';
+import { CredentialsPage } from './credentials/CredentialsPage';
 import './App.css';
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'designer' | 'request' | 'tracker' | 'inbox'>('inbox'); // 디폴트로 사용자가 원한 inbox를 켜둠
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'designer' | 'request' | 'tracker' | 'inbox' | 'credentials'>('inbox'); // 디폴트로 사용자가 원한 inbox를 켜둠
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
 
   // 실행 트래커에서 인스턴스를 선택해 실시간 모니터링을 시도할 때
@@ -84,9 +85,12 @@ function App() {
           
           <div className="sidebar-separator">설정 및 감사</div>
           
-          <button className="sidebar-menu-item disabled">
-            <Settings size={16} />
-            <span>시스템 설정</span>
+          <button 
+            className={`sidebar-menu-item ${activeTab === 'credentials' ? 'active' : ''}`}
+            onClick={() => setActiveTab('credentials')}
+          >
+            <KeyRound size={16} />
+            <span>Credential Store</span>
           </button>
           
           <button className="sidebar-menu-item disabled">
@@ -120,6 +124,7 @@ function App() {
               {activeTab === 'request' && "업무 신청 런처"}
               {activeTab === 'tracker' && "운영자 / 모니터링 담당 상세 화면 구성"}
               {activeTab === 'inbox' && "내 결재함"}
+              {activeTab === 'credentials' && "Credential Store 관리"}
             </h1>
             <p className="header-subtitle">
               {activeTab === 'dashboard' && "전체 워크플로우 실시간 상태 모니터링 및 주요 KPI 요약"}
@@ -127,6 +132,7 @@ function App() {
               {activeTab === 'request' && "필요한 업무 프로세스를 신속하게 가동하고 요청을 전달합니다"}
               {activeTab === 'tracker' && "실행 모니터링, 실패 대응, 재시도/운영 조치 및 로그 분석"}
               {activeTab === 'inbox' && "승인 대기 Task 확인 및 처리"}
+              {activeTab === 'credentials' && "외부 연동 secret을 안전하게 관리하고 노드에서는 credential ID만 참조합니다"}
             </p>
           </div>
 
@@ -144,6 +150,11 @@ function App() {
             {activeTab === 'designer' && (
               <div className="info-banner-bubble info-purple">
                 설계자/관리자는 드래그 & 드롭으로 손쉽게 프로세스를 구성하고, 속성 설정 및 버전을 관리합니다.
+              </div>
+            )}
+            {activeTab === 'credentials' && (
+              <div className="info-banner-bubble">
+                Secret 원문은 저장 후 다시 노출하지 않으며, 사용 이력은 audit log에 기록됩니다.
               </div>
             )}
             
@@ -198,6 +209,8 @@ function App() {
           {activeTab === 'inbox' && (
             <InboxPage onSwitchToDesigner={() => setActiveTab('designer')} />
           )}
+
+          {activeTab === 'credentials' && <CredentialsPage />}
         </main>
       </div>
     </div>

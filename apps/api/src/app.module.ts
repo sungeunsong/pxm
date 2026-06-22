@@ -5,6 +5,7 @@ import { DebugModule } from './debug/debug.module';
 import { TemplatesModule } from './templates/templates.module';
 import { TasksModule } from './tasks/tasks.module';
 import { PluginsModule } from './plugins/plugins.module';
+import { CredentialsModule } from './credentials/credentials.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { PluginsModule } from './plugins/plugins.module';
     TemplatesModule,
     TasksModule,
     PluginsModule,
+    CredentialsModule,
   ],
 })
 export class AppModule {}

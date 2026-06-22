@@ -88,6 +88,83 @@
   font-size: var(--font-size-xs);
 }
 
+.credential-binding-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: var(--radius-sm);
+}
+
+.credential-binding-title {
+  color: #1e40af;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.credential-binding-row {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.credential-binding-row span {
+  color: #64748b;
+}
+
+.credential-binding-row strong {
+  min-width: 0;
+  color: #0f172a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.credential-binding-note {
+  color: #1d4ed8;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.credential-managed-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 12px;
+  align-items: center;
+  padding: 10px;
+  background: var(--bg-tertiary);
+  border: 1px dashed #93c5fd;
+  border-radius: var(--radius-sm);
+}
+
+.credential-managed-label {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: var(--font-weight-semibold);
+}
+
+.credential-managed-helper {
+  margin-top: 3px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.credential-managed-field code {
+  color: #1d4ed8;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.credential-managed-field span {
+  grid-column: 1 / -1;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
 .node-test-section {
   gap: 12px;
 }
@@ -127,17 +204,142 @@
   font-weight: var(--font-weight-semibold);
 }
 
-.node-test-result pre {
+.json-tree-view {
   max-height: 280px;
-  margin: 0;
   overflow: auto;
-  padding: 10px;
+  padding: 6px 0;
   color: var(--text-primary);
   font-family: var(--font-mono);
   font-size: 12px;
-  line-height: 1.55;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+.json-tree-node {
+  min-width: 0;
+}
+
+.json-tree-row {
+  display: grid;
+  grid-template-columns: minmax(72px, 0.8fr) minmax(96px, 1fr) minmax(70px, 1fr);
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 28px;
+  padding: 5px 10px;
+  color: var(--text-primary);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.json-tree-row:hover {
+  background: color-mix(in srgb, var(--border-focus) 12%, transparent);
+}
+
+.json-tree-row.parent {
+  font-weight: var(--font-weight-semibold);
+}
+
+.json-tree-key,
+.json-tree-path,
+.json-tree-value,
+.json-tree-count {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.json-tree-key {
+  color: var(--text-primary);
+}
+
+.json-tree-path {
+  color: var(--text-tertiary);
+}
+
+.json-tree-value {
+  color: var(--text-secondary);
+}
+
+.json-tree-count {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.path-suggestion-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.path-suggestion-title {
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.path-suggestion-empty {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+}
+
+.path-suggestion-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.path-suggestion-item {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.path-suggestion-item:hover {
+  border-color: var(--border-focus);
+}
+
+.path-suggestion-label,
+.path-suggestion-item code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.path-suggestion-label {
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.path-suggestion-item code {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.path-suggestion-action {
+  color: var(--border-focus);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
 }
 
 .property-textarea {

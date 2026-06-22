@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { CreateTemplateDto, UpdateTemplateDto, TemplateResponseDto } from './dto/template.dto';
+import {
+  CreateTemplateDto,
+  UpdateTemplateDto,
+  TemplateResponseDto,
+  WorkflowExportDocument,
+} from './dto/template.dto';
 import { WorkflowDefinitionMetadata, WorkflowRepositoryPort } from '../db/ports/db.ports';
 import { randomUUID } from 'crypto';
 
@@ -61,6 +66,49 @@ export class TemplatesService {
     return !!current;
   }
 
+  async export(id: string): Promise<WorkflowExportDocument | null> {
+    const template = await this.findOne(id);
+    if (!template) return null;
+
+    const redactedPaths: string[] = [];
+    const nodes = redactSecrets(template.nodes || [], redactedPaths, 'workflow.nodes');
+    const edges = redactSecrets(template.edges || [], redactedPaths, 'workflow.edges');
+
+    return {
+      schema_version: 'pxm.workflow.v1',
+      exported_at: new Date().toISOString(),
+      workflow: {
+        name: template.name,
+        metadata: {
+          description: template.description || '',
+          group: template.group || '',
+          tags: template.tags || [],
+          version_note: template.version_note || '',
+        },
+        nodes,
+        edges,
+        plugin_dependencies: extractPluginDependencies(nodes),
+      },
+      security: {
+        secrets_policy: 'redacted',
+        redacted_paths: redactedPaths,
+      },
+    };
+  }
+
+  async import(document: any): Promise<TemplateResponseDto> {
+    const parsed = parseWorkflowExportDocument(document);
+    return this.create({
+      name: parsed.workflow.name,
+      description: parsed.workflow.metadata.description,
+      group: parsed.workflow.metadata.group,
+      tags: parsed.workflow.metadata.tags,
+      version_note: parsed.workflow.metadata.version_note,
+      nodes: parsed.workflow.nodes,
+      edges: parsed.workflow.edges,
+    });
+  }
+
   private mapToDto(row: any): TemplateResponseDto {
     const metadata = this.normalizeMetadata({
       ...(row.metadata || {}),
@@ -100,4 +148,132 @@ export class TemplatesService {
       version_note: typeof input?.version_note === 'string' ? input.version_note : '',
     };
   }
+}
+
+const SECRET_KEY_PATTERN = /(password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|connection_uri|authorization|credential)/i;
+
+function shouldRedactSecretKey(key: string): boolean {
+  if (/^credential[_-]?id$/i.test(key)) {
+    return false;
+  }
+  return SECRET_KEY_PATTERN.test(key);
+}
+
+function redactSecrets<T>(value: T, redactedPaths: string[], path: string): T {
+  if (Array.isArray(value)) {
+    return value.map((item, index) => redactSecrets(item, redactedPaths, `${path}[${index}]`)) as T;
+  }
+
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+
+  const result: Record<string, any> = {};
+  for (const [key, child] of Object.entries(value as Record<string, any>)) {
+    const childPath = `${path}.${key}`;
+    if (shouldRedactSecretKey(key)) {
+      if (child !== undefined && child !== null && child !== '') {
+        redactedPaths.push(childPath);
+      }
+      result[key] = null;
+      continue;
+    }
+    result[key] = redactSecrets(child, redactedPaths, childPath);
+  }
+  return result as T;
+}
+
+function extractPluginDependencies(nodes: any[]) {
+  const dependencies = new Map<string, { plugin_id: string; version?: string; node_ids: string[] }>();
+
+  for (const node of nodes || []) {
+    const pluginId = node?.data?.plugin_id || node?.plugin_id;
+    if (typeof pluginId !== 'string' || !pluginId.trim()) {
+      continue;
+    }
+    const version = node?.data?.plugin_version || node?.plugin_version;
+    const key = `${pluginId}@${typeof version === 'string' ? version : ''}`;
+    const current =
+      dependencies.get(key) ||
+      {
+        plugin_id: pluginId,
+        ...(typeof version === 'string' && version ? { version } : {}),
+        node_ids: [],
+      };
+    if (node?.id) {
+      current.node_ids.push(String(node.id));
+    }
+    dependencies.set(key, current);
+  }
+
+  return [...dependencies.values()];
+}
+
+function parseWorkflowExportDocument(document: any): WorkflowExportDocument {
+  if (!document || typeof document !== 'object') {
+    throw new Error('Import document must be a JSON object');
+  }
+  if (document.schema_version !== 'pxm.workflow.v1') {
+    throw new Error('Unsupported workflow schema_version');
+  }
+
+  const workflow = document.workflow;
+  if (!workflow || typeof workflow !== 'object') {
+    throw new Error('workflow is required');
+  }
+  if (typeof workflow.name !== 'string' || !workflow.name.trim()) {
+    throw new Error('workflow.name is required');
+  }
+  if (!Array.isArray(workflow.nodes)) {
+    throw new Error('workflow.nodes must be an array');
+  }
+  if (!Array.isArray(workflow.edges)) {
+    throw new Error('workflow.edges must be an array');
+  }
+
+  const nodeIds = new Set<string>();
+  for (const node of workflow.nodes) {
+    if (!node || typeof node.id !== 'string' || !node.id.trim()) {
+      throw new Error('Every node must have an id');
+    }
+    if (!node.data || typeof node.data.nodeType !== 'string') {
+      throw new Error(`Node ${node.id} must have data.nodeType`);
+    }
+    nodeIds.add(node.id);
+  }
+
+  for (const edge of workflow.edges) {
+    if (!edge || typeof edge.source !== 'string' || typeof edge.target !== 'string') {
+      throw new Error('Every edge must have source and target');
+    }
+    if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target)) {
+      throw new Error(`Edge ${edge.id || `${edge.source}->${edge.target}`} references unknown node`);
+    }
+  }
+
+  const metadata = workflow.metadata || {};
+  return {
+    schema_version: 'pxm.workflow.v1',
+    exported_at: typeof document.exported_at === 'string' ? document.exported_at : new Date().toISOString(),
+    workflow: {
+      name: workflow.name.trim(),
+      metadata: {
+        description: typeof metadata.description === 'string' ? metadata.description : '',
+        group: typeof metadata.group === 'string' ? metadata.group : '',
+        tags: Array.isArray(metadata.tags) ? metadata.tags.map((tag) => String(tag).trim()).filter(Boolean) : [],
+        version_note: typeof metadata.version_note === 'string' ? metadata.version_note : '',
+      },
+      nodes: workflow.nodes,
+      edges: workflow.edges,
+      plugin_dependencies: Array.isArray(workflow.plugin_dependencies)
+        ? workflow.plugin_dependencies
+        : extractPluginDependencies(workflow.nodes),
+    },
+    security: {
+      secrets_policy: 'redacted',
+      redacted_paths: Array.isArray(document.security?.redacted_paths)
+        ? document.security.redacted_paths.map(String)
+        : [],
+    },
+  };
 }

@@ -7,13 +7,20 @@ use std::{
     time::Duration,
 };
 
+use aes_gcm::{
+    aead::{Aead, KeyInit},
+    Aes256Gcm, Nonce,
+};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use base64::{engine::general_purpose, Engine as _};
+use chrono::Utc;
 use futures_util::TryStreamExt;
-use mongodb::bson::{self, Bson, Document};
+use mongodb::bson::{self, doc, Bson, Document};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 use crate::v2::ports::{PluginExecutionResult, PluginExecutorPort, PluginInvocation};
 
@@ -316,6 +323,9 @@ impl PluginExecutorPort for PluginExecutorRegistry {
         })?;
 
         invocation.config = handler.prepare_config(&invocation.config)?;
+        invocation.config =
+            resolve_credential_binding(invocation.config.clone(), &invocation, handler.plugin_id())
+                .await?;
         let audit_context = PluginAuditContext::from_invocation(&invocation, handler);
         let result = handler.execute(invocation).await;
         self.audit.write_execution(&audit_context, &result);
@@ -683,6 +693,172 @@ fn split_resolved_secrets(mut config: Value) -> (Value, Value) {
         .unwrap_or_else(|| json!({}));
 
     (config, secrets)
+}
+
+async fn resolve_credential_binding(
+    config: Value,
+    invocation: &PluginInvocation,
+    plugin_id: &str,
+) -> Result<Value> {
+    let credential_id = config
+        .get("credential_id")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.to_string());
+
+    let Some(credential_id) = credential_id else {
+        return Ok(config);
+    };
+
+    let secret = resolve_credential_secret(
+        &credential_id,
+        CredentialUsage {
+            actor: "engine",
+            node_id: Some(invocation.node_id.as_str()),
+            workflow_id: Some(invocation.instance_id.to_string()),
+        },
+    )
+    .await?;
+
+    let target = config
+        .get("credential_binding")
+        .and_then(|binding| binding.get("target"))
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| infer_credential_target(plugin_id).to_string());
+
+    let mut object = config
+        .as_object()
+        .cloned()
+        .ok_or_else(|| anyhow!("plugin config must be an object"))?;
+
+    match target.as_str() {
+        "connection_uri" => {
+            object.insert("connection_uri".to_string(), Value::String(secret));
+        }
+        "authorization_header" | "basic_auth_header" | "api_key_header" => {
+            let header_name = config
+                .get("credential_binding")
+                .and_then(|binding| binding.get("headerName"))
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or(if target == "api_key_header" {
+                    "x-api-key"
+                } else {
+                    "Authorization"
+                });
+            let scheme = config
+                .get("credential_binding")
+                .and_then(|binding| binding.get("scheme"))
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.trim().is_empty());
+            let header_value = scheme
+                .map(|scheme| format!("{} {}", scheme, secret))
+                .unwrap_or(secret);
+            let mut headers = config
+                .get("headers")
+                .and_then(|value| value.as_object())
+                .cloned()
+                .unwrap_or_default();
+            headers.insert(header_name.to_string(), Value::String(header_value));
+            object.insert("headers".to_string(), Value::Object(headers));
+        }
+        "" => return Ok(Value::Object(object)),
+        other => {
+            return Err(anyhow!(
+                "unsupported credential binding target '{}' for plugin '{}'",
+                other,
+                plugin_id
+            ))
+        }
+    }
+
+    Ok(Value::Object(object))
+}
+
+fn infer_credential_target(plugin_id: &str) -> &str {
+    match plugin_id {
+        "connector.db.mongodb.query" => "connection_uri",
+        "builtin.http_request" => "authorization_header",
+        _ => "",
+    }
+}
+
+struct CredentialUsage<'a> {
+    actor: &'a str,
+    node_id: Option<&'a str>,
+    workflow_id: Option<String>,
+}
+
+async fn resolve_credential_secret(credential_id: &str, usage: CredentialUsage<'_>) -> Result<String> {
+    let mongo_url = std::env::var("MONGODB_URL")
+        .unwrap_or_else(|_| "mongodb://127.0.0.1:27017/?replicaSet=rs0".to_string());
+    let db_name = std::env::var("MONGO_DB_NAME").unwrap_or_else(|_| "pxm_db".to_string());
+    let client = mongodb::Client::with_uri_str(&mongo_url).await?;
+    let db = client.database(&db_name);
+
+    let doc = db
+        .collection::<Document>("credential_profiles")
+        .find_one(doc! { "_id": credential_id }, None)
+        .await?
+        .ok_or_else(|| anyhow!("credential '{}' was not found", credential_id))?;
+
+    if doc.get_bool("active").unwrap_or(true) == false {
+        return Err(anyhow!("credential '{}' is inactive", credential_id));
+    }
+
+    let secret_doc = doc
+        .get_document("secret")
+        .map_err(|_| anyhow!("credential '{}' has no encrypted secret", credential_id))?;
+    let secret = decrypt_credential_secret(secret_doc)?;
+
+    let now = Utc::now().to_rfc3339();
+    db.collection::<Document>("credential_profiles")
+        .update_one(
+            doc! { "_id": credential_id },
+            doc! { "$set": { "last_used_at": now.clone() } },
+            None,
+        )
+        .await?;
+    db.collection::<Document>("credential_audit_logs")
+        .insert_one(
+            doc! {
+                "_id": uuid::Uuid::new_v4().to_string(),
+                "credential_id": credential_id,
+                "action": "used",
+                "actor": usage.actor,
+                "node_id": usage.node_id,
+                "workflow_id": usage.workflow_id,
+                "created_at": now,
+            },
+            None,
+        )
+        .await?;
+
+    Ok(secret)
+}
+
+fn decrypt_credential_secret(secret: &Document) -> Result<String> {
+    let algorithm = secret.get_str("algorithm").unwrap_or("aes-256-gcm");
+    if algorithm != "aes-256-gcm" {
+        return Err(anyhow!("unsupported credential encryption algorithm '{}'", algorithm));
+    }
+
+    let iv = general_purpose::STANDARD.decode(secret.get_str("iv")?)?;
+    let tag = general_purpose::STANDARD.decode(secret.get_str("tag")?)?;
+    let ciphertext = general_purpose::STANDARD.decode(secret.get_str("ciphertext")?)?;
+    let key_source = std::env::var("CREDENTIAL_SECRET_KEY")
+        .unwrap_or_else(|_| "pxm-local-development-credential-key".to_string());
+    let key = Sha256::digest(key_source.as_bytes());
+    let cipher = Aes256Gcm::new_from_slice(&key)?;
+
+    let mut payload = ciphertext;
+    payload.extend_from_slice(&tag);
+    let plaintext = cipher
+        .decrypt(Nonce::from_slice(&iv), payload.as_ref())
+        .map_err(|_| anyhow!("credential secret could not be decrypted"))?;
+    Ok(String::from_utf8(plaintext)?)
 }
 
 fn prepare_config(config: &Value, manifest: &PluginManifest) -> Result<Value> {
