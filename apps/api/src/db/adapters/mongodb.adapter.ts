@@ -7,6 +7,10 @@ import {
   WorkflowInstanceRepositoryPort,
   WorkflowTaskRepositoryPort,
   OutboxRepositoryPort,
+  EngineQueueRepositoryPort,
+  WorkflowScheduleJob,
+  WorkflowScheduleRepositoryPort,
+  WorkflowScheduleStatus,
 } from '../ports/db.ports';
 
 @Injectable()
@@ -15,7 +19,9 @@ export class MongodbAdapter
     WorkflowRepositoryPort,
     WorkflowInstanceRepositoryPort,
     WorkflowTaskRepositoryPort,
-    OutboxRepositoryPort
+    OutboxRepositoryPort,
+    EngineQueueRepositoryPort,
+    WorkflowScheduleRepositoryPort
 {
   constructor(@Inject(MONGO_DB) private readonly db: Db) {}
 
@@ -322,6 +328,304 @@ export class MongodbAdapter
     });
   }
 
+  async getQueueStats(): Promise<{
+    by_status: Record<string, number>;
+    queued: number;
+    running: number;
+    failed: number;
+    completed: number;
+    oldest_queued_at: string | null;
+    oldest_queued_age_ms: number | null;
+    running_workers: Array<{
+      worker_id: string;
+      running_jobs: number;
+      last_updated_at: string | null;
+    }>;
+    worker_heartbeats: Array<{
+      worker_id: string;
+      last_heartbeat_at: string | null;
+      locked_instances: number;
+    }>;
+    max_attempt: number;
+  }> {
+    const jobs = this.db.collection<any>('v2_engine_jobs');
+    const statusRows = await jobs
+      .aggregate<{ _id: string; count: number }>([
+        { $group: { _id: '$status', count: { $sum: 1 } } },
+      ])
+      .toArray();
+    const byStatus = Object.fromEntries(
+      statusRows.map((row) => [row._id || 'UNKNOWN', row.count]),
+    );
+
+    const oldestQueued = await jobs.findOne(
+      { status: 'QUEUED' },
+      { sort: { run_at: 1, _id: 1 }, projection: { run_at: 1 } },
+    );
+    const oldestQueuedAt = oldestQueued?.run_at || null;
+    const oldestQueuedAgeMs = oldestQueuedAt
+      ? Math.max(0, Date.now() - Date.parse(oldestQueuedAt))
+      : null;
+
+    const runningWorkers = await jobs
+      .aggregate<{
+        _id: string | null;
+        running_jobs: number;
+        last_updated_at: string | null;
+      }>([
+        { $match: { status: 'RUNNING' } },
+        {
+          $group: {
+            _id: '$lock_owner',
+            running_jobs: { $sum: 1 },
+            last_updated_at: { $max: '$updated_at' },
+          },
+        },
+        { $sort: { running_jobs: -1 } },
+      ])
+      .toArray();
+
+    const maxAttemptRow = await jobs
+      .aggregate<{ _id: null; max_attempt: number }>([
+        { $group: { _id: null, max_attempt: { $max: '$attempt' } } },
+      ])
+      .next();
+    const workerHeartbeats = await this.db
+      .collection<any>('v2_process_instances')
+      .aggregate<{
+        _id: string | null;
+        last_heartbeat_at: string | null;
+        locked_instances: number;
+      }>([
+        { $match: { lock_owner: { $ne: null } } },
+        {
+          $group: {
+            _id: '$lock_owner',
+            last_heartbeat_at: { $max: '$heartbeat_at' },
+            locked_instances: { $sum: 1 },
+          },
+        },
+        { $sort: { locked_instances: -1 } },
+      ])
+      .toArray();
+
+    return {
+      by_status: byStatus,
+      queued: byStatus.QUEUED || 0,
+      running: byStatus.RUNNING || 0,
+      failed: byStatus.FAILED || 0,
+      completed: byStatus.COMPLETED || 0,
+      oldest_queued_at: oldestQueuedAt,
+      oldest_queued_age_ms: oldestQueuedAgeMs,
+      running_workers: runningWorkers.map((row) => ({
+        worker_id: row._id || 'unknown',
+        running_jobs: row.running_jobs,
+        last_updated_at: row.last_updated_at || null,
+      })),
+      worker_heartbeats: workerHeartbeats.map((row) => ({
+        worker_id: row._id || 'unknown',
+        last_heartbeat_at: row.last_heartbeat_at || null,
+        locked_instances: row.locked_instances,
+      })),
+      max_attempt: maxAttemptRow?.max_attempt || 0,
+    };
+  }
+
+  async replaceDefinitionSchedules(
+    definitionId: string,
+    jobs: WorkflowScheduleJob[],
+  ): Promise<void> {
+    const now = new Date().toISOString();
+    const collection = this.db.collection<any>('v2_schedule_jobs');
+    const activeIds = jobs.map((job) => job.id);
+
+    await collection.updateMany(
+      {
+        definition_id: definitionId,
+        ...(activeIds.length ? { _id: { $nin: activeIds } } : {}),
+      },
+      {
+        $set: {
+          active: false,
+          status: 'DISABLED',
+          updated_at: now,
+        },
+      },
+    );
+
+    for (const job of jobs) {
+      await collection.updateOne(
+        { _id: job.id },
+        {
+          $set: {
+            definition_id: job.definitionId,
+            definition_name: job.definitionName,
+            start_node_id: job.startNodeId,
+            schedule_type: job.scheduleType,
+            interval_seconds: job.intervalSeconds ?? null,
+            cron_expression: job.cronExpression ?? null,
+            input: job.input || {},
+            next_run_at: job.nextRunAt.toISOString(),
+            active: job.active,
+            status: job.active ? 'WAITING' : 'DISABLED',
+            lock_owner: null,
+            locked_until: null,
+            updated_at: now,
+          },
+          $setOnInsert: {
+            last_run_at: null,
+            last_instance_id: null,
+            last_error: null,
+            created_at: now,
+          },
+        },
+        { upsert: true },
+      );
+    }
+  }
+
+  async claimDueSchedules(
+    now: Date,
+    owner: string,
+    limit: number,
+  ): Promise<WorkflowScheduleJob[]> {
+    const collection = this.db.collection<any>('v2_schedule_jobs');
+    const claimed: WorkflowScheduleJob[] = [];
+    const nowIso = now.toISOString();
+    const lockedUntil = new Date(now.getTime() + 60_000).toISOString();
+
+    for (let i = 0; i < limit; i += 1) {
+      const result = await collection.findOneAndUpdate(
+        {
+          active: true,
+          status: 'WAITING',
+          next_run_at: { $lte: nowIso },
+          $or: [
+            { locked_until: null },
+            { locked_until: { $lt: nowIso } },
+            { lock_owner: owner },
+          ],
+        },
+        {
+          $set: {
+            status: 'RUNNING',
+            lock_owner: owner,
+            locked_until: lockedUntil,
+            updated_at: nowIso,
+          },
+        },
+        {
+          sort: { next_run_at: 1, _id: 1 },
+          returnDocument: 'after',
+        },
+      );
+
+      const doc = (result as any)?.value || result;
+      if (!doc?._id) break;
+      claimed.push(mapScheduleDoc(doc));
+    }
+
+    return claimed;
+  }
+
+  async markScheduleSuccess(
+    id: string,
+    nextRunAt: Date,
+    instanceId: string,
+  ): Promise<void> {
+    const now = new Date().toISOString();
+    const current = await this.db.collection<any>('v2_schedule_jobs').findOne({ _id: id });
+    await this.db.collection<any>('v2_schedule_jobs').updateOne(
+      { _id: id },
+      {
+        $set: {
+          status: 'WAITING',
+          next_run_at: nextRunAt.toISOString(),
+          last_run_at: now,
+          last_instance_id: instanceId,
+          last_error: null,
+          lock_owner: null,
+          locked_until: null,
+          updated_at: now,
+        },
+      },
+    );
+    await this.db.collection<any>('v2_schedule_runs').insertOne({
+      _id: crypto.randomUUID(),
+      schedule_job_id: id,
+      definition_id: current?.definition_id || '',
+      instance_id: instanceId,
+      scheduled_for: current?.next_run_at || now,
+      fired_at: now,
+      status: 'STARTED',
+      error: null,
+      created_at: now,
+    });
+  }
+
+  async markScheduleFailure(
+    id: string,
+    error: string,
+    nextRunAt: Date,
+  ): Promise<void> {
+    const now = new Date().toISOString();
+    const current = await this.db.collection<any>('v2_schedule_jobs').findOne({ _id: id });
+    await this.db.collection<any>('v2_schedule_jobs').updateOne(
+      { _id: id },
+      {
+        $set: {
+          status: 'WAITING',
+          next_run_at: nextRunAt.toISOString(),
+          last_error: error,
+          lock_owner: null,
+          locked_until: null,
+          updated_at: now,
+        },
+      },
+    );
+    await this.db.collection<any>('v2_schedule_runs').insertOne({
+      _id: crypto.randomUUID(),
+      schedule_job_id: id,
+      definition_id: current?.definition_id || '',
+      instance_id: null,
+      scheduled_for: current?.next_run_at || now,
+      fired_at: now,
+      status: 'FAILED',
+      error,
+      created_at: now,
+    });
+  }
+
+  async getDefinitionScheduleStatus(
+    definitionId: string,
+    limit = 10,
+  ): Promise<WorkflowScheduleStatus> {
+    const jobDoc = await this.db
+      .collection<any>('v2_schedule_jobs')
+      .findOne({ definition_id: definitionId }, { sort: { updated_at: -1 } });
+    const runs = await this.db
+      .collection<any>('v2_schedule_runs')
+      .find({ definition_id: definitionId })
+      .sort({ created_at: -1 })
+      .limit(limit)
+      .toArray();
+
+    return {
+      job: jobDoc ? mapScheduleDoc(jobDoc) : null,
+      runs: runs.map((doc) => ({
+        id: doc._id,
+        scheduleJobId: doc.schedule_job_id,
+        definitionId: doc.definition_id,
+        instanceId: doc.instance_id || null,
+        scheduledFor: doc.scheduled_for,
+        firedAt: doc.fired_at,
+        status: doc.status,
+        error: doc.error || null,
+        createdAt: doc.created_at,
+      })),
+    };
+  }
+
   // ==========================================
   // WorkflowTaskRepositoryPort 구현 (V2 태스크 대응)
   // ==========================================
@@ -508,4 +812,25 @@ export class MongodbAdapter
     });
     return { ok: true, id: result.insertedId.toString() };
   }
+}
+
+function mapScheduleDoc(doc: any): WorkflowScheduleJob {
+  return {
+    id: doc._id,
+    definitionId: doc.definition_id,
+    definitionName: doc.definition_name,
+    startNodeId: doc.start_node_id,
+    scheduleType: doc.schedule_type,
+    intervalSeconds: doc.interval_seconds ?? null,
+    cronExpression: doc.cron_expression ?? null,
+    input: doc.input || {},
+    nextRunAt: new Date(doc.next_run_at),
+    active: Boolean(doc.active),
+    status: doc.status || null,
+    lastRunAt: doc.last_run_at || null,
+    lastInstanceId: doc.last_instance_id || null,
+    lastError: doc.last_error || null,
+    updatedAt: doc.updated_at || null,
+    createdAt: doc.created_at || null,
+  };
 }

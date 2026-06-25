@@ -7,10 +7,14 @@ import {
 } from './dto/template.dto';
 import { WorkflowDefinitionMetadata, WorkflowRepositoryPort } from '../db/ports/db.ports';
 import { randomUUID } from 'crypto';
+import { SchedulesService } from '../schedules/schedules.service';
 
 @Injectable()
 export class TemplatesService {
-  constructor(private readonly workflowRepo: WorkflowRepositoryPort) {}
+  constructor(
+    private readonly workflowRepo: WorkflowRepositoryPort,
+    private readonly schedulesService: SchedulesService,
+  ) {}
 
   async create(dto: CreateTemplateDto): Promise<TemplateResponseDto> {
     const id = randomUUID();
@@ -21,6 +25,7 @@ export class TemplatesService {
       dto.edges || [],
       this.normalizeMetadata(dto),
     );
+    await this.schedulesService.syncDefinitionSchedules(id, dto.name, dto.nodes || []);
     const result = await this.workflowRepo.getDefinition(id);
     return this.mapToDto(result);
   }
@@ -56,6 +61,7 @@ export class TemplatesService {
     });
 
     await this.workflowRepo.createDefinition(id, updatedName, updatedNodes, updatedEdges, updatedMetadata);
+    await this.schedulesService.syncDefinitionSchedules(id, updatedName, updatedNodes || []);
     const result = await this.workflowRepo.getDefinition(id);
     return result ? this.mapToDto(result) : null;
   }

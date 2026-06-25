@@ -2,7 +2,7 @@ import { BadRequestException, Body, Controller, Delete, Get, HttpStatus, NotFoun
 import type { Response } from 'express';
 import { TemplatesService } from './templates.service';
 import { CreateTemplateDto, UpdateTemplateDto } from './dto/template.dto';
-import { WorkflowInstanceRepositoryPort } from '../db/ports/db.ports';
+import { WorkflowInstanceRepositoryPort, WorkflowScheduleRepositoryPort } from '../db/ports/db.ports';
 import { InstancesService } from '../instances/instances.service';
 import { randomUUID } from 'crypto';
 
@@ -12,6 +12,7 @@ export class TemplatesController {
     private readonly templatesService: TemplatesService,
     private readonly instanceRepo: WorkflowInstanceRepositoryPort,
     private readonly instancesService: InstancesService,
+    private readonly scheduleRepo: WorkflowScheduleRepositoryPort,
   ) {}
 
   @Post()
@@ -88,6 +89,56 @@ export class TemplatesController {
     }
     console.log(`[BFF] Template ${id} deployed. Nodes: ${body.nodes.length}, Edges: ${body.edges.length}`);
     return { success: true, template };
+  }
+
+  @Post(':id/schedule/toggle')
+  async toggleSchedule(
+    @Param('id') id: string,
+    @Body() body: { enabled?: boolean },
+  ) {
+    const template = await this.templatesService.findOne(id);
+    if (!template) {
+      throw new NotFoundException('Template not found');
+    }
+
+    const nodes = (template.nodes || []).map((node: any) => {
+      if (node.data?.nodeType !== 'start' || node.data?.triggerType !== 'schedule') {
+        return node;
+      }
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          scheduleEnabled: body?.enabled === true,
+        },
+      };
+    });
+
+    const updated = await this.templatesService.update(id, {
+      name: template.name,
+      description: template.description,
+      group: template.group,
+      tags: template.tags,
+      version_note: template.version_note,
+      nodes,
+      edges: template.edges,
+    });
+
+    if (!updated) {
+      throw new NotFoundException('Template not found');
+    }
+
+    return { success: true, enabled: body?.enabled === true, template: updated };
+  }
+
+  @Get(':id/schedule/status')
+  async scheduleStatus(@Param('id') id: string) {
+    const template = await this.templatesService.findOne(id);
+    if (!template) {
+      throw new NotFoundException('Template not found');
+    }
+
+    return this.scheduleRepo.getDefinitionScheduleStatus(id, 10);
   }
 
   @Delete(':id')

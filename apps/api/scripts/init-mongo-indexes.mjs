@@ -17,6 +17,10 @@ async function main() {
   await db.collection('v2_tokens').createIndex({ instance_id: 1, node_id: 1 });
   await db.collection('v2_engine_jobs').createIndex({ status: 1, run_at: 1, _id: 1 });
   await db.collection('v2_engine_jobs').createIndex({ instance_id: 1, _id: 1 });
+  await db.collection('v2_schedule_jobs').createIndex({ active: 1, status: 1, next_run_at: 1, _id: 1 });
+  await db.collection('v2_schedule_jobs').createIndex({ definition_id: 1 });
+  await db.collection('v2_schedule_runs').createIndex({ definition_id: 1, created_at: -1 });
+  await db.collection('v2_schedule_runs').createIndex({ schedule_job_id: 1, created_at: -1 });
   await db.collection('v2_tasks').createIndex({ assignee: 1, status: 1, created_at: -1 });
   await db.collection('v2_tasks').createIndex({ token_id: 1 }, { unique: true, sparse: true });
   await db.collection('v2_event_outbox').createIndex({ instance_id: 1, created_at: 1 });
@@ -86,6 +90,67 @@ async function ensureValidators(db) {
       payload: { bsonType: 'object' },
       created_at: { bsonType: 'string' },
       updated_at: { bsonType: 'string' },
+    },
+  });
+
+  await upsertValidator(db, 'v2_schedule_jobs', {
+    bsonType: 'object',
+    required: [
+      '_id',
+      'definition_id',
+      'definition_name',
+      'start_node_id',
+      'schedule_type',
+      'next_run_at',
+      'active',
+      'status',
+      'input',
+      'created_at',
+      'updated_at',
+    ],
+    properties: {
+      _id: { bsonType: 'string' },
+      definition_id: { bsonType: 'string' },
+      definition_name: { bsonType: 'string' },
+      start_node_id: { bsonType: 'string' },
+      schedule_type: { enum: ['interval', 'cron'] },
+      interval_seconds: { bsonType: ['int', 'long', 'double', 'null'] },
+      cron_expression: { bsonType: ['string', 'null'] },
+      input: { bsonType: 'object' },
+      next_run_at: { bsonType: 'string' },
+      active: { bsonType: 'bool' },
+      status: { enum: ['WAITING', 'RUNNING', 'DISABLED'] },
+      lock_owner: { bsonType: ['string', 'null'] },
+      locked_until: { bsonType: ['string', 'null'] },
+      last_run_at: { bsonType: ['string', 'null'] },
+      last_instance_id: { bsonType: ['string', 'null'] },
+      last_error: { bsonType: ['string', 'null'] },
+      created_at: { bsonType: 'string' },
+      updated_at: { bsonType: 'string' },
+    },
+  });
+
+  await upsertValidator(db, 'v2_schedule_runs', {
+    bsonType: 'object',
+    required: [
+      '_id',
+      'schedule_job_id',
+      'definition_id',
+      'scheduled_for',
+      'fired_at',
+      'status',
+      'created_at',
+    ],
+    properties: {
+      _id: { bsonType: 'string' },
+      schedule_job_id: { bsonType: 'string' },
+      definition_id: { bsonType: 'string' },
+      instance_id: { bsonType: ['string', 'null'] },
+      scheduled_for: { bsonType: 'string' },
+      fired_at: { bsonType: 'string' },
+      status: { enum: ['STARTED', 'FAILED'] },
+      error: { bsonType: ['string', 'null'] },
+      created_at: { bsonType: 'string' },
     },
   });
 

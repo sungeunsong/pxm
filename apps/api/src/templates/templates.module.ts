@@ -3,9 +3,10 @@ import { TemplatesController } from './templates.controller';
 import { TemplatesService } from './templates.service';
 import { DbModule } from '../db/db.module';
 import { InstancesModule } from '../instances/instances.module';
+import { SchedulesModule } from '../schedules/schedules.module';
 
 @Module({
-  imports: [DbModule, InstancesModule],
+  imports: [DbModule, InstancesModule, SchedulesModule],
   controllers: [TemplatesController],
   providers: [TemplatesService],
   exports: [TemplatesService],

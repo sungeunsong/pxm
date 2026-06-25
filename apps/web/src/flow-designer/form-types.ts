@@ -59,6 +59,12 @@ export interface CustomNodeData {
   
   // Start 노드 전용
   formSchema?: FormSchema;       // 동적 폼 정의
+  triggerType?: 'manual' | 'api' | 'schedule';
+  scheduleEnabled?: boolean;
+  scheduleType?: 'interval' | 'cron';
+  intervalSeconds?: number | string;
+  cronExpression?: string;
+  scheduleInput?: Record<string, any>;
   
   // Service 노드 전용
   url?: string;

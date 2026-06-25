@@ -409,13 +409,112 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
   // Start 노드 속성
   const renderStartProperties = () => {
     const data = node.data as any;
+    const triggerType = data.triggerType || 'manual';
+    const scheduleType = data.scheduleType || 'interval';
     return (
-      <div className="property-section">
-        <FormSchemaEditor
-          schema={data.formSchema}
-          onChange={(schema: FormSchema) => onUpdate(node.id, { ...data, formSchema: schema })}
-        />
-      </div>
+      <>
+        <div className="property-section">
+          <h4 className="property-section-title">시작 트리거</h4>
+          <Select
+            label="Trigger Type"
+            value={triggerType}
+            onChange={(e) =>
+              onUpdate(node.id, {
+                ...data,
+                triggerType: e.target.value,
+                scheduleType: data.scheduleType || 'interval',
+                intervalSeconds: data.intervalSeconds || 300,
+                cronExpression: data.cronExpression || '*/5 * * * *',
+              })
+            }
+            options={[
+              { value: 'manual', label: 'Manual / API' },
+              { value: 'schedule', label: 'Schedule' },
+            ]}
+            helperText="Schedule을 선택하면 템플릿 저장 시 scheduler job이 생성됩니다."
+            fullWidth
+          />
+          {triggerType === 'schedule' && (
+            <>
+              <Select
+                label="Schedule Type"
+                value={scheduleType}
+                onChange={(e) =>
+                  onUpdate(node.id, {
+                    ...data,
+                    triggerType: 'schedule',
+                    scheduleType: e.target.value,
+                  })
+                }
+                options={[
+                  { value: 'interval', label: 'Interval' },
+                  { value: 'cron', label: 'Cron' },
+                ]}
+                fullWidth
+              />
+              {scheduleType === 'interval' ? (
+                <Input
+                  label="Interval Seconds"
+                  type="number"
+                  min={1}
+                  placeholder="300"
+                  value={data.intervalSeconds || ''}
+                  onChange={(e) =>
+                    onUpdate(node.id, {
+                      ...data,
+                      triggerType: 'schedule',
+                      scheduleType: 'interval',
+                      intervalSeconds: e.target.value === '' ? '' : Number(e.target.value),
+                    })
+                  }
+                  helperText="예: 300 = 5분마다 실행"
+                  fullWidth
+                />
+              ) : (
+                <Input
+                  label="Cron Expression"
+                  placeholder="*/5 * * * *"
+                  value={data.cronExpression || ''}
+                  onChange={(e) =>
+                    onUpdate(node.id, {
+                      ...data,
+                      triggerType: 'schedule',
+                      scheduleType: 'cron',
+                      cronExpression: e.target.value,
+                    })
+                  }
+                  helperText="5-field cron 형식입니다. 예: */5 * * * *"
+                  fullWidth
+                />
+              )}
+              <div className="property-group">
+                <label className="property-label">Scheduled Input JSON</label>
+                <textarea
+                  className="property-textarea"
+                  value={JSON.stringify(data.scheduleInput || {}, null, 2)}
+                  onChange={(e) =>
+                    onUpdate(node.id, {
+                      ...data,
+                      triggerType: 'schedule',
+                      scheduleInput: parseJsonLoose(e.target.value),
+                    })
+                  }
+                  spellCheck={false}
+                />
+                <div className="property-helper-text">
+                  스케줄 실행 시 formData로 전달됩니다.
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+        <div className="property-section">
+          <FormSchemaEditor
+            schema={data.formSchema}
+            onChange={(schema: FormSchema) => onUpdate(node.id, { ...data, formSchema: schema })}
+          />
+        </div>
+      </>
     );
   };
 

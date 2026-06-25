@@ -9,6 +9,7 @@ use crate::v2::types::{
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use mongodb::bson::{doc, Bson, Document};
+use mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT;
 use mongodb::{Client, ClientSession, Database};
 use serde_json::Value;
 use std::any::Any;
@@ -212,7 +213,7 @@ impl TransactionManagerPort for MongoAdapter {
     async fn begin(&self) -> Result<Box<dyn Tx>> {
         let session = if self.is_replica_set {
             let mut sess = self.client.start_session(None).await?;
-            let _ = sess.start_transaction(None).await;
+            sess.start_transaction(None).await?;
             Some(sess)
         } else {
             None
@@ -230,7 +231,23 @@ impl TransactionManagerPort for MongoAdapter {
             .map_err(|_| anyhow::anyhow!("Failed to downcast Tx to MongoTx"))?;
         if concrete_tx.is_replica_set {
             if let Some(ref mut sess) = concrete_tx.session {
-                let _ = sess.commit_transaction().await;
+                let mut commit_attempts = 0;
+                loop {
+                    match sess.commit_transaction().await {
+                        Ok(()) => break,
+                        Err(err)
+                            if err.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT)
+                                && commit_attempts < 3 =>
+                        {
+                            commit_attempts += 1;
+                            tokio::time::sleep(std::time::Duration::from_millis(
+                                50 * commit_attempts,
+                            ))
+                            .await;
+                        }
+                        Err(err) => return Err(err.into()),
+                    }
+                }
             }
         }
         Ok(())
@@ -243,7 +260,7 @@ impl TransactionManagerPort for MongoAdapter {
             .map_err(|_| anyhow::anyhow!("Failed to downcast Tx to MongoTx"))?;
         if concrete_tx.is_replica_set {
             if let Some(ref mut sess) = concrete_tx.session {
-                let _ = sess.abort_transaction().await;
+                sess.abort_transaction().await?;
             }
         }
         Ok(())

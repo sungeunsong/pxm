@@ -64,7 +64,7 @@ function App() {
             onClick={() => setActiveTab('request')}
           >
             <Rocket size={16} />
-            <span>업무 및 요청</span>
+            <span>워크플로우 관리</span>
           </button>
 
           <button 
@@ -121,7 +121,7 @@ function App() {
             <h1 className="header-title">
               {activeTab === 'dashboard' && "종합 상황실 / 대시보드"}
               {activeTab === 'designer' && "설계자 / 관리자 상세 화면 구성"}
-              {activeTab === 'request' && "업무 신청 런처"}
+              {activeTab === 'request' && "워크플로우 관리"}
               {activeTab === 'tracker' && "운영자 / 모니터링 담당 상세 화면 구성"}
               {activeTab === 'inbox' && "내 결재함"}
               {activeTab === 'credentials' && "Credential Store 관리"}
@@ -129,7 +129,7 @@ function App() {
             <p className="header-subtitle">
               {activeTab === 'dashboard' && "전체 워크플로우 실시간 상태 모니터링 및 주요 KPI 요약"}
               {activeTab === 'designer' && "프로세스 템플릿 설계, 배포, 관리 및 노드 속성 설정"}
-              {activeTab === 'request' && "필요한 업무 프로세스를 신속하게 가동하고 요청을 전달합니다"}
+              {activeTab === 'request' && "배포된 워크플로우를 조회하고 트리거 상태와 수동 실행을 관리합니다"}
               {activeTab === 'tracker' && "실행 모니터링, 실패 대응, 재시도/운영 조치 및 로그 분석"}
               {activeTab === 'inbox' && "승인 대기 Task 확인 및 처리"}
               {activeTab === 'credentials' && "외부 연동 secret을 안전하게 관리하고 노드에서는 credential ID만 참조합니다"}

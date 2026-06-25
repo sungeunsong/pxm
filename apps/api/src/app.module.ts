@@ -6,6 +6,8 @@ import { TemplatesModule } from './templates/templates.module';
 import { TasksModule } from './tasks/tasks.module';
 import { PluginsModule } from './plugins/plugins.module';
 import { CredentialsModule } from './credentials/credentials.module';
+import { EngineModule } from './engine/engine.module';
+import { SchedulesModule } from './schedules/schedules.module';
 
 @Module({
   imports: [
@@ -19,6 +21,8 @@ import { CredentialsModule } from './credentials/credentials.module';
     TasksModule,
     PluginsModule,
     CredentialsModule,
+    EngineModule,
+    SchedulesModule,
   ],
 })
 export class AppModule {}

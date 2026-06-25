@@ -1,4 +1,4 @@
-import { Body, Controller, Get, NotFoundException, Param, Post, Req, Sse } from '@nestjs/common';
+import { Body, Controller, Get, NotFoundException, Param, Post, Query, Req, Sse } from '@nestjs/common';
 import type { Request } from 'express';
 import { Observable } from 'rxjs';
 import { OutboxService } from '../outbox/outbox.service';
@@ -43,6 +43,22 @@ export class InstancesController {
       throw new NotFoundException('Instance not found');
     }
     return result;
+  }
+
+  @Get('/instances/:id/retry/preview')
+  async retryPreview(
+    @Param('id') id: string,
+    @Query('mode') mode?: 'full_instance' | 'failed_node',
+  ) {
+    return this.instances.previewRetry(id, mode === 'failed_node' ? 'failed_node' : 'full_instance');
+  }
+
+  @Post('/instances/:id/retry')
+  async retry(
+    @Param('id') id: string,
+    @Body() body?: { mode?: 'full_instance' | 'failed_node' },
+  ) {
+    return this.instances.retryInstance(id, body?.mode === 'failed_node' ? 'failed_node' : 'full_instance');
   }
 
   @Get('/instances/:id/trace')

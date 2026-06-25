@@ -1,5 +1,6 @@
 use anyhow::Result;
 use chrono::Utc;
+use mongodb::error::{TRANSIENT_TRANSACTION_ERROR, UNKNOWN_TRANSACTION_COMMIT_RESULT};
 use rand::Rng;
 use serde_json::{json, Value};
 use std::io::Write;
@@ -11,7 +12,9 @@ use crate::v2::ports::{
     PluginInvocation, ProcessDefinitionRepositoryPort, TaskRepositoryPort, TokenRepositoryPort,
     TransactionManagerPort, Tx, WorkflowInstanceRepositoryPort,
 };
-use crate::v2::types::{EdgeRule, GatewayType, JobType, NodeDef, TokenStatus, V2Instance, V2Token};
+use crate::v2::types::{
+    EdgeRule, GatewayType, JobType, NodeDef, TokenStatus, V2Instance, V2Job, V2Token,
+};
 
 pub struct V2RuntimeContext {
     pub tx_manager: Box<dyn TransactionManagerPort>,
@@ -850,18 +853,54 @@ pub async fn run_v2_once(ctx: &V2RuntimeContext, worker_id: &str) -> Result<bool
             JobType::Timer => {
                 let tokens = ctx.token_repo.load_tokens(instance.id, tx.as_mut()).await?;
                 if let Some(tid) = job.token_id {
-                    let mut timer_tokens: Vec<V2Token> =
-                        tokens.into_iter().filter(|t| t.id == tid).collect();
-                    for token in &mut timer_tokens {
+                    let timer_token = tokens.into_iter().find(|t| t.id == tid);
+                    if let Some(mut token) = timer_token {
                         if token.status == TokenStatus::Waiting {
-                            token.status = TokenStatus::Active;
+                            ctx.exec_log
+                                .append_log(
+                                    instance.id,
+                                    Some(token.id),
+                                    Some(&token.node_id),
+                                    "NODE_COMPLETED",
+                                    json!({"timer_expired": true}),
+                                    tx.as_mut(),
+                                )
+                                .await?;
+
+                            token.status = TokenStatus::Consumed;
                             token.updated_at = Utc::now();
                             ctx.token_repo
                                 .update_tokens(&[token.clone()], tx.as_mut())
                                 .await?;
+
+                            let next_edges: Vec<&EdgeRule> = edges
+                                .iter()
+                                .filter(|e| e.source_node_id == token.node_id)
+                                .collect();
+
+                            for edge in next_edges {
+                                let new_token = V2Token {
+                                    id: Uuid::new_v4(),
+                                    instance_id: instance.id,
+                                    node_id: edge.target_node_id.clone(),
+                                    status: TokenStatus::Active,
+                                    parent_token_id: Some(token.id),
+                                    scope_key: token.scope_key.clone(),
+                                    created_at: Utc::now(),
+                                    updated_at: Utc::now(),
+                                };
+                                ctx.token_repo
+                                    .create_tokens(&[new_token.clone()], tx.as_mut())
+                                    .await?;
+                                active_tokens.push(new_token);
+                            }
+                        } else {
+                            println!(
+                                "[v2_engine] timer job {} ignored because token {} is {:?}",
+                                job.id, token.id, token.status
+                            );
                         }
                     }
-                    active_tokens = timer_tokens;
                 }
             }
             JobType::Retry => {
@@ -917,11 +956,11 @@ pub async fn run_v2_once(ctx: &V2RuntimeContext, worker_id: &str) -> Result<bool
 
     match result {
         Ok((processed, should_commit)) => {
-            if should_commit {
-                ctx.tx_manager.commit(tx).await?;
+            let finish_result = if should_commit {
+                ctx.tx_manager.commit(tx).await
             } else {
-                ctx.tx_manager.rollback(tx).await?;
-            }
+                ctx.tx_manager.rollback(tx).await
+            };
             if lease_acquired {
                 let _ = ctx
                     .instance_lock
@@ -930,6 +969,13 @@ pub async fn run_v2_once(ctx: &V2RuntimeContext, worker_id: &str) -> Result<bool
             }
             if advisory_acquired {
                 let _ = ctx.instance_lock.advisory_unlock(job.instance_id).await;
+            }
+            if let Err(err) = finish_result {
+                if is_transient_transaction_error(&err) {
+                    requeue_transient_job(ctx, &job, &err).await?;
+                    return Ok(true);
+                }
+                return Err(err);
             }
             Ok(processed)
         }
@@ -944,9 +990,66 @@ pub async fn run_v2_once(ctx: &V2RuntimeContext, worker_id: &str) -> Result<bool
             if advisory_acquired {
                 let _ = ctx.instance_lock.advisory_unlock(job.instance_id).await;
             }
+            if is_transient_transaction_error(&err) {
+                requeue_transient_job(ctx, &job, &err).await?;
+                return Ok(true);
+            }
             Err(err)
         }
     }
+}
+
+fn is_transient_transaction_error(err: &anyhow::Error) -> bool {
+    for cause in err.chain() {
+        if let Some(mongo_err) = cause.downcast_ref::<mongodb::error::Error>() {
+            return mongo_err.contains_label(TRANSIENT_TRANSACTION_ERROR)
+                || mongo_err.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT);
+        }
+    }
+
+    let message = err.to_string();
+    message.contains("WriteConflict")
+        || message.contains(TRANSIENT_TRANSACTION_ERROR)
+        || message.contains(UNKNOWN_TRANSACTION_COMMIT_RESULT)
+}
+
+async fn requeue_transient_job(
+    ctx: &V2RuntimeContext,
+    job: &V2Job,
+    err: &anyhow::Error,
+) -> Result<()> {
+    let delay_ms = std::env::var("ENGINE_TRANSIENT_RETRY_DELAY_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(250);
+    let delay_sec = delay_ms as f64 / 1000.0;
+
+    println!(
+        "[v2_engine] transient transaction error for job_id={}, requeueing after {}ms: {}",
+        job.id, delay_ms, err
+    );
+
+    let mut retry_tx = ctx.tx_manager.begin().await?;
+    ctx.job_queue
+        .release_job(job.id, delay_sec, retry_tx.as_mut())
+        .await?;
+    ctx.exec_log
+        .append_log(
+            job.instance_id,
+            job.token_id,
+            None,
+            "V2_JOB_TRANSIENT_RETRY",
+            json!({
+                "job_id": job.id,
+                "job_type": job.job_type.as_str(),
+                "delay_ms": delay_ms,
+                "error": err.to_string()
+            }),
+            retry_tx.as_mut(),
+        )
+        .await?;
+    ctx.tx_manager.commit(retry_tx).await?;
+    Ok(())
 }
 
 // ============================================================
