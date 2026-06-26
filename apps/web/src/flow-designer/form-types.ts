@@ -48,7 +48,7 @@ export interface FormSchema {
 
 // CustomNodeData 확장
 export interface CustomNodeData {
-  nodeType: 'start' | 'service' | 'script' | 'timer' | 'gateway' | 'approval' | 'end';
+  nodeType: 'start' | 'service' | 'script' | 'timer' | 'gateway' | 'approval' | 'workflow_call' | 'end';
   label: string;
   description?: string;
   icon?: string;
@@ -102,6 +102,13 @@ export interface CustomNodeData {
   assignee?: string;
   approvalType?: string;
   requireComment?: boolean;
+
+  // Workflow Call 노드 전용
+  targetWorkflowId?: string;
+  targetWorkflowName?: string;
+  workflowInputMode?: 'inherit_form_data' | 'context_path' | 'static_json';
+  workflowInputPath?: string;
+  workflowInputJson?: string;
 
   // End 노드 전용
   resultPath?: string;

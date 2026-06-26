@@ -29,6 +29,11 @@ export interface NodePathSuggestion {
   sourceNodeLabel: string;
 }
 
+interface WorkflowOption {
+  id: string;
+  name: string;
+}
+
 export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
   node,
   onUpdate,
@@ -45,6 +50,9 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
   const [credentials, setCredentials] = React.useState<CredentialProfile[]>([]);
   const [credentialsLoading, setCredentialsLoading] = React.useState(false);
   const [credentialsError, setCredentialsError] = React.useState<string | null>(null);
+  const [workflowOptions, setWorkflowOptions] = React.useState<WorkflowOption[]>([]);
+  const [workflowOptionsLoading, setWorkflowOptionsLoading] = React.useState(false);
+  const [workflowOptionsError, setWorkflowOptionsError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -72,6 +80,48 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
       cancelled = true;
     };
   }, []);
+
+  React.useEffect(() => {
+    if (node.data.nodeType !== 'workflow_call') {
+      return;
+    }
+
+    let cancelled = false;
+    setWorkflowOptionsLoading(true);
+    fetch('/api/templates?activeOnly=false')
+      .then(async (response) => {
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) {
+          throw new Error(payload?.message || `Workflow list API failed: ${response.status}`);
+        }
+        return Array.isArray(payload) ? payload : [];
+      })
+      .then((items) => {
+        if (!cancelled) {
+          setWorkflowOptions(
+            items.map((item: any) => ({
+              id: item.id,
+              name: item.name || item.id,
+            })),
+          );
+          setWorkflowOptionsError(null);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setWorkflowOptionsError(error instanceof Error ? error.message : 'Workflow 목록을 불러오지 못했습니다.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setWorkflowOptionsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [node.data.nodeType]);
 
   const handleLabelChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onUpdate(node.id, { label: e.target.value });
@@ -551,6 +601,82 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
     );
   };
 
+  const renderWorkflowCallProperties = () => {
+    const data = node.data as any;
+    const selectedWorkflow = workflowOptions.find((workflow) => workflow.id === data.targetWorkflowId);
+    const inputMode = data.workflowInputMode || 'inherit_form_data';
+    const staticJsonError =
+      inputMode === 'static_json' ? validateJsonText(data.workflowInputJson || '{}') : null;
+
+    return (
+      <div className="property-section">
+        <h4 className="property-section-title">워크플로우 호출</h4>
+        <Select
+          label="호출 대상"
+          value={data.targetWorkflowId || ''}
+          onChange={(e) => {
+            const workflow = workflowOptions.find((item) => item.id === e.target.value);
+            onUpdate(node.id, {
+              ...data,
+              targetWorkflowId: workflow?.id || '',
+              targetWorkflowName: workflow?.name || '',
+            });
+          }}
+          options={[
+            { value: '', label: workflowOptionsLoading ? '불러오는 중...' : '워크플로우 선택' },
+            ...workflowOptions.map((workflow) => ({
+              value: workflow.id,
+              label: workflow.name,
+            })),
+          ]}
+          helperText={workflowOptionsError || (selectedWorkflow ? selectedWorkflow.id : 'async 방식으로 자식 instance를 생성합니다. 자식 완료까지 기다리지는 않습니다.')}
+          fullWidth
+        />
+        <Select
+          label="입력 전달"
+          value={inputMode}
+          onChange={(e) => onUpdate(node.id, { ...data, workflowInputMode: e.target.value as any })}
+          options={[
+            { value: 'inherit_form_data', label: '현재 formData 그대로 전달' },
+            { value: 'context_path', label: 'Context path 값 전달' },
+            { value: 'static_json', label: '정적 JSON 전달' },
+          ]}
+          fullWidth
+        />
+        {inputMode === 'context_path' && (
+          <Input
+            label="Input Path"
+            placeholder="scriptResults.prepareInput"
+            value={data.workflowInputPath || ''}
+            onChange={(e) => onUpdate(node.id, { ...data, workflowInputPath: e.target.value })}
+            helperText="예: formData, outputs.prepareInput, scriptResults.prepareInput"
+            fullWidth
+          />
+        )}
+        {inputMode === 'static_json' && (
+          <div className="property-group">
+            <label className="property-label">Input JSON</label>
+            <textarea
+              className="property-textarea"
+              value={data.workflowInputJson || '{\n  \n}'}
+              onChange={(e) => onUpdate(node.id, { ...data, workflowInputJson: e.target.value })}
+              spellCheck={false}
+            />
+            {staticJsonError && <div className="property-error-text">{staticJsonError}</div>}
+          </div>
+        )}
+        <Input
+          label="Output Path"
+          placeholder="workflowCalls.child"
+          value={data.outputPath || ''}
+          onChange={(e) => onUpdate(node.id, { ...data, outputPath: e.target.value })}
+          helperText="child_instance_id와 호출 상태를 저장할 context path입니다."
+          fullWidth
+        />
+      </div>
+    );
+  };
+
   const renderEndProperties = () => {
     const data = node.data as any;
     return (
@@ -602,6 +728,7 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
       {node.data.nodeType === 'timer' && renderTimerProperties()}
       {node.data.nodeType === 'gateway' && renderGatewayProperties()}
       {node.data.nodeType === 'approval' && renderApprovalProperties()}
+      {node.data.nodeType === 'workflow_call' && renderWorkflowCallProperties()}
       {node.data.nodeType === 'end' && renderEndProperties()}
 
       {/* 위치 정보 */}
@@ -1120,6 +1247,19 @@ function JsonTreeNode({
 
 function appendJsonPath(path: string, key: string) {
   return /^\d+$/.test(key) ? `${path}[${key}]` : `${path}.${key}`;
+}
+
+function validateJsonText(value: string) {
+  const text = value.trim();
+  if (!text) {
+    return null;
+  }
+  try {
+    JSON.parse(text);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : 'JSON 형식이 올바르지 않습니다.';
+  }
 }
 
 function formatJsonLeaf(value: unknown) {

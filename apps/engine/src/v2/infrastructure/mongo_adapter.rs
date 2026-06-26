@@ -925,4 +925,36 @@ impl WorkflowInstanceRepositoryPort for MongoAdapter {
         }
         Ok(())
     }
+
+    async fn create_instance(
+        &self,
+        instance_id: Uuid,
+        definition_id: Uuid,
+        state: &str,
+        context: Value,
+        tx: &mut dyn Tx,
+    ) -> Result<()> {
+        let session = get_session_mut(tx)?;
+        let coll = self.db.collection::<Document>("v2_process_instances");
+        let now = Utc::now().to_rfc3339();
+        let doc = doc! {
+            "_id": instance_id.to_string(),
+            "process_definition_id": definition_id.to_string(),
+            "state": state,
+            "status": state,
+            "context": json_to_bson(&context),
+            "lock_owner": Bson::Null,
+            "lock_until": Bson::Null,
+            "heartbeat_at": Bson::Null,
+            "created_at": &now,
+            "updated_at": &now,
+        };
+
+        if let Some(sess) = session {
+            coll.insert_one_with_session(doc, None, sess).await?;
+        } else {
+            coll.insert_one(doc, None).await?;
+        }
+        Ok(())
+    }
 }

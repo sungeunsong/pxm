@@ -103,11 +103,13 @@
   - [x] retry 전 context/입력 확인
   - [x] side effect node 재실행 경고
 
-- [ ] Workflow call node
-  - [ ] 호출 대상 workflow 선택
-  - [ ] input mapping
-  - [ ] sync/async 호출 모드
-  - [ ] child instance trace 연결
+- [x] Workflow call node
+  - [x] 호출 대상 workflow 선택
+  - [x] input mapping
+  - [x] async 호출 정책: 자식 instance 생성/START job 등록까지 보장, 자식 완료는 기다리지 않음
+  - [x] child instance trace 연결
+  - [x] 직접 self-call 차단 및 호출 depth 제한
+  - [ ] sync/wait 호출 모드
 
 - [ ] 이력 API 권한 모델 정리
   - [ ] admin/operator 조회 범위
@@ -152,6 +154,5 @@
 
 ## Next Recommended Work
 
-1. Phase 2의 Workflow call node를 진행한다.
-2. 이후 이력 API 권한 모델을 정리한다.
-3. 운영 전 실제 목표 부하 기준으로 engine worker 수와 Mongo write capacity를 재검증한다.
+1. Phase 2의 이력 API 권한 모델을 정리한다.
+2. 운영 전 실제 목표 부하 기준으로 engine worker 수와 Mongo write capacity를 재검증한다.

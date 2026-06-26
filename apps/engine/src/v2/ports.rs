@@ -173,6 +173,16 @@ pub trait WorkflowInstanceRepositoryPort: Send + Sync {
         context: Value,
         tx: &mut dyn Tx,
     ) -> Result<()>;
+
+    /// 다른 워크플로우를 호출할 때 자식 인스턴스를 생성합니다.
+    async fn create_instance(
+        &self,
+        instance_id: Uuid,
+        definition_id: Uuid,
+        state: &str,
+        context: Value,
+        tx: &mut dyn Tx,
+    ) -> Result<()>;
 }
 
 #[derive(Debug, Clone)]

@@ -25,6 +25,8 @@
   --n8n-gateway-glow: rgba(139, 92, 246, 0.15);
   --n8n-approval: #ec4899;
   --n8n-approval-glow: rgba(236, 72, 153, 0.15);
+  --n8n-workflow-call: #0891b2;
+  --n8n-workflow-call-glow: rgba(8, 145, 178, 0.15);
   --n8n-end: #ef4444;
   --n8n-end-glow: rgba(239, 68, 68, 0.15);
 
@@ -102,6 +104,10 @@ body {
   border-color: var(--n8n-approval) !important;
   box-shadow: 0 0 0 3px var(--n8n-approval-glow), 0 4px 6px -1px rgba(0, 0, 0, 0.05) !important;
 }
+.custom-node.selected.custom-node-workflow_call {
+  border-color: var(--n8n-workflow-call) !important;
+  box-shadow: 0 0 0 3px var(--n8n-workflow-call-glow), 0 4px 6px -1px rgba(0, 0, 0, 0.05) !important;
+}
 .custom-node.selected.custom-node-end {
   border-color: var(--n8n-end) !important;
   box-shadow: 0 0 0 3px var(--n8n-end-glow), 0 4px 6px -1px rgba(0, 0, 0, 0.05) !important;
@@ -125,6 +131,7 @@ body {
 .custom-node-timer .custom-node-icon { background: linear-gradient(135deg, #f59e0b, #d97706) !important; }
 .custom-node-gateway .custom-node-icon { background: linear-gradient(135deg, #8b5cf6, #7c3aed) !important; }
 .custom-node-approval .custom-node-icon { background: linear-gradient(135deg, #ec4899, #db2777) !important; }
+.custom-node-workflow_call .custom-node-icon { background: linear-gradient(135deg, #0891b2, #0e7490) !important; }
 .custom-node-end .custom-node-icon { background: linear-gradient(135deg, #ef4444, #dc2626) !important; }
 
 /* Custom Handles */

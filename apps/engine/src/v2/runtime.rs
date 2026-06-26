@@ -410,6 +410,88 @@ fn external_execution_context(context: &Value) -> Value {
     external
 }
 
+fn resolve_workflow_call_target(node: &NodeDef) -> Result<Uuid> {
+    let raw = node
+        .config
+        .get("targetWorkflowId")
+        .or_else(|| node.config.get("target_definition_id"))
+        .or_else(|| node.config.get("targetDefinitionId"))
+        .or_else(|| node.config.get("workflow_id"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("Workflow Call target workflow is not configured"))?;
+
+    Ok(Uuid::parse_str(raw)?)
+}
+
+fn resolve_workflow_call_input(node: &NodeDef, context: &Value) -> Result<Value> {
+    let mode = node
+        .config
+        .get("workflowInputMode")
+        .or_else(|| node.config.get("inputMode"))
+        .and_then(|value| value.as_str())
+        .unwrap_or("inherit_form_data");
+
+    match mode {
+        "context_path" => {
+            let path = node
+                .config
+                .get("workflowInputPath")
+                .or_else(|| node.config.get("inputPath"))
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("Workflow Call input path is required"))?;
+            Ok(get_context_value_at_path(context, path).unwrap_or(Value::Null))
+        }
+        "static_json" => {
+            if let Some(value) = node.config.get("workflowInput") {
+                return Ok(value.clone());
+            }
+
+            let raw = node
+                .config
+                .get("workflowInputJson")
+                .or_else(|| node.config.get("inputJson"))
+                .and_then(|value| value.as_str())
+                .unwrap_or("{}")
+                .trim();
+            Ok(serde_json::from_str(raw)?)
+        }
+        _ => Ok(get_form_data(context)
+            .cloned()
+            .unwrap_or_else(|| json!({}))),
+    }
+}
+
+fn workflow_call_output_path(node: &NodeDef) -> String {
+    node.config
+        .get("outputPath")
+        .or_else(|| node.config.get("output_path"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("workflowCalls.{}", node.node_id))
+}
+
+fn workflow_call_depth(context: &Value) -> i64 {
+    context
+        .get("runtime")
+        .and_then(|runtime| runtime.get("call_depth"))
+        .and_then(|value| value.as_i64())
+        .unwrap_or(0)
+}
+
+fn max_workflow_call_depth() -> i64 {
+    std::env::var("WORKFLOW_CALL_MAX_DEPTH")
+        .ok()
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(8)
+        .max(1)
+}
+
 fn gateway_type(node: &NodeDef) -> GatewayType {
     let raw = node
         .config
@@ -1471,6 +1553,214 @@ async fn execute_token_flow(
                         tx,
                     )
                     .await?;
+            }
+
+            "workflow_call" => {
+                ctx.exec_log
+                    .append_log(
+                        instance.id,
+                        Some(token.id),
+                        Some(&token.node_id),
+                        "NODE_STARTED",
+                        json!({"call_mode": "async"}),
+                        tx,
+                    )
+                    .await?;
+
+                let call_result: Result<Value> = async {
+                    let target_definition_id = resolve_workflow_call_target(node)?;
+                    if target_definition_id == instance.process_definition_id {
+                        anyhow::bail!("Workflow Call cannot target the current workflow");
+                    }
+
+                    let current_depth = workflow_call_depth(&instance.context);
+                    let max_depth = max_workflow_call_depth();
+                    if current_depth >= max_depth {
+                        anyhow::bail!(
+                            "Workflow Call depth limit exceeded: current={}, max={}",
+                            current_depth,
+                            max_depth
+                        );
+                    }
+
+                    let child_form_data = resolve_workflow_call_input(node, &instance.context)?;
+                    let (child_nodes, _) = ctx
+                        .def_repo
+                        .load_definition_graph(target_definition_id)
+                        .await?;
+                    let child_start_node = child_nodes
+                        .iter()
+                        .find(|child_node| child_node.node_type == "start")
+                        .ok_or_else(|| anyhow::anyhow!("Target workflow start node not found"))?;
+
+                    let child_instance_id = Uuid::new_v4();
+                    let child_token_id = Uuid::new_v4();
+                    let child_context = json!({
+                        "runtime": {
+                            "cursor": child_start_node.node_id,
+                            "template_id": target_definition_id,
+                            "parent_instance_id": instance.id,
+                            "parent_token_id": token.id,
+                            "parent_node_id": token.node_id,
+                            "call_mode": "async",
+                            "call_depth": current_depth + 1
+                        },
+                        "data": {
+                            "formData": child_form_data,
+                            "outputs": {}
+                        }
+                    });
+
+                    ctx.instance_repo
+                        .create_instance(
+                            child_instance_id,
+                            target_definition_id,
+                            "CREATED",
+                            child_context,
+                            tx,
+                        )
+                        .await?;
+                    ctx.token_repo
+                        .create_tokens(
+                            &[V2Token {
+                                id: child_token_id,
+                                instance_id: child_instance_id,
+                                node_id: child_start_node.node_id.clone(),
+                                status: TokenStatus::Active,
+                                parent_token_id: None,
+                                scope_key: None,
+                                created_at: Utc::now(),
+                                updated_at: Utc::now(),
+                            }],
+                            tx,
+                        )
+                        .await?;
+                    ctx.job_queue
+                        .enqueue_job(
+                            child_instance_id,
+                            None,
+                            JobType::Start,
+                            0.0,
+                            0,
+                            json!({
+                                "node_id": child_start_node.node_id,
+                                "reason": "workflow_call",
+                                "parent_instance_id": instance.id,
+                                "parent_token_id": token.id,
+                                "parent_node_id": token.node_id
+                            }),
+                            tx,
+                        )
+                        .await?;
+
+                    Ok(json!({
+                        "child_instance_id": child_instance_id,
+                        "target_workflow_id": target_definition_id,
+                        "target_workflow_name": node.config.get("targetWorkflowName").and_then(|value| value.as_str()),
+                        "call_mode": "async",
+                        "call_depth": current_depth + 1,
+                        "status": "STARTED"
+                    }))
+                }
+                .await;
+
+                match call_result {
+                    Ok(output) => {
+                        let output_path = workflow_call_output_path(node);
+                        set_context_value_at_path(&mut instance.context, &output_path, output.clone());
+                        ctx.instance_repo
+                            .update_instance(
+                                instance.id,
+                                &instance.state,
+                                instance.context.clone(),
+                                tx,
+                            )
+                            .await?;
+
+                        ctx.exec_log
+                            .append_log(
+                                instance.id,
+                                Some(token.id),
+                                Some(&token.node_id),
+                                "NODE_COMPLETED",
+                                json!({"output_path": output_path, "output": output}),
+                                tx,
+                            )
+                            .await?;
+                        ctx.outbox
+                            .append_event(
+                                instance.id,
+                                Some(token.id),
+                                Some(&token.node_id),
+                                "WORKFLOW_CALLED",
+                                output,
+                                tx,
+                            )
+                            .await?;
+
+                        token.status = TokenStatus::Consumed;
+                        token.updated_at = Utc::now();
+                        ctx.token_repo.update_tokens(&[token.clone()], tx).await?;
+
+                        let next_edges: Vec<&EdgeRule> = edges
+                            .iter()
+                            .filter(|e| e.source_node_id == token.node_id)
+                            .collect();
+
+                        for edge in next_edges {
+                            let new_token = V2Token {
+                                id: Uuid::new_v4(),
+                                instance_id: instance.id,
+                                node_id: edge.target_node_id.clone(),
+                                status: TokenStatus::Active,
+                                parent_token_id: Some(token.id),
+                                scope_key: token.scope_key.clone(),
+                                created_at: Utc::now(),
+                                updated_at: Utc::now(),
+                            };
+                            ctx.token_repo
+                                .create_tokens(&[new_token.clone()], tx)
+                                .await?;
+                            active_tokens.push(new_token);
+                        }
+                    }
+                    Err(err) => {
+                        token.status = TokenStatus::Failed;
+                        token.updated_at = Utc::now();
+                        ctx.token_repo.update_tokens(&[token.clone()], tx).await?;
+
+                        instance.state = "FAILED".to_string();
+                        ctx.instance_repo
+                            .update_instance(
+                                instance.id,
+                                &instance.state,
+                                instance.context.clone(),
+                                tx,
+                            )
+                            .await?;
+
+                        ctx.exec_log
+                            .append_log(
+                                instance.id,
+                                Some(token.id),
+                                Some(&token.node_id),
+                                "NODE_FAILED",
+                                json!({"reason": err.to_string()}),
+                                tx,
+                            )
+                            .await?;
+                        ctx.outbox
+                            .append_event(
+                                instance.id,
+                                Some(token.id),
+                                Some(&token.node_id),
+                                "INSTANCE_FAILED",
+                                json!({"reason": "workflow_call_failed", "detail": err.to_string()}),
+                                tx,
+                            )
+                            .await?;
+                    }
+                }
             }
 
             "service" => {

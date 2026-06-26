@@ -375,6 +375,13 @@
   line-height: 1.45;
 }
 
+.property-error-text {
+  margin-top: 6px;
+  color: var(--color-error);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+}
+
 .gateway-rule-list {
   display: flex;
   flex-direction: column;

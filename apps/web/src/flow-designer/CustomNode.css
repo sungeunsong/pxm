@@ -88,6 +88,10 @@
   background: var(--node-approval);
 }
 
+.custom-node-workflow_call .custom-node-icon {
+  background: var(--node-workflow-call);
+}
+
 .custom-node-end .custom-node-icon {
   background: var(--node-end);
 }
@@ -136,6 +140,11 @@
 .custom-node.selected.custom-node-approval {
   border-color: var(--node-approval);
   box-shadow: 0 0 0 3px rgba(255, 193, 7, 0.3);
+}
+
+.custom-node.selected.custom-node-workflow_call {
+  border-color: var(--node-workflow-call);
+  box-shadow: 0 0 0 3px rgba(8, 145, 178, 0.3);
 }
 
 .custom-node.selected.custom-node-end {

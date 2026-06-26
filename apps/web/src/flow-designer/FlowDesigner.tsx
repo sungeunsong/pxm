@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useRef } from 'react';
 import type { Node } from 'reactflow';
 import type { Edge } from 'reactflow';
-import { Braces, CheckSquare, CircleCheck, Clock, Diamond, Inbox, PanelRightClose, PanelRightOpen, Play, Search, Star } from 'lucide-react';
+import { Braces, CheckSquare, CircleCheck, Clock, Diamond, Inbox, PanelRightClose, PanelRightOpen, Play, Search, Star, Workflow } from 'lucide-react';
 import { Button } from '../components/Button';
 import { Header } from '../components/Header';
 import { Input } from '../components/Input';
@@ -613,6 +613,20 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
                 <div className="palette-node" draggable onDragStart={(e) => onDragStart(e, 'approval', 'Approval')}>
                   <div className="palette-node-icon" style={{ background: 'var(--node-approval)' }}><CheckSquare size={16} /></div>
                   <span className="palette-node-label">Approval</span>
+                </div>
+                <div
+                  className="palette-node"
+                  draggable
+                  onDragStart={(e) =>
+                    onDragStart(e, 'workflow_call', 'Workflow Call', {
+                      description: '다른 워크플로우 호출',
+                      workflowInputMode: 'inherit_form_data',
+                      outputPath: 'workflowCalls.child',
+                    })
+                  }
+                >
+                  <div className="palette-node-icon" style={{ background: 'var(--node-workflow-call)' }}><Workflow size={16} /></div>
+                  <span className="palette-node-label">Workflow Call</span>
                 </div>
                 <div className="palette-node" draggable onDragStart={(e) => onDragStart(e, 'end', 'End')}>
                   <div className="palette-node-icon" style={{ background: 'var(--node-end)' }}><CircleCheck size={16} /></div>

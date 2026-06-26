@@ -16,6 +16,7 @@ import {
   Shuffle,
   Square,
   Ticket,
+  Workflow,
   UserPlus,
   UserSearch,
   Users,
@@ -37,6 +38,7 @@ const iconMap: Record<string, React.ComponentType<{ size?: number; fill?: string
   shuffle: Shuffle,
   square: Square,
   ticket: Ticket,
+  workflow: Workflow,
   'user-plus': UserPlus,
   'user-search': UserSearch,
   users: Users,
@@ -75,6 +77,8 @@ export function nodeTypeIcon(nodeType: string, icon?: string) {
       return <Diamond size={15} fill="currentColor" />;
     case 'approval':
       return <CheckSquare size={15} />;
+    case 'workflow_call':
+      return <Workflow size={15} />;
     case 'end':
       return <CircleCheck size={15} />;
     default:

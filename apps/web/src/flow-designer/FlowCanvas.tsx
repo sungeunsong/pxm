@@ -352,6 +352,7 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
               case 'timer': return '#ff9800';
               case 'gateway': return '#9c27b0';
               case 'approval': return '#ffc107';
+              case 'workflow_call': return '#0891b2';
               case 'end': return '#f44336';
               default: return '#666';
             }
