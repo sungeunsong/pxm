@@ -111,6 +111,11 @@
   - [x] child instance trace 연결
   - [x] 직접 self-call 차단 및 호출 depth 제한
   - [x] sync/wait 호출 모드
+  - [ ] 고도화: 간접 순환 호출 사전 탐지 (`A -> B -> A`)
+  - [ ] 고도화: wait timeout 정책
+  - [ ] 고도화: parent cancel 시 child cancel propagation
+  - [ ] 고도화: child trace/result 바로가기 UI
+  - [ ] 고도화: wait 모드 실패 후 재시도 UX 정리
 
 - [ ] 이력 API 권한 모델 정리
   - [ ] admin/operator 조회 범위
