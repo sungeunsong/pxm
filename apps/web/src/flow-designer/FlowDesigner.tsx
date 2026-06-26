@@ -620,6 +620,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
                   onDragStart={(e) =>
                     onDragStart(e, 'workflow_call', 'Workflow Call', {
                       description: '다른 워크플로우 호출',
+                      workflowCallMode: 'async',
                       workflowInputMode: 'inherit_form_data',
                       outputPath: 'workflowCalls.child',
                     })

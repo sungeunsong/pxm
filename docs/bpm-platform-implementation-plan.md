@@ -107,9 +107,10 @@
   - [x] 호출 대상 workflow 선택
   - [x] input mapping
   - [x] async 호출 정책: 자식 instance 생성/START job 등록까지 보장, 자식 완료는 기다리지 않음
+  - [x] wait 호출 정책: 부모 token WAITING, 자식 완료/실패 후 parent RESUME
   - [x] child instance trace 연결
   - [x] 직접 self-call 차단 및 호출 depth 제한
-  - [ ] sync/wait 호출 모드
+  - [x] sync/wait 호출 모드
 
 - [ ] 이력 API 권한 모델 정리
   - [ ] admin/operator 조회 범위

@@ -604,6 +604,7 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
   const renderWorkflowCallProperties = () => {
     const data = node.data as any;
     const selectedWorkflow = workflowOptions.find((workflow) => workflow.id === data.targetWorkflowId);
+    const callMode = data.workflowCallMode || data.callMode || 'async';
     const inputMode = data.workflowInputMode || 'inherit_form_data';
     const staticJsonError =
       inputMode === 'static_json' ? validateJsonText(data.workflowInputJson || '{}') : null;
@@ -629,7 +630,22 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
               label: workflow.name,
             })),
           ]}
-          helperText={workflowOptionsError || (selectedWorkflow ? selectedWorkflow.id : 'async 방식으로 자식 instance를 생성합니다. 자식 완료까지 기다리지는 않습니다.')}
+          helperText={workflowOptionsError || (selectedWorkflow ? selectedWorkflow.id : '호출할 자식 워크플로우를 선택합니다.')}
+          fullWidth
+        />
+        <Select
+          label="호출 모드"
+          value={callMode}
+          onChange={(e) => onUpdate(node.id, { ...data, workflowCallMode: e.target.value as any })}
+          options={[
+            { value: 'async', label: 'Async - 시작만 요청하고 다음 노드 진행' },
+            { value: 'wait', label: 'Wait - 자식 완료 후 다음 노드 진행' },
+          ]}
+          helperText={
+            callMode === 'wait'
+              ? '부모 instance는 WAITING 상태가 되고, 자식 완료/실패 후 재개됩니다.'
+              : '자식 instance 생성과 START job 등록까지만 보장합니다.'
+          }
           fullWidth
         />
         <Select

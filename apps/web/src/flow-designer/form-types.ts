@@ -106,6 +106,7 @@ export interface CustomNodeData {
   // Workflow Call 노드 전용
   targetWorkflowId?: string;
   targetWorkflowName?: string;
+  workflowCallMode?: 'async' | 'wait';
   workflowInputMode?: 'inherit_form_data' | 'context_path' | 'static_json';
   workflowInputPath?: string;
   workflowInputJson?: string;
