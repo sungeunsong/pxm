@@ -76,6 +76,10 @@
   background: var(--node-script);
 }
 
+.custom-node-command .custom-node-icon {
+  background: var(--node-command);
+}
+
 .custom-node-timer .custom-node-icon {
   background: var(--node-timer);
 }
@@ -125,6 +129,11 @@
 .custom-node.selected.custom-node-script {
   border-color: var(--node-script);
   box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.3);
+}
+
+.custom-node.selected.custom-node-command {
+  border-color: var(--node-command);
+  box-shadow: 0 0 0 3px rgba(100, 116, 139, 0.3);
 }
 
 .custom-node.selected.custom-node-timer {

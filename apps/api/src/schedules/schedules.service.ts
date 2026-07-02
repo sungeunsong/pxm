@@ -110,7 +110,9 @@ export class SchedulesService implements OnModuleInit, OnModuleDestroy {
         },
       };
 
-      await this.instanceRepo.createInstance(instanceId, definition.id, 'CREATED', ctx);
+      await this.instanceRepo.createInstance(instanceId, definition.id, 'CREATED', ctx, {
+        workspace_id: 'default',
+      });
       await this.instanceRepo.createJob({
         instanceId,
         type: 'START',

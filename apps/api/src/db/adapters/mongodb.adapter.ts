@@ -11,6 +11,9 @@ import {
   WorkflowScheduleJob,
   WorkflowScheduleRepositoryPort,
   WorkflowScheduleStatus,
+  WorkflowHistoryActor,
+  WorkflowInstanceAccess,
+  WorkflowDefinitionVersion,
 } from '../ports/db.ports';
 
 @Injectable()
@@ -78,12 +81,17 @@ export class MongodbAdapter
     }));
 
     const now = new Date().toISOString();
+    const existing = await this.db
+      .collection<any>('v2_process_definitions')
+      .findOne({ _id: id }, { projection: { version: 1 } });
+    const nextVersion = Number(existing?.version || 0) + 1;
 
     await this.db.collection<any>('v2_process_definitions').updateOne(
       { _id: id },
       {
         $set: {
           name,
+          version: nextVersion,
           description: metadata.description || '',
           group: metadata.group || '',
           tags: metadata.tags || [],
@@ -99,6 +107,22 @@ export class MongodbAdapter
       },
       { upsert: true },
     );
+
+    await this.db.collection<any>('v2_process_definition_versions').insertOne({
+      _id: `${id}:${nextVersion}`,
+      definition_id: id,
+      version: nextVersion,
+      name,
+      description: metadata.description || '',
+      group: metadata.group || '',
+      tags: metadata.tags || [],
+      version_note: metadata.version_note || '',
+      metadata,
+      nodes: formattedNodes,
+      edges: formattedEdges,
+      created_at: now,
+      updated_at: now,
+    });
   }
 
   async listDefinitions(): Promise<any[]> {
@@ -116,6 +140,7 @@ export class MongodbAdapter
       tags: doc.tags || doc.metadata?.tags || [],
       version_note: doc.version_note || doc.metadata?.version_note || '',
       metadata: doc.metadata || {},
+      version: doc.version || 1,
       created_at: doc.created_at,
       updated_at: doc.updated_at,
     }));
@@ -136,6 +161,97 @@ export class MongodbAdapter
       tags: doc.tags || doc.metadata?.tags || [],
       version_note: doc.version_note || doc.metadata?.version_note || '',
       metadata: doc.metadata || {},
+      version: doc.version || 1,
+      created_at: doc.created_at,
+      updated_at: doc.updated_at,
+      nodes: (doc.nodes || []).map(
+        (n: any) =>
+          n.config?.ui_node || {
+            id: n.node_id,
+            data: n.config || {},
+          },
+      ),
+      edges: (doc.edges || []).map(
+        (e: any) =>
+          e.ui_edge || {
+            id: e.id,
+            source: e.source_node_id,
+            target: e.target_node_id,
+            data: {
+              condition: e.condition_expr,
+              isDefault: e.is_default,
+            },
+          },
+      ),
+    };
+  }
+
+  async listDefinitionVersions(id: string): Promise<WorkflowDefinitionVersion[]> {
+    const docs = await this.db
+      .collection<any>('v2_process_definition_versions')
+      .find({ definition_id: id })
+      .sort({ version: -1 })
+      .toArray();
+
+    return docs.map((doc) => ({
+      definition_id: doc.definition_id,
+      version: doc.version,
+      name: doc.name,
+      description: doc.description || doc.metadata?.description || '',
+      group: doc.group || doc.metadata?.group || '',
+      tags: doc.tags || doc.metadata?.tags || [],
+      version_note: doc.version_note || doc.metadata?.version_note || '',
+      created_at: doc.created_at,
+      updated_at: doc.updated_at,
+      node_count: Array.isArray(doc.nodes) ? doc.nodes.length : 0,
+      edge_count: Array.isArray(doc.edges) ? doc.edges.length : 0,
+    }));
+  }
+
+  async getDefinitionVersion(id: string, version: number): Promise<any> {
+    const doc = await this.db
+      .collection<any>('v2_process_definition_versions')
+      .findOne({ definition_id: id, version });
+
+    return doc ? this.mapDefinitionDocument(doc) : null;
+  }
+
+  async restoreDefinitionVersion(
+    id: string,
+    version: number,
+    metadata: WorkflowDefinitionMetadata = {},
+  ): Promise<any> {
+    const snapshot = await this.getDefinitionVersion(id, version);
+    if (!snapshot) return null;
+
+    await this.createDefinition(
+      id,
+      snapshot.name,
+      snapshot.nodes || [],
+      snapshot.edges || [],
+      {
+        ...(snapshot.metadata || {}),
+        ...metadata,
+        version_note:
+          metadata.version_note ||
+          `Rollback to v${version}${snapshot.version_note ? `: ${snapshot.version_note}` : ''}`,
+      },
+    );
+
+    return this.getDefinition(id);
+  }
+
+  private mapDefinitionDocument(doc: any): any {
+    return {
+      id: doc.definition_id || doc._id,
+      definition_id: doc.definition_id || doc._id,
+      name: doc.name,
+      description: doc.description || doc.metadata?.description || '',
+      group: doc.group || doc.metadata?.group || '',
+      tags: doc.tags || doc.metadata?.tags || [],
+      version_note: doc.version_note || doc.metadata?.version_note || '',
+      metadata: doc.metadata || {},
+      version: doc.version || 1,
       created_at: doc.created_at,
       updated_at: doc.updated_at,
       nodes: (doc.nodes || []).map(
@@ -168,14 +284,20 @@ export class MongodbAdapter
     definitionId: string,
     status: string,
     ctx: any,
+    access?: WorkflowInstanceAccess,
   ): Promise<void> {
     const now = new Date().toISOString();
+    const normalizedAccess = normalizeAccess(ctx, access);
     await this.db.collection<any>('v2_process_instances').insertOne({
       _id: id,
       process_definition_id: definitionId,
       state: status,
       status: status,
-      context: ctx,
+      context: normalizedAccess ? applyAccessToContext(ctx, normalizedAccess) : ctx,
+      workspace_id: normalizedAccess?.workspace_id,
+      requester_id: normalizedAccess?.requester_id,
+      client_id: normalizedAccess?.client_id,
+      approver_ids: normalizedAccess?.approver_ids || [],
       lock_owner: null,
       lock_until: null,
       heartbeat_at: null,
@@ -184,10 +306,10 @@ export class MongodbAdapter
     });
   }
 
-  async listInstances(): Promise<any[]> {
+  async listInstances(actor?: WorkflowHistoryActor): Promise<any[]> {
     const instances = await this.db
       .collection<any>('v2_process_instances')
-      .find({})
+      .find(buildMongoHistoryFilter(actor))
       .sort({ created_at: -1 })
       .limit(50)
       .toArray();
@@ -208,8 +330,12 @@ export class MongodbAdapter
         id: inst._id,
         definition_id: inst.process_definition_id,
         state: inst.state,
-        status: inst.status,
+        status: inst.state || inst.status,
         context: inst.context,
+        workspace_id: inst.workspace_id || inst.context?.runtime?.access?.workspace_id || 'default',
+        requester_id: inst.requester_id || inst.context?.runtime?.access?.requester_id || null,
+        client_id: inst.client_id || inst.context?.runtime?.access?.client_id || null,
+        approver_ids: inst.approver_ids || inst.context?.runtime?.access?.approver_ids || [],
         created_at: inst.created_at,
         updated_at: inst.updated_at,
         template_name: templateName,
@@ -218,6 +344,29 @@ export class MongodbAdapter
       });
     }
     return result;
+  }
+
+  async listChildInstances(parentInstanceId: string): Promise<any[]> {
+    const children = await this.db
+      .collection<any>('v2_process_instances')
+      .find({ 'context.runtime.parent_instance_id': parentInstanceId })
+      .toArray();
+
+    return children.map((inst) => ({
+      id: inst._id,
+      definition_id: inst.process_definition_id,
+      state: inst.state,
+      status: inst.state || inst.status,
+      context: inst.context,
+      workspace_id: inst.workspace_id || inst.context?.runtime?.access?.workspace_id || 'default',
+      requester_id: inst.requester_id || inst.context?.runtime?.access?.requester_id || null,
+      client_id: inst.client_id || inst.context?.runtime?.access?.client_id || null,
+      approver_ids: inst.approver_ids || inst.context?.runtime?.access?.approver_ids || [],
+      created_at: inst.created_at,
+      updated_at: inst.updated_at,
+      template_id: inst.process_definition_id,
+      ctx: inst.context,
+    }));
   }
 
   async getInstance(id: string): Promise<any> {
@@ -231,8 +380,12 @@ export class MongodbAdapter
       id: inst._id,
       definition_id: inst.process_definition_id,
       state: inst.state,
-      status: inst.status,
+      status: inst.state || inst.status,
       context: inst.context,
+      workspace_id: inst.workspace_id || inst.context?.runtime?.access?.workspace_id || 'default',
+      requester_id: inst.requester_id || inst.context?.runtime?.access?.requester_id || null,
+      client_id: inst.client_id || inst.context?.runtime?.access?.client_id || null,
+      approver_ids: inst.approver_ids || inst.context?.runtime?.access?.approver_ids || [],
       created_at: inst.created_at,
       updated_at: inst.updated_at,
       template_id: inst.process_definition_id,
@@ -261,6 +414,22 @@ export class MongodbAdapter
       {
         $set: {
           context: ctx,
+          updated_at: now,
+        },
+      },
+    );
+  }
+
+  async completeJobsForInstance(id: string): Promise<void> {
+    const now = new Date().toISOString();
+    await this.db.collection<any>('v2_engine_jobs').updateMany(
+      {
+        instance_id: id,
+        status: { $in: ['QUEUED', 'RUNNING'] },
+      },
+      {
+        $set: {
+          status: 'COMPLETED',
           updated_at: now,
         },
       },
@@ -833,4 +1002,78 @@ function mapScheduleDoc(doc: any): WorkflowScheduleJob {
     updatedAt: doc.updated_at || null,
     createdAt: doc.created_at || null,
   };
+}
+
+function normalizeAccess(ctx: any, access?: WorkflowInstanceAccess): WorkflowInstanceAccess | null {
+  const existing = ctx?.runtime?.access || {};
+  const merged = {
+    ...existing,
+    ...(access || {}),
+  };
+  if (!merged.workspace_id && !merged.requester_id && !merged.client_id && !merged.approver_ids) {
+    return null;
+  }
+  return {
+    workspace_id: merged.workspace_id || 'default',
+    requester_id: merged.requester_id || null,
+    client_id: merged.client_id || null,
+    approver_ids: Array.isArray(merged.approver_ids) ? merged.approver_ids : [],
+  };
+}
+
+function applyAccessToContext(ctx: any, access: WorkflowInstanceAccess): any {
+  return {
+    ...ctx,
+    runtime: {
+      ...(ctx?.runtime || {}),
+      access,
+    },
+  };
+}
+
+function buildMongoHistoryFilter(actor?: WorkflowHistoryActor): Record<string, any> {
+  if (!actor || actor.roles.includes('admin')) {
+    return {};
+  }
+
+  const or: Record<string, any>[] = [];
+  const actorId = actor.actor_id;
+
+  if (actor.roles.includes('operator')) {
+    const workspaceIds = actor.workspace_ids.length ? actor.workspace_ids : ['default'];
+    or.push({ workspace_id: { $in: workspaceIds } });
+    or.push({ 'context.runtime.access.workspace_id': { $in: workspaceIds } });
+    if (workspaceIds.includes('default')) {
+      or.push({ workspace_id: { $exists: false }, 'context.runtime.access.workspace_id': { $exists: false } });
+    }
+  }
+
+  if (actor.roles.includes('workflow_owner') && actor.owned_workflow_ids.length > 0) {
+    or.push({ process_definition_id: { $in: actor.owned_workflow_ids } });
+  }
+
+  if (actorId && actor.roles.includes('requester')) {
+    or.push({ requester_id: actorId });
+    or.push({ 'context.runtime.access.requester_id': actorId });
+  }
+
+  if (actorId && actor.roles.includes('approver')) {
+    or.push({ approver_ids: actorId });
+    or.push({ 'context.runtime.access.approver_ids': actorId });
+  }
+
+  if (actor.roles.includes('api_client')) {
+    if (actorId) {
+      or.push({ client_id: actorId });
+      or.push({ 'context.runtime.access.client_id': actorId });
+    }
+    if (actor.allowed_instance_ids.length > 0) {
+      or.push({ _id: { $in: actor.allowed_instance_ids } });
+    }
+    if (actor.allowed_workflow_ids.length > 0) {
+      or.push({ process_definition_id: { $in: actor.allowed_workflow_ids } });
+    }
+  }
+
+  return or.length > 0 ? { $or: or } : { _id: '__no_authorized_instances__' };
 }

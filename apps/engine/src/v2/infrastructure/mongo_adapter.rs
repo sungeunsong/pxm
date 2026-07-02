@@ -396,6 +396,30 @@ impl JobQueuePort for MongoAdapter {
         Ok(())
     }
 
+    async fn complete_queued_jobs_for_token(
+        &self,
+        instance_id: Uuid,
+        token_id: Uuid,
+        tx: &mut dyn Tx,
+    ) -> Result<()> {
+        let session = get_session_mut(tx)?;
+        let coll = self.db.collection::<Document>("v2_engine_jobs");
+        let now = Utc::now().to_rfc3339();
+        let filter = doc! {
+            "instance_id": instance_id.to_string(),
+            "token_id": token_id.to_string(),
+            "status": "QUEUED",
+        };
+        let update = doc! { "$set": { "status": "COMPLETED", "updated_at": &now } };
+        if let Some(sess) = session {
+            coll.update_many_with_session(filter, update, None, sess)
+                .await?;
+        } else {
+            coll.update_many(filter, update, None).await?;
+        }
+        Ok(())
+    }
+
     async fn reclaim_stale_jobs(&self) -> Result<i64> {
         let jobs_coll = self.db.collection::<Document>("v2_engine_jobs");
         let _instances_coll = self.db.collection::<Document>("v2_process_instances");

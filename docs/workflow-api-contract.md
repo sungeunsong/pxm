@@ -178,3 +178,87 @@ Phase 1에서는 인증/권한 구현은 포함하지 않는다. 계약 초안�
 - result/trace/stream 조회는 requester, owner, operator/admin 범위로 제한한다.
 - 모든 external start 요청은 requester/client id, source, request id를 audit field로 남긴다.
 - secret 원문은 request/response/result/trace에 노출하지 않는다.
+
+## History API Permission Model
+
+Phase 2의 이력 API 권한 모델은 `/api/instances`, `/api/instances/:id`, `/api/instances/:id/trace`, `/api/instances/:id/result`, `/api/instances/:id/stream`에 동일하게 적용한다. 목록 API는 조회 가능한 instance만 반환하고, 단건/trace/result/stream API는 조회 권한이 없으면 `404 Not Found`를 반환한다. 권한 없는 instance의 존재 여부를 노출하지 않기 위해 `403 Forbidden`은 사용하지 않는다.
+
+### Actor Context
+
+인증 계층은 API handler에 아래 actor context를 전달해야 한다.
+
+```json
+{
+  "actor_type": "user",
+  "actor_id": "kim",
+  "roles": ["requester"],
+  "workspace_ids": ["default"],
+  "owned_workflow_ids": ["workflow-uuid"],
+  "allowed_workflow_ids": ["workflow-uuid"],
+  "allowed_instance_ids": ["instance-uuid"]
+}
+```
+
+- `actor_type`: `user` 또는 `api_client`.
+- `actor_id`: 사용자 id 또는 API client id.
+- `roles`: `admin`, `operator`, `workflow_owner`, `requester`, `approver` 중 하나 이상.
+- `workspace_ids`: actor가 접근 가능한 workspace 범위. workspace를 아직 저장하지 않는 instance는 `default` workspace로 취급한다.
+- `owned_workflow_ids`: workflow owner가 관리하는 workflow/template id 목록.
+- `allowed_workflow_ids`: API client 또는 제한 사용자에게 명시적으로 허용된 workflow/template id 목록.
+- `allowed_instance_ids`: API client 또는 task 위임으로 명시적으로 허용된 instance id 목록.
+
+인증이 없는 개발 환경에서는 actor context가 없으면 기존 UI 호환을 위해 operator-equivalent read로 처리할 수 있다. 운영 환경에서는 actor context가 없는 요청을 `401 Unauthorized`로 거부한다.
+
+### Instance Ownership Fields
+
+권한 판단에 필요한 instance 필드는 아래 기준으로 저장한다.
+
+- `workspace_id`: workflow가 속한 workspace. 없으면 `default`.
+- `process_definition_id` 또는 `template_id`: workflow/template id.
+- `requester_id`: start 요청의 최종 신청자. UI 신청은 로그인 사용자 id, 외부 API 신청은 payload의 requester가 아니라 인증된 subject에서 결정한다.
+- `client_id`: API client로 시작한 경우의 client id.
+- `approver_ids`: 현재 또는 과거 user task assignee 목록. task repository에서 조인하거나 instance context에 denormalize한다.
+
+외부 start payload의 `input.requester`는 업무 데이터로만 취급하고 권한 판단 subject로 사용하지 않는다.
+
+### Role Scopes
+
+- `admin`: 모든 workspace의 instance, trace, result, stream 조회 가능.
+- `operator`: 본인 `workspace_ids`에 포함된 workspace의 모든 instance 조회 가능.
+- `workflow_owner`: `owned_workflow_ids`에 포함된 workflow/template에서 생성된 instance 조회 가능. trace/result/stream도 같은 범위로 허용한다.
+- `requester`: `requester_id === actor_id`인 instance 조회 가능.
+- `approver`: `approver_ids`에 `actor_id`가 포함된 instance 조회 가능. 본인에게 배정된 task와 그 관련 instance의 trace/result/stream을 볼 수 있다.
+- `api_client`: `client_id === actor_id`인 instance, `allowed_instance_ids`에 포함된 instance, 또는 `allowed_workflow_ids`에 포함된 workflow/template에서 생성된 instance만 조회 가능.
+
+여러 role이 있으면 허용 범위는 합집합으로 계산한다.
+
+### Endpoint Rules
+
+`GET /api/instances`
+
+- `admin`: 전체 목록.
+- `operator`: `workspace_id in actor.workspace_ids`.
+- `workflow_owner`: `process_definition_id/template_id in actor.owned_workflow_ids`.
+- `requester`: `requester_id = actor.actor_id`.
+- `approver`: `approver_ids contains actor.actor_id`.
+- `api_client`: `client_id = actor.actor_id` 또는 명시 허용 workflow/instance.
+
+`GET /api/instances/:id`
+
+- 목록 API와 같은 scope filter를 단건 instance에 적용한다.
+- 권한이 없거나 instance가 없으면 `404 Not Found`.
+
+`GET /api/instances/:id/trace`
+
+- instance 단건 조회 권한이 있을 때만 허용한다.
+- trace payload는 secret redaction 후 반환한다.
+
+`GET /api/instances/:id/result`
+
+- instance 단건 조회 권한이 있을 때만 허용한다.
+- result payload는 secret redaction 후 반환한다.
+
+`GET /api/instances/:id/stream`
+
+- SSE 연결 시점에 instance 단건 조회 권한을 확인한다.
+- 연결 유지 중 권한이 변경될 수 있으므로 장기 연결은 재연결 또는 주기적 재검증 정책을 둔다. 초기 구현은 연결 시점 검증만 적용한다.

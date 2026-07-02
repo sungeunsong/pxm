@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   Shuffle,
   Square,
+  Terminal,
   Ticket,
   Workflow,
   UserPlus,
@@ -37,6 +38,7 @@ const iconMap: Record<string, React.ComponentType<{ size?: number; fill?: string
   'shield-check': ShieldCheck,
   shuffle: Shuffle,
   square: Square,
+  terminal: Terminal,
   ticket: Ticket,
   workflow: Workflow,
   'user-plus': UserPlus,
@@ -71,6 +73,8 @@ export function nodeTypeIcon(nodeType: string, icon?: string) {
       return <Cpu size={15} />;
     case 'script':
       return <Braces size={15} />;
+    case 'command':
+      return <Terminal size={15} />;
     case 'timer':
       return <Clock size={15} />;
     case 'gateway':

@@ -11,6 +11,9 @@ import {
   WorkflowScheduleJob,
   WorkflowScheduleRepositoryPort,
   WorkflowScheduleStatus,
+  WorkflowHistoryActor,
+  WorkflowInstanceAccess,
+  WorkflowDefinitionVersion,
 } from '../ports/db.ports';
 
 @Injectable()
@@ -25,6 +28,7 @@ export class PostgresAdapter
 {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
   private scheduleTableReady = false;
+  private definitionVersionTableReady = false;
 
   private async loadNodeLabels(instanceId: string): Promise<Map<string, string>> {
     const { rows } = await this.pool.query(
@@ -61,13 +65,20 @@ export class PostgresAdapter
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      await this.ensureDefinitionVersionTable(client);
+
+      const currentRes = await client.query(
+        `SELECT version FROM v2_process_definitions WHERE id = $1::uuid`,
+        [id],
+      );
+      const nextVersion = Number(currentRes.rows[0]?.version || 0) + 1;
 
       // 1. v2_process_definitions 삽입
       await client.query(
         `INSERT INTO v2_process_definitions (id, definition_key, version, name, status, metadata, created_at, updated_at)
-         VALUES ($1::uuid, $1, 1, $2, 'ACTIVE', $3::jsonb, NOW(), NOW())
-         ON CONFLICT (id) DO UPDATE SET name = $2, metadata = $3::jsonb, updated_at = NOW()`,
-        [id, name, JSON.stringify(metadata)],
+         VALUES ($1::uuid, $1, $4, $2, 'ACTIVE', $3::jsonb, NOW(), NOW())
+         ON CONFLICT (id) DO UPDATE SET version = $4, name = $2, metadata = $3::jsonb, updated_at = NOW()`,
+        [id, name, JSON.stringify(metadata), nextVersion],
       );
 
       // 2. 기존 노드 삭제 후 재생성 (V2 배포 정규화 구조)
@@ -114,6 +125,20 @@ export class PostgresAdapter
         );
       }
 
+      await client.query(
+        `INSERT INTO v2_process_definition_versions
+          (definition_id, version, name, metadata, nodes, edges, created_at, updated_at)
+         VALUES ($1::uuid, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, NOW(), NOW())`,
+        [
+          id,
+          nextVersion,
+          name,
+          JSON.stringify(metadata),
+          JSON.stringify(nodes || []),
+          JSON.stringify(edges || []),
+        ],
+      );
+
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK');
@@ -145,6 +170,7 @@ export class PostgresAdapter
     );
     const edgesRes = await this.pool.query(
       `SELECT * FROM v2_definition_edges WHERE definition_id = $1 ORDER BY eval_order ASC`,
+      [id],
     );
 
     return {
@@ -166,6 +192,104 @@ export class PostgresAdapter
     };
   }
 
+  async listDefinitionVersions(id: string): Promise<WorkflowDefinitionVersion[]> {
+    await this.ensureDefinitionVersionTable();
+    const { rows } = await this.pool.query(
+      `SELECT definition_id, version, name, metadata, nodes, edges, created_at, updated_at
+       FROM v2_process_definition_versions
+       WHERE definition_id = $1::uuid
+       ORDER BY version DESC`,
+      [id],
+    );
+
+    return rows.map((row) => ({
+      definition_id: row.definition_id,
+      version: row.version,
+      name: row.name,
+      description: row.metadata?.description || '',
+      group: row.metadata?.group || '',
+      tags: row.metadata?.tags || [],
+      version_note: row.metadata?.version_note || '',
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      node_count: Array.isArray(row.nodes) ? row.nodes.length : 0,
+      edge_count: Array.isArray(row.edges) ? row.edges.length : 0,
+    }));
+  }
+
+  async getDefinitionVersion(id: string, version: number): Promise<any> {
+    await this.ensureDefinitionVersionTable();
+    const { rows } = await this.pool.query(
+      `SELECT definition_id, version, name, metadata, nodes, edges, created_at, updated_at
+       FROM v2_process_definition_versions
+       WHERE definition_id = $1::uuid AND version = $2`,
+      [id, version],
+    );
+    const row = rows[0];
+    if (!row) return null;
+
+    return {
+      id: row.definition_id,
+      definition_id: row.definition_id,
+      version: row.version,
+      name: row.name,
+      description: row.metadata?.description || '',
+      group: row.metadata?.group || '',
+      tags: row.metadata?.tags || [],
+      version_note: row.metadata?.version_note || '',
+      metadata: row.metadata || {},
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      nodes: row.nodes || [],
+      edges: row.edges || [],
+    };
+  }
+
+  async restoreDefinitionVersion(
+    id: string,
+    version: number,
+    metadata: WorkflowDefinitionMetadata = {},
+  ): Promise<any> {
+    const snapshot = await this.getDefinitionVersion(id, version);
+    if (!snapshot) return null;
+
+    await this.createDefinition(
+      id,
+      snapshot.name,
+      snapshot.nodes || [],
+      snapshot.edges || [],
+      {
+        ...(snapshot.metadata || {}),
+        ...metadata,
+        version_note:
+          metadata.version_note ||
+          `Rollback to v${version}${snapshot.version_note ? `: ${snapshot.version_note}` : ''}`,
+      },
+    );
+
+    return this.getDefinition(id);
+  }
+
+  private async ensureDefinitionVersionTable(client?: { query: (sql: string, values?: any[]) => Promise<any> }) {
+    if (this.definitionVersionTableReady) return;
+    const runner = client || this.pool;
+    await runner.query(`
+      CREATE TABLE IF NOT EXISTS v2_process_definition_versions (
+        id BIGSERIAL PRIMARY KEY,
+        definition_id UUID NOT NULL,
+        version INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        nodes JSONB NOT NULL DEFAULT '[]'::jsonb,
+        edges JSONB NOT NULL DEFAULT '[]'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE(definition_id, version)
+      )
+    `);
+    this.definitionVersionTableReady = true;
+  }
+
   // ==========================================
   // WorkflowInstanceRepositoryPort 구현 (V2 인스턴스 대응)
   // ==========================================
@@ -174,20 +298,26 @@ export class PostgresAdapter
     definitionId: string,
     status: string,
     ctx: any,
+    access?: WorkflowInstanceAccess,
   ): Promise<void> {
+    const normalizedAccess = normalizeAccess(ctx, access);
+    const nextCtx = normalizedAccess ? applyAccessToContext(ctx, normalizedAccess) : ctx;
     await this.pool.query(
       `INSERT INTO v2_process_instances (id, process_definition_id, state, context, started_at, created_at, updated_at)
        VALUES ($1::uuid, $2::uuid, $3, $4::jsonb, NOW(), NOW(), NOW())`,
-      [id, definitionId, status, JSON.stringify(ctx)],
+      [id, definitionId, status, JSON.stringify(nextCtx)],
     );
   }
 
-  async listInstances(): Promise<any[]> {
+  async listInstances(actor?: WorkflowHistoryActor): Promise<any[]> {
+    const scope = buildPostgresHistoryScope(actor);
     const { rows } = await this.pool.query(
       `SELECT i.*, d.name as template_name
        FROM v2_process_instances i
        LEFT JOIN v2_process_definitions d ON i.process_definition_id = d.id
+       ${scope.where}
        ORDER BY i.created_at DESC LIMIT 50`,
+      scope.params,
     );
     return rows.map((r) => ({
       ...r,
@@ -196,6 +326,25 @@ export class PostgresAdapter
       definition_id: r.process_definition_id,
       status: r.state,
       ctx: r.context,
+      ...accessProjection(r),
+    }));
+  }
+
+  async listChildInstances(parentInstanceId: string): Promise<any[]> {
+    const { rows } = await this.pool.query(
+      `SELECT *
+       FROM v2_process_instances
+       WHERE context->'runtime'->>'parent_instance_id' = $1
+       ORDER BY created_at DESC`,
+      [parentInstanceId],
+    );
+    return rows.map((r) => ({
+      ...r,
+      template_id: r.process_definition_id,
+      definition_id: r.process_definition_id,
+      status: r.state,
+      ctx: r.context,
+      ...accessProjection(r),
     }));
   }
 
@@ -212,6 +361,7 @@ export class PostgresAdapter
       definition_id: rows[0].process_definition_id,
       status: rows[0].state,
       ctx: rows[0].context,
+      ...accessProjection(rows[0]),
     };
   }
 
@@ -226,6 +376,15 @@ export class PostgresAdapter
     await this.pool.query(
       `UPDATE v2_process_instances SET context = $1::jsonb, updated_at = NOW() WHERE id = $2`,
       [JSON.stringify(ctx), id],
+    );
+  }
+
+  async completeJobsForInstance(id: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE v2_engine_jobs
+       SET status = 'COMPLETED', updated_at = NOW()
+       WHERE instance_id = $1::uuid AND status IN ('QUEUED', 'RUNNING')`,
+      [id],
     );
   }
 
@@ -832,4 +991,99 @@ function mapScheduleRow(row: any): WorkflowScheduleJob {
     updatedAt: row.updated_at?.toISOString?.() || row.updated_at || null,
     createdAt: row.created_at?.toISOString?.() || row.created_at || null,
   };
+}
+
+function normalizeAccess(ctx: any, access?: WorkflowInstanceAccess): WorkflowInstanceAccess | null {
+  const existing = ctx?.runtime?.access || {};
+  const merged = {
+    ...existing,
+    ...(access || {}),
+  };
+  if (!merged.workspace_id && !merged.requester_id && !merged.client_id && !merged.approver_ids) {
+    return null;
+  }
+  return {
+    workspace_id: merged.workspace_id || 'default',
+    requester_id: merged.requester_id || null,
+    client_id: merged.client_id || null,
+    approver_ids: Array.isArray(merged.approver_ids) ? merged.approver_ids : [],
+  };
+}
+
+function applyAccessToContext(ctx: any, access: WorkflowInstanceAccess): any {
+  return {
+    ...ctx,
+    runtime: {
+      ...(ctx?.runtime || {}),
+      access,
+    },
+  };
+}
+
+function accessProjection(row: any): WorkflowInstanceAccess {
+  const access = row.context?.runtime?.access || {};
+  return {
+    workspace_id: access.workspace_id || 'default',
+    requester_id: access.requester_id || null,
+    client_id: access.client_id || null,
+    approver_ids: Array.isArray(access.approver_ids) ? access.approver_ids : [],
+  };
+}
+
+function buildPostgresHistoryScope(actor?: WorkflowHistoryActor): {
+  where: string;
+  params: any[];
+} {
+  if (!actor || actor.roles.includes('admin')) {
+    return { where: '', params: [] };
+  }
+
+  const clauses: string[] = [];
+  const params: any[] = [];
+  const actorId = actor.actor_id;
+
+  const addParam = (value: any) => {
+    params.push(value);
+    return `$${params.length}`;
+  };
+
+  if (actor.roles.includes('operator')) {
+    const workspaceIds = actor.workspace_ids.length ? actor.workspace_ids : ['default'];
+    const param = addParam(workspaceIds);
+    clauses.push(`COALESCE(i.context->'runtime'->'access'->>'workspace_id', 'default') = ANY(${param}::text[])`);
+  }
+
+  if (actor.roles.includes('workflow_owner') && actor.owned_workflow_ids.length > 0) {
+    const param = addParam(actor.owned_workflow_ids);
+    clauses.push(`i.process_definition_id::text = ANY(${param}::text[])`);
+  }
+
+  if (actorId && actor.roles.includes('requester')) {
+    const param = addParam(actorId);
+    clauses.push(`i.context->'runtime'->'access'->>'requester_id' = ${param}`);
+  }
+
+  if (actorId && actor.roles.includes('approver')) {
+    const param = addParam(actorId);
+    clauses.push(`COALESCE(i.context->'runtime'->'access'->'approver_ids', '[]'::jsonb) ? ${param}`);
+  }
+
+  if (actor.roles.includes('api_client')) {
+    if (actorId) {
+      const param = addParam(actorId);
+      clauses.push(`i.context->'runtime'->'access'->>'client_id' = ${param}`);
+    }
+    if (actor.allowed_instance_ids.length > 0) {
+      const param = addParam(actor.allowed_instance_ids);
+      clauses.push(`i.id::text = ANY(${param}::text[])`);
+    }
+    if (actor.allowed_workflow_ids.length > 0) {
+      const param = addParam(actor.allowed_workflow_ids);
+      clauses.push(`i.process_definition_id::text = ANY(${param}::text[])`);
+    }
+  }
+
+  return clauses.length > 0
+    ? { where: `WHERE ${clauses.map((clause) => `(${clause})`).join(' OR ')}`, params }
+    : { where: 'WHERE false', params: [] };
 }

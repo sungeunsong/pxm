@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Search, Eye, Filter, CheckCircle2, AlertTriangle, PlayCircle, Clock, RotateCcw, ShieldAlert } from 'lucide-react';
+import { Search, Eye, Filter, CheckCircle2, AlertTriangle, PlayCircle, Clock, RotateCcw, ShieldAlert, StopCircle } from 'lucide-react';
 import './InstanceTracker.css';
 
 interface Instance {
@@ -11,6 +11,8 @@ interface Instance {
   updated_at: string;
   retry_source_instance_id?: string | null;
   retry_mode?: string | null;
+  workflow_call_parent_instance_id?: string | null;
+  workflow_call_child_instance_ids?: string[];
 }
 
 interface InstanceTrackerProps {
@@ -57,6 +59,7 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
   const [loading, setLoading] = useState(false);
   const [filterState, setFilterState] = useState<string>('ALL');
   const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [terminatingId, setTerminatingId] = useState<string | null>(null);
   const [previewLoadingId, setPreviewLoadingId] = useState<string | null>(null);
   const [retryPreview, setRetryPreview] = useState<RetryPreview | null>(null);
 
@@ -82,6 +85,11 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
             row.ctx?.runtime?.retry?.source_instance_id ||
             null,
           retry_mode: row.context?.runtime?.retry?.mode || row.ctx?.runtime?.retry?.mode || null,
+          workflow_call_parent_instance_id:
+            row.context?.runtime?.parent_instance_id ||
+            row.ctx?.runtime?.parent_instance_id ||
+            null,
+          workflow_call_child_instance_ids: extractWorkflowCallChildInstanceIds(row.context || row.ctx || {}),
         })),
       );
     } catch (error) {
@@ -114,6 +122,12 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
   const retriesBySource = instances.reduce<Record<string, Instance[]>>((acc, inst) => {
     if (inst.retry_source_instance_id) {
       acc[inst.retry_source_instance_id] = [...(acc[inst.retry_source_instance_id] || []), inst];
+    }
+    return acc;
+  }, {});
+  const workflowChildrenByParent = instances.reduce<Record<string, Instance[]>>((acc, inst) => {
+    if (inst.workflow_call_parent_instance_id) {
+      acc[inst.workflow_call_parent_instance_id] = [...(acc[inst.workflow_call_parent_instance_id] || []), inst];
     }
     return acc;
   }, {});
@@ -156,6 +170,27 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
       alert(error instanceof Error ? error.message : '재시도 요청에 실패했습니다.');
     } finally {
       setRetryingId(null);
+    }
+  };
+
+  const terminateInstance = async (instanceId: string) => {
+    if (!confirm('이 실행과 연결된 대기 중인 자식 실행을 종료하시겠습니까?')) {
+      return;
+    }
+    setTerminatingId(instanceId);
+    try {
+      const response = await fetch(`/api/instances/${instanceId}/terminate`, {
+        method: 'POST',
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(payload?.message || `terminate api failed: ${response.status}`);
+      }
+      await fetchInstances();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : '실행 종료 요청에 실패했습니다.');
+    } finally {
+      setTerminatingId(null);
     }
   };
 
@@ -235,6 +270,16 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
                           후속 재시도 {retriesBySource[inst.id].length}건 · 최근 {retriesBySource[inst.id][0].state}
                         </div>
                       )}
+                      {inst.workflow_call_parent_instance_id && (
+                        <div className="retry-lineage retry-lineage-child">
+                          자식 실행 · 부모 {shortId(inst.workflow_call_parent_instance_id)}
+                        </div>
+                      )}
+                      {(workflowChildrenByParent[inst.id]?.length > 0 || (inst.workflow_call_child_instance_ids || []).length > 0) && (
+                        <div className="retry-lineage retry-lineage-parent">
+                          호출 자식 {Math.max(workflowChildrenByParent[inst.id]?.length || 0, inst.workflow_call_child_instance_ids?.length || 0)}건
+                        </div>
+                      )}
                     </td>
                     <td className="inst-status-cell">
                       <div className={`status-badge-wrapper ${inst.state.toLowerCase()}`}>
@@ -261,6 +306,16 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
                           {retryingId === inst.id || previewLoadingId === inst.id ? '확인 중' : '전체 재시도'}
                         </button>
                       )}
+                      {['CREATED', 'RUNNING', 'WAITING'].includes(inst.state.toUpperCase()) && (
+                        <button
+                          className="btn-lineage-instance"
+                          onClick={() => terminateInstance(inst.id)}
+                          disabled={terminatingId === inst.id}
+                        >
+                          <StopCircle size={12} />
+                          {terminatingId === inst.id ? '종료 중' : '종료'}
+                        </button>
+                      )}
                       {inst.state.toUpperCase() === 'FAILED' && (
                         <button
                           className="btn-retry-node"
@@ -285,6 +340,22 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
                           onClick={() => onSelectInstance?.(retriesBySource[inst.id][0].id)}
                         >
                           최근 재시도
+                        </button>
+                      )}
+                      {inst.workflow_call_parent_instance_id && (
+                        <button
+                          className="btn-lineage-instance"
+                          onClick={() => onSelectInstance?.(inst.workflow_call_parent_instance_id!)}
+                        >
+                          부모 추적
+                        </button>
+                      )}
+                      {(workflowChildrenByParent[inst.id]?.[0] || inst.workflow_call_child_instance_ids?.[0]) && (
+                        <button
+                          className="btn-lineage-instance"
+                          onClick={() => onSelectInstance?.(workflowChildrenByParent[inst.id]?.[0]?.id || inst.workflow_call_child_instance_ids![0])}
+                        >
+                          자식 추적
                         </button>
                       )}
                     </td>
@@ -385,4 +456,30 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
 
 function shortId(id: string) {
   return `${id.slice(0, 8)}...`;
+}
+
+function extractWorkflowCallChildInstanceIds(context: any): string[] {
+  const outputs = context?.data?.outputs || context?.outputs || {};
+  const ids = new Set<string>();
+
+  const visit = (value: unknown) => {
+    if (!value || typeof value !== 'object') {
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+
+    const record = value as Record<string, unknown>;
+    const childId = record.child_instance_id;
+    if (typeof childId === 'string' && childId.trim()) {
+      ids.add(childId);
+    }
+    Object.values(record).forEach(visit);
+  };
+
+  visit(outputs.workflowCalls);
+  visit(outputs.workflow_calls);
+  return [...ids];
 }

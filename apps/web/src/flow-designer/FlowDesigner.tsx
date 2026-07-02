@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useRef } from 'react';
 import type { Node } from 'reactflow';
 import type { Edge } from 'reactflow';
-import { Braces, CheckSquare, CircleCheck, Clock, Diamond, Inbox, PanelRightClose, PanelRightOpen, Play, Search, Star, Workflow } from 'lucide-react';
+import { Braces, CheckSquare, CircleCheck, Clock, Diamond, Inbox, PanelRightClose, PanelRightOpen, Play, Search, Star, Terminal, Workflow } from 'lucide-react';
 import { Button } from '../components/Button';
 import { Header } from '../components/Header';
 import { Input } from '../components/Input';
@@ -585,7 +585,10 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
               <div className="palette-nodes">
                 <div className="palette-node" draggable onDragStart={(e) => onDragStart(e, 'start', 'Start')}>
                   <div className="palette-node-icon" style={{ background: 'var(--node-start)' }}><Play size={16} fill="currentColor" /></div>
-                  <span className="palette-node-label">Start</span>
+                  <div className="palette-node-text">
+                    <span className="palette-node-label">Start</span>
+                    <span className="palette-node-caption">Manual · Schedule · DB Watch</span>
+                  </div>
                 </div>
                 <div className="palette-node" draggable onDragStart={(e) => onDragStart(e, 'timer', 'Timer')}>
                   <div className="palette-node-icon" style={{ background: 'var(--node-timer)' }}><Clock size={16} /></div>
@@ -605,6 +608,22 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
                 >
                   <div className="palette-node-icon" style={{ background: 'var(--node-script)' }}><Braces size={16} /></div>
                   <span className="palette-node-label">JS Node</span>
+                </div>
+                <div
+                  className="palette-node"
+                  draggable
+                  onDragStart={(e) =>
+                    onDragStart(e, 'command', 'Command', {
+                      description: 'Allowlist command 실행',
+                      commandId: 'builtin.echo',
+                      commandArgumentsJson: '{\n  "message": "hello from command node"\n}',
+                      outputPath: 'commandResults.echo',
+                      commandTimeoutMs: 1000,
+                    })
+                  }
+                >
+                  <div className="palette-node-icon" style={{ background: 'var(--node-command)' }}><Terminal size={16} /></div>
+                  <span className="palette-node-label">Command</span>
                 </div>
                 <div className="palette-node" draggable onDragStart={(e) => onDragStart(e, 'gateway', 'Gateway')}>
                   <div className="palette-node-icon" style={{ background: 'var(--node-gateway)' }}><Diamond size={16} fill="currentColor" /></div>

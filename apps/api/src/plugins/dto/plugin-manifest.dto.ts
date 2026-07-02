@@ -48,5 +48,6 @@ export interface PluginManifestDto {
   signature?: string;
   isolation_policy?: PluginIsolationPolicy;
   resource_limits?: PluginResourceLimits;
+  manifest_source?: 'file' | 'registry';
   tags?: string[];
 }

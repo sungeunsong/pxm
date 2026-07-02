@@ -6,8 +6,11 @@ import {
   Search, 
   Inbox, 
   FileText, 
+  FileJson,
   Bell,
   KeyRound,
+  Plug,
+  Terminal,
   HelpCircle
 } from 'lucide-react';
 import { DashboardPage } from './dashboard/DashboardPage';
@@ -16,10 +19,13 @@ import { RequestPortal } from './request-portal/RequestPortal';
 import { InstanceTracker } from './instance-tracker/InstanceTracker';
 import { InboxPage } from './inbox/InboxPage';
 import { CredentialsPage } from './credentials/CredentialsPage';
+import { CommandRegistryPage } from './commands/CommandRegistryPage';
+import { PluginControlPage } from './plugins/PluginControlPage';
+import { PluginRegistryPage } from './plugins/PluginRegistryPage';
 import './App.css';
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'designer' | 'request' | 'tracker' | 'inbox' | 'credentials'>('inbox'); // 디폴트로 사용자가 원한 inbox를 켜둠
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'designer' | 'request' | 'tracker' | 'inbox' | 'credentials' | 'commands' | 'plugins' | 'pluginRegistry'>('inbox'); // 디폴트로 사용자가 원한 inbox를 켜둠
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
 
   // 실행 트래커에서 인스턴스를 선택해 실시간 모니터링을 시도할 때
@@ -92,6 +98,30 @@ function App() {
             <KeyRound size={16} />
             <span>Credential Store</span>
           </button>
+
+          <button
+            className={`sidebar-menu-item ${activeTab === 'commands' ? 'active' : ''}`}
+            onClick={() => setActiveTab('commands')}
+          >
+            <Terminal size={16} />
+            <span>Command Registry</span>
+          </button>
+
+          <button
+            className={`sidebar-menu-item ${activeTab === 'plugins' ? 'active' : ''}`}
+            onClick={() => setActiveTab('plugins')}
+          >
+            <Plug size={16} />
+            <span>Plugin Control</span>
+          </button>
+
+          <button
+            className={`sidebar-menu-item ${activeTab === 'pluginRegistry' ? 'active' : ''}`}
+            onClick={() => setActiveTab('pluginRegistry')}
+          >
+            <FileJson size={16} />
+            <span>Plugin Registry</span>
+          </button>
           
           <button className="sidebar-menu-item disabled">
             <FileText size={16} />
@@ -125,6 +155,9 @@ function App() {
               {activeTab === 'tracker' && "운영자 / 모니터링 담당 상세 화면 구성"}
               {activeTab === 'inbox' && "내 결재함"}
               {activeTab === 'credentials' && "Credential Store 관리"}
+              {activeTab === 'commands' && "Command Registry 관리"}
+              {activeTab === 'plugins' && "Plugin Control 관리"}
+              {activeTab === 'pluginRegistry' && "Plugin Registry 관리"}
             </h1>
             <p className="header-subtitle">
               {activeTab === 'dashboard' && "전체 워크플로우 실시간 상태 모니터링 및 주요 KPI 요약"}
@@ -133,6 +166,9 @@ function App() {
               {activeTab === 'tracker' && "실행 모니터링, 실패 대응, 재시도/운영 조치 및 로그 분석"}
               {activeTab === 'inbox' && "승인 대기 Task 확인 및 처리"}
               {activeTab === 'credentials' && "외부 연동 secret을 안전하게 관리하고 노드에서는 credential ID만 참조합니다"}
+              {activeTab === 'commands' && "workflow에서 사용할 allowlist command를 최고관리자가 등록하고 통제합니다"}
+              {activeTab === 'plugins' && "Flow Designer에서 사용할 플러그인의 활성 상태와 workspace 정책을 관리합니다"}
+              {activeTab === 'pluginRegistry' && "플러그인 manifest를 등록, 검증, hot reload합니다"}
             </p>
           </div>
 
@@ -155,6 +191,21 @@ function App() {
             {activeTab === 'credentials' && (
               <div className="info-banner-bubble">
                 Secret 원문은 저장 후 다시 노출하지 않으며, 사용 이력은 audit log에 기록됩니다.
+              </div>
+            )}
+            {activeTab === 'commands' && (
+              <div className="info-banner-bubble">
+                Command는 registry에 등록된 executable만 실행되며 실행 이력은 audit log로 남습니다.
+              </div>
+            )}
+            {activeTab === 'plugins' && (
+              <div className="info-banner-bubble">
+                Disabled 플러그인은 디자이너 팔레트와 실행 API에서 사용할 수 없습니다.
+              </div>
+            )}
+            {activeTab === 'pluginRegistry' && (
+              <div className="info-banner-bubble">
+                파일 manifest는 읽기 전용이며, 운영자가 추가한 manifest는 Mongo registry에 저장됩니다.
               </div>
             )}
             
@@ -211,6 +262,12 @@ function App() {
           )}
 
           {activeTab === 'credentials' && <CredentialsPage />}
+
+          {activeTab === 'commands' && <CommandRegistryPage />}
+
+          {activeTab === 'plugins' && <PluginControlPage />}
+
+          {activeTab === 'pluginRegistry' && <PluginRegistryPage />}
         </main>
       </div>
     </div>

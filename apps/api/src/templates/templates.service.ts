@@ -1,23 +1,26 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import {
   CreateTemplateDto,
   UpdateTemplateDto,
   TemplateResponseDto,
   WorkflowExportDocument,
 } from './dto/template.dto';
-import { WorkflowDefinitionMetadata, WorkflowRepositoryPort } from '../db/ports/db.ports';
+import { WorkflowDefinitionMetadata, WorkflowDefinitionVersion, WorkflowRepositoryPort } from '../db/ports/db.ports';
 import { randomUUID } from 'crypto';
 import { SchedulesService } from '../schedules/schedules.service';
+import { DbWatchService } from '../db-watch/db-watch.service';
 
 @Injectable()
 export class TemplatesService {
   constructor(
     private readonly workflowRepo: WorkflowRepositoryPort,
     private readonly schedulesService: SchedulesService,
+    private readonly dbWatchService: DbWatchService,
   ) {}
 
   async create(dto: CreateTemplateDto): Promise<TemplateResponseDto> {
     const id = randomUUID();
+    await this.assertNoWorkflowCallCycle(id, dto.nodes || []);
     await this.workflowRepo.createDefinition(
       id,
       dto.name,
@@ -26,6 +29,7 @@ export class TemplatesService {
       this.normalizeMetadata(dto),
     );
     await this.schedulesService.syncDefinitionSchedules(id, dto.name, dto.nodes || []);
+    await this.dbWatchService.syncDefinitionWatchJobs(id, dto.name, dto.nodes || []);
     const result = await this.workflowRepo.getDefinition(id);
     return this.mapToDto(result);
   }
@@ -60,8 +64,10 @@ export class TemplatesService {
       version_note: dto.version_note !== undefined ? dto.version_note : current.version_note,
     });
 
+    await this.assertNoWorkflowCallCycle(id, updatedNodes || []);
     await this.workflowRepo.createDefinition(id, updatedName, updatedNodes, updatedEdges, updatedMetadata);
     await this.schedulesService.syncDefinitionSchedules(id, updatedName, updatedNodes || []);
+    await this.dbWatchService.syncDefinitionWatchJobs(id, updatedName, updatedNodes || []);
     const result = await this.workflowRepo.getDefinition(id);
     return result ? this.mapToDto(result) : null;
   }
@@ -115,6 +121,50 @@ export class TemplatesService {
     });
   }
 
+  async listVersions(id: string): Promise<WorkflowDefinitionVersion[] | null> {
+    const current = await this.workflowRepo.getDefinition(id);
+    if (!current) return null;
+    return this.workflowRepo.listDefinitionVersions(id);
+  }
+
+  async getVersion(id: string, version: number): Promise<TemplateResponseDto | null> {
+    const result = await this.workflowRepo.getDefinitionVersion(id, version);
+    return result ? this.mapToDto(result) : null;
+  }
+
+  async diffVersions(id: string, fromVersion: number, toVersion?: number): Promise<WorkflowVersionDiffResponse | null> {
+    const from = await this.workflowRepo.getDefinitionVersion(id, fromVersion);
+    const to = toVersion
+      ? await this.workflowRepo.getDefinitionVersion(id, toVersion)
+      : await this.workflowRepo.getDefinition(id);
+
+    if (!from || !to) return null;
+
+    const before = comparableWorkflow(from);
+    const after = comparableWorkflow(to);
+    return {
+      definition_id: id,
+      from_version: from.version,
+      to_version: to.version || null,
+      from: summarizeVersion(from),
+      to: summarizeVersion(to),
+      changes: diffValues(before, after),
+    };
+  }
+
+  async rollback(id: string, version: number): Promise<TemplateResponseDto | null> {
+    const snapshot = await this.workflowRepo.getDefinitionVersion(id, version);
+    if (!snapshot) return null;
+
+    await this.assertNoWorkflowCallCycle(id, snapshot.nodes || []);
+    const restored = await this.workflowRepo.restoreDefinitionVersion(id, version);
+    if (!restored) return null;
+
+    await this.schedulesService.syncDefinitionSchedules(id, restored.name, restored.nodes || []);
+    await this.dbWatchService.syncDefinitionWatchJobs(id, restored.name, restored.nodes || []);
+    return this.mapToDto(restored);
+  }
+
   private mapToDto(row: any): TemplateResponseDto {
     const metadata = this.normalizeMetadata({
       ...(row.metadata || {}),
@@ -154,6 +204,155 @@ export class TemplatesService {
       version_note: typeof input?.version_note === 'string' ? input.version_note : '',
     };
   }
+
+  private async assertNoWorkflowCallCycle(definitionId: string, nodes: any[]): Promise<void> {
+    const graph = new Map<string, string[]>();
+    const definitions = await this.workflowRepo.listDefinitions();
+
+    for (const definition of definitions) {
+      const fullDefinition = await this.workflowRepo.getDefinition(definition.id);
+      if (!fullDefinition?.id) {
+        continue;
+      }
+      graph.set(fullDefinition.id, extractWorkflowCallTargets(fullDefinition.nodes || []));
+    }
+
+    graph.set(definitionId, extractWorkflowCallTargets(nodes || []));
+
+    const visited = new Set<string>();
+    const path: string[] = [];
+    const findCycle = (currentId: string): string[] | null => {
+      if (path.includes(currentId)) {
+        return [...path.slice(path.indexOf(currentId)), currentId];
+      }
+      if (visited.has(currentId)) {
+        return null;
+      }
+      visited.add(currentId);
+      path.push(currentId);
+      for (const targetId of graph.get(currentId) || []) {
+        if (!graph.has(targetId)) {
+          continue;
+        }
+        const cycle = findCycle(targetId);
+        if (cycle) {
+          return cycle;
+        }
+      }
+      path.pop();
+      return null;
+    };
+
+    const cycle = findCycle(definitionId);
+    if (cycle?.includes(definitionId)) {
+      throw new BadRequestException(`Workflow call cycle detected: ${cycle.join(' -> ')}`);
+    }
+  }
+}
+
+export type WorkflowVersionDiffResponse = {
+  definition_id: string;
+  from_version: number;
+  to_version: number | null;
+  from: WorkflowVersionSummary;
+  to: WorkflowVersionSummary;
+  changes: WorkflowVersionChange[];
+};
+
+type WorkflowVersionSummary = {
+  version: number;
+  name: string;
+  version_note?: string;
+  node_count: number;
+  edge_count: number;
+  created_at?: string;
+  updated_at?: string;
+};
+
+type WorkflowVersionChange = {
+  path: string;
+  type: 'added' | 'removed' | 'changed';
+  before?: any;
+  after?: any;
+};
+
+function comparableWorkflow(definition: any) {
+  return sortObjectKeys({
+    name: definition.name,
+    metadata: {
+      description: definition.description || definition.metadata?.description || '',
+      group: definition.group || definition.metadata?.group || '',
+      tags: definition.tags || definition.metadata?.tags || [],
+      version_note: definition.version_note || definition.metadata?.version_note || '',
+    },
+    nodes: (definition.nodes || []).map(normalizeGraphItem).sort(compareById),
+    edges: (definition.edges || []).map(normalizeGraphItem).sort(compareById),
+  });
+}
+
+function summarizeVersion(definition: any): WorkflowVersionSummary {
+  return {
+    version: definition.version || 1,
+    name: definition.name,
+    version_note: definition.version_note || definition.metadata?.version_note || '',
+    node_count: Array.isArray(definition.nodes) ? definition.nodes.length : 0,
+    edge_count: Array.isArray(definition.edges) ? definition.edges.length : 0,
+    created_at: definition.created_at,
+    updated_at: definition.updated_at,
+  };
+}
+
+function normalizeGraphItem(item: any) {
+  return sortObjectKeys(item || {});
+}
+
+function compareById(a: any, b: any) {
+  return String(a?.id || a?.source || '').localeCompare(String(b?.id || b?.source || ''));
+}
+
+function diffValues(before: any, after: any, path = ''): WorkflowVersionChange[] {
+  if (JSON.stringify(before) === JSON.stringify(after)) {
+    return [];
+  }
+
+  if (!isPlainObject(before) || !isPlainObject(after)) {
+    return [{ path: path || '$', type: 'changed', before, after }];
+  }
+
+  const changes: WorkflowVersionChange[] = [];
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  for (const key of [...keys].sort()) {
+    const childPath = path ? `${path}.${key}` : key;
+    if (!(key in before)) {
+      changes.push({ path: childPath, type: 'added', after: after[key] });
+      continue;
+    }
+    if (!(key in after)) {
+      changes.push({ path: childPath, type: 'removed', before: before[key] });
+      continue;
+    }
+    changes.push(...diffValues(before[key], after[key], childPath));
+  }
+  return changes;
+}
+
+function sortObjectKeys(value: any): any {
+  if (Array.isArray(value)) {
+    return value.map(sortObjectKeys);
+  }
+  if (!isPlainObject(value)) {
+    return value;
+  }
+  return Object.keys(value)
+    .sort()
+    .reduce<Record<string, any>>((acc, key) => {
+      acc[key] = sortObjectKeys(value[key]);
+      return acc;
+    }, {});
+}
+
+function isPlainObject(value: any): value is Record<string, any> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
 const SECRET_KEY_PATTERN = /(password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|connection_uri|authorization|credential)/i;
@@ -213,6 +412,14 @@ function extractPluginDependencies(nodes: any[]) {
   }
 
   return [...dependencies.values()];
+}
+
+function extractWorkflowCallTargets(nodes: any[]): string[] {
+  return (nodes || [])
+    .filter((node) => (node?.data?.nodeType || node?.node_type || node?.type) === 'workflow_call')
+    .map((node) => node?.data?.targetWorkflowId || node?.data?.targetDefinitionId || node?.targetWorkflowId)
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .map((value) => value.trim());
 }
 
 function parseWorkflowExportDocument(document: any): WorkflowExportDocument {

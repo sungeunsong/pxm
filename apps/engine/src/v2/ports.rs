@@ -52,6 +52,14 @@ pub trait JobQueuePort: Send + Sync {
         tx: &mut dyn Tx,
     ) -> Result<()>;
 
+    /// 특정 토큰에 남아 있는 대기 job을 완료 처리합니다.
+    async fn complete_queued_jobs_for_token(
+        &self,
+        instance_id: Uuid,
+        token_id: Uuid,
+        tx: &mut dyn Tx,
+    ) -> Result<()>;
+
     /// 고사(Stale) 상태에 빠진 RUNNING 잡을 다시 READY 상태로 회수합니다.
     async fn reclaim_stale_jobs(&self) -> Result<i64>;
 }

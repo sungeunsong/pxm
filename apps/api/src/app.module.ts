@@ -8,6 +8,7 @@ import { PluginsModule } from './plugins/plugins.module';
 import { CredentialsModule } from './credentials/credentials.module';
 import { EngineModule } from './engine/engine.module';
 import { SchedulesModule } from './schedules/schedules.module';
+import { CommandsModule } from './commands/commands.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { SchedulesModule } from './schedules/schedules.module';
     TasksModule,
     PluginsModule,
     CredentialsModule,
+    CommandsModule,
     EngineModule,
     SchedulesModule,
   ],

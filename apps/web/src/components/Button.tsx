@@ -7,7 +7,7 @@ export interface ButtonProps {
   icon?: React.ReactNode;
   iconPosition?: 'left' | 'right';
   children?: React.ReactNode;
-  onClick?: () => void;
+  onClick?: React.MouseEventHandler<HTMLButtonElement>;
   disabled?: boolean;
   className?: string;
   type?: 'button' | 'submit' | 'reset';

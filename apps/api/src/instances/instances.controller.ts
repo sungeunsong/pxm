@@ -2,6 +2,7 @@ import { Body, Controller, Get, NotFoundException, Param, Post, Query, Req, Sse 
 import type { Request } from 'express';
 import { Observable } from 'rxjs';
 import { OutboxService } from '../outbox/outbox.service';
+import { actorFromRequest, instanceAccessFromRequest } from './history-auth';
 import { InstancesService } from './instances.service';
 
 type SseMessage = {
@@ -18,27 +19,27 @@ export class InstancesController {
   ) {}
 
   @Post('/instances')
-  async create(@Body() body: any) {
+  async create(@Body() body: any, @Req() req: Request) {
     // dto를 엄격히 하고 싶으면 CreateInstanceDto로 바꿔도 OK
     return this.instances.createInstance({
       template_id: body?.template_id,
       ctx: body?.ctx,
-    });
+    }, instanceAccessFromRequest(req, body?.ctx?.data?.formData || body?.ctx?.data || body?.ctx));
   }
 
   @Get('/instances')
-  async findAll() {
-    return this.instances.findAll();
+  async findAll(@Req() req: Request) {
+    return this.instances.findAll(actorFromRequest(req));
   }
 
   @Get('/instances/:id')
-  async findOne(@Param('id') id: string) {
-    return this.instances.findOne(id);
+  async findOne(@Param('id') id: string, @Req() req: Request) {
+    return this.instances.findOne(id, actorFromRequest(req));
   }
 
   @Get('/instances/:id/result')
-  async result(@Param('id') id: string) {
-    const result = await this.instances.getResult(id);
+  async result(@Param('id') id: string, @Req() req: Request) {
+    const result = await this.instances.getResult(id, actorFromRequest(req));
     if (!result) {
       throw new NotFoundException('Instance not found');
     }
@@ -49,28 +50,46 @@ export class InstancesController {
   async retryPreview(
     @Param('id') id: string,
     @Query('mode') mode?: 'full_instance' | 'failed_node',
+    @Req() req?: Request,
   ) {
-    return this.instances.previewRetry(id, mode === 'failed_node' ? 'failed_node' : 'full_instance');
+    return this.instances.previewRetry(
+      id,
+      mode === 'failed_node' ? 'failed_node' : 'full_instance',
+      actorFromRequest(req),
+    );
   }
 
   @Post('/instances/:id/retry')
   async retry(
     @Param('id') id: string,
     @Body() body?: { mode?: 'full_instance' | 'failed_node' },
+    @Req() req?: Request,
   ) {
-    return this.instances.retryInstance(id, body?.mode === 'failed_node' ? 'failed_node' : 'full_instance');
+    return this.instances.retryInstance(
+      id,
+      body?.mode === 'failed_node' ? 'failed_node' : 'full_instance',
+      actorFromRequest(req),
+    );
+  }
+
+  @Post('/instances/:id/terminate')
+  async terminate(@Param('id') id: string, @Req() req: Request) {
+    return this.instances.terminateInstance(id, actorFromRequest(req));
   }
 
   @Get('/instances/:id/trace')
-  async trace(@Param('id') id: string) {
+  async trace(@Param('id') id: string, @Req() req: Request) {
+    await this.instances.ensureReadableInstance(id, actorFromRequest(req));
     return this.outbox.fetchTrace(id, 200);
   }
 
   @Sse('/instances/:id/stream')
-  stream(
+  async stream(
     @Param('id') instanceId: string,
     @Req() req: Request,
-  ): Observable<MessageEvent> {
+  ): Promise<Observable<MessageEvent>> {
+    await this.instances.ensureReadableInstance(instanceId, actorFromRequest(req));
+
     // SSE 표준: Last-Event-ID 헤더로 재연결 커서 전달
     const lastEventIdHeader =
       req.header('last-event-id') ?? req.header('Last-Event-ID');

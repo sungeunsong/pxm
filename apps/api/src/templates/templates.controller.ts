@@ -1,9 +1,10 @@
-import { BadRequestException, Body, Controller, Delete, Get, HttpStatus, NotFoundException, Param, Post, Put, Query, Res } from '@nestjs/common';
-import type { Response } from 'express';
+import { BadRequestException, Body, Controller, Delete, Get, HttpStatus, NotFoundException, Param, ParseIntPipe, Post, Put, Query, Req, Res } from '@nestjs/common';
+import type { Request, Response } from 'express';
 import { TemplatesService } from './templates.service';
 import { CreateTemplateDto, UpdateTemplateDto } from './dto/template.dto';
 import { WorkflowInstanceRepositoryPort, WorkflowScheduleRepositoryPort } from '../db/ports/db.ports';
 import { InstancesService } from '../instances/instances.service';
+import { instanceAccessFromRequest } from '../instances/history-auth';
 import { randomUUID } from 'crypto';
 
 @Controller('templates')
@@ -42,6 +43,57 @@ export class TemplatesController {
       throw new NotFoundException('Template not found');
     }
     return document;
+  }
+
+  @Get(':id/versions')
+  async versions(@Param('id') id: string) {
+    const versions = await this.templatesService.listVersions(id);
+    if (!versions) {
+      throw new NotFoundException('Template not found');
+    }
+    return versions;
+  }
+
+  @Get(':id/versions/diff')
+  async versionDiff(
+    @Param('id') id: string,
+    @Query('from', ParseIntPipe) from: number,
+    @Query('to') to?: string,
+  ) {
+    const toVersion = to ? Number.parseInt(to, 10) : undefined;
+    if (to && !Number.isFinite(toVersion)) {
+      throw new BadRequestException('to must be a number');
+    }
+
+    const diff = await this.templatesService.diffVersions(id, from, toVersion);
+    if (!diff) {
+      throw new NotFoundException('Template version not found');
+    }
+    return diff;
+  }
+
+  @Get(':id/versions/:version')
+  async version(
+    @Param('id') id: string,
+    @Param('version', ParseIntPipe) version: number,
+  ) {
+    const template = await this.templatesService.getVersion(id, version);
+    if (!template) {
+      throw new NotFoundException('Template version not found');
+    }
+    return template;
+  }
+
+  @Post(':id/versions/:version/rollback')
+  async rollbackVersion(
+    @Param('id') id: string,
+    @Param('version', ParseIntPipe) version: number,
+  ) {
+    const template = await this.templatesService.rollback(id, version);
+    if (!template) {
+      throw new NotFoundException('Template version not found');
+    }
+    return template;
   }
 
   @Get(':id')
@@ -154,15 +206,17 @@ export class TemplatesController {
   async execute(
     @Param('id') id: string,
     @Body() body?: StartWorkflowRequest,
+    @Req() req?: Request,
     @Res({ passthrough: true }) res?: Response,
   ) {
-    return this.start(id, body, res);
+    return this.start(id, body, req, res);
   }
 
   @Post(':id/start')
   async start(
     @Param('id') id: string,
     @Body() body?: StartWorkflowRequest,
+    @Req() req?: Request,
     @Res({ passthrough: true }) res?: Response,
   ) {
     // 템플릿 조회
@@ -182,6 +236,8 @@ export class TemplatesController {
     }
 
     // ctx 구조: Rust Engine이 기대하는 실행 컨텍스트
+    const formData = body?.input || body?.formData || {};
+    const access = instanceAccessFromRequest(req, formData);
     const ctx = {
       runtime: {
         cursor: startNode.id,
@@ -189,15 +245,16 @@ export class TemplatesController {
         edges: template.edges,
         template_id: template.id,
         template_name: template.name,
+        access,
       },
       data: {
-        formData: body?.input || body?.formData || {},
+        formData,
         outputs: {},
       },
     };
 
     // 1) process_instance 생성
-    await this.instanceRepo.createInstance(instanceId, template.id, 'CREATED', ctx);
+    await this.instanceRepo.createInstance(instanceId, template.id, 'CREATED', ctx, access);
 
     // 2) engine_jobs 생성 (START)
     await this.instanceRepo.createJob({

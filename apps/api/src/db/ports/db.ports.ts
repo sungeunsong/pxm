@@ -8,6 +8,13 @@ export abstract class WorkflowRepositoryPort {
   ): Promise<void>;
   abstract listDefinitions(): Promise<any[]>;
   abstract getDefinition(id: string): Promise<any>;
+  abstract listDefinitionVersions(id: string): Promise<WorkflowDefinitionVersion[]>;
+  abstract getDefinitionVersion(id: string, version: number): Promise<any>;
+  abstract restoreDefinitionVersion(
+    id: string,
+    version: number,
+    metadata?: WorkflowDefinitionMetadata,
+  ): Promise<any>;
 }
 
 export type WorkflowDefinitionMetadata = {
@@ -17,17 +24,51 @@ export type WorkflowDefinitionMetadata = {
   version_note?: string;
 };
 
+export type WorkflowDefinitionVersion = {
+  definition_id: string;
+  version: number;
+  name: string;
+  description?: string;
+  group?: string;
+  tags?: string[];
+  version_note?: string;
+  created_at?: string;
+  updated_at?: string;
+  node_count: number;
+  edge_count: number;
+};
+
+export type WorkflowHistoryActor = {
+  actor_type: 'user' | 'api_client';
+  actor_id: string | null;
+  roles: string[];
+  workspace_ids: string[];
+  owned_workflow_ids: string[];
+  allowed_workflow_ids: string[];
+  allowed_instance_ids: string[];
+};
+
+export type WorkflowInstanceAccess = {
+  workspace_id?: string;
+  requester_id?: string | null;
+  client_id?: string | null;
+  approver_ids?: string[];
+};
+
 export abstract class WorkflowInstanceRepositoryPort {
   abstract createInstance(
     id: string,
     definitionId: string,
     status: string,
     ctx: any,
+    access?: WorkflowInstanceAccess,
   ): Promise<void>;
-  abstract listInstances(): Promise<any[]>;
+  abstract listInstances(actor?: WorkflowHistoryActor): Promise<any[]>;
+  abstract listChildInstances(parentInstanceId: string): Promise<any[]>;
   abstract getInstance(id: string): Promise<any>;
   abstract updateInstanceStatus(id: string, status: string): Promise<void>;
   abstract updateInstanceCtx(id: string, ctx: any): Promise<void>;
+  abstract completeJobsForInstance(id: string): Promise<void>;
   abstract createToken(token: {
     id: string;
     instanceId: string;

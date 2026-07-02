@@ -1,10 +1,16 @@
 use anyhow::Result;
 use chrono::Utc;
-use mongodb::error::{TRANSIENT_TRANSACTION_ERROR, UNKNOWN_TRANSACTION_COMMIT_RESULT};
+use futures_util::TryStreamExt;
+use mongodb::{
+    bson::{doc, Bson, Document},
+    error::{TRANSIENT_TRANSACTION_ERROR, UNKNOWN_TRANSACTION_COMMIT_RESULT},
+    Client,
+};
 use rand::Rng;
 use serde_json::{json, Value};
 use std::io::Write;
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 use crate::v2::ports::{
@@ -284,6 +290,336 @@ process.stdin.on('end', () => {
     }
 }
 
+#[derive(Debug, Clone)]
+struct CommandSpec {
+    executable: String,
+    fixed_args: Vec<String>,
+    arg_order: Vec<String>,
+    timeout_ms: u64,
+    max_stdout_bytes: usize,
+    max_stderr_bytes: usize,
+    working_dir: Option<String>,
+}
+
+async fn execute_command_node(node: &NodeDef, context: &Value) -> Result<Value> {
+    let command_id = node
+        .config
+        .get("commandId")
+        .or_else(|| node.config.get("command_id"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("Command node requires command_id"))?;
+
+    let registry = command_registry().await?;
+    let spec = registry
+        .get(command_id)
+        .ok_or_else(|| anyhow::anyhow!("Command '{}' is not registered in allowlist", command_id))?;
+
+    let timeout_ms = node
+        .config
+        .get("commandTimeoutMs")
+        .or_else(|| node.config.get("timeoutMs"))
+        .or_else(|| node.config.get("timeout"))
+        .and_then(|value| value.as_u64().or_else(|| value.as_str().and_then(|text| text.parse().ok())))
+        .unwrap_or(spec.timeout_ms)
+        .clamp(50, spec.timeout_ms.max(50));
+
+    let args = resolve_command_args(node, context, spec)?;
+    let mut command = Command::new(&spec.executable);
+    command.args(&spec.fixed_args);
+    command.args(&args);
+    command.stdin(Stdio::null());
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+    if let Some(working_dir) = &spec.working_dir {
+        command.current_dir(working_dir);
+    }
+
+    let started_at = Utc::now();
+    let mut child = command.spawn()?;
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    let mut timed_out = false;
+
+    loop {
+        if let Some(_status) = child.try_wait()? {
+            break;
+        }
+        if Instant::now() >= deadline {
+            timed_out = true;
+            let _ = child.kill();
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let output = child.wait_with_output()?;
+    let stdout = truncate_bytes(&output.stdout, spec.max_stdout_bytes);
+    let stderr = truncate_bytes(&output.stderr, spec.max_stderr_bytes);
+    let exit_code = output.status.code();
+    let duration_ms = (Utc::now() - started_at).num_milliseconds().max(0);
+
+    append_command_audit(json!({
+        "ts": Utc::now().to_rfc3339(),
+        "command_id": command_id,
+        "node_id": node.node_id,
+        "executable": spec.executable,
+        "exit_code": exit_code,
+        "timed_out": timed_out,
+        "duration_ms": duration_ms,
+    }));
+
+    let result = json!({
+        "command_id": command_id,
+        "exit_code": exit_code,
+        "success": output.status.success() && !timed_out,
+        "timed_out": timed_out,
+        "duration_ms": duration_ms,
+        "stdout": stdout,
+        "stderr": stderr,
+    });
+
+    if timed_out {
+        anyhow::bail!("Command '{}' timed out after {}ms", command_id, timeout_ms);
+    }
+    if !output.status.success() {
+        anyhow::bail!(
+            "Command '{}' failed with exit_code={:?}: {}",
+            command_id,
+            exit_code,
+            result
+                .get("stderr")
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
+        );
+    }
+
+    Ok(result)
+}
+
+async fn command_registry() -> Result<std::collections::HashMap<String, CommandSpec>> {
+    let mut registry = std::collections::HashMap::new();
+    registry.insert(
+        "builtin.echo".to_string(),
+        CommandSpec {
+            executable: "/usr/bin/printf".to_string(),
+            fixed_args: vec!["%s".to_string()],
+            arg_order: vec!["message".to_string()],
+            timeout_ms: 1000,
+            max_stdout_bytes: 4096,
+            max_stderr_bytes: 4096,
+            working_dir: None,
+        },
+    );
+    registry.insert(
+        "builtin.node_version".to_string(),
+        CommandSpec {
+            executable: "/usr/bin/node".to_string(),
+            fixed_args: vec!["--version".to_string()],
+            arg_order: vec![],
+            timeout_ms: 1000,
+            max_stdout_bytes: 4096,
+            max_stderr_bytes: 4096,
+            working_dir: None,
+        },
+    );
+
+    if let Some(raw) = std::env::var("PXM_COMMAND_REGISTRY_JSON")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+    {
+        registry.extend(parse_command_registry(&raw)?);
+    }
+
+    registry.extend(load_mongo_command_registry().await?);
+    Ok(registry)
+}
+
+async fn load_mongo_command_registry() -> Result<std::collections::HashMap<String, CommandSpec>> {
+    let mongo_url = match std::env::var("MONGODB_URL") {
+        Ok(value) if !value.trim().is_empty() => value,
+        _ => return Ok(std::collections::HashMap::new()),
+    };
+    let db_name = std::env::var("MONGO_DB_NAME").unwrap_or_else(|_| "pxm_db".to_string());
+    let client = Client::with_uri_str(&mongo_url).await?;
+    let collection = client
+        .database(&db_name)
+        .collection::<Document>("command_registry");
+    let mut cursor = collection.find(doc! { "enabled": { "$ne": false } }, None).await?;
+    let mut registry = std::collections::HashMap::new();
+
+    while let Some(doc) = cursor.try_next().await? {
+        let command_id = doc
+            .get_str("command_id")
+            .or_else(|_| doc.get_str("_id"))
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if command_id.is_empty() {
+            continue;
+        }
+        let executable = doc.get_str("executable").unwrap_or("").trim().to_string();
+        if executable.is_empty() {
+            continue;
+        }
+        registry.insert(
+            command_id,
+            CommandSpec {
+                executable,
+                fixed_args: bson_string_array(doc.get("fixed_args")),
+                arg_order: bson_string_array(doc.get("arg_order")),
+                timeout_ms: bson_u64(doc.get("timeout_ms")).unwrap_or(1000).clamp(50, 60_000),
+                max_stdout_bytes: bson_u64(doc.get("max_stdout_bytes"))
+                    .unwrap_or(16_384)
+                    .min(1_048_576) as usize,
+                max_stderr_bytes: bson_u64(doc.get("max_stderr_bytes"))
+                    .unwrap_or(16_384)
+                    .min(1_048_576) as usize,
+                working_dir: doc.get_str("working_dir").ok().map(ToString::to_string),
+            },
+        );
+    }
+
+    Ok(registry)
+}
+
+fn parse_command_registry(raw: &str) -> Result<std::collections::HashMap<String, CommandSpec>> {
+    let value: Value = serde_json::from_str(raw)?;
+    let commands = value
+        .get("commands")
+        .and_then(|value| value.as_object())
+        .or_else(|| value.as_object())
+        .ok_or_else(|| anyhow::anyhow!("PXM_COMMAND_REGISTRY_JSON must be an object"))?;
+
+    let mut registry = std::collections::HashMap::new();
+    for (command_id, spec) in commands {
+        let executable = spec
+            .get("executable")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("Command '{}' requires executable", command_id))?;
+        registry.insert(
+            command_id.clone(),
+            CommandSpec {
+                executable: executable.to_string(),
+                fixed_args: string_array(spec.get("fixed_args").or_else(|| spec.get("fixedArgs"))),
+                arg_order: string_array(spec.get("arg_order").or_else(|| spec.get("argOrder"))),
+                timeout_ms: spec
+                    .get("timeout_ms")
+                    .or_else(|| spec.get("timeoutMs"))
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(1000)
+                    .clamp(50, 60_000),
+                max_stdout_bytes: spec
+                    .get("max_stdout_bytes")
+                    .or_else(|| spec.get("maxStdoutBytes"))
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(16_384)
+                    .min(1_048_576) as usize,
+                max_stderr_bytes: spec
+                    .get("max_stderr_bytes")
+                    .or_else(|| spec.get("maxStderrBytes"))
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(16_384)
+                    .min(1_048_576) as usize,
+                working_dir: spec
+                    .get("working_dir")
+                    .or_else(|| spec.get("workingDir"))
+                    .and_then(|value| value.as_str())
+                    .map(ToString::to_string),
+            },
+        );
+    }
+    Ok(registry)
+}
+
+fn resolve_command_args(node: &NodeDef, context: &Value, spec: &CommandSpec) -> Result<Vec<String>> {
+    let arguments = node
+        .config
+        .get("commandArguments")
+        .or_else(|| node.config.get("arguments"))
+        .cloned()
+        .or_else(|| {
+            node.config
+                .get("commandArgumentsJson")
+                .or_else(|| node.config.get("argumentsJson"))
+                .and_then(|value| value.as_str())
+                .and_then(|raw| serde_json::from_str(raw).ok())
+        })
+        .unwrap_or_else(|| json!({}));
+
+    let mut args = Vec::new();
+    for key in &spec.arg_order {
+        let value = arguments
+            .get(key)
+            .cloned()
+            .or_else(|| get_context_value_at_path(context, key))
+            .unwrap_or(Value::Null);
+        args.push(command_arg_to_string(&value));
+    }
+    Ok(args)
+}
+
+fn command_arg_to_string(value: &Value) -> String {
+    match value {
+        Value::Null => String::new(),
+        Value::String(text) => text.clone(),
+        Value::Bool(flag) => flag.to_string(),
+        Value::Number(number) => number.to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn string_array(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(ToString::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn bson_string_array(value: Option<&Bson>) -> Vec<String> {
+    value
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(ToString::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn bson_u64(value: Option<&Bson>) -> Option<u64> {
+    match value {
+        Some(Bson::Int32(value)) => (*value).try_into().ok(),
+        Some(Bson::Int64(value)) => (*value).try_into().ok(),
+        Some(Bson::Double(value)) if value.is_finite() && *value >= 0.0 => Some(*value as u64),
+        _ => None,
+    }
+}
+
+fn truncate_bytes(bytes: &[u8], limit: usize) -> String {
+    let end = bytes.len().min(limit);
+    String::from_utf8_lossy(&bytes[..end]).to_string()
+}
+
+fn append_command_audit(event: Value) {
+    let path = std::env::var("PXM_COMMAND_AUDIT_LOG")
+        .unwrap_or_else(|_| "../../logs/command-audit.jsonl".to_string());
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "{}", event);
+    }
+}
+
 fn set_context_value_at_path(context: &mut Value, output_path: &str, value: Value) {
     let raw_path = output_path
         .trim()
@@ -459,9 +795,7 @@ fn resolve_workflow_call_input(node: &NodeDef, context: &Value) -> Result<Value>
                 .trim();
             Ok(serde_json::from_str(raw)?)
         }
-        _ => Ok(get_form_data(context)
-            .cloned()
-            .unwrap_or_else(|| json!({}))),
+        _ => Ok(get_form_data(context).cloned().unwrap_or_else(|| json!({}))),
     }
 }
 
@@ -484,6 +818,20 @@ fn workflow_call_mode(node: &NodeDef) -> &str {
         .unwrap_or("async")
 }
 
+fn workflow_call_wait_timeout_sec(node: &NodeDef) -> f64 {
+    node.config
+        .get("workflowWaitTimeoutMs")
+        .or_else(|| node.config.get("waitTimeoutMs"))
+        .and_then(|value| {
+            value
+                .as_f64()
+                .or_else(|| value.as_str().and_then(|text| text.parse::<f64>().ok()))
+        })
+        .unwrap_or(300_000.0)
+        .max(1000.0)
+        / 1000.0
+}
+
 fn workflow_call_depth(context: &Value) -> i64 {
     context
         .get("runtime")
@@ -502,11 +850,7 @@ fn max_workflow_call_depth() -> i64 {
 
 fn parent_workflow_call_context(context: &Value) -> Option<(Uuid, Uuid, String)> {
     let runtime = context.get("runtime")?;
-    if runtime
-        .get("call_mode")
-        .and_then(|value| value.as_str())
-        != Some("wait")
-    {
+    if runtime.get("call_mode").and_then(|value| value.as_str()) != Some("wait") {
         return None;
     }
 
@@ -764,7 +1108,7 @@ fn resolve_approval_assignment(node: &NodeDef, context: &Value) -> (String, Valu
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_approval_assignment, V2RetryPolicy};
+    use super::{execute_command_node, resolve_approval_assignment, V2RetryPolicy};
     use crate::v2::types::NodeDef;
     use serde_json::json;
 
@@ -845,6 +1189,43 @@ mod tests {
         }));
 
         assert_eq!(policy.max_attempts, 0);
+    }
+
+    #[tokio::test]
+    async fn executes_builtin_echo_command_node() {
+        let node = NodeDef {
+            node_id: "cmd".to_string(),
+            node_type: "command".to_string(),
+            config: json!({
+                "commandId": "builtin.echo",
+                "commandArguments": {
+                    "message": "hello"
+                }
+            }),
+        };
+
+        let output = execute_command_node(&node, &json!({}))
+            .await
+            .expect("command should run");
+        assert_eq!(output["success"], true);
+        assert_eq!(output["exit_code"], 0);
+        assert_eq!(output["stdout"], "hello");
+    }
+
+    #[tokio::test]
+    async fn rejects_unregistered_command_node() {
+        let node = NodeDef {
+            node_id: "cmd".to_string(),
+            node_type: "command".to_string(),
+            config: json!({
+                "commandId": "missing.command"
+            }),
+        };
+
+        let error = execute_command_node(&node, &json!({}))
+            .await
+            .expect_err("command must be denied");
+        assert!(error.to_string().contains("not registered"));
     }
 }
 
@@ -1232,6 +1613,14 @@ async fn execute_token_flow(
     tx: &mut dyn Tx,
 ) -> Result<()> {
     while let Some(mut token) = active_tokens.pop() {
+        if token.status == TokenStatus::Consumed || token.status == TokenStatus::Failed {
+            println!(
+                "[v2_engine] skipping token {} at node {} because status is {:?}",
+                token.id, token.node_id, token.status
+            );
+            continue;
+        }
+
         // 노드 명세 조회
         let node = nodes.iter().find(|n| n.node_id == token.node_id);
         let Some(node) = node else {
@@ -1463,26 +1852,26 @@ async fn execute_token_flow(
                                 )
                                 .await?;
 
-	                            ctx.outbox
-	                                .append_event(
-	                                    instance.id,
-	                                    Some(token.id),
-	                                    Some(&token.node_id),
-	                                    "INSTANCE_FAILED",
-	                                    json!({"reason": "task_rejected"}),
-	                                    tx,
-	                                )
-	                                .await?;
-	                            notify_waiting_parent_workflow_call(
-	                                ctx,
-	                                instance,
-	                                "FAILED",
-	                                json!({"reason": "task_rejected"}),
-	                                tx,
-	                            )
-	                            .await?;
-	                            continue;
-	                        }
+                            ctx.outbox
+                                .append_event(
+                                    instance.id,
+                                    Some(token.id),
+                                    Some(&token.node_id),
+                                    "INSTANCE_FAILED",
+                                    json!({"reason": "task_rejected"}),
+                                    tx,
+                                )
+                                .await?;
+                            notify_waiting_parent_workflow_call(
+                                ctx,
+                                instance,
+                                "FAILED",
+                                json!({"reason": "task_rejected"}),
+                                tx,
+                            )
+                            .await?;
+                            continue;
+                        }
 
                         // 승인 시 다음 노드 진행
                         let next_edges: Vec<&EdgeRule> = edges
@@ -1651,6 +2040,49 @@ async fn execute_token_flow(
             "workflow_call" => {
                 if token.status == TokenStatus::Waiting
                     && job_payload
+                        .get("workflow_call_timeout")
+                        .and_then(|value| value.as_bool())
+                        .unwrap_or(false)
+                {
+                    token.status = TokenStatus::Failed;
+                    token.updated_at = Utc::now();
+                    ctx.token_repo.update_tokens(&[token.clone()], tx).await?;
+
+                    instance.state = "FAILED".to_string();
+                    ctx.instance_repo
+                        .update_instance(instance.id, &instance.state, instance.context.clone(), tx)
+                        .await?;
+                    ctx.exec_log
+                        .append_log(
+                            instance.id,
+                            Some(token.id),
+                            Some(&token.node_id),
+                            "NODE_FAILED",
+                            json!({
+                                "reason": "workflow_call_timeout",
+                                "child_instance_id": job_payload.get("child_instance_id").cloned().unwrap_or(Value::Null)
+                            }),
+                            tx,
+                        )
+                        .await?;
+                    ctx.outbox
+                        .append_event(
+                            instance.id,
+                            Some(token.id),
+                            Some(&token.node_id),
+                            "INSTANCE_FAILED",
+                            json!({
+                                "reason": "workflow_call_timeout",
+                                "child_instance_id": job_payload.get("child_instance_id").cloned().unwrap_or(Value::Null)
+                            }),
+                            tx,
+                        )
+                        .await?;
+                    continue;
+                }
+
+                if token.status == TokenStatus::Waiting
+                    && job_payload
                         .get("workflow_call_resume")
                         .and_then(|value| value.as_bool())
                         .unwrap_or(false)
@@ -1667,6 +2099,9 @@ async fn execute_token_flow(
                         .get("child_result")
                         .cloned()
                         .unwrap_or(Value::Null);
+                    ctx.job_queue
+                        .complete_queued_jobs_for_token(instance.id, token.id, tx)
+                        .await?;
 
                     if child_status == "COMPLETED" {
                         let output_path = workflow_call_output_path(node);
@@ -1677,7 +2112,11 @@ async fn execute_token_flow(
                             "call_mode": "wait",
                             "status": "COMPLETED"
                         });
-                        set_context_value_at_path(&mut instance.context, &output_path, output.clone());
+                        set_context_value_at_path(
+                            &mut instance.context,
+                            &output_path,
+                            output.clone(),
+                        );
                         ctx.instance_repo
                             .update_instance(
                                 instance.id,
@@ -1686,16 +2125,16 @@ async fn execute_token_flow(
                                 tx,
                             )
                             .await?;
-	                        ctx.exec_log
-	                            .append_log(
-	                                instance.id,
-	                                Some(token.id),
-	                                Some(&token.node_id),
-	                                "NODE_COMPLETED",
-	                                json!({"output_path": output_path, "output": output.clone()}),
-	                                tx,
-	                            )
-	                            .await?;
+                        ctx.exec_log
+                            .append_log(
+                                instance.id,
+                                Some(token.id),
+                                Some(&token.node_id),
+                                "NODE_COMPLETED",
+                                json!({"output_path": output_path, "output": output.clone()}),
+                                tx,
+                            )
+                            .await?;
 
                         token.status = TokenStatus::Consumed;
                         token.updated_at = Utc::now();
@@ -1877,48 +2316,70 @@ async fn execute_token_flow(
                 }
                 .await;
 
-	                match call_result {
-	                    Ok(output) => {
-	                        let output_path = workflow_call_output_path(node);
-	                        let is_wait_call = output
-	                            .get("call_mode")
-	                            .and_then(|value| value.as_str())
-	                            == Some("wait");
-	                        set_context_value_at_path(&mut instance.context, &output_path, output.clone());
-	                        ctx.instance_repo
-	                            .update_instance(
+                match call_result {
+                    Ok(output) => {
+                        let output_path = workflow_call_output_path(node);
+                        let is_wait_call = output.get("call_mode").and_then(|value| value.as_str())
+                            == Some("wait");
+                        set_context_value_at_path(
+                            &mut instance.context,
+                            &output_path,
+                            output.clone(),
+                        );
+                        ctx.instance_repo
+                            .update_instance(
                                 instance.id,
                                 &instance.state,
                                 instance.context.clone(),
                                 tx,
-	                            )
-	                            .await?;
+                            )
+                            .await?;
 
-	                        ctx.outbox
-	                            .append_event(
-	                                instance.id,
-	                                Some(token.id),
-	                                Some(&token.node_id),
-	                                "WORKFLOW_CALLED",
-	                                output.clone(),
-	                                tx,
-	                            )
-	                            .await?;
+                        ctx.outbox
+                            .append_event(
+                                instance.id,
+                                Some(token.id),
+                                Some(&token.node_id),
+                                "WORKFLOW_CALLED",
+                                output.clone(),
+                                tx,
+                            )
+                            .await?;
 
-	                        if is_wait_call {
-	                            ctx.exec_log
-	                                .append_log(
-	                                    instance.id,
-	                                    Some(token.id),
-	                                    Some(&token.node_id),
-	                                    "NODE_WAITING",
-	                                    json!({"output_path": output_path, "output": output.clone()}),
-	                                    tx,
-	                                )
-	                                .await?;
-	                            token.status = TokenStatus::Waiting;
-	                            token.updated_at = Utc::now();
-	                            ctx.token_repo.update_tokens(&[token.clone()], tx).await?;
+                        if is_wait_call {
+                            let child_instance_id = output
+                                .get("child_instance_id")
+                                .cloned()
+                                .unwrap_or(Value::Null);
+                            ctx.exec_log
+                                .append_log(
+                                    instance.id,
+                                    Some(token.id),
+                                    Some(&token.node_id),
+                                    "NODE_WAITING",
+                                    json!({"output_path": output_path, "output": output.clone()}),
+                                    tx,
+                                )
+                                .await?;
+                            token.status = TokenStatus::Waiting;
+                            token.updated_at = Utc::now();
+                            ctx.token_repo.update_tokens(&[token.clone()], tx).await?;
+                            ctx.job_queue
+                                .enqueue_job(
+                                    instance.id,
+                                    Some(token.id),
+                                    JobType::Resume,
+                                    workflow_call_wait_timeout_sec(node),
+                                    0,
+                                    json!({
+                                        "reason": "workflow_call_timeout",
+                                        "workflow_call_timeout": true,
+                                        "completed_node_id": token.node_id,
+                                        "child_instance_id": child_instance_id
+                                    }),
+                                    tx,
+                                )
+                                .await?;
 
                             instance.state = "WAITING".to_string();
                             ctx.instance_repo
@@ -1943,20 +2404,20 @@ async fn execute_token_flow(
                                     tx,
                                 )
                                 .await?;
-	                            continue;
-	                        }
+                            continue;
+                        }
 
-	                        ctx.exec_log
-	                            .append_log(
-	                                instance.id,
-	                                Some(token.id),
-	                                Some(&token.node_id),
-	                                "NODE_COMPLETED",
-	                                json!({"output_path": output_path, "output": output}),
-	                                tx,
-	                            )
-	                            .await?;
-	                        token.status = TokenStatus::Consumed;
+                        ctx.exec_log
+                            .append_log(
+                                instance.id,
+                                Some(token.id),
+                                Some(&token.node_id),
+                                "NODE_COMPLETED",
+                                json!({"output_path": output_path, "output": output}),
+                                tx,
+                            )
+                            .await?;
+                        token.status = TokenStatus::Consumed;
                         token.updated_at = Utc::now();
                         ctx.token_repo.update_tokens(&[token.clone()], tx).await?;
 
@@ -2007,7 +2468,7 @@ async fn execute_token_flow(
                                 tx,
                             )
                             .await?;
-	                        ctx.outbox
+                        ctx.outbox
 	                            .append_event(
 	                                instance.id,
 	                                Some(token.id),
@@ -2017,17 +2478,17 @@ async fn execute_token_flow(
 	                                tx,
 	                            )
 	                            .await?;
-	                        notify_waiting_parent_workflow_call(
-	                            ctx,
-	                            instance,
-	                            "FAILED",
-	                            json!({"reason": "workflow_call_failed", "detail": err.to_string()}),
-	                            tx,
-	                        )
-	                        .await?;
-	                    }
-	                }
-	            }
+                        notify_waiting_parent_workflow_call(
+                            ctx,
+                            instance,
+                            "FAILED",
+                            json!({"reason": "workflow_call_failed", "detail": err.to_string()}),
+                            tx,
+                        )
+                        .await?;
+                    }
+                }
+            }
 
             "service" => {
                 ctx.exec_log
@@ -2169,27 +2630,27 @@ async fn execute_token_flow(
                                 )
                                 .await?;
 
-	                            ctx.outbox
-	                                .append_event(
-	                                    instance.id,
-	                                    Some(token.id),
-	                                    Some(&token.node_id),
-	                                    "INSTANCE_FAILED",
-	                                    json!({"reason": "service_node_failed_max_retries"}),
-	                                    tx,
-	                                )
-	                                .await?;
-	                            notify_waiting_parent_workflow_call(
-	                                ctx,
-	                                instance,
-	                                "FAILED",
-	                                json!({"reason": "service_node_failed_max_retries"}),
-	                                tx,
-	                            )
-	                            .await?;
-	                        }
-	                    }
-	                }
+                            ctx.outbox
+                                .append_event(
+                                    instance.id,
+                                    Some(token.id),
+                                    Some(&token.node_id),
+                                    "INSTANCE_FAILED",
+                                    json!({"reason": "service_node_failed_max_retries"}),
+                                    tx,
+                                )
+                                .await?;
+                            notify_waiting_parent_workflow_call(
+                                ctx,
+                                instance,
+                                "FAILED",
+                                json!({"reason": "service_node_failed_max_retries"}),
+                                tx,
+                            )
+                            .await?;
+                        }
+                    }
+                }
             }
 
             "script" => {
@@ -2299,27 +2760,170 @@ async fn execute_token_flow(
                             )
                             .await?;
 
-	                        ctx.outbox
-	                            .append_event(
-	                                instance.id,
-	                                Some(token.id),
-	                                Some(&token.node_id),
-	                                "INSTANCE_FAILED",
-	                                json!({"reason": "script_node_failed"}),
-	                                tx,
-	                            )
-	                            .await?;
-	                        notify_waiting_parent_workflow_call(
-	                            ctx,
-	                            instance,
-	                            "FAILED",
-	                            json!({"reason": "script_node_failed"}),
-	                            tx,
-	                        )
-	                        .await?;
-	                    }
-	                }
-	            }
+                        ctx.outbox
+                            .append_event(
+                                instance.id,
+                                Some(token.id),
+                                Some(&token.node_id),
+                                "INSTANCE_FAILED",
+                                json!({"reason": "script_node_failed"}),
+                                tx,
+                            )
+                            .await?;
+                        notify_waiting_parent_workflow_call(
+                            ctx,
+                            instance,
+                            "FAILED",
+                            json!({"reason": "script_node_failed"}),
+                            tx,
+                        )
+                        .await?;
+                    }
+                }
+            }
+
+            "command" => {
+                ctx.exec_log
+                    .append_log(
+                        instance.id,
+                        Some(token.id),
+                        Some(&token.node_id),
+                        "NODE_STARTED",
+                        json!({
+                            "command_id": node
+                                .config
+                                .get("commandId")
+                                .or_else(|| node.config.get("command_id"))
+                                .and_then(|value| value.as_str())
+                                .unwrap_or("")
+                        }),
+                        tx,
+                    )
+                    .await?;
+
+                match execute_command_node(node, &instance.context).await {
+                    Ok(output) => {
+                        let output_path = node
+                            .config
+                            .get("outputPath")
+                            .or_else(|| node.config.get("output_path"))
+                            .and_then(|value| value.as_str())
+                            .filter(|value| !value.trim().is_empty())
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| format!("commandResults.{}", token.node_id));
+
+                        set_context_value_at_path(
+                            &mut instance.context,
+                            &output_path,
+                            output.clone(),
+                        );
+                        ctx.instance_repo
+                            .update_instance(
+                                instance.id,
+                                &instance.state,
+                                instance.context.clone(),
+                                tx,
+                            )
+                            .await?;
+
+                        ctx.exec_log
+                            .append_log(
+                                instance.id,
+                                Some(token.id),
+                                Some(&token.node_id),
+                                "NODE_COMPLETED",
+                                json!({
+                                    "command_id": output.get("command_id").cloned().unwrap_or(Value::Null),
+                                    "output_path": output_path,
+                                    "exit_code": output.get("exit_code").cloned().unwrap_or(Value::Null),
+                                    "timed_out": output.get("timed_out").cloned().unwrap_or(Value::Bool(false)),
+                                    "duration_ms": output.get("duration_ms").cloned().unwrap_or(Value::Null)
+                                }),
+                                tx,
+                            )
+                            .await?;
+
+                        token.status = TokenStatus::Consumed;
+                        token.updated_at = Utc::now();
+                        ctx.token_repo.update_tokens(&[token.clone()], tx).await?;
+
+                        let next_edges: Vec<&EdgeRule> = edges
+                            .iter()
+                            .filter(|e| e.source_node_id == token.node_id)
+                            .collect();
+
+                        for edge in next_edges {
+                            let new_token = V2Token {
+                                id: Uuid::new_v4(),
+                                instance_id: instance.id,
+                                node_id: edge.target_node_id.clone(),
+                                status: TokenStatus::Active,
+                                parent_token_id: Some(token.id),
+                                scope_key: token.scope_key.clone(),
+                                created_at: Utc::now(),
+                                updated_at: Utc::now(),
+                            };
+                            ctx.token_repo
+                                .create_tokens(&[new_token.clone()], tx)
+                                .await?;
+                            active_tokens.push(new_token);
+                        }
+                    }
+                    Err(err) => {
+                        token.status = TokenStatus::Failed;
+                        token.updated_at = Utc::now();
+                        ctx.token_repo.update_tokens(&[token.clone()], tx).await?;
+
+                        instance.state = "FAILED".to_string();
+                        ctx.instance_repo
+                            .update_instance(
+                                instance.id,
+                                &instance.state,
+                                instance.context.clone(),
+                                tx,
+                            )
+                            .await?;
+
+                        ctx.exec_log
+                            .append_log(
+                                instance.id,
+                                Some(token.id),
+                                Some(&token.node_id),
+                                "NODE_FAILED",
+                                json!({
+                                    "command_id": node
+                                        .config
+                                        .get("commandId")
+                                        .or_else(|| node.config.get("command_id"))
+                                        .and_then(|value| value.as_str())
+                                        .unwrap_or(""),
+                                    "reason": err.to_string()
+                                }),
+                                tx,
+                            )
+                            .await?;
+
+                        ctx.outbox
+                            .append_event(
+                                instance.id,
+                                Some(token.id),
+                                Some(&token.node_id),
+                                "INSTANCE_FAILED",
+                                json!({"reason": "command_node_failed"}),
+                                tx,
+                            )
+                            .await?;
+                        notify_waiting_parent_workflow_call(
+                            ctx,
+                            instance,
+                            "FAILED",
+                            json!({"reason": "command_node_failed"}),
+                            tx,
+                        )
+                        .await?;
+                    }
+                }
+            }
 
             "end" => {
                 let result_path = node
@@ -2357,15 +2961,15 @@ async fn execute_token_flow(
                         tx,
                     )
                     .await?;
-	                ctx.exec_log
-	                    .append_log(
-	                        instance.id,
-	                        Some(token.id),
-	                        Some(&token.node_id),
-	                        "NODE_COMPLETED",
-	                        json!({"result_path": result_path, "result": completed_result.clone()}),
-	                        tx,
-	                    )
+                ctx.exec_log
+                    .append_log(
+                        instance.id,
+                        Some(token.id),
+                        Some(&token.node_id),
+                        "NODE_COMPLETED",
+                        json!({"result_path": result_path, "result": completed_result.clone()}),
+                        tx,
+                    )
                     .await?;
 
                 token.status = TokenStatus::Consumed;
@@ -2386,25 +2990,25 @@ async fn execute_token_flow(
                         .update_instance(instance.id, &instance.state, instance.context.clone(), tx)
                         .await?;
 
-	                    ctx.outbox
-	                        .append_event(
-	                            instance.id,
-	                            None,
-	                            None,
-	                            "INSTANCE_COMPLETED",
-	                            json!({"instance_id": instance.id}),
-	                            tx,
-	                        )
-	                        .await?;
-	                    notify_waiting_parent_workflow_call(
-	                        ctx,
-	                        instance,
-	                        "COMPLETED",
-	                        completed_result,
-	                        tx,
-	                    )
-	                    .await?;
-	                }
+                    ctx.outbox
+                        .append_event(
+                            instance.id,
+                            None,
+                            None,
+                            "INSTANCE_COMPLETED",
+                            json!({"instance_id": instance.id}),
+                            tx,
+                        )
+                        .await?;
+                    notify_waiting_parent_workflow_call(
+                        ctx,
+                        instance,
+                        "COMPLETED",
+                        completed_result,
+                        tx,
+                    )
+                    .await?;
+                }
             }
 
             _ => {

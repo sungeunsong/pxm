@@ -111,54 +111,116 @@
   - [x] child instance trace 연결
   - [x] 직접 self-call 차단 및 호출 depth 제한
   - [x] sync/wait 호출 모드
-  - [ ] 고도화: 간접 순환 호출 사전 탐지 (`A -> B -> A`)
-  - [ ] 고도화: wait timeout 정책
-  - [ ] 고도화: parent cancel 시 child cancel propagation
-  - [ ] 고도화: child trace/result 바로가기 UI
-  - [ ] 고도화: wait 모드 실패 후 재시도 UX 정리
+  - [x] 고도화: 간접 순환 호출 사전 탐지 (`A -> B -> A`)
+  - [x] 고도화: wait timeout 정책
+  - [x] 고도화: parent cancel 시 child cancel propagation
+  - [x] 고도화: child trace/result 바로가기 UI
+  - [x] 고도화: wait 모드 실패 후 재시도 UX 정리
 
-- [ ] 이력 API 권한 모델 정리
-  - [ ] admin/operator 조회 범위
-  - [ ] workflow owner 조회 범위
-  - [ ] requester 조회 범위
-  - [ ] approver 조회 범위
-  - [ ] API client 조회 범위
+- [x] 이력 API 권한 구현
+  - [x] admin/operator 조회 범위
+  - [x] workflow owner 조회 범위
+  - [x] requester 조회 범위
+  - [x] approver 조회 범위
+  - [x] API client 조회 범위
 
 ## Phase 3
 
-- [ ] Executable/Command Node
-  - [ ] `command_id` registry 설계
-  - [ ] argument schema 설계
-  - [ ] timeout/stdout/stderr limit
-  - [ ] allowlist 기반 executor
-  - [ ] audit log
-  - [ ] external agent 실행 모델 검토
+- [x] Executable/Command Node local executor
+  - [x] `command_id` registry 설계
+  - [x] argument schema 설계
+  - [x] timeout/stdout/stderr limit
+  - [x] allowlist 기반 executor
+  - [x] audit log
+  - [x] external agent 실행 모델 검토 (`docs/command-node-execution-model.md`)
 
-- [ ] DB Watch Start
-  - [ ] watch 대상 connection 설정
-  - [ ] Mongo Change Stream 검토
-  - [ ] polling fallback 검토
-  - [ ] change event -> workflow input mapping
+- [x] Command Registry 관리
+  - [x] MongoDB command registry 저장소
+  - [x] command registry 관리 API
+  - [x] 최고관리자 관리 화면
+  - [x] Command Node registry dropdown
+  - [x] engine DB registry 로딩
+  - [x] builtin command 노출
 
-- [ ] Plugin control UI
-  - [ ] plugin enable/disable
-  - [ ] version pin
-  - [ ] workspace allowlist
-  - [ ] trusted source 표시
+- [x] DB Watch Start
+  - [x] watch 대상 connection 설정 (same Mongo cluster/database)
+  - [x] polling fallback 구현
+  - [x] change event -> workflow input mapping
+  - [x] Mongo Change Stream 실시간 watch 구현
 
-- [ ] Workflow version diff/rollback
-  - [ ] workflow version history
-  - [ ] JSON diff view
-  - [ ] rollback API
+- [x] Plugin control UI
+  - [x] plugin enable/disable
+  - [x] version pin
+  - [x] workspace allowlist
+  - [x] trusted source 표시
 
-- [ ] External agent 실행 모델
-  - [ ] agent registration
-  - [ ] heartbeat
-  - [ ] command dispatch
-  - [ ] result collection
-  - [ ] network/security model
+- [ ] Plugin Manifest Registry 관리
+  - [x] manifest 등록 API
+  - [x] manifest 수정/삭제 API
+  - [x] manifest validation
+  - [x] plugin manifest hot reload
+  - [x] manifest 관리 UI
+  - [ ] trusted source / signature 검증
+  - [x] Plugin Control UI 연동
+
+## Plugin Runtime / SDK Roadmap
+
+- [ ] Plugin Runtime 상세 설계
+  - [ ] `docs/plugin-sdk-design.md` 작성
+  - [ ] plugin type 정의 (builtin, external_http, sdk_package, agent_executed)
+  - [ ] external_http execution contract 설계
+  - [ ] credential/secret 전달 정책 설계
+  - [ ] timeout/retry/cancel/result schema 정책 설계
+  - [ ] sandbox/security policy 설계
+
+- [ ] Plugin SDK / Package 모델
+  - [ ] plugin developer guide 작성
+  - [ ] package 구조 정의
+  - [ ] manifest schema 확정
+  - [ ] execute/test context contract 설계
+  - [ ] local validate/test/pack CLI 설계
+  - [ ] bundle upload/private registry 전략 설계
+
+- [x] Workflow version diff/rollback
+  - [x] workflow version history
+  - [x] JSON diff view
+  - [x] rollback API
+
+## PXM Agent Roadmap
+
+- [ ] Agent 상세 설계
+  - [ ] `docs/pxm-agent-architecture.md` 작성
+  - [ ] 네트워크 모델 결정 (outbound polling / long polling / push 배제 여부)
+  - [ ] 인증/등록 모델 결정 (registration token, agent_id, token rotation, revocation)
+  - [ ] capability/권한 모델 결정 (workspace, command, plugin, secret scope)
+  - [ ] job dispatch/result protocol 설계
+  - [ ] audit/security model 설계
+  - [ ] MVP 구현 범위 확정
+
+- [ ] Agent PoC
+  - [ ] agent registration API
+  - [ ] heartbeat API
+  - [ ] outbound job polling
+  - [ ] command dispatch PoC
+  - [ ] result collection PoC
+
+- [ ] Agent MVP
+  - [ ] agent group / workspace binding
+  - [ ] command/plugin capability matching
+  - [ ] timeout/retry/cancel
+  - [ ] stdout/stderr/resource limit
+  - [ ] admin UI
+
+- [ ] Agent 운영화
+  - [ ] mTLS 또는 강화된 token rotation
+  - [ ] binary signing / upgrade strategy
+  - [ ] proxy/offline/reconnect 지원
+  - [ ] HA / load balancing
+  - [ ] metrics / alerting
+  - [ ] artifact / 대용량 결과 처리
 
 ## Next Recommended Work
 
-1. Phase 2의 이력 API 권한 모델을 정리한다.
-2. 운영 전 실제 목표 부하 기준으로 engine worker 수와 Mongo write capacity를 재검증한다.
+1. 운영 전 실제 목표 부하 기준으로 engine worker 수와 Mongo write capacity를 재검증한다.
+2. 회의 시연 전 `docs/bpm-platform-demo-guide.md` 기준으로 demo workflow와 sample data를 준비한다.
+3. PXM Agent는 별도 로드맵으로 상세 설계부터 진행한다.

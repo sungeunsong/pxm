@@ -31,6 +31,14 @@ export interface PluginManifest {
     max_attempts?: number;
     backoff_ms?: number;
   };
+  enabled?: boolean;
+  trusted_source?: string;
+  trusted?: boolean;
+  available_versions?: string[];
+  pinned_version?: string;
+  workspace_ids?: string[];
+  manifest_source?: 'file' | 'registry';
+  editable?: boolean;
   tags?: string[];
 }
 
@@ -73,4 +81,85 @@ export const pluginsApi = {
     }
     return payload;
   },
+
+  async controlList(): Promise<PluginManifest[]> {
+    const response = await fetch('/api/plugins/control', {
+      headers: adminHeaders(),
+    });
+    if (!response.ok) {
+      throw new Error(`plugin control api failed: ${response.status}`);
+    }
+    return response.json();
+  },
+
+  async updateControl(
+    pluginId: string,
+    payload: {
+      enabled?: boolean;
+      pinned_version?: string | null;
+      workspace_ids?: string[];
+      trusted_source?: string | null;
+    },
+  ): Promise<PluginManifest> {
+    const response = await fetch(`/api/plugins/${encodeURIComponent(pluginId)}/control`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        ...adminHeaders(),
+      },
+      body: JSON.stringify(payload),
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(body?.message || `plugin control update failed: ${response.status}`);
+    }
+    return body;
+  },
+
+  async registryList(): Promise<PluginManifest[]> {
+    const response = await fetch('/api/plugins/registry', {
+      headers: adminHeaders(),
+    });
+    if (!response.ok) {
+      throw new Error(`plugin registry api failed: ${response.status}`);
+    }
+    return response.json();
+  },
+
+  async saveRegistryManifest(manifest: Record<string, unknown>): Promise<PluginManifest> {
+    const response = await fetch('/api/plugins/registry', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...adminHeaders(),
+      },
+      body: JSON.stringify(manifest),
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(body?.message || `plugin registry save failed: ${response.status}`);
+    }
+    return body;
+  },
+
+  async deleteRegistryManifest(pluginId: string, version: string): Promise<void> {
+    const response = await fetch(
+      `/api/plugins/registry/${encodeURIComponent(pluginId)}/${encodeURIComponent(version)}`,
+      {
+        method: 'DELETE',
+        headers: adminHeaders(),
+      },
+    );
+    const body = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(body?.message || `plugin registry delete failed: ${response.status}`);
+    }
+  },
 };
+
+function adminHeaders() {
+  return {
+    'x-actor-id': 'admin',
+    'x-actor-roles': 'admin',
+  };
+}

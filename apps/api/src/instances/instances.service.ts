@@ -3,6 +3,8 @@ import { CreateInstanceDto } from './dto/create-instance.dto';
 import { randomUUID } from 'crypto';
 import {
   OutboxRepositoryPort,
+  WorkflowHistoryActor,
+  WorkflowInstanceAccess,
   WorkflowInstanceRepositoryPort,
   WorkflowRepositoryPort,
 } from '../db/ports/db.ports';
@@ -15,10 +17,10 @@ export class InstancesService {
     private readonly outboxRepo: OutboxRepositoryPort,
   ) {}
 
-  async createInstance(dto: CreateInstanceDto) {
+  async createInstance(dto: CreateInstanceDto, access?: WorkflowInstanceAccess) {
     const instanceId = randomUUID();
     const definitionId = dto.template_id ?? randomUUID();
-    const ctx = dto.ctx ?? {};
+    const ctx = withAccess(dto.ctx ?? {}, access);
 
     // 1) V2 process instance 생성
     await this.instanceRepo.createInstance(
@@ -26,6 +28,7 @@ export class InstancesService {
       definitionId,
       'CREATED',
       ctx,
+      access,
     );
 
     // 2) V2 engine job START 생성
@@ -48,16 +51,16 @@ export class InstancesService {
     return { instance_id: instanceId };
   }
 
-  async findAll() {
-    return this.instanceRepo.listInstances();
+  async findAll(actor?: WorkflowHistoryActor) {
+    return this.instanceRepo.listInstances(actor);
   }
 
-  async findOne(id: string) {
-    return this.instanceRepo.getInstance(id);
+  async findOne(id: string, actor?: WorkflowHistoryActor) {
+    return this.getReadableInstance(id, actor);
   }
 
-  async getResult(id: string) {
-    const instance = await this.instanceRepo.getInstance(id);
+  async getResult(id: string, actor?: WorkflowHistoryActor) {
+    const instance = await this.getReadableInstanceOrNull(id, actor);
     if (!instance) {
       return null;
     }
@@ -74,8 +77,50 @@ export class InstancesService {
     };
   }
 
-  async previewRetry(id: string, mode: 'full_instance' | 'failed_node' = 'full_instance') {
-    const analysis = await this.analyzeRetryTarget(id, mode);
+  async terminateInstance(id: string, actor?: WorkflowHistoryActor) {
+    await this.ensureReadableInstance(id, actor);
+    const terminated = await this.terminateInstanceRecursive(id, new Set<string>());
+    return { success: true, instance_id: id, terminated_instances: terminated };
+  }
+
+  private async terminateInstanceRecursive(id: string, visited: Set<string>): Promise<string[]> {
+    if (visited.has(id)) {
+      return [];
+    }
+    visited.add(id);
+
+    const instance = await this.instanceRepo.getInstance(id);
+    if (!instance) {
+      throw new NotFoundException('Instance not found');
+    }
+
+    const terminated: string[] = [];
+    const status = String(instance.state ?? instance.status ?? '').toUpperCase();
+    if (!['COMPLETED', 'FAILED', 'TERMINATED'].includes(status)) {
+      await this.instanceRepo.updateInstanceStatus(id, 'TERMINATED');
+      await this.instanceRepo.completeJobsForInstance(id);
+      await this.outboxRepo.appendEvent(id, 'INSTANCE_TERMINATED', {
+        reason: 'operator_terminated',
+      });
+      terminated.push(id);
+    } else {
+      await this.instanceRepo.completeJobsForInstance(id);
+    }
+
+    const children = await this.instanceRepo.listChildInstances(id);
+    for (const child of children) {
+      terminated.push(...(await this.terminateInstanceRecursive(child.id, visited)));
+    }
+
+    return terminated;
+  }
+
+  async previewRetry(
+    id: string,
+    mode: 'full_instance' | 'failed_node' = 'full_instance',
+    actor?: WorkflowHistoryActor,
+  ) {
+    const analysis = await this.analyzeRetryTarget(id, mode, actor);
     const sideEffectWarnings =
       mode === 'failed_node'
         ? analysis.targetNode
@@ -119,12 +164,16 @@ export class InstancesService {
     };
   }
 
-  async retryInstance(id: string, mode: 'full_instance' | 'failed_node' = 'full_instance') {
+  async retryInstance(
+    id: string,
+    mode: 'full_instance' | 'failed_node' = 'full_instance',
+    actor?: WorkflowHistoryActor,
+  ) {
     if (mode === 'failed_node') {
-      return this.retryFailedNode(id);
+      return this.retryFailedNode(id, actor);
     }
 
-    const source = await this.instanceRepo.getInstance(id);
+    const source = await this.getReadableInstance(id, actor);
     if (!source) {
       throw new NotFoundException('Instance not found');
     }
@@ -171,7 +220,8 @@ export class InstancesService {
       },
     };
 
-    await this.instanceRepo.createInstance(instanceId, definition.id, 'CREATED', ctx);
+    const access = accessFromInstance(source);
+    await this.instanceRepo.createInstance(instanceId, definition.id, 'CREATED', withAccess(ctx, access), access);
     await this.instanceRepo.createJob({
       instanceId,
       type: 'START',
@@ -203,8 +253,8 @@ export class InstancesService {
     };
   }
 
-  private async retryFailedNode(id: string) {
-    const analysis = await this.analyzeRetryTarget(id, 'failed_node');
+  private async retryFailedNode(id: string, actor?: WorkflowHistoryActor) {
+    const analysis = await this.analyzeRetryTarget(id, 'failed_node', actor);
     if (!analysis.canRetry) {
       throw new BadRequestException(analysis.reason || 'Failed-node retry is not available');
     }
@@ -270,11 +320,12 @@ export class InstancesService {
     };
   }
 
-  private async analyzeRetryTarget(id: string, mode: 'full_instance' | 'failed_node') {
-    const instance = await this.instanceRepo.getInstance(id);
-    if (!instance) {
-      throw new NotFoundException('Instance not found');
-    }
+  private async analyzeRetryTarget(
+    id: string,
+    mode: 'full_instance' | 'failed_node',
+    actor?: WorkflowHistoryActor,
+  ) {
+    const instance = await this.getReadableInstance(id, actor);
 
     const status = String(instance.state ?? instance.status ?? '').toUpperCase();
     const definitionId = instance.template_id ?? instance.definition_id ?? instance.process_definition_id;
@@ -339,7 +390,7 @@ export class InstancesService {
 
     const failedNode = (definition.nodes || []).find((node: any) => node.id === failedNodeId);
     const failedNodeType = failedNode?.data?.nodeType || failedNode?.node_type || failedNode?.type || null;
-    const supported = ['service', 'script'].includes(failedNodeType);
+    const supported = ['service', 'script', 'command', 'workflow_call'].includes(failedNodeType);
     return {
       instance,
       definition,
@@ -350,12 +401,94 @@ export class InstancesService {
       reason: failedNode
         ? supported
           ? null
-          : 'Failed-node retry supports service/script nodes only'
+          : 'Failed-node retry supports service/script/command/workflow_call nodes only'
         : 'Failed node is not found in workflow definition',
       targetNode: failedNode || null,
       targetNodeType: failedNodeType,
     };
   }
+
+  async ensureReadableInstance(id: string, actor?: WorkflowHistoryActor): Promise<void> {
+    await this.getReadableInstance(id, actor);
+  }
+
+  private async getReadableInstance(id: string, actor?: WorkflowHistoryActor): Promise<any> {
+    const instance = await this.getReadableInstanceOrNull(id, actor);
+    if (!instance) {
+      throw new NotFoundException('Instance not found');
+    }
+    return instance;
+  }
+
+  private async getReadableInstanceOrNull(id: string, actor?: WorkflowHistoryActor): Promise<any | null> {
+    const instance = await this.instanceRepo.getInstance(id);
+    if (!instance || !canReadInstance(instance, actor)) {
+      return null;
+    }
+    return instance;
+  }
+}
+
+function withAccess(ctx: any, access?: WorkflowInstanceAccess): any {
+  if (!access) {
+    return ctx;
+  }
+  return {
+    ...ctx,
+    runtime: {
+      ...(ctx?.runtime || {}),
+      access,
+    },
+  };
+}
+
+function accessFromInstance(instance: any): WorkflowInstanceAccess {
+  const access = instance.context?.runtime?.access || instance.ctx?.runtime?.access || {};
+  return {
+    workspace_id: instance.workspace_id || access.workspace_id,
+    requester_id: instance.requester_id || access.requester_id || null,
+    client_id: instance.client_id || access.client_id || null,
+    approver_ids: instance.approver_ids || access.approver_ids || [],
+  };
+}
+
+function canReadInstance(instance: any, actor?: WorkflowHistoryActor): boolean {
+  if (!actor) {
+    return true;
+  }
+
+  const roles = new Set(actor.roles || []);
+  if (roles.has('admin')) {
+    return true;
+  }
+
+  const access = accessFromInstance(instance);
+  const workspaceId = access.workspace_id || 'default';
+  const definitionId = String(instance.process_definition_id || instance.definition_id || instance.template_id || '');
+  const instanceId = String(instance.id || instance._id || '');
+  const actorId = actor.actor_id;
+
+  if (roles.has('operator') && actor.workspace_ids.includes(workspaceId)) {
+    return true;
+  }
+  if (roles.has('workflow_owner') && actor.owned_workflow_ids.includes(definitionId)) {
+    return true;
+  }
+  if (actorId && roles.has('requester') && access.requester_id === actorId) {
+    return true;
+  }
+  if (actorId && roles.has('approver') && (access.approver_ids || []).includes(actorId)) {
+    return true;
+  }
+  if (roles.has('api_client')) {
+    return Boolean(
+      (actorId && access.client_id === actorId) ||
+        actor.allowed_instance_ids.includes(instanceId) ||
+        actor.allowed_workflow_ids.includes(definitionId),
+    );
+  }
+
+  return false;
 }
 
 function buildSideEffectWarnings(nodes: any[]) {
@@ -382,6 +515,26 @@ function detectSideEffect(node: any): {
       node_type: nodeType,
       severity: 'low',
       message: 'Script 노드는 외부 호출/쓰기 로직을 포함할 수 있습니다.',
+    };
+  }
+
+  if (nodeType === 'workflow_call') {
+    return {
+      node_id: node.id,
+      node_label: label,
+      node_type: nodeType,
+      severity: 'low',
+      message: 'Workflow Call 노드는 자식 워크플로우 실행을 다시 생성할 수 있습니다.',
+    };
+  }
+
+  if (nodeType === 'command') {
+    return {
+      node_id: node.id,
+      node_label: label,
+      node_type: nodeType,
+      severity: 'high',
+      message: 'Command 노드는 allowlist 명령을 다시 실행할 수 있습니다.',
     };
   }
 

@@ -192,6 +192,27 @@ impl JobQueuePort for PostgresAdapter {
         Ok(())
     }
 
+    async fn complete_queued_jobs_for_token(
+        &self,
+        instance_id: Uuid,
+        token_id: Uuid,
+        tx: &mut dyn Tx,
+    ) -> Result<()> {
+        let sqlx_tx = get_tx_mut(tx)?;
+        sqlx::query(
+            r#"
+            update v2_engine_jobs
+            set status = 'COMPLETED', updated_at = now()
+            where instance_id = $1 and token_id = $2 and status = 'QUEUED'
+            "#,
+        )
+        .bind(instance_id)
+        .bind(token_id)
+        .execute(&mut **sqlx_tx)
+        .await?;
+        Ok(())
+    }
+
     async fn reclaim_stale_jobs(&self) -> Result<i64> {
         let res = sqlx::query(
             r#"

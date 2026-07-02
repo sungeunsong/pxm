@@ -85,6 +85,52 @@ export interface WorkflowExportDocument {
   };
 }
 
+export interface WorkflowTemplateVersion {
+  definition_id: string;
+  version: number;
+  name: string;
+  description?: string;
+  group?: string;
+  tags?: string[];
+  version_note?: string;
+  created_at?: string;
+  updated_at?: string;
+  node_count: number;
+  edge_count: number;
+}
+
+export interface WorkflowVersionChange {
+  path: string;
+  type: 'added' | 'removed' | 'changed';
+  before?: unknown;
+  after?: unknown;
+}
+
+export interface WorkflowVersionDiff {
+  definition_id: string;
+  from_version: number;
+  to_version: number | null;
+  from: {
+    version: number;
+    name: string;
+    version_note?: string;
+    node_count: number;
+    edge_count: number;
+    created_at?: string;
+    updated_at?: string;
+  };
+  to: {
+    version: number;
+    name: string;
+    version_note?: string;
+    node_count: number;
+    edge_count: number;
+    created_at?: string;
+    updated_at?: string;
+  };
+  changes: WorkflowVersionChange[];
+}
+
 const API_BASE_URL = '/api';
 
 export const templatesApi = {
@@ -212,6 +258,44 @@ export const templatesApi = {
 
     if (!response.ok) {
       throw new Error(`Failed to import template: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  async listVersions(id: string): Promise<WorkflowTemplateVersion[]> {
+    const response = await fetch(`${API_BASE_URL}/templates/${id}/versions`);
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch template versions: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  async diffVersions(id: string, from: number, to?: number): Promise<WorkflowVersionDiff> {
+    const params = new URLSearchParams();
+    params.set('from', String(from));
+    if (to) {
+      params.set('to', String(to));
+    }
+
+    const response = await fetch(`${API_BASE_URL}/templates/${id}/versions/diff?${params.toString()}`);
+
+    if (!response.ok) {
+      throw new Error(`Failed to diff template versions: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  async rollbackVersion(id: string, version: number): Promise<WorkflowTemplate> {
+    const response = await fetch(`${API_BASE_URL}/templates/${id}/versions/${version}/rollback`, {
+      method: 'POST',
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to rollback template version: ${response.statusText}`);
     }
 
     return response.json();

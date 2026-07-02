@@ -48,7 +48,7 @@ export interface FormSchema {
 
 // CustomNodeData 확장
 export interface CustomNodeData {
-  nodeType: 'start' | 'service' | 'script' | 'timer' | 'gateway' | 'approval' | 'workflow_call' | 'end';
+  nodeType: 'start' | 'service' | 'script' | 'command' | 'timer' | 'gateway' | 'approval' | 'workflow_call' | 'end';
   label: string;
   description?: string;
   icon?: string;
@@ -59,12 +59,20 @@ export interface CustomNodeData {
   
   // Start 노드 전용
   formSchema?: FormSchema;       // 동적 폼 정의
-  triggerType?: 'manual' | 'api' | 'schedule';
+  triggerType?: 'manual' | 'api' | 'schedule' | 'db_watch';
   scheduleEnabled?: boolean;
   scheduleType?: 'interval' | 'cron';
   intervalSeconds?: number | string;
   cronExpression?: string;
   scheduleInput?: Record<string, any>;
+  dbWatchEnabled?: boolean;
+  dbWatchDatabase?: string;
+  dbWatchCollection?: string;
+  dbWatchOperation?: 'insert' | 'update' | 'upsert';
+  dbWatchMode?: 'polling' | 'change_stream';
+  dbWatchFilter?: Record<string, any>;
+  dbWatchPollIntervalSeconds?: number | string;
+  dbWatchCursorField?: string;
   
   // Service 노드 전용
   url?: string;
@@ -89,6 +97,11 @@ export interface CustomNodeData {
   code?: string;
   outputPath?: string;
   scriptTimeoutMs?: number;
+
+  // Command 노드 전용
+  commandId?: string;
+  commandArgumentsJson?: string;
+  commandTimeoutMs?: number | string;
   
   // Timer 노드 전용
   durationMs?: string;
@@ -107,6 +120,7 @@ export interface CustomNodeData {
   targetWorkflowId?: string;
   targetWorkflowName?: string;
   workflowCallMode?: 'async' | 'wait';
+  workflowWaitTimeoutMs?: number | string;
   workflowInputMode?: 'inherit_form_data' | 'context_path' | 'static_json';
   workflowInputPath?: string;
   workflowInputJson?: string;

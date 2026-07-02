@@ -1,0 +1,204 @@
+.command-registry-page {
+  height: 100%;
+  overflow: auto;
+  padding: 24px;
+  background: #f8fafc;
+}
+
+.command-registry-header,
+.command-panel-header,
+.command-summary-row,
+.command-registry-layout,
+.command-form-grid,
+.command-form-actions {
+  display: flex;
+  gap: 16px;
+}
+
+.command-registry-header {
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.command-registry-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.command-registry-title h2,
+.command-panel-header h3 {
+  margin: 0;
+  color: #0f172a;
+}
+
+.command-registry-header p {
+  margin: 6px 0 0;
+  color: #64748b;
+}
+
+.command-registry-error {
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+  border-radius: 8px;
+}
+
+.command-summary-row {
+  margin-bottom: 18px;
+}
+
+.command-summary-card {
+  flex: 1;
+  padding: 14px 16px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.command-summary-card span {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.command-summary-card strong {
+  color: #0f172a;
+  font-size: 22px;
+}
+
+.command-registry-layout {
+  align-items: flex-start;
+}
+
+.command-panel {
+  flex: 1.2;
+  min-width: 0;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.command-list-panel {
+  flex: 1;
+}
+
+.command-panel-header {
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.command-empty {
+  padding: 18px;
+  color: #64748b;
+  text-align: center;
+}
+
+.command-table {
+  display: grid;
+  gap: 8px;
+}
+
+.command-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.command-row.selected {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+.command-row-main {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.command-name,
+.command-meta {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-name {
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.command-meta {
+  color: #64748b;
+  font-size: 12px;
+  margin-top: 3px;
+}
+
+.command-status {
+  font-size: 11px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  border: 1px solid #cbd5e1;
+}
+
+.command-status.active {
+  color: #047857;
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+}
+
+.command-status.inactive {
+  color: #64748b;
+  background: #f1f5f9;
+}
+
+.command-form {
+  display: grid;
+  gap: 12px;
+}
+
+.command-form-grid {
+  align-items: flex-start;
+}
+
+.command-form-grid > * {
+  flex: 1;
+}
+
+.command-form-group {
+  display: grid;
+  gap: 6px;
+}
+
+.command-form-group label {
+  color: #334155;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.command-form-group textarea {
+  min-height: 112px;
+  resize: vertical;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 10px;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+}
+
+.command-form-actions {
+  justify-content: flex-end;
+}

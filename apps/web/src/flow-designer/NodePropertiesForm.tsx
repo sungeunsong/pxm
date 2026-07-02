@@ -5,6 +5,7 @@ import { Button, Input, Select, Checkbox } from '../components';
 import type { CustomNodeData, FormSchema } from './form-types';
 import type { PluginManifest, PluginJsonSchemaProperty, PluginTestResponse } from '../api/plugins';
 import { credentialsApi, type CredentialProfile } from '../api/credentials';
+import { commandsApi, type CommandRegistryItem } from '../api/commands';
 import { FormSchemaEditor } from './FormSchemaEditor';
 import { PluginIcon } from './plugin-icons';
 import './NodePropertiesForm.css';
@@ -53,6 +54,9 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
   const [workflowOptions, setWorkflowOptions] = React.useState<WorkflowOption[]>([]);
   const [workflowOptionsLoading, setWorkflowOptionsLoading] = React.useState(false);
   const [workflowOptionsError, setWorkflowOptionsError] = React.useState<string | null>(null);
+  const [commandOptions, setCommandOptions] = React.useState<CommandRegistryItem[]>([]);
+  const [commandOptionsLoading, setCommandOptionsLoading] = React.useState(false);
+  const [commandOptionsError, setCommandOptionsError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -115,6 +119,37 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
       .finally(() => {
         if (!cancelled) {
           setWorkflowOptionsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [node.data.nodeType]);
+
+  React.useEffect(() => {
+    if (node.data.nodeType !== 'command') {
+      return;
+    }
+
+    let cancelled = false;
+    setCommandOptionsLoading(true);
+    commandsApi
+      .list(true)
+      .then((items) => {
+        if (!cancelled) {
+          setCommandOptions(items);
+          setCommandOptionsError(null);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setCommandOptionsError(error instanceof Error ? error.message : 'Command 목록을 불러오지 못했습니다.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setCommandOptionsLoading(false);
         }
       });
 
@@ -403,6 +438,79 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
     );
   };
 
+  const renderCommandProperties = () => {
+    const data = node.data as any;
+    const argumentsJson = data.commandArgumentsJson || '{\n  "message": "hello from command node"\n}';
+    const jsonError = validateJsonText(argumentsJson);
+    const selectedCommand = commandOptions.find((command) => command.command_id === data.commandId);
+
+    return (
+      <div className="property-section">
+        <h4 className="property-section-title">Command 실행 설정</h4>
+        <Select
+          label="Command ID"
+          value={data.commandId || ''}
+          onChange={(e) => {
+            const command = commandOptions.find((item) => item.command_id === e.target.value);
+            onUpdate(node.id, {
+              ...data,
+              commandId: e.target.value,
+              commandTimeoutMs: command?.timeout_ms || data.commandTimeoutMs,
+              commandArgumentsJson: data.commandArgumentsJson || buildDefaultCommandArguments(command),
+            });
+          }}
+          options={buildCommandOptions(commandOptions, data.commandId, commandOptionsLoading)}
+          helperText={
+            commandOptionsError ||
+            selectedCommand?.description ||
+            '엔진 allowlist registry에 등록된 command_id만 실행됩니다.'
+          }
+          fullWidth
+        />
+        {!selectedCommand && data.commandId && (
+          <div className="property-helper-text">
+            현재 command_id는 목록에 없습니다. engine registry에 없으면 실행 시 실패합니다.
+          </div>
+        )}
+        <div className="property-group">
+          <label className="property-label">Arguments JSON</label>
+          <textarea
+            className="property-textarea code-textarea"
+            value={argumentsJson}
+            onChange={(e) => onUpdate(node.id, { ...data, commandArgumentsJson: e.target.value })}
+            spellCheck={false}
+          />
+          <div className="property-helper-text">
+            registry의 arg_order에 맞춰 JSON key 값을 인자로 전달합니다.
+          </div>
+          {jsonError && <div className="property-error-text">{jsonError}</div>}
+        </div>
+        <Input
+          label="Output Path"
+          placeholder="commandResults.echo"
+          value={data.outputPath || ''}
+          onChange={(e) => onUpdate(node.id, { ...data, outputPath: e.target.value })}
+          helperText="stdout/stderr/exit_code 실행 결과가 저장될 context path입니다."
+          fullWidth
+        />
+        <Input
+          label="Timeout (ms)"
+          type="number"
+          placeholder="1000"
+          value={data.commandTimeoutMs || ''}
+          onChange={(e) =>
+            onUpdate(node.id, {
+              ...data,
+              commandTimeoutMs: e.target.value === '' ? '' : Number(e.target.value),
+            })
+          }
+          helperText="registry timeout보다 크게 설정해도 registry 상한으로 제한됩니다."
+          fullWidth
+        />
+      </div>
+    );
+  };
+
   // Timer 노드 속성
   const renderTimerProperties = () => {
     const data = node.data as any;
@@ -475,13 +583,18 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
                 scheduleType: data.scheduleType || 'interval',
                 intervalSeconds: data.intervalSeconds || 300,
                 cronExpression: data.cronExpression || '*/5 * * * *',
+                dbWatchMode: data.dbWatchMode || 'polling',
+                dbWatchOperation: data.dbWatchOperation || 'insert',
+                dbWatchPollIntervalSeconds: data.dbWatchPollIntervalSeconds || 10,
+                dbWatchCursorField: data.dbWatchCursorField || 'created_at',
               })
             }
             options={[
               { value: 'manual', label: 'Manual / API' },
               { value: 'schedule', label: 'Schedule' },
+              { value: 'db_watch', label: 'DB Watch' },
             ]}
-            helperText="Schedule을 선택하면 템플릿 저장 시 scheduler job이 생성됩니다."
+            helperText="Schedule/DB Watch는 템플릿 저장 시 백그라운드 job이 생성됩니다."
             fullWidth
           />
           {triggerType === 'schedule' && (
@@ -553,6 +666,130 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
                 />
                 <div className="property-helper-text">
                   스케줄 실행 시 formData로 전달됩니다.
+                </div>
+              </div>
+            </>
+          )}
+          {triggerType === 'db_watch' && (
+            <>
+              <Checkbox
+                label="DB Watch Enabled"
+                checked={data.dbWatchEnabled === true}
+                onChange={(e) =>
+                  onUpdate(node.id, {
+                    ...data,
+                    triggerType: 'db_watch',
+                    dbWatchEnabled: e.target.checked,
+                  })
+                }
+              />
+              <Input
+                label="Database"
+                placeholder="pxm_db"
+                value={data.dbWatchDatabase || ''}
+                onChange={(e) =>
+                  onUpdate(node.id, {
+                    ...data,
+                    triggerType: 'db_watch',
+                    dbWatchDatabase: e.target.value,
+                  })
+                }
+                helperText="비워두면 API가 연결한 기본 Mongo DB를 사용합니다."
+                fullWidth
+              />
+              <Input
+                label="Collection"
+                placeholder="incoming_requests"
+                value={data.dbWatchCollection || ''}
+                onChange={(e) =>
+                  onUpdate(node.id, {
+                    ...data,
+                    triggerType: 'db_watch',
+                    dbWatchCollection: e.target.value,
+                  })
+                }
+                fullWidth
+              />
+              <Select
+                label="Watch Mode"
+                value={data.dbWatchMode || 'polling'}
+                onChange={(e) =>
+                  onUpdate(node.id, {
+                    ...data,
+                    triggerType: 'db_watch',
+                    dbWatchMode: e.target.value as any,
+                  })
+                }
+                options={[
+                  { value: 'polling', label: 'Polling' },
+                  { value: 'change_stream', label: 'Mongo Change Stream' },
+                ]}
+                helperText="Change Stream은 Mongo replica set 또는 managed cluster가 필요합니다."
+                fullWidth
+              />
+              <Select
+                label="Operation"
+                value={data.dbWatchOperation || 'insert'}
+                onChange={(e) =>
+                  onUpdate(node.id, {
+                    ...data,
+                    triggerType: 'db_watch',
+                    dbWatchOperation: e.target.value as any,
+                  })
+                }
+                options={[
+                  { value: 'insert', label: 'Insert / new cursor' },
+                  { value: 'update', label: 'Update / changed cursor' },
+                  { value: 'upsert', label: 'Upsert / changed cursor' },
+                ]}
+                helperText="Polling은 cursor 증가를 감지하고, Change Stream은 Mongo 변경 이벤트를 받습니다."
+                fullWidth
+              />
+              <Input
+                label="Cursor Field"
+                placeholder="created_at"
+                value={data.dbWatchCursorField || 'created_at'}
+                onChange={(e) =>
+                  onUpdate(node.id, {
+                    ...data,
+                    triggerType: 'db_watch',
+                    dbWatchCursorField: e.target.value,
+                  })
+                }
+                helperText="created_at, updated_at처럼 증가 비교가 가능한 필드를 사용합니다."
+                fullWidth
+              />
+              <Input
+                label="Poll Interval Seconds"
+                type="number"
+                min={1}
+                placeholder="10"
+                value={data.dbWatchPollIntervalSeconds || ''}
+                onChange={(e) =>
+                  onUpdate(node.id, {
+                    ...data,
+                    triggerType: 'db_watch',
+                    dbWatchPollIntervalSeconds: e.target.value === '' ? '' : Number(e.target.value),
+                  })
+                }
+                fullWidth
+              />
+              <div className="property-group">
+                <label className="property-label">Filter JSON</label>
+                <textarea
+                  className="property-textarea"
+                  value={JSON.stringify(data.dbWatchFilter || {}, null, 2)}
+                  onChange={(e) =>
+                    onUpdate(node.id, {
+                      ...data,
+                      triggerType: 'db_watch',
+                      dbWatchFilter: parseJsonLoose(e.target.value),
+                    })
+                  }
+                  spellCheck={false}
+                />
+                <div className="property-helper-text">
+                  매칭된 문서는 formData.document로 전달됩니다.
                 </div>
               </div>
             </>
@@ -648,6 +885,23 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
           }
           fullWidth
         />
+        {callMode === 'wait' && (
+          <Input
+            label="Wait Timeout (ms)"
+            type="number"
+            min={1000}
+            placeholder="300000"
+            value={data.workflowWaitTimeoutMs || ''}
+            onChange={(e) =>
+              onUpdate(node.id, {
+                ...data,
+                workflowWaitTimeoutMs: e.target.value === '' ? '' : Number(e.target.value),
+              })
+            }
+            helperText="비워두면 기본 300000ms(5분) 후 timeout 실패 처리합니다."
+            fullWidth
+          />
+        )}
         <Select
           label="입력 전달"
           value={inputMode}
@@ -741,6 +995,7 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
       {node.data.nodeType === 'start' && renderStartProperties()}
       {node.data.nodeType === 'service' && renderServiceProperties()}
       {node.data.nodeType === 'script' && renderScriptProperties()}
+      {node.data.nodeType === 'command' && renderCommandProperties()}
       {node.data.nodeType === 'timer' && renderTimerProperties()}
       {node.data.nodeType === 'gateway' && renderGatewayProperties()}
       {node.data.nodeType === 'approval' && renderApprovalProperties()}
@@ -870,6 +1125,43 @@ function buildPluginOptions(plugins: PluginManifest[]) {
   }));
 
   return options;
+}
+
+function buildCommandOptions(
+  commands: CommandRegistryItem[],
+  currentCommandId?: string,
+  loading = false,
+) {
+  const options = [
+    { value: '', label: loading ? '불러오는 중...' : 'Command 선택' },
+    ...commands.map((command) => ({
+      value: command.command_id,
+      label: command.display_name || command.command_id,
+    })),
+  ];
+
+  if (currentCommandId && !commands.some((command) => command.command_id === currentCommandId)) {
+    options.push({ value: currentCommandId, label: `${currentCommandId} (custom)` });
+  }
+
+  return options;
+}
+
+function buildDefaultCommandArguments(command?: CommandRegistryItem) {
+  if (!command) {
+    return '{\n  \n}';
+  }
+  const properties = command.argument_schema?.properties;
+  if (!properties || typeof properties !== 'object') {
+    return '{\n  \n}';
+  }
+  const value = Object.fromEntries(
+    Object.entries(properties).map(([key, schema]: [string, any]) => [
+      key,
+      schema?.default ?? '',
+    ]),
+  );
+  return JSON.stringify(value, null, 2);
 }
 
 type CredentialPolicy = {
