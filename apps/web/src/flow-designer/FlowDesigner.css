@@ -15,6 +15,118 @@
   display: none;
 }
 
+.workflow-tab-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 6px 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+  overflow: hidden;
+}
+
+.workflow-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.workflow-tab {
+  display: grid;
+  grid-template-columns: minmax(120px, 220px) 28px;
+  align-items: center;
+  height: 30px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+.workflow-tab.active {
+  background: var(--bg-elevated);
+  border-color: var(--border-strong);
+}
+
+.workflow-tab-main,
+.workflow-tab-close,
+.workflow-tab-add {
+  border: 0;
+  cursor: pointer;
+}
+
+.workflow-tab-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 100%;
+  padding: 0 8px;
+  color: var(--text-secondary);
+  background: transparent;
+  text-align: left;
+}
+
+.workflow-tab.active .workflow-tab-main {
+  color: var(--text-primary);
+}
+
+.workflow-tab-status {
+  width: 10px;
+  color: var(--color-warning);
+  font-size: 10px;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+
+.workflow-tab-title {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-tab-version {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  flex: 0 0 auto;
+}
+
+.workflow-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: var(--text-tertiary);
+  background: transparent;
+}
+
+.workflow-tab-close:hover,
+.workflow-tab-add:hover {
+  color: var(--text-primary);
+  background: var(--bg-primary);
+}
+
+.workflow-tab-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  flex: 0 0 auto;
+}
+
 /* ===== Content Area (3-Column Layout) ===== */
 .flow-designer-content {
   display: grid;

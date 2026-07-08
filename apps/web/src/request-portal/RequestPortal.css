@@ -38,7 +38,8 @@
 
 .workflow-refresh-button,
 .workflow-row-action,
-.btn-launch-execute {
+.btn-launch-execute,
+.workflow-delete-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -282,6 +283,18 @@
   border-color: #fde68a;
 }
 
+.trigger-badge.db-watch.enabled {
+  color: #0f766e;
+  background: #f0fdfa;
+  border-color: #99f6e4;
+}
+
+.trigger-badge.db-watch.disabled {
+  color: #9a3412;
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+
 .workflow-structure {
   display: flex;
   flex-direction: column;
@@ -448,6 +461,27 @@
   border-color: #fecaca;
 }
 
+.danger-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.workflow-delete-button {
+  height: 36px;
+  padding: 0 12px;
+  color: #991b1b;
+  background: #fff1f2;
+  border-color: #fecdd3;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.workflow-delete-button:hover {
+  background: #ffe4e6;
+  border-color: #fda4af;
+}
+
 .schedule-run-list {
   margin-top: 4px;
   border: 1px solid var(--border-subtle);
@@ -528,6 +562,97 @@
   color: var(--text-tertiary);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.request-input-preset-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: #f8fafc;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+
+.request-input-preset-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.request-input-preset-header > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.request-input-preset-header strong {
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.request-input-preset-header span,
+.request-input-preset-empty {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.request-input-preset-header button {
+  height: 28px;
+  padding: 0 9px;
+  color: #1d4ed8;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
+.request-input-preset-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.request-input-preset-item {
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  background: #ffffff;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+}
+
+.request-input-preset-item button {
+  height: 27px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.request-input-preset-item button:first-child {
+  max-width: 160px;
+  overflow: hidden;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.request-input-preset-delete {
+  width: 24px;
+  border-left: 1px solid var(--border-subtle) !important;
+  font-size: 15px;
+}
+
+.request-input-preset-empty {
+  margin: 0;
 }
 
 .form-group {

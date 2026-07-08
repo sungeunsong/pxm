@@ -64,12 +64,16 @@ export interface WorkflowExportDocument {
   schema_version: 'pxm.workflow.v1';
   exported_at: string;
   workflow: {
+    definition_id?: string;
+    version?: number;
+    exported_version_note?: string;
     name: string;
     metadata: {
       description?: string;
       group?: string;
       tags: string[];
       version_note?: string;
+      imported_from?: WorkflowImportSourceMetadata;
     };
     nodes: Node[];
     edges: Edge[];
@@ -83,6 +87,14 @@ export interface WorkflowExportDocument {
     secrets_policy: 'redacted';
     redacted_paths: string[];
   };
+}
+
+export interface WorkflowImportSourceMetadata {
+  schema_version: string;
+  definition_id?: string;
+  version?: number;
+  exported_version_note?: string;
+  exported_at?: string;
 }
 
 export interface WorkflowTemplateVersion {
@@ -129,6 +141,21 @@ export interface WorkflowVersionDiff {
     updated_at?: string;
   };
   changes: WorkflowVersionChange[];
+}
+
+export interface TestDbWatchConnectionRequest {
+  database?: string | null;
+  collection?: string | null;
+  credential_id?: string | null;
+  mode?: 'polling' | 'change_stream';
+  cursor_field?: string | null;
+  filter?: Record<string, any>;
+}
+
+export interface TestDbWatchConnectionResponse {
+  ok: boolean;
+  duration_ms: number;
+  details: Record<string, unknown>;
 }
 
 const API_BASE_URL = '/api';
@@ -258,6 +285,23 @@ export const templatesApi = {
 
     if (!response.ok) {
       throw new Error(`Failed to import template: ${response.statusText}`);
+    }
+
+    return response.json();
+  },
+
+  async testDbWatchConnection(data: TestDbWatchConnectionRequest): Promise<TestDbWatchConnectionResponse> {
+    const response = await fetch(`${API_BASE_URL}/db-watch/test`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+    });
+
+    if (!response.ok) {
+      const message = await response.text().catch(() => response.statusText);
+      throw new Error(message || `Failed to test DB watch connection: ${response.statusText}`);
     }
 
     return response.json();

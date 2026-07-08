@@ -25,6 +25,93 @@
   line-height: 1.6;
 }
 
+.input-preset-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 22px;
+  padding: 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+
+.input-preset-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.input-preset-header > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.input-preset-header strong {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.input-preset-header span,
+.input-preset-empty {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.input-preset-empty {
+  margin: 0;
+}
+
+.input-preset-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.input-preset-item {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  overflow: hidden;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+}
+
+.input-preset-item button {
+  height: 28px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.input-preset-item button:first-child {
+  max-width: 180px;
+  overflow: hidden;
+  padding: 0 9px;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.input-preset-item button:first-child:hover,
+.input-preset-delete:hover {
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+}
+
+.input-preset-delete {
+  width: 26px;
+  border-left: 1px solid var(--border-subtle) !important;
+  font-size: 16px;
+  line-height: 1;
+}
+
 /* 폼 필드 컨테이너 */
 .form-fields {
   display: flex;

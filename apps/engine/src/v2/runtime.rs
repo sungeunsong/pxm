@@ -185,7 +185,15 @@ fn get_form_data(context: &Value) -> Option<&Value> {
         .or_else(|| context.get("formData"))
 }
 
-fn execute_js_node(node: &NodeDef, context: &Value) -> Result<Value> {
+#[derive(Debug, Clone)]
+struct JsExecution {
+    success: bool,
+    output: Value,
+    console: Value,
+    error_message: Option<String>,
+}
+
+fn execute_js_node(node: &NodeDef, context: &Value) -> Result<JsExecution> {
     let code = node
         .config
         .get("code")
@@ -210,11 +218,43 @@ let raw = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', chunk => raw += chunk);
 process.stdin.on('end', () => {
+  let consoleEntries = [];
   try {
     const payload = JSON.parse(raw || '{}');
+    let consoleBytes = 0;
+    const maxLines = Number(payload.console_max_lines) || 200;
+    const maxBytes = Number(payload.console_max_bytes) || 65536;
+    const stringify = (value) => {
+      if (typeof value === 'string') return value;
+      if (typeof value === 'undefined') return 'undefined';
+      try {
+        return JSON.stringify(value);
+      } catch (_error) {
+        return String(value);
+      }
+    };
+    const captureConsole = (level, args) => {
+      if (consoleEntries.length >= maxLines || consoleBytes >= maxBytes) return;
+      const message = Array.from(args).map(stringify).join(' ');
+      const remaining = Math.max(0, maxBytes - consoleBytes);
+      const text = message.length > remaining ? message.slice(0, remaining) : message;
+      consoleBytes += text.length;
+      consoleEntries.push({
+        level,
+        message: text,
+        timestamp: new Date().toISOString(),
+      });
+    };
     const sandbox = vm.createContext({
       input: payload.context || {},
       context: payload.context || {},
+      console: {
+        log: (...args) => captureConsole('log', args),
+        info: (...args) => captureConsole('info', args),
+        warn: (...args) => captureConsole('warn', args),
+        error: (...args) => captureConsole('error', args),
+        debug: (...args) => captureConsole('debug', args),
+      },
     }, {
       codeGeneration: { strings: false, wasm: false },
     });
@@ -227,10 +267,15 @@ process.stdin.on('end', () => {
       timeout: Number(payload.timeout_ms) || 1000,
       displayErrors: true,
     });
-    process.stdout.write(JSON.stringify({ success: true, output: output === undefined ? null : output }));
+    process.stdout.write(JSON.stringify({
+      success: true,
+      output: output === undefined ? null : output,
+      console: consoleEntries,
+    }));
   } catch (error) {
     process.stdout.write(JSON.stringify({
       success: false,
+      console: consoleEntries,
       error: {
         name: error && error.name,
         message: error && error.message ? error.message : String(error),
@@ -245,6 +290,8 @@ process.stdin.on('end', () => {
         "code": code,
         "context": external_execution_context(context),
         "timeout_ms": timeout_ms,
+        "console_max_lines": 200,
+        "console_max_bytes": 65_536,
     });
 
     let mut child = Command::new("node")
@@ -274,19 +321,34 @@ process.stdin.on('end', () => {
         })
     });
 
-    if response
+    let success = response
         .get("success")
         .and_then(|value| value.as_bool())
-        .unwrap_or(false)
-    {
-        Ok(response.get("output").cloned().unwrap_or(Value::Null))
+        .unwrap_or(false);
+    let console = response
+        .get("console")
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+
+    if success {
+        Ok(JsExecution {
+            success: true,
+            output: response.get("output").cloned().unwrap_or(Value::Null),
+            console,
+            error_message: None,
+        })
     } else {
         let message = response
             .get("error")
             .and_then(|error| error.get("message"))
             .and_then(|value| value.as_str())
             .unwrap_or("JS node execution failed");
-        anyhow::bail!(message.to_string())
+        Ok(JsExecution {
+            success: false,
+            output: Value::Null,
+            console,
+            error_message: Some(message.to_string()),
+        })
     }
 }
 
@@ -2666,7 +2728,7 @@ async fn execute_token_flow(
                     .await?;
 
                 match execute_js_node(node, &instance.context) {
-                    Ok(output) => {
+                    Ok(js) if js.success => {
                         let output_path = node
                             .config
                             .get("outputPath")
@@ -2679,7 +2741,7 @@ async fn execute_token_flow(
                         set_context_value_at_path(
                             &mut instance.context,
                             &output_path,
-                            output.clone(),
+                            js.output.clone(),
                         );
                         ctx.instance_repo
                             .update_instance(
@@ -2699,7 +2761,8 @@ async fn execute_token_flow(
                                 json!({
                                     "script_type": "javascript",
                                     "output_path": output_path,
-                                    "output": output
+                                    "output": js.output,
+                                    "console": js.console
                                 }),
                                 tx,
                             )
@@ -2731,6 +2794,55 @@ async fn execute_token_flow(
                             active_tokens.push(new_token);
                         }
                     }
+                    Ok(js) => {
+                        token.status = TokenStatus::Failed;
+                        token.updated_at = Utc::now();
+                        ctx.token_repo.update_tokens(&[token.clone()], tx).await?;
+
+                        instance.state = "FAILED".to_string();
+                        ctx.instance_repo
+                            .update_instance(
+                                instance.id,
+                                &instance.state,
+                                instance.context.clone(),
+                                tx,
+                            )
+                            .await?;
+
+                        ctx.exec_log
+                            .append_log(
+                                instance.id,
+                                Some(token.id),
+                                Some(&token.node_id),
+                                "NODE_FAILED",
+                                json!({
+                                    "script_type": "javascript",
+                                    "reason": js.error_message.unwrap_or_else(|| "JS node execution failed".to_string()),
+                                    "console": js.console
+                                }),
+                                tx,
+                            )
+                            .await?;
+
+                        ctx.outbox
+                            .append_event(
+                                instance.id,
+                                Some(token.id),
+                                Some(&token.node_id),
+                                "INSTANCE_FAILED",
+                                json!({"reason": "script_node_failed"}),
+                                tx,
+                            )
+                            .await?;
+                        notify_waiting_parent_workflow_call(
+                            ctx,
+                            instance,
+                            "FAILED",
+                            json!({"reason": "script_node_failed"}),
+                            tx,
+                        )
+                        .await?;
+                    }
                     Err(err) => {
                         token.status = TokenStatus::Failed;
                         token.updated_at = Utc::now();
@@ -2754,7 +2866,8 @@ async fn execute_token_flow(
                                 "NODE_FAILED",
                                 json!({
                                     "script_type": "javascript",
-                                    "reason": err.to_string()
+                                    "reason": err.to_string(),
+                                    "console": []
                                 }),
                                 tx,
                             )

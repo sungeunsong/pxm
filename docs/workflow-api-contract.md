@@ -110,13 +110,16 @@ End node의 `resultPath`가 비어 있으면 `context.data`만 result로 저장�
 
 `GET /api/templates/:template_id/export`
 
-저장된 workflow를 이식 가능한 JSON 문서로 반환한다. Export에는 원본 template id를 포함하지 않으며, import 시 새 template id를 발급한다.
+저장된 workflow를 이식 가능한 JSON 문서로 반환한다. Export에는 원본 definition/version 참고 정보를 포함한다. Import 시에는 새 template id를 발급하되, 원본 정보는 `metadata.imported_from`에 참고 정보로 보존한다.
 
 ```json
 {
   "schema_version": "pxm.workflow.v1",
   "exported_at": "2026-06-18T04:31:00.000Z",
   "workflow": {
+    "definition_id": "8d9b0f8a-5f0a-4f3e-8a6f-4c63f114fe1a",
+    "version": 7,
+    "exported_version_note": "Add approval branch",
     "name": "Workflow Name",
     "metadata": {
       "description": "",
@@ -142,6 +145,46 @@ End node의 `resultPath`가 비어 있으면 `context.data`만 result로 저장�
 ```
 
 Secret성 key는 export 시 `null`로 제거하고 `security.redacted_paths`에 경로를 기록한다. 현재 redaction 대상 key 패턴은 `password`, `secret`, `token`, `api_key`, `access_key`, `private_key`, `connection_uri`, `authorization`, `credential` 계열이다.
+
+### Command terminal output polling
+
+`GET /api/instances/:instance_id/terminal-outputs`
+
+Command Node의 stdout/stderr snapshot을 polling으로 조회한다. 장기 실행 command의 실시간 streaming은 별도 저장소/chunk 모델이 필요하므로, 현재 계약은 trace cursor 기반 polling snapshot으로 둔다.
+
+Query:
+
+- `node_id`: 특정 command node만 조회
+- `after`: 이전 응답의 `poll_after` 값. 해당 trace cursor 이후 변경된 command output만 반환
+
+Response:
+
+```json
+{
+  "instance_id": "170cc5be-a754-459d-8049-65f820ab45cf",
+  "status": "COMPLETED",
+  "poll_after": 42,
+  "outputs": [
+    {
+      "node_id": "run-command",
+      "node_label": "명령어 실행",
+      "status": "COMPLETED",
+      "command_id": "app.nit.worklog_get",
+      "output_path": "commandResults.run-command",
+      "exit_code": 0,
+      "timed_out": false,
+      "duration_ms": 239,
+      "stdout": "...",
+      "stderr": "",
+      "has_output": true,
+      "last_event_id": 41,
+      "updated_at": "2026-07-08T05:20:00.000Z"
+    }
+  ]
+}
+```
+
+ANSI control sequence와 secret성 값은 응답 단계에서 제거/마스킹한다. 원본 stdout/stderr의 장기 보관/삭제 정책은 운영 retention 정책에서 별도로 결정한다.
 
 ## Import Workflow
 

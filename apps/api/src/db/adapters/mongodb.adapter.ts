@@ -14,6 +14,9 @@ import {
   WorkflowHistoryActor,
   WorkflowInstanceAccess,
   WorkflowDefinitionVersion,
+  WorkflowInputPreset,
+  WorkflowInputPresetRepositoryPort,
+  UpsertWorkflowInputPreset,
 } from '../ports/db.ports';
 
 @Injectable()
@@ -24,9 +27,11 @@ export class MongodbAdapter
     WorkflowTaskRepositoryPort,
     OutboxRepositoryPort,
     EngineQueueRepositoryPort,
-    WorkflowScheduleRepositoryPort
+    WorkflowScheduleRepositoryPort,
+    WorkflowInputPresetRepositoryPort
 {
   constructor(@Inject(MONGO_DB) private readonly db: Db) {}
+  private inputPresetIndexesReady = false;
 
   private async loadNodeLabels(instanceId: string): Promise<Map<string, string>> {
     const inst = await this.db
@@ -91,6 +96,7 @@ export class MongodbAdapter
       {
         $set: {
           name,
+          status: 'ACTIVE',
           version: nextVersion,
           description: metadata.description || '',
           group: metadata.group || '',
@@ -128,7 +134,7 @@ export class MongodbAdapter
   async listDefinitions(): Promise<any[]> {
     const docs = await this.db
       .collection<any>('v2_process_definitions')
-      .find({})
+      .find({ status: { $ne: 'DELETED' } })
       .sort({ created_at: -1 })
       .toArray();
 
@@ -149,7 +155,7 @@ export class MongodbAdapter
   async getDefinition(id: string): Promise<any> {
     const doc = await this.db
       .collection<any>('v2_process_definitions')
-      .findOne({ _id: id });
+      .findOne({ _id: id, status: { $ne: 'DELETED' } });
 
     if (!doc) return null;
 
@@ -239,6 +245,20 @@ export class MongodbAdapter
     );
 
     return this.getDefinition(id);
+  }
+
+  async deleteDefinition(id: string): Promise<boolean> {
+    const result = await this.db.collection<any>('v2_process_definitions').updateOne(
+      { _id: id, status: { $ne: 'DELETED' } },
+      {
+        $set: {
+          status: 'DELETED',
+          updated_at: new Date().toISOString(),
+        },
+      },
+    );
+
+    return result.matchedCount > 0;
   }
 
   private mapDefinitionDocument(doc: any): any {
@@ -981,6 +1001,116 @@ export class MongodbAdapter
     });
     return { ok: true, id: result.insertedId.toString() };
   }
+
+  async listInputPresets(workflowId: string): Promise<WorkflowInputPreset[]> {
+    await this.ensureInputPresetIndexes();
+    const docs = await this.db
+      .collection<any>('workflow_input_presets')
+      .find({ workflow_id: workflowId, enabled: { $ne: false } })
+      .sort({ updated_at: -1 })
+      .toArray();
+
+    return docs.map(mapInputPresetDoc);
+  }
+
+  async getInputPreset(workflowId: string, idOrAlias: string): Promise<WorkflowInputPreset | null> {
+    await this.ensureInputPresetIndexes();
+    const doc = await this.db.collection<any>('workflow_input_presets').findOne({
+      workflow_id: workflowId,
+      enabled: { $ne: false },
+      $or: [{ _id: idOrAlias }, { alias: idOrAlias }],
+    });
+
+    return doc ? mapInputPresetDoc(doc) : null;
+  }
+
+  async upsertInputPreset(
+    workflowId: string,
+    preset: UpsertWorkflowInputPreset,
+  ): Promise<WorkflowInputPreset> {
+    await this.ensureInputPresetIndexes();
+    const now = new Date().toISOString();
+    const alias = preset.alias || slugifyPresetAlias(preset.name);
+    const filter = preset.id
+      ? { _id: preset.id, workflow_id: workflowId }
+      : { workflow_id: workflowId, alias };
+    const id = preset.id || crypto.randomUUID();
+
+    await this.db.collection<any>('workflow_input_presets').updateOne(
+      filter,
+      {
+        $set: {
+          workflow_id: workflowId,
+          alias,
+          name: preset.name.trim(),
+          description: preset.description || '',
+          values: preset.values || {},
+          scope: preset.scope || 'private',
+          group_id: preset.group_id || null,
+          enabled: true,
+          updated_by: preset.actor || null,
+          updated_at: now,
+        },
+        $setOnInsert: {
+          _id: id,
+          created_by: preset.actor || null,
+          created_at: now,
+        },
+      },
+      { upsert: true },
+    );
+
+    const saved = await this.db.collection<any>('workflow_input_presets').findOne(
+      preset.id ? { _id: preset.id, workflow_id: workflowId } : { workflow_id: workflowId, alias },
+    );
+    return mapInputPresetDoc(saved);
+  }
+
+  async deleteInputPreset(workflowId: string, presetId: string): Promise<boolean> {
+    await this.ensureInputPresetIndexes();
+    const result = await this.db
+      .collection<any>('workflow_input_presets')
+      .updateOne(
+        { _id: presetId, workflow_id: workflowId },
+        { $set: { enabled: false, updated_at: new Date().toISOString() } },
+      );
+    return result.matchedCount > 0;
+  }
+
+  private async ensureInputPresetIndexes(): Promise<void> {
+    if (this.inputPresetIndexesReady) return;
+    const collection = this.db.collection<any>('workflow_input_presets');
+    await collection.createIndex({ workflow_id: 1, alias: 1 }, { unique: true });
+    await collection.createIndex({ workflow_id: 1, updated_at: -1 });
+    this.inputPresetIndexesReady = true;
+  }
+}
+
+function mapInputPresetDoc(doc: any): WorkflowInputPreset {
+  return {
+    id: doc._id,
+    workflow_id: doc.workflow_id,
+    alias: doc.alias,
+    name: doc.name,
+    description: doc.description || '',
+    values: doc.values || {},
+    scope: doc.scope || 'private',
+    group_id: doc.group_id || null,
+    enabled: doc.enabled !== false,
+    created_by: doc.created_by || null,
+    updated_by: doc.updated_by || null,
+    created_at: doc.created_at,
+    updated_at: doc.updated_at,
+  };
+}
+
+function slugifyPresetAlias(value: string): string {
+  const alias = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9가-힣_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return alias || `preset-${Date.now()}`;
 }
 
 function mapScheduleDoc(doc: any): WorkflowScheduleJob {

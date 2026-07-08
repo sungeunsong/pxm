@@ -2,7 +2,11 @@ import { BadRequestException, Body, Controller, Delete, Get, HttpStatus, NotFoun
 import type { Request, Response } from 'express';
 import { TemplatesService } from './templates.service';
 import { CreateTemplateDto, UpdateTemplateDto } from './dto/template.dto';
-import { WorkflowInstanceRepositoryPort, WorkflowScheduleRepositoryPort } from '../db/ports/db.ports';
+import {
+  WorkflowInputPresetRepositoryPort,
+  WorkflowInstanceRepositoryPort,
+  WorkflowScheduleRepositoryPort,
+} from '../db/ports/db.ports';
 import { InstancesService } from '../instances/instances.service';
 import { instanceAccessFromRequest } from '../instances/history-auth';
 import { randomUUID } from 'crypto';
@@ -14,6 +18,7 @@ export class TemplatesController {
     private readonly instanceRepo: WorkflowInstanceRepositoryPort,
     private readonly instancesService: InstancesService,
     private readonly scheduleRepo: WorkflowScheduleRepositoryPort,
+    private readonly inputPresetRepo: WorkflowInputPresetRepositoryPort,
   ) {}
 
   @Post()
@@ -183,6 +188,46 @@ export class TemplatesController {
     return { success: true, enabled: body?.enabled === true, template: updated };
   }
 
+  @Post(':id/db-watch/toggle')
+  async toggleDbWatch(
+    @Param('id') id: string,
+    @Body() body: { enabled?: boolean },
+  ) {
+    const template = await this.templatesService.findOne(id);
+    if (!template) {
+      throw new NotFoundException('Template not found');
+    }
+
+    const nodes = (template.nodes || []).map((node: any) => {
+      if (node.data?.nodeType !== 'start' || node.data?.triggerType !== 'db_watch') {
+        return node;
+      }
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          dbWatchEnabled: body?.enabled === true,
+        },
+      };
+    });
+
+    const updated = await this.templatesService.update(id, {
+      name: template.name,
+      description: template.description,
+      group: template.group,
+      tags: template.tags,
+      version_note: template.version_note,
+      nodes,
+      edges: template.edges,
+    });
+
+    if (!updated) {
+      throw new NotFoundException('Template not found');
+    }
+
+    return { success: true, enabled: body?.enabled === true, template: updated };
+  }
+
   @Get(':id/schedule/status')
   async scheduleStatus(@Param('id') id: string) {
     const template = await this.templatesService.findOne(id);
@@ -191,6 +236,65 @@ export class TemplatesController {
     }
 
     return this.scheduleRepo.getDefinitionScheduleStatus(id, 10);
+  }
+
+  @Get(':id/input-presets')
+  async listInputPresets(@Param('id') id: string) {
+    const template = await this.templatesService.findOne(id);
+    if (!template) {
+      throw new NotFoundException('Template not found');
+    }
+    return this.inputPresetRepo.listInputPresets(id);
+  }
+
+  @Get(':id/input-presets/:presetId')
+  async getInputPreset(
+    @Param('id') id: string,
+    @Param('presetId') presetId: string,
+  ) {
+    const preset = await this.inputPresetRepo.getInputPreset(id, presetId);
+    if (!preset) {
+      throw new NotFoundException('Input preset not found');
+    }
+    return preset;
+  }
+
+  @Post(':id/input-presets')
+  async saveInputPreset(
+    @Param('id') id: string,
+    @Body() body: InputPresetRequest,
+    @Req() req?: Request,
+  ) {
+    const template = await this.templatesService.findOne(id);
+    if (!template) {
+      throw new NotFoundException('Template not found');
+    }
+    if (!body?.name?.trim()) {
+      throw new BadRequestException('name is required');
+    }
+
+    return this.inputPresetRepo.upsertInputPreset(id, {
+      id: body.id,
+      alias: normalizePresetAlias(body.alias || body.name),
+      name: body.name,
+      description: body.description,
+      values: sanitizePresetValues(body.values || {}),
+      scope: body.scope || 'private',
+      group_id: body.group_id || null,
+      actor: getRequestActor(req),
+    });
+  }
+
+  @Delete(':id/input-presets/:presetId')
+  async deleteInputPreset(
+    @Param('id') id: string,
+    @Param('presetId') presetId: string,
+  ) {
+    const success = await this.inputPresetRepo.deleteInputPreset(id, presetId);
+    if (!success) {
+      throw new NotFoundException('Input preset not found');
+    }
+    return { success: true };
   }
 
   @Delete(':id')
@@ -235,8 +339,20 @@ export class TemplatesController {
       throw new Error('Start node not found in template');
     }
 
+    const requestedPreset = body?.preset_id || body?.preset_alias || body?.preset;
+    const inputOverrides = body?.input || body?.formData || {};
+    const inputPreset = requestedPreset
+      ? await this.inputPresetRepo.getInputPreset(template.id, requestedPreset)
+      : null;
+    if (requestedPreset && !inputPreset) {
+      throw new NotFoundException('Input preset not found');
+    }
+
     // ctx 구조: Rust Engine이 기대하는 실행 컨텍스트
-    const formData = body?.input || body?.formData || {};
+    const formData = {
+      ...(inputPreset?.values || {}),
+      ...inputOverrides,
+    };
     const access = instanceAccessFromRequest(req, formData);
     const ctx = {
       runtime: {
@@ -246,6 +362,14 @@ export class TemplatesController {
         template_id: template.id,
         template_name: template.name,
         access,
+        input_preset: inputPreset
+          ? {
+              id: inputPreset.id,
+              alias: inputPreset.alias,
+              name: inputPreset.name,
+              override_keys: Object.keys(inputOverrides),
+            }
+          : null,
       },
       data: {
         formData,
@@ -357,6 +481,19 @@ type StartWorkflowRequest = {
   sync_timeout_ms?: number;
   input?: Record<string, any>;
   formData?: Record<string, any>;
+  preset?: string;
+  preset_id?: string;
+  preset_alias?: string;
+};
+
+type InputPresetRequest = {
+  id?: string;
+  alias?: string;
+  name?: string;
+  description?: string;
+  values?: Record<string, any>;
+  scope?: 'private' | 'group' | 'public';
+  group_id?: string | null;
 };
 
 function normalizeSyncTimeoutMs(value?: number): number {
@@ -368,4 +505,62 @@ function normalizeSyncTimeoutMs(value?: number): number {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function sanitizePresetValues(value: any): Record<string, any> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+  return sanitizeJsonObject(value);
+}
+
+function sanitizeJsonObject(value: Record<string, any>): Record<string, any> {
+  return Object.entries(value).reduce<Record<string, any>>((acc, [key, item]) => {
+    if (isSensitivePresetKey(key)) {
+      return acc;
+    }
+    const sanitized = sanitizeJsonValue(item);
+    if (sanitized !== undefined) {
+      acc[key] = sanitized;
+    }
+    return acc;
+  }, {});
+}
+
+function sanitizeJsonValue(value: any): any {
+  if (
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    value === null
+  ) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => sanitizeJsonValue(item))
+      .filter((item) => item !== undefined);
+  }
+  if (value && typeof value === 'object') {
+    return sanitizeJsonObject(value);
+  }
+  return undefined;
+}
+
+function isSensitivePresetKey(key: string) {
+  return /(password|passwd|secret|token|api[_-]?key|credential|private[_-]?key|passphrase)/i.test(key);
+}
+
+function normalizePresetAlias(value: string): string {
+  const alias = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9가-힣_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return alias || `preset-${Date.now()}`;
+}
+
+function getRequestActor(req?: Request): string | null {
+  const headerActor = req?.header('x-user-id') || req?.header('x-api-client-id');
+  return headerActor || null;
 }

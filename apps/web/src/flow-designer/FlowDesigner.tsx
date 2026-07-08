@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useRef } from 'react';
 import type { Node } from 'reactflow';
 import type { Edge } from 'reactflow';
-import { Braces, CheckSquare, CircleCheck, Clock, Diamond, Inbox, PanelRightClose, PanelRightOpen, Play, Search, Star, Terminal, Workflow } from 'lucide-react';
+import { Braces, CheckSquare, CircleCheck, Clock, Diamond, Inbox, PanelRightClose, PanelRightOpen, Play, Plus, Search, Star, Terminal, Workflow, X } from 'lucide-react';
 import { Button } from '../components/Button';
 import { Header } from '../components/Header';
 import { Input } from '../components/Input';
@@ -27,6 +27,22 @@ export interface FlowDesignerProps {
   initialMonitorInstanceId?: string;
 }
 
+type DesignerTab = {
+  tabId: string;
+  templateId: string | null;
+  templateName: string;
+  templateVersion?: number;
+  description: string;
+  group: string;
+  tags: string;
+  versionNote: string;
+  nodes: Node<CustomNodeData>[];
+  edges: Edge[];
+  isDirty: boolean;
+};
+
+const INITIAL_DESIGNER_TAB_ID = 'designer-tab-initial';
+
 export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, initialMonitorInstanceId }) => {
   const [darkMode, setDarkMode] = useState(true);
   const [selectedNode, setSelectedNode] = useState<Node<CustomNodeData> | null>(null);
@@ -50,6 +66,8 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
   const [isNodeTestRunning, setIsNodeTestRunning] = useState(false);
   const [nodeTestResult, setNodeTestResult] = useState<PluginTestResponse | null>(null);
   const [nodeTestError, setNodeTestError] = useState<string | null>(null);
+  const [designerTabs, setDesignerTabs] = useState<DesignerTab[]>(() => [createBlankDesignerTab(INITIAL_DESIGNER_TAB_ID)]);
+  const [activeDesignerTabId, setActiveDesignerTabId] = useState(INITIAL_DESIGNER_TAB_ID);
   const [favoritePluginIds, setFavoritePluginIds] = useState<string[]>(() => {
     try {
       return JSON.parse(localStorage.getItem('pxm.favoritePlugins') || '[]');
@@ -62,6 +80,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
   const eventSourceRef = useRef<EventSource | null>(null);
   const eventQueueRef = useRef<Array<{nodeId: string, status: 'pending' | 'running' | 'completed' | 'failed'}>>([]); 
   const isProcessingRef = useRef(false);
+  const suppressCanvasDirtyRef = useRef(true);
 
   // SSE 연결 정리
   React.useEffect(() => {
@@ -70,6 +89,12 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
         eventSourceRef.current.close();
       }
     };
+  }, []);
+
+  React.useEffect(() => {
+    window.setTimeout(() => {
+      suppressCanvasDirtyRef.current = false;
+    }, 0);
   }, []);
 
   React.useEffect(() => {
@@ -89,6 +114,19 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
     };
   }, []);
 
+  React.useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!designerTabs.some((tab) => tab.isDirty)) {
+        return;
+      }
+      event.preventDefault();
+      event.returnValue = '';
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [designerTabs]);
+
   // 실시간 추적 인스턴스 전이 연동
   React.useEffect(() => {
     if (initialMonitorInstanceId) {
@@ -96,6 +134,166 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
       handleHistorySelect(initialMonitorInstanceId);
     }
   }, [initialMonitorInstanceId]);
+
+  const activeDesignerTab = useMemo(
+    () => designerTabs.find((tab) => tab.tabId === activeDesignerTabId) || designerTabs[0],
+    [activeDesignerTabId, designerTabs],
+  );
+
+  const buildCurrentTabSnapshot = React.useCallback(
+    (tabId = activeDesignerTabId, dirtyOverride?: boolean): DesignerTab => {
+      const baseTab =
+        designerTabs.find((tab) => tab.tabId === tabId) ||
+        activeDesignerTab ||
+        createBlankDesignerTab(tabId);
+      return {
+        ...baseTab,
+        templateId: currentTemplateId,
+        templateName: currentTemplateName,
+        description: workflowDescription,
+        group: workflowGroup,
+        tags: workflowTags,
+        versionNote: workflowVersionNote,
+        nodes: (flowCanvasRef.current?.getNodes() || canvasNodes) as Node<CustomNodeData>[],
+        edges: flowCanvasRef.current?.getEdges() || canvasEdges,
+        isDirty: dirtyOverride ?? baseTab.isDirty,
+      };
+    },
+    [
+      activeDesignerTab,
+      activeDesignerTabId,
+      canvasEdges,
+      canvasNodes,
+      currentTemplateId,
+      currentTemplateName,
+      designerTabs,
+      workflowDescription,
+      workflowGroup,
+      workflowTags,
+      workflowVersionNote,
+    ],
+  );
+
+  const persistActiveDesignerTab = React.useCallback(
+    (dirtyOverride?: boolean) => {
+      const snapshot = buildCurrentTabSnapshot(activeDesignerTabId, dirtyOverride);
+      setDesignerTabs((tabs) =>
+        tabs.map((tab) => (tab.tabId === activeDesignerTabId ? snapshot : tab)),
+      );
+      return snapshot;
+    },
+    [activeDesignerTabId, buildCurrentTabSnapshot],
+  );
+
+  const restoreDesignerTab = React.useCallback((tab: DesignerTab) => {
+    suppressCanvasDirtyRef.current = true;
+    setCurrentTemplateId(tab.templateId);
+    setCurrentTemplateName(tab.templateName);
+    setWorkflowDescription(tab.description);
+    setWorkflowGroup(tab.group);
+    setWorkflowTags(tab.tags);
+    setWorkflowVersionNote(tab.versionNote);
+    setSelectedNode(null);
+    setNodeTestResult(null);
+    setNodeTestError(null);
+    setIsExecutionModalOpen(false);
+    setIsExecutionPanelOpen(false);
+    setExecutionInstanceId(null);
+    setExecutionFormSchema(undefined);
+    flowCanvasRef.current?.setNodesAndEdges(tab.nodes, tab.edges);
+    window.setTimeout(() => {
+      suppressCanvasDirtyRef.current = false;
+    }, 0);
+  }, []);
+
+  const handleSwitchDesignerTab = (tabId: string) => {
+    if (tabId === activeDesignerTabId) {
+      return;
+    }
+    persistActiveDesignerTab();
+    const nextTab = designerTabs.find((tab) => tab.tabId === tabId);
+    if (!nextTab) {
+      return;
+    }
+    setActiveDesignerTabId(tabId);
+    restoreDesignerTab(nextTab);
+  };
+
+  const handleNewDesignerTab = () => {
+    const snapshot = persistActiveDesignerTab();
+    const newTab = createBlankDesignerTab();
+    setDesignerTabs((tabs) => tabs.map((tab) => (tab.tabId === snapshot.tabId ? snapshot : tab)).concat(newTab));
+    setActiveDesignerTabId(newTab.tabId);
+    restoreDesignerTab(newTab);
+  };
+
+  const handleCloseDesignerTab = (tabId: string) => {
+    const closingTab = tabId === activeDesignerTabId ? buildCurrentTabSnapshot(tabId) : designerTabs.find((tab) => tab.tabId === tabId);
+    if (!closingTab) {
+      return;
+    }
+    if (closingTab.isDirty && !window.confirm(`"${getDesignerTabTitle(closingTab)}" 탭의 저장하지 않은 변경사항을 버릴까요?`)) {
+      return;
+    }
+
+    if (designerTabs.length === 1) {
+      const replacement = createBlankDesignerTab(INITIAL_DESIGNER_TAB_ID);
+      setDesignerTabs([replacement]);
+      setActiveDesignerTabId(replacement.tabId);
+      restoreDesignerTab(replacement);
+      return;
+    }
+
+    const closingIndex = designerTabs.findIndex((tab) => tab.tabId === tabId);
+    const remainingTabs = designerTabs.filter((tab) => tab.tabId !== tabId);
+    setDesignerTabs(remainingTabs);
+
+    if (tabId === activeDesignerTabId) {
+      const nextTab = remainingTabs[Math.max(0, closingIndex - 1)] || remainingTabs[0];
+      setActiveDesignerTabId(nextTab.tabId);
+      restoreDesignerTab(nextTab);
+    }
+  };
+
+  const markActiveDesignerTabDirty = React.useCallback(() => {
+    setDesignerTabs((tabs) =>
+      tabs.map((tab) => (tab.tabId === activeDesignerTabId ? { ...tab, isDirty: true } : tab)),
+    );
+  }, [activeDesignerTabId]);
+
+  const handleCanvasNodesChange = React.useCallback(
+    (nodes: Node[]) => {
+      setCanvasNodes(nodes as Node<CustomNodeData>[]);
+      if (!suppressCanvasDirtyRef.current) {
+        markActiveDesignerTabDirty();
+      }
+    },
+    [markActiveDesignerTabDirty],
+  );
+
+  const handleCanvasEdgesChange = React.useCallback(
+    (edges: Edge[]) => {
+      setCanvasEdges(edges);
+      if (!suppressCanvasDirtyRef.current) {
+        markActiveDesignerTabDirty();
+      }
+    },
+    [markActiveDesignerTabDirty],
+  );
+
+  const handleMetadataChange = <K extends 'description' | 'group' | 'tags' | 'versionNote'>(
+    field: K,
+    setter: React.Dispatch<React.SetStateAction<string>>,
+  ) => (value: string) => {
+    setter(value);
+    setDesignerTabs((tabs) =>
+      tabs.map((tab) =>
+        tab.tabId === activeDesignerTabId
+          ? { ...tab, [field]: value, isDirty: true }
+          : tab,
+      ),
+    );
+  };
 
   const handleRun = async (formData?: Record<string, any>) => {
     if (!currentTemplateId) {
@@ -294,6 +492,25 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
           edges,
         });
         setCurrentTemplateName(updated.name);
+        setDesignerTabs((tabs) =>
+          tabs.map((tab) =>
+            tab.tabId === activeDesignerTabId
+              ? {
+                  ...tab,
+                  templateId: updated.id,
+                  templateName: updated.name,
+                  templateVersion: updated.version,
+                  description: updated.description || '',
+                  group: updated.group || '',
+                  tags: (updated.tags || []).join(', '),
+                  versionNote: updated.version_note || '',
+                  nodes: updated.nodes as Node<CustomNodeData>[],
+                  edges: updated.edges,
+                  isDirty: false,
+                }
+              : tab,
+          ),
+        );
         alert(`템플릿이 업데이트되었습니다: ${updated.name} (v${updated.version})`);
       } else {
         const created = await templatesApi.create({
@@ -307,6 +524,25 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
         });
         setCurrentTemplateId(created.id);
         setCurrentTemplateName(created.name);
+        setDesignerTabs((tabs) =>
+          tabs.map((tab) =>
+            tab.tabId === activeDesignerTabId
+              ? {
+                  ...tab,
+                  templateId: created.id,
+                  templateName: created.name,
+                  templateVersion: created.version,
+                  description: created.description || '',
+                  group: created.group || '',
+                  tags: (created.tags || []).join(', '),
+                  versionNote: created.version_note || '',
+                  nodes: created.nodes as Node<CustomNodeData>[],
+                  edges: created.edges,
+                  isDirty: false,
+                }
+              : tab,
+          ),
+        );
         alert(`템플릿이 저장되었습니다: ${created.name}`);
       }
     } catch (error) {
@@ -347,7 +583,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
       const text = await file.text();
       const document = JSON.parse(text);
       const imported = await templatesApi.import(document);
-      handleTemplateSelect(imported);
+      openTemplateInDesignerTab(imported);
       alert(`워크플로우를 가져왔습니다: ${imported.name}`);
     } catch (error) {
       console.error('Failed to import workflow:', error);
@@ -360,14 +596,28 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
   };
 
   const handleTemplateSelect = (template: WorkflowTemplate) => {
-    flowCanvasRef.current?.setNodesAndEdges(template.nodes, template.edges);
-    setCurrentTemplateId(template.id);
-    setCurrentTemplateName(template.name);
-    setWorkflowDescription(template.description || '');
-    setWorkflowGroup(template.group || '');
-    setWorkflowTags((template.tags || []).join(', '));
-    setWorkflowVersionNote(template.version_note || '');
+    openTemplateInDesignerTab(template);
     alert(`템플릿 "${template.name}"을 불러왔습니다.`);
+  };
+
+  const openTemplateInDesignerTab = (template: WorkflowTemplate) => {
+    const existingTab = designerTabs.find((tab) => tab.templateId === template.id);
+    persistActiveDesignerTab();
+
+    if (existingTab) {
+      const refreshedTab = createDesignerTabFromTemplate(template, existingTab.tabId);
+      setDesignerTabs((tabs) =>
+        tabs.map((tab) => (tab.tabId === existingTab.tabId ? refreshedTab : tab)),
+      );
+      setActiveDesignerTabId(existingTab.tabId);
+      restoreDesignerTab(refreshedTab);
+      return;
+    }
+
+    const newTab = createDesignerTabFromTemplate(template);
+    setDesignerTabs((tabs) => tabs.concat(newTab));
+    setActiveDesignerTabId(newTab.tabId);
+    restoreDesignerTab(newTab);
   };
 
   const handleHistorySelect = async (instanceId: string) => {
@@ -566,6 +816,52 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
         darkMode={darkMode}
         onToggleDarkMode={handleToggleDarkMode}
       />
+      <div className="workflow-tab-bar" role="tablist" aria-label="열린 워크플로우">
+        <div className="workflow-tabs">
+          {designerTabs.map((tab) => (
+            <div
+              key={tab.tabId}
+              className={`workflow-tab ${tab.tabId === activeDesignerTabId ? 'active' : ''}`}
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab.tabId === activeDesignerTabId}
+                className="workflow-tab-main"
+                onClick={() => handleSwitchDesignerTab(tab.tabId)}
+                title={getDesignerTabTitle(tab)}
+              >
+                <span className="workflow-tab-status" aria-hidden="true">
+                  {tab.isDirty ? '●' : ''}
+                </span>
+                <span className="workflow-tab-title">{getDesignerTabTitle(tab)}</span>
+                {tab.templateVersion && <span className="workflow-tab-version">v{tab.templateVersion}</span>}
+              </button>
+              <button
+                type="button"
+                className="workflow-tab-close"
+                aria-label={`${getDesignerTabTitle(tab)} 탭 닫기`}
+                title="탭 닫기"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  handleCloseDesignerTab(tab.tabId);
+                }}
+              >
+                <X size={13} />
+              </button>
+            </div>
+          ))}
+        </div>
+        <button
+          type="button"
+          className="workflow-tab-add"
+          onClick={handleNewDesignerTab}
+          aria-label="새 워크플로우 탭"
+          title="새 워크플로우 탭"
+        >
+          <Plus size={15} />
+        </button>
+      </div>
       <input
         ref={importFileInputRef}
         type="file"
@@ -699,8 +995,8 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
           <FlowCanvas
             ref={flowCanvasRef}
             onNodeSelect={handleNodeSelect}
-            onNodesChange={(nodes) => setCanvasNodes(nodes as Node<CustomNodeData>[])}
-            onEdgesChange={setCanvasEdges}
+            onNodesChange={handleCanvasNodesChange}
+            onEdgesChange={handleCanvasEdgesChange}
           />
         </main>
 
@@ -708,6 +1004,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
           {isExecutionPanelOpen ? (
             <ExecutionPanel
               instanceId={executionInstanceId}
+              templateId={currentTemplateId}
               templateName={currentTemplateName}
               formSchema={executionFormSchema}
               onFormSubmit={(formData) => handleRun(formData)}
@@ -757,10 +1054,10 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
                       group={workflowGroup}
                       tags={workflowTags}
                       versionNote={workflowVersionNote}
-                      onDescriptionChange={setWorkflowDescription}
-                      onGroupChange={setWorkflowGroup}
-                      onTagsChange={setWorkflowTags}
-                      onVersionNoteChange={setWorkflowVersionNote}
+                      onDescriptionChange={handleMetadataChange('description', setWorkflowDescription)}
+                      onGroupChange={handleMetadataChange('group', setWorkflowGroup)}
+                      onTagsChange={handleMetadataChange('tags', setWorkflowTags)}
+                      onVersionNoteChange={handleMetadataChange('versionNote', setWorkflowVersionNote)}
                     />
                   )}
                 </div>
@@ -785,6 +1082,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
       <ExecutionModal
         isOpen={isExecutionModalOpen}
         instanceId={executionInstanceId}
+        templateId={currentTemplateId}
         templateName={currentTemplateName}
         formSchema={executionFormSchema}
         onFormSubmit={(formData) => handleRun(formData)}
@@ -795,6 +1093,64 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
 };
 
 const CORE_PLUGIN_ID = 'builtin.http_request';
+
+const DEFAULT_DESIGNER_NODES: Node<CustomNodeData>[] = [
+  {
+    id: '1',
+    type: 'custom',
+    position: { x: 100, y: 100 },
+    data: { label: 'Start', nodeType: 'start', description: '워크플로우 시작' },
+  },
+];
+
+const DEFAULT_DESIGNER_EDGES: Edge[] = [];
+
+function createBlankDesignerTab(tabId = createDesignerTabId()): DesignerTab {
+  return {
+    tabId,
+    templateId: null,
+    templateName: '',
+    description: '',
+    group: '',
+    tags: '',
+    versionNote: '',
+    nodes: cloneWorkflowNodes(DEFAULT_DESIGNER_NODES),
+    edges: cloneWorkflowEdges(DEFAULT_DESIGNER_EDGES),
+    isDirty: false,
+  };
+}
+
+function createDesignerTabFromTemplate(template: WorkflowTemplate, tabId = createDesignerTabId()): DesignerTab {
+  return {
+    tabId,
+    templateId: template.id,
+    templateName: template.name,
+    templateVersion: template.version,
+    description: template.description || '',
+    group: template.group || '',
+    tags: (template.tags || []).join(', '),
+    versionNote: template.version_note || '',
+    nodes: cloneWorkflowNodes(template.nodes as Node<CustomNodeData>[]),
+    edges: cloneWorkflowEdges(template.edges),
+    isDirty: false,
+  };
+}
+
+function createDesignerTabId() {
+  return `designer-tab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getDesignerTabTitle(tab: DesignerTab) {
+  return tab.templateName || 'Untitled Workflow';
+}
+
+function cloneWorkflowNodes(nodes: Node<CustomNodeData>[]) {
+  return JSON.parse(JSON.stringify(nodes || [])) as Node<CustomNodeData>[];
+}
+
+function cloneWorkflowEdges(edges: Edge[]) {
+  return JSON.parse(JSON.stringify(edges || [])) as Edge[];
+}
 
 function getCorePlugins(plugins: PluginManifest[]) {
   return plugins.filter((plugin) => plugin.plugin_id === CORE_PLUGIN_ID);

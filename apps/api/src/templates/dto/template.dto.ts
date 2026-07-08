@@ -4,6 +4,7 @@ export class CreateTemplateDto {
   group?: string;
   tags?: string[];
   version_note?: string;
+  imported_from?: WorkflowImportSourceMetadata;
   nodes: any[]; // React Flow nodes
   edges: any[]; // React Flow edges
 }
@@ -26,6 +27,7 @@ export class TemplateResponseDto {
   group?: string;
   tags: string[];
   version_note?: string;
+  imported_from?: WorkflowImportSourceMetadata;
   nodes: any[];
   edges: any[];
   version: number;
@@ -40,12 +42,16 @@ export type WorkflowExportDocument = {
   schema_version: 'pxm.workflow.v1';
   exported_at: string;
   workflow: {
+    definition_id?: string;
+    version?: number;
+    exported_version_note?: string;
     name: string;
     metadata: {
       description?: string;
       group?: string;
       tags: string[];
       version_note?: string;
+      imported_from?: WorkflowImportSourceMetadata;
     };
     nodes: any[];
     edges: any[];
@@ -59,4 +65,12 @@ export type WorkflowExportDocument = {
     secrets_policy: 'redacted';
     redacted_paths: string[];
   };
+};
+
+export type WorkflowImportSourceMetadata = {
+  schema_version: string;
+  definition_id?: string;
+  version?: number;
+  exported_version_note?: string;
+  exported_at?: string;
 };

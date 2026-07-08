@@ -73,6 +73,7 @@ export interface CustomNodeData {
   dbWatchFilter?: Record<string, any>;
   dbWatchPollIntervalSeconds?: number | string;
   dbWatchCursorField?: string;
+  dbWatchCredentialId?: string;
   
   // Service 노드 전용
   url?: string;

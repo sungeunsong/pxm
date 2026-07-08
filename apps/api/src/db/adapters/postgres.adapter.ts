@@ -14,6 +14,9 @@ import {
   WorkflowHistoryActor,
   WorkflowInstanceAccess,
   WorkflowDefinitionVersion,
+  WorkflowInputPreset,
+  WorkflowInputPresetRepositoryPort,
+  UpsertWorkflowInputPreset,
 } from '../ports/db.ports';
 
 @Injectable()
@@ -24,11 +27,13 @@ export class PostgresAdapter
     WorkflowTaskRepositoryPort,
     OutboxRepositoryPort,
     EngineQueueRepositoryPort,
-    WorkflowScheduleRepositoryPort
+    WorkflowScheduleRepositoryPort,
+    WorkflowInputPresetRepositoryPort
 {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
   private scheduleTableReady = false;
   private definitionVersionTableReady = false;
+  private inputPresetTableReady = false;
 
   private async loadNodeLabels(instanceId: string): Promise<Map<string, string>> {
     const { rows } = await this.pool.query(
@@ -150,14 +155,14 @@ export class PostgresAdapter
 
   async listDefinitions(): Promise<any[]> {
     const { rows } = await this.pool.query(
-      `SELECT * FROM v2_process_definitions ORDER BY created_at DESC`,
+      `SELECT * FROM v2_process_definitions WHERE status <> 'DELETED' ORDER BY created_at DESC`,
     );
     return rows;
   }
 
   async getDefinition(id: string): Promise<any> {
     const defRes = await this.pool.query(
-      `SELECT * FROM v2_process_definitions WHERE id = $1`,
+      `SELECT * FROM v2_process_definitions WHERE id = $1 AND status <> 'DELETED'`,
       [id],
     );
     if (defRes.rows.length === 0) return null;
@@ -268,6 +273,16 @@ export class PostgresAdapter
     );
 
     return this.getDefinition(id);
+  }
+
+  async deleteDefinition(id: string): Promise<boolean> {
+    const { rowCount } = await this.pool.query(
+      `UPDATE v2_process_definitions
+       SET status = 'DELETED', updated_at = NOW()
+       WHERE id = $1::uuid AND status <> 'DELETED'`,
+      [id],
+    );
+    return (rowCount || 0) > 0;
   }
 
   private async ensureDefinitionVersionTable(client?: { query: (sql: string, values?: any[]) => Promise<any> }) {
@@ -970,6 +985,141 @@ export class PostgresAdapter
     );
     return { ok: true, id: rows[0].id };
   }
+
+  async listInputPresets(workflowId: string): Promise<WorkflowInputPreset[]> {
+    await this.ensureInputPresetTable();
+    const { rows } = await this.pool.query(
+      `
+      SELECT *
+      FROM workflow_input_presets
+      WHERE workflow_id = $1 AND enabled = true
+      ORDER BY updated_at DESC
+      `,
+      [workflowId],
+    );
+    return rows.map(mapInputPresetRow);
+  }
+
+  async getInputPreset(workflowId: string, idOrAlias: string): Promise<WorkflowInputPreset | null> {
+    await this.ensureInputPresetTable();
+    const { rows } = await this.pool.query(
+      `
+      SELECT *
+      FROM workflow_input_presets
+      WHERE workflow_id = $1 AND enabled = true AND (id = $2 OR alias = $2)
+      LIMIT 1
+      `,
+      [workflowId, idOrAlias],
+    );
+    return rows[0] ? mapInputPresetRow(rows[0]) : null;
+  }
+
+  async upsertInputPreset(
+    workflowId: string,
+    preset: UpsertWorkflowInputPreset,
+  ): Promise<WorkflowInputPreset> {
+    await this.ensureInputPresetTable();
+    const alias = preset.alias || slugifyPresetAlias(preset.name);
+    const id = preset.id || crypto.randomUUID();
+    const { rows } = await this.pool.query(
+      `
+      INSERT INTO workflow_input_presets
+        (id, workflow_id, alias, name, description, values, scope, group_id, enabled, created_by, updated_by, created_at, updated_at)
+      VALUES
+        ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, true, $9, $9, NOW(), NOW())
+      ON CONFLICT (workflow_id, alias)
+      DO UPDATE SET
+        name = EXCLUDED.name,
+        description = EXCLUDED.description,
+        values = EXCLUDED.values,
+        scope = EXCLUDED.scope,
+        group_id = EXCLUDED.group_id,
+        enabled = true,
+        updated_by = EXCLUDED.updated_by,
+        updated_at = NOW()
+      RETURNING *
+      `,
+      [
+        id,
+        workflowId,
+        alias,
+        preset.name.trim(),
+        preset.description || '',
+        JSON.stringify(preset.values || {}),
+        preset.scope || 'private',
+        preset.group_id || null,
+        preset.actor || null,
+      ],
+    );
+    return mapInputPresetRow(rows[0]);
+  }
+
+  async deleteInputPreset(workflowId: string, presetId: string): Promise<boolean> {
+    await this.ensureInputPresetTable();
+    const { rowCount } = await this.pool.query(
+      `
+      UPDATE workflow_input_presets
+      SET enabled = false, updated_at = NOW()
+      WHERE workflow_id = $1 AND id = $2
+      `,
+      [workflowId, presetId],
+    );
+    return (rowCount || 0) > 0;
+  }
+
+  private async ensureInputPresetTable(): Promise<void> {
+    if (this.inputPresetTableReady) return;
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS workflow_input_presets (
+        id TEXT PRIMARY KEY,
+        workflow_id TEXT NOT NULL,
+        alias TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        values JSONB NOT NULL DEFAULT '{}'::jsonb,
+        scope TEXT NOT NULL DEFAULT 'private',
+        group_id TEXT NULL,
+        enabled BOOLEAN NOT NULL DEFAULT true,
+        created_by TEXT NULL,
+        updated_by TEXT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (workflow_id, alias)
+      )
+    `);
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_workflow_input_presets_workflow_updated
+      ON workflow_input_presets (workflow_id, updated_at DESC)
+    `);
+    this.inputPresetTableReady = true;
+  }
+}
+
+function mapInputPresetRow(row: any): WorkflowInputPreset {
+  return {
+    id: row.id,
+    workflow_id: row.workflow_id,
+    alias: row.alias,
+    name: row.name,
+    description: row.description || '',
+    values: row.values || {},
+    scope: row.scope || 'private',
+    group_id: row.group_id || null,
+    enabled: row.enabled !== false,
+    created_by: row.created_by || null,
+    updated_by: row.updated_by || null,
+    created_at: row.created_at?.toISOString?.() || row.created_at,
+    updated_at: row.updated_at?.toISOString?.() || row.updated_at,
+  };
+}
+
+function slugifyPresetAlias(value: string): string {
+  const alias = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9가-힣_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return alias || `preset-${Date.now()}`;
 }
 
 function mapScheduleRow(row: any): WorkflowScheduleJob {

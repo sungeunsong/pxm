@@ -1,4 +1,9 @@
 import React from 'react';
+import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror';
+import { javascript } from '@codemirror/lang-javascript';
+import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
+import { EditorView } from '@codemirror/view';
+import { tags } from '@lezer/highlight';
 import type { Node } from 'reactflow';
 import type { Edge } from 'reactflow';
 import { Button, Input, Select, Checkbox } from '../components';
@@ -6,6 +11,7 @@ import type { CustomNodeData, FormSchema } from './form-types';
 import type { PluginManifest, PluginJsonSchemaProperty, PluginTestResponse } from '../api/plugins';
 import { credentialsApi, type CredentialProfile } from '../api/credentials';
 import { commandsApi, type CommandRegistryItem } from '../api/commands';
+import { templatesApi, type TestDbWatchConnectionResponse } from '../api/templates';
 import { FormSchemaEditor } from './FormSchemaEditor';
 import { PluginIcon } from './plugin-icons';
 import './NodePropertiesForm.css';
@@ -35,6 +41,61 @@ interface WorkflowOption {
   name: string;
 }
 
+const javascriptEditorExtensions = [
+  javascript({ jsx: true }),
+  EditorView.lineWrapping,
+  EditorView.theme({
+    '&': {
+      color: 'var(--text-primary)',
+      backgroundColor: 'var(--bg-tertiary)',
+      fontSize: '12px',
+    },
+    '.cm-content': {
+      minHeight: '260px',
+      padding: '10px 0',
+      fontFamily: 'var(--font-mono)',
+      lineHeight: '1.6',
+    },
+    '.cm-gutters': {
+      color: 'var(--text-tertiary)',
+      backgroundColor: 'color-mix(in srgb, var(--bg-tertiary) 88%, var(--bg-secondary))',
+      borderRight: '1px solid var(--border-subtle)',
+    },
+    '.cm-line': {
+      padding: '0 12px',
+    },
+    '.cm-activeLine': {
+      backgroundColor: 'color-mix(in srgb, var(--border-focus) 8%, transparent)',
+    },
+    '.cm-activeLineGutter': {
+      backgroundColor: 'color-mix(in srgb, var(--border-focus) 10%, transparent)',
+      color: 'var(--text-secondary)',
+    },
+    '&.cm-focused': {
+      outline: 'none',
+    },
+    '&.cm-focused .cm-cursor': {
+      borderLeftColor: 'var(--text-primary)',
+    },
+    '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': {
+      backgroundColor: 'color-mix(in srgb, var(--border-focus) 24%, transparent)',
+    },
+  }),
+  syntaxHighlighting(
+    HighlightStyle.define([
+      { tag: tags.keyword, color: '#2563eb', fontWeight: '600' },
+      { tag: [tags.string, tags.special(tags.string)], color: '#15803d' },
+      { tag: [tags.number, tags.bool, tags.null], color: '#9333ea' },
+      { tag: [tags.comment, tags.lineComment, tags.blockComment], color: 'var(--text-tertiary)', fontStyle: 'italic' },
+      { tag: [tags.function(tags.variableName), tags.function(tags.propertyName)], color: '#b45309' },
+      { tag: [tags.variableName, tags.propertyName], color: 'var(--text-primary)' },
+      { tag: tags.operator, color: '#db2777' },
+      { tag: tags.punctuation, color: 'var(--text-secondary)' },
+    ]),
+    { fallback: true },
+  ),
+];
+
 export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
   node,
   onUpdate,
@@ -47,7 +108,7 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
   testResult,
   testError,
 }) => {
-  const scriptTextareaRef = React.useRef<HTMLTextAreaElement | null>(null);
+  const scriptEditorRef = React.useRef<ReactCodeMirrorRef | null>(null);
   const [credentials, setCredentials] = React.useState<CredentialProfile[]>([]);
   const [credentialsLoading, setCredentialsLoading] = React.useState(false);
   const [credentialsError, setCredentialsError] = React.useState<string | null>(null);
@@ -57,6 +118,19 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
   const [commandOptions, setCommandOptions] = React.useState<CommandRegistryItem[]>([]);
   const [commandOptionsLoading, setCommandOptionsLoading] = React.useState(false);
   const [commandOptionsError, setCommandOptionsError] = React.useState<string | null>(null);
+  const [dbWatchFilterJson, setDbWatchFilterJson] = React.useState('{}');
+  const [dbWatchFilterError, setDbWatchFilterError] = React.useState<string | null>(null);
+  const [dbWatchTestRunning, setDbWatchTestRunning] = React.useState(false);
+  const [dbWatchTestResult, setDbWatchTestResult] = React.useState<TestDbWatchConnectionResponse | null>(null);
+  const [dbWatchTestError, setDbWatchTestError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    const data = node.data as any;
+    setDbWatchFilterJson(JSON.stringify(data.dbWatchFilter || {}, null, 2));
+    setDbWatchFilterError(null);
+    setDbWatchTestResult(null);
+    setDbWatchTestError(null);
+  }, [node.id]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -174,9 +248,9 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
     const data = node.data as any;
     const code = data.code || '';
     const reference = `context.${path}`;
-    const textarea = scriptTextareaRef.current;
-    const start = textarea?.selectionStart ?? code.length;
-    const end = textarea?.selectionEnd ?? code.length;
+    const editorView = scriptEditorRef.current?.view;
+    const start = editorView?.state.selection.main.from ?? code.length;
+    const end = editorView?.state.selection.main.to ?? code.length;
     const nextCode = `${code.slice(0, start)}${reference}${code.slice(end)}`;
 
     onUpdate(node.id, {
@@ -186,10 +260,36 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
     });
 
     requestAnimationFrame(() => {
-      textarea?.focus();
       const cursor = start + reference.length;
-      textarea?.setSelectionRange(cursor, cursor);
+      editorView?.focus();
+      editorView?.dispatch({
+        selection: { anchor: cursor },
+        scrollIntoView: true,
+      });
     });
+  };
+
+  const handleTestDbWatchConnection = async () => {
+    const data = node.data as any;
+    setDbWatchTestRunning(true);
+    setDbWatchTestResult(null);
+    setDbWatchTestError(null);
+
+    try {
+      const result = await templatesApi.testDbWatchConnection({
+        database: data.dbWatchDatabase || null,
+        collection: data.dbWatchCollection || null,
+        credential_id: data.dbWatchCredentialId || null,
+        mode: data.dbWatchMode || 'polling',
+        cursor_field: data.dbWatchCursorField || null,
+        filter: isPlainObject(data.dbWatchFilter) ? data.dbWatchFilter : {},
+      });
+      setDbWatchTestResult(result);
+    } catch (error) {
+      setDbWatchTestError(error instanceof Error ? error.message : 'DB Watch 연결 테스트에 실패했습니다.');
+    } finally {
+      setDbWatchTestRunning(false);
+    }
   };
 
   // Service 노드 속성
@@ -388,19 +488,28 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
         <h4 className="property-section-title">JS 실행 설정</h4>
         <div className="property-group">
           <label className="property-label">JavaScript Code</label>
-          <textarea
-            ref={scriptTextareaRef}
-            className="property-textarea code-textarea"
+          <CodeMirror
+            ref={scriptEditorRef}
+            className="property-code-editor"
             value={data.code || ''}
-            onChange={(e) =>
+            extensions={javascriptEditorExtensions}
+            basicSetup={{
+              autocompletion: true,
+              bracketMatching: true,
+              closeBrackets: true,
+              foldGutter: true,
+              highlightActiveLine: true,
+              highlightActiveLineGutter: true,
+              lineNumbers: true,
+            }}
+            onChange={(value) =>
               onUpdate(node.id, {
                 ...data,
                 scriptType: 'javascript',
-                code: e.target.value,
+                code: value,
               })
             }
             placeholder="return { total: input.formData.price * input.formData.quantity };"
-            spellCheck={false}
           />
           <div className="property-helper-text">
             `input`과 `context`를 읽고, `return` 값이 output path에 저장됩니다.
@@ -443,6 +552,12 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
     const argumentsJson = data.commandArgumentsJson || '{\n  "message": "hello from command node"\n}';
     const jsonError = validateJsonText(argumentsJson);
     const selectedCommand = commandOptions.find((command) => command.command_id === data.commandId);
+    const argumentDocs = selectedCommand
+      ? buildCommandArgumentDocs(selectedCommand, argumentsJson, pathSuggestions)
+      : [];
+    const missingRequiredArgs = selectedCommand && !jsonError
+      ? findMissingRequiredCommandArgs(selectedCommand, argumentsJson, pathSuggestions)
+      : [];
 
     return (
       <div className="property-section">
@@ -472,6 +587,9 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
             현재 command_id는 목록에 없습니다. engine registry에 없으면 실행 시 실패합니다.
           </div>
         )}
+        {selectedCommand && (
+          <CommandArgumentGuide command={selectedCommand} arguments={argumentDocs} />
+        )}
         <div className="property-group">
           <label className="property-label">Arguments JSON</label>
           <textarea
@@ -481,9 +599,14 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
             spellCheck={false}
           />
           <div className="property-helper-text">
-            registry의 arg_order에 맞춰 JSON key 값을 인자로 전달합니다.
+            registry의 arg_order에 맞춰 JSON key 값을 인자로 전달합니다. 비워둔 key는 같은 이름의 이전 노드 output path에서 찾습니다.
           </div>
           {jsonError && <div className="property-error-text">{jsonError}</div>}
+          {!jsonError && missingRequiredArgs.length > 0 && (
+            <div className="property-error-text">
+              필수 argument 누락: {missingRequiredArgs.join(', ')}
+            </div>
+          )}
         </div>
         <Input
           label="Output Path"
@@ -569,6 +692,14 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
     const data = node.data as any;
     const triggerType = data.triggerType || 'manual';
     const scheduleType = data.scheduleType || 'interval';
+    const dbWatchMode = data.dbWatchMode || 'polling';
+    const dbWatchCredentialPolicy = getDbWatchCredentialPolicy();
+    const dbWatchCredentials = credentials.filter((credential) =>
+      isCredentialCompatible(credential, dbWatchCredentialPolicy),
+    );
+    const selectedDbWatchCredential = credentials.find(
+      (credential) => credential.id === data.dbWatchCredentialId,
+    );
     return (
       <>
         <div className="property-section">
@@ -683,6 +814,61 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
                   })
                 }
               />
+              <div className="node-test-header">
+                <div>
+                  <div className="property-label">DB Watch Connection Test</div>
+                  <div className="property-helper-text">
+                    현재 credential, database, collection, filter로 연결과 조회 권한을 확인합니다.
+                  </div>
+                </div>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleTestDbWatchConnection}
+                  disabled={dbWatchTestRunning || !data.dbWatchCollection}
+                >
+                  {dbWatchTestRunning ? '확인 중...' : '연결 테스트'}
+                </Button>
+              </div>
+              {(dbWatchTestResult || dbWatchTestError) && (
+                <div className={`node-test-result ${dbWatchTestResult?.ok ? 'success' : 'error'}`}>
+                  <div className="node-test-result-meta">
+                    {dbWatchTestResult
+                      ? `성공 · ${dbWatchTestResult.duration_ms}ms`
+                      : '실패'}
+                  </div>
+                  <JsonTreeView
+                    value={dbWatchTestResult?.details ?? { error: dbWatchTestError }}
+                    onPathClick={handleCopyPath}
+                  />
+                </div>
+              )}
+              <Select
+                label="MongoDB Credential"
+                value={data.dbWatchCredentialId || ''}
+                onChange={(e) =>
+                  onUpdate(node.id, {
+                    ...data,
+                    triggerType: 'db_watch',
+                    dbWatchCredentialId: e.target.value || undefined,
+                  })
+                }
+                options={buildCredentialOptions(dbWatchCredentials, dbWatchCredentialPolicy)}
+                helperText={
+                  credentialsError ||
+                  (credentialsLoading
+                    ? 'Credential 목록을 불러오는 중입니다.'
+                    : dbWatchCredentialPolicy.helperText)
+                }
+                fullWidth
+              />
+              {selectedDbWatchCredential && (
+                <CredentialBindingSummary
+                  credential={selectedDbWatchCredential}
+                  binding={buildCredentialBinding(selectedDbWatchCredential, dbWatchCredentialPolicy)}
+                  policy={dbWatchCredentialPolicy}
+                />
+              )}
               <Input
                 label="Database"
                 placeholder="pxm_db"
@@ -712,7 +898,7 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
               />
               <Select
                 label="Watch Mode"
-                value={data.dbWatchMode || 'polling'}
+                value={dbWatchMode}
                 onChange={(e) =>
                   onUpdate(node.id, {
                     ...data,
@@ -748,7 +934,7 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
               <Input
                 label="Cursor Field"
                 placeholder="created_at"
-                value={data.dbWatchCursorField || 'created_at'}
+                value={data.dbWatchCursorField ?? 'created_at'}
                 onChange={(e) =>
                   onUpdate(node.id, {
                     ...data,
@@ -756,41 +942,63 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
                     dbWatchCursorField: e.target.value,
                   })
                 }
-                helperText="created_at, updated_at처럼 증가 비교가 가능한 필드를 사용합니다."
-                fullWidth
-              />
-              <Input
-                label="Poll Interval Seconds"
-                type="number"
-                min={1}
-                placeholder="10"
-                value={data.dbWatchPollIntervalSeconds || ''}
-                onChange={(e) =>
-                  onUpdate(node.id, {
-                    ...data,
-                    triggerType: 'db_watch',
-                    dbWatchPollIntervalSeconds: e.target.value === '' ? '' : Number(e.target.value),
-                  })
+                helperText={
+                  dbWatchMode === 'change_stream'
+                    ? 'Change Stream에서는 이벤트 식별값으로 사용합니다. 비워두면 Mongo change _id를 fallback으로 사용합니다.'
+                    : 'Polling에서는 created_at, updated_at처럼 증가 비교가 가능한 필드를 기준으로 새 문서를 찾습니다.'
                 }
                 fullWidth
               />
-              <div className="property-group">
-                <label className="property-label">Filter JSON</label>
-                <textarea
-                  className="property-textarea"
-                  value={JSON.stringify(data.dbWatchFilter || {}, null, 2)}
+              {dbWatchMode === 'polling' ? (
+                <Input
+                  label="Poll Interval Seconds"
+                  type="number"
+                  min={1}
+                  placeholder="10"
+                  value={data.dbWatchPollIntervalSeconds || ''}
                   onChange={(e) =>
                     onUpdate(node.id, {
                       ...data,
                       triggerType: 'db_watch',
-                      dbWatchFilter: parseJsonLoose(e.target.value),
+                      dbWatchPollIntervalSeconds: e.target.value === '' ? '' : Number(e.target.value),
                     })
                   }
+                  helperText="Polling 모드에서 다음 조회까지 기다릴 시간입니다."
+                  fullWidth
+                />
+              ) : (
+                <div className="property-helper-text">
+                  Change Stream 모드는 MongoDB 변경 이벤트를 실시간으로 구독하므로 poll interval을 사용하지 않습니다.
+                </div>
+              )}
+              <div className="property-group">
+                <label className="property-label">Filter JSON</label>
+                <textarea
+                  className="property-textarea"
+                  value={dbWatchFilterJson}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    setDbWatchFilterJson(raw);
+                    const parsed = parseJsonObject(raw);
+                    if (parsed.ok) {
+                      setDbWatchFilterError(null);
+                      onUpdate(node.id, {
+                        ...data,
+                        triggerType: 'db_watch',
+                        dbWatchFilter: parsed.value,
+                      });
+                    } else {
+                      setDbWatchFilterError(parsed.message);
+                    }
+                  }}
                   spellCheck={false}
                 />
                 <div className="property-helper-text">
                   매칭된 문서는 formData.document로 전달됩니다.
                 </div>
+                {dbWatchFilterError && (
+                  <div className="property-error-text">{dbWatchFilterError}</div>
+                )}
               </div>
             </>
           )}
@@ -1164,6 +1372,188 @@ function buildDefaultCommandArguments(command?: CommandRegistryItem) {
   return JSON.stringify(value, null, 2);
 }
 
+type CommandArgumentDoc = {
+  key: string;
+  title: string;
+  type: string;
+  required: boolean;
+  defaultValue: unknown;
+  description: string;
+  orderIndex: number | null;
+  source: CommandArgumentSource;
+};
+
+type CommandArgumentSource =
+  | { kind: 'json' }
+  | { kind: 'upstream'; suggestion: NodePathSuggestion }
+  | { kind: 'missing' }
+  | { kind: 'optional' };
+
+function buildCommandArgumentDocs(
+  command: CommandRegistryItem,
+  argumentsJson: string,
+  pathSuggestions: NodePathSuggestion[],
+): CommandArgumentDoc[] {
+  const schema = command.argument_schema || {};
+  const properties = isPlainObject(schema.properties) ? schema.properties : {};
+  const required = new Set(Array.isArray(schema.required) ? schema.required.map(String) : []);
+  const orderIndex = new Map(command.arg_order.map((key, index) => [key, index]));
+  const keys = Array.from(new Set([...command.arg_order, ...Object.keys(properties)]));
+  const argumentValues = parseCommandArgumentsObject(argumentsJson);
+  const upstreamByPath = buildUpstreamPathMap(pathSuggestions);
+
+  return keys.map((key) => {
+    const property = isPlainObject(properties[key]) ? properties[key] : {};
+    const source = resolveCommandArgumentSource(
+      key,
+      required.has(key),
+      argumentValues,
+      upstreamByPath,
+    );
+    return {
+      key,
+      title: typeof property.title === 'string' ? property.title : key,
+      type: typeof property.type === 'string' ? property.type : 'any',
+      required: required.has(key),
+      defaultValue: property.default,
+      description: typeof property.description === 'string' ? property.description : '',
+      orderIndex: orderIndex.has(key) ? orderIndex.get(key)! : null,
+      source,
+    };
+  });
+}
+
+function findMissingRequiredCommandArgs(
+  command: CommandRegistryItem,
+  argumentsJson: string,
+  pathSuggestions: NodePathSuggestion[],
+): string[] {
+  const schema = command.argument_schema || {};
+  const required = Array.isArray(schema.required) ? schema.required.map(String) : [];
+  if (required.length === 0) {
+    return [];
+  }
+
+  const argumentValues = parseCommandArgumentsObject(argumentsJson);
+  const upstreamByPath = buildUpstreamPathMap(pathSuggestions);
+
+  return required.filter((key) =>
+    resolveCommandArgumentSource(key, true, argumentValues, upstreamByPath).kind === 'missing',
+  );
+}
+
+function parseCommandArgumentsObject(argumentsJson: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(argumentsJson);
+    return isPlainObject(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildUpstreamPathMap(pathSuggestions: NodePathSuggestion[]): Map<string, NodePathSuggestion> {
+  const map = new Map<string, NodePathSuggestion>();
+  for (const suggestion of pathSuggestions) {
+    map.set(normalizeArgumentPath(suggestion.path), suggestion);
+  }
+  return map;
+}
+
+function resolveCommandArgumentSource(
+  key: string,
+  required: boolean,
+  argumentValues: Record<string, unknown> | null,
+  upstreamByPath: Map<string, NodePathSuggestion>,
+): CommandArgumentSource {
+  const value = argumentValues?.[key];
+  if (value !== undefined && value !== null && value !== '') {
+    return { kind: 'json' };
+  }
+
+  const upstream = upstreamByPath.get(normalizeArgumentPath(key));
+  if (upstream) {
+    return { kind: 'upstream', suggestion: upstream };
+  }
+
+  return required ? { kind: 'missing' } : { kind: 'optional' };
+}
+
+function normalizeArgumentPath(path: string) {
+  return path.trim().replace(/^context\./, '').replace(/^data\.outputs\./, '');
+}
+
+function CommandArgumentGuide({
+  command,
+  arguments: argumentDocs,
+}: {
+  command: CommandRegistryItem;
+  arguments: CommandArgumentDoc[];
+}) {
+  if (argumentDocs.length === 0) {
+    return (
+      <div className="command-argument-guide compact">
+        이 command는 추가 arguments를 요구하지 않습니다.
+      </div>
+    );
+  }
+
+  return (
+    <div className="command-argument-guide">
+      <div className="command-argument-guide-title">
+        Arguments Contract
+        <span>{command.arg_order.length > 0 ? `CLI order: ${command.arg_order.join(' -> ')}` : 'CLI arguments 없음'}</span>
+      </div>
+      <div className="command-argument-list">
+        {argumentDocs.map((argument) => (
+          <div className="command-argument-item" key={argument.key}>
+            <div className="command-argument-main">
+              <code>{argument.key}</code>
+              <span>{argument.title}</span>
+              {argument.required && <strong>required</strong>}
+              <CommandArgumentSourceBadge source={argument.source} />
+            </div>
+            <div className="command-argument-meta">
+              <span>type: {argument.type}</span>
+              <span>
+                order: {argument.orderIndex === null ? 'not passed' : argument.orderIndex + 1}
+              </span>
+              {argument.defaultValue !== undefined && (
+                <span>default: {String(argument.defaultValue)}</span>
+              )}
+            </div>
+            {argument.description && (
+              <div className="command-argument-description">{argument.description}</div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CommandArgumentSourceBadge({ source }: { source: CommandArgumentSource }) {
+  if (source.kind === 'json') {
+    return <em className="command-argument-source is-json">Arguments JSON</em>;
+  }
+
+  if (source.kind === 'upstream') {
+    return (
+      <em
+        className="command-argument-source is-upstream"
+        title={`${source.suggestion.sourceNodeLabel}: ${source.suggestion.path}`}
+      >
+        이전 노드: {source.suggestion.sourceNodeLabel}
+      </em>
+    );
+  }
+
+  if (source.kind === 'missing') {
+    return <em className="command-argument-source is-missing">누락</em>;
+  }
+
+  return <em className="command-argument-source is-optional">선택</em>;
+}
+
 type CredentialPolicy = {
   mode: 'none' | 'mongodb_connection' | 'http_auth';
   title: string;
@@ -1220,6 +1610,17 @@ function getCredentialPolicy(plugin?: PluginManifest): CredentialPolicy {
     handledFields: [],
     allowedTypes: [],
     preferredScopes: [],
+  };
+}
+
+function getDbWatchCredentialPolicy(): CredentialPolicy {
+  return {
+    mode: 'mongodb_connection',
+    title: 'MongoDB watch connection URI',
+    helperText: 'Connection String 타입이며 mongo/mongodb/db/database 계열 scope가 있는 credential만 표시됩니다. 비워두면 API 서버의 기본 MongoDB 연결을 사용합니다.',
+    handledFields: [],
+    allowedTypes: ['connection_string'],
+    preferredScopes: ['mongo', 'mongodb', 'mongo-db', 'mongo_db', 'db', 'database'],
   };
 }
 
@@ -1433,6 +1834,25 @@ function parseJsonLoose(value: string) {
   } catch {
     return value;
   }
+}
+
+function parseJsonObject(value: string): { ok: true; value: Record<string, any> } | { ok: false; message: string } {
+  try {
+    const parsed = JSON.parse(value);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { ok: false, message: 'JSON object 형식으로 입력하세요. 예: {"type":"approval"}' };
+    }
+    return { ok: true, value: parsed };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : 'JSON 파싱에 실패했습니다.',
+    };
+  }
+}
+
+function isPlainObject(value: unknown): value is Record<string, any> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
 function getTestResultValue(result?: PluginTestResponse | null, error?: string | null) {

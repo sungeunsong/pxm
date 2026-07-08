@@ -19,6 +19,7 @@ export interface ExecutionEvent {
 export interface ExecutionModalProps {
   isOpen: boolean;
   instanceId: string | null;
+  templateId?: string | null;
   templateName: string;
   formSchema?: FormSchema;
   onFormSubmit?: (formData: Record<string, any>) => void;
@@ -28,6 +29,7 @@ export interface ExecutionModalProps {
 export const ExecutionModal: React.FC<ExecutionModalProps> = ({
   isOpen,
   instanceId,
+  templateId,
   templateName,
   formSchema,
   onFormSubmit,
@@ -200,6 +202,7 @@ export const ExecutionModal: React.FC<ExecutionModalProps> = ({
               </p>
               <FormRenderer
                 schema={formSchema}
+                presetScopeId={templateId || undefined}
                 onSubmit={(data) => {
                   onFormSubmit(data);
                 }}

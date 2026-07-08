@@ -9,6 +9,7 @@ import { CredentialsModule } from './credentials/credentials.module';
 import { EngineModule } from './engine/engine.module';
 import { SchedulesModule } from './schedules/schedules.module';
 import { CommandsModule } from './commands/commands.module';
+import { DbWatchModule } from './db-watch/db-watch.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { CommandsModule } from './commands/commands.module';
     CommandsModule,
     EngineModule,
     SchedulesModule,
+    DbWatchModule,
   ],
 })
 export class AppModule {}

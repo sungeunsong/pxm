@@ -1,11 +1,12 @@
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { ChangeStream, ChangeStreamDocument, Db, Document, ObjectId } from 'mongodb';
+import { ChangeStream, ChangeStreamDocument, Db, Document, MongoClient, ObjectId } from 'mongodb';
 import {
   WorkflowInstanceRepositoryPort,
   WorkflowRepositoryPort,
 } from '../db/ports/db.ports';
 import { MONGO_DB } from '../db/mongo.provider';
+import { CredentialsService } from '../credentials/credentials.service';
 
 type DbWatchOperation = 'insert' | 'update' | 'upsert';
 type DbWatchMode = 'polling' | 'change_stream';
@@ -17,6 +18,7 @@ interface DbWatchJob {
   start_node_id: string;
   database: string | null;
   collection: string;
+  credential_id?: string | null;
   operation: DbWatchOperation;
   mode: DbWatchMode;
   filter: Record<string, any>;
@@ -40,11 +42,13 @@ export class DbWatchService implements OnModuleInit, OnModuleDestroy {
   private watchTimer?: NodeJS.Timeout;
   private running = false;
   private readonly changeStreams = new Map<string, ChangeStream>();
+  private readonly credentialClients = new Map<string, { connectionString: string; client: MongoClient }>();
 
   constructor(
     @Inject(MONGO_DB) private readonly db: Db,
     private readonly workflowRepo: WorkflowRepositoryPort,
     private readonly instanceRepo: WorkflowInstanceRepositoryPort,
+    private readonly credentialsService: CredentialsService,
   ) {}
 
   async onModuleInit() {
@@ -80,6 +84,10 @@ export class DbWatchService implements OnModuleInit, OnModuleDestroy {
       void stream.close();
     }
     this.changeStreams.clear();
+    for (const entry of this.credentialClients.values()) {
+      void entry.client.close();
+    }
+    this.credentialClients.clear();
   }
 
   async syncDefinitionWatchJobs(
@@ -121,6 +129,7 @@ export class DbWatchService implements OnModuleInit, OnModuleDestroy {
             start_node_id: job.start_node_id,
             database: job.database,
             collection: job.collection,
+            credential_id: job.credential_id || null,
             operation: job.operation,
             mode: job.mode,
             filter: job.filter,
@@ -139,9 +148,80 @@ export class DbWatchService implements OnModuleInit, OnModuleDestroy {
         },
         { upsert: true },
       );
+
+      if (shouldRestartChangeStream(existing, job)) {
+        await this.closeChangeStream(job._id);
+      }
     }
 
     await this.reconcileChangeStreams();
+  }
+
+  async testConnection(config: {
+    database?: string | null;
+    collection?: string | null;
+    credential_id?: string | null;
+    mode?: DbWatchMode | string | null;
+    cursor_field?: string | null;
+    filter?: Record<string, any> | null;
+  }): Promise<{ ok: boolean; duration_ms: number; details: Record<string, any> }> {
+    const startedAt = Date.now();
+    const collection = stringOrEmpty(config.collection).trim();
+    if (!collection) {
+      throw new Error('collection is required');
+    }
+
+    const job: DbWatchJob = {
+      _id: 'db-watch-test',
+      definition_id: 'db-watch-test',
+      definition_name: 'DB Watch Test',
+      start_node_id: 'db-watch-test',
+      database: stringOrEmpty(config.database).trim() || null,
+      collection,
+      credential_id: stringOrEmpty(config.credential_id).trim() || null,
+      operation: 'insert',
+      mode: normalizeMode(config.mode),
+      filter: isPlainObject(config.filter) ? config.filter : {},
+      poll_interval_seconds: 10,
+      cursor_field: stringOrEmpty(config.cursor_field).trim() || 'created_at',
+      active: false,
+      status: 'IDLE',
+      next_poll_at: new Date(),
+      created_at: new Date(),
+      updated_at: new Date(),
+    };
+
+    const targetDb = await this.getTargetDb(job);
+    await targetDb.command({ ping: 1 });
+    const target = targetDb.collection(job.collection);
+    const hasMatchingDocument = await target.find(job.filter).limit(1).maxTimeMS(3000).hasNext();
+    const hasCursorDocument = await target
+      .find(buildCursorPresenceFilter(job.filter, job.cursor_field))
+      .limit(1)
+      .maxTimeMS(3000)
+      .hasNext();
+    let changeStreamOpened = false;
+
+    if (job.mode === 'change_stream') {
+      const stream = target.watch([], { fullDocument: 'updateLookup', maxAwaitTimeMS: 1000 });
+      changeStreamOpened = true;
+      await stream.close().catch(() => undefined);
+    }
+
+    return {
+      ok: true,
+      duration_ms: Date.now() - startedAt,
+      details: {
+        database: targetDb.databaseName,
+        collection: job.collection,
+        mode: job.mode,
+        credential_id: job.credential_id,
+        cursor_field: job.cursor_field,
+        filter_matched_existing_document: hasMatchingDocument,
+        cursor_field_found_on_matching_document: hasCursorDocument,
+        change_stream_opened: changeStreamOpened,
+      },
+    };
   }
 
   private async tick(): Promise<void> {
@@ -184,8 +264,7 @@ export class DbWatchService implements OnModuleInit, OnModuleDestroy {
     const activeIds = new Set(jobs.map((job) => job._id));
     for (const [jobId, stream] of this.changeStreams.entries()) {
       if (!activeIds.has(jobId)) {
-        await stream.close().catch(() => undefined);
-        this.changeStreams.delete(jobId);
+        await this.closeChangeStream(jobId, stream);
       }
     }
 
@@ -198,7 +277,7 @@ export class DbWatchService implements OnModuleInit, OnModuleDestroy {
 
   private async openChangeStream(job: DbWatchJob): Promise<void> {
     try {
-      const targetDb = job.database ? this.db.client.db(job.database) : this.db;
+      const targetDb = await this.getTargetDb(job);
       const pipeline = buildChangeStreamPipeline(job);
       const stream = targetDb.collection(job.collection).watch(pipeline, {
         fullDocument: 'updateLookup',
@@ -324,10 +403,35 @@ export class DbWatchService implements OnModuleInit, OnModuleDestroy {
     );
 
     try {
-      const targetDb = job.database ? this.db.client.db(job.database) : this.db;
+      const targetDb = await this.getTargetDb(job);
       const target = targetDb.collection(job.collection);
       const eventLimit = positiveInt(process.env.DB_WATCH_START_EVENT_BATCH_SIZE, 25);
       const filter = buildPollFilter(job);
+
+      if (job.last_seen_value === undefined || job.last_seen_value === null) {
+        const latest = await target
+          .find(filter)
+          .sort({ [job.cursor_field]: -1 })
+          .limit(1)
+          .toArray();
+        const latestValue = latest.length > 0 ? readPath(latest[0], job.cursor_field) : null;
+        const nextPollAt = new Date(Date.now() + Math.max(1, job.poll_interval_seconds) * 1000);
+
+        await jobs.updateOne(
+          { _id: job._id },
+          {
+            $set: {
+              status: 'IDLE',
+              next_poll_at: nextPollAt,
+              last_seen_value: serializeCursorValue(latestValue),
+              last_error: undefined,
+              updated_at: new Date(),
+            },
+          },
+        );
+        return;
+      }
+
       const docs = await target.find(filter).sort({ [job.cursor_field]: 1 }).limit(eventLimit).toArray();
 
       let lastSeenValue = job.last_seen_value;
@@ -487,6 +591,43 @@ export class DbWatchService implements OnModuleInit, OnModuleDestroy {
     return instanceId;
   }
 
+  private async getTargetDb(job: DbWatchJob): Promise<Db> {
+    if (!job.credential_id) {
+      return job.database ? this.db.client.db(job.database) : this.db;
+    }
+
+    const credential = await this.credentialsService.get(job.credential_id);
+    if (credential.type !== 'connection_string') {
+      throw new Error(`DB watch credential must be connection_string: ${job.credential_id}`);
+    }
+
+    const connectionString = await this.credentialsService.resolveSecret(job.credential_id, {
+      actor: 'db_watch',
+      node_id: job.start_node_id,
+      workflow_id: job.definition_id,
+    });
+    const cached = this.credentialClients.get(job.credential_id);
+    if (cached?.connectionString === connectionString) {
+      return cached.client.db(job.database || undefined);
+    }
+
+    if (cached) {
+      await cached.client.close().catch(() => undefined);
+    }
+
+    const client = new MongoClient(connectionString);
+    await client.connect();
+    this.credentialClients.set(job.credential_id, { connectionString, client });
+    return client.db(job.database || undefined);
+  }
+
+  private async closeChangeStream(jobId: string, stream = this.changeStreams.get(jobId)): Promise<void> {
+    if (stream) {
+      await stream.close().catch(() => undefined);
+    }
+    this.changeStreams.delete(jobId);
+  }
+
   private async ensureIndexes(): Promise<void> {
     await this.db.collection('v2_db_watch_jobs').createIndex({ active: 1, next_poll_at: 1 });
     await this.db.collection('v2_db_watch_jobs').createIndex({ active: 1, mode: 1 });
@@ -520,6 +661,7 @@ function buildDbWatchJob(
     start_node_id: node.id,
     database: stringOrEmpty(data.dbWatchDatabase).trim() || defaultDatabase,
     collection,
+    credential_id: stringOrEmpty(data.dbWatchCredentialId).trim() || null,
     operation: normalizeOperation(data.dbWatchOperation),
     mode: normalizeMode(data.dbWatchMode),
     filter: isPlainObject(data.dbWatchFilter) ? data.dbWatchFilter : {},
@@ -533,14 +675,41 @@ function buildDbWatchJob(
   };
 }
 
+function shouldRestartChangeStream(existing: DbWatchJob | null, next: DbWatchJob): boolean {
+  if (!existing || existing.mode !== 'change_stream') {
+    return false;
+  }
+  if (next.mode !== 'change_stream' || !next.active) {
+    return true;
+  }
+
+  return (
+    existing.database !== next.database ||
+    existing.collection !== next.collection ||
+    (existing.credential_id || null) !== (next.credential_id || null) ||
+    existing.operation !== next.operation ||
+    JSON.stringify(existing.filter || {}) !== JSON.stringify(next.filter || {})
+  );
+}
+
 function buildPollFilter(job: DbWatchJob): Record<string, any> {
-  const filter: Record<string, any> = { ...(isPlainObject(job.filter) ? job.filter : {}) };
+  const filter = buildCursorPresenceFilter(job.filter, job.cursor_field);
   if (job.last_seen_value !== undefined && job.last_seen_value !== null) {
     filter[job.cursor_field] = {
       ...(isPlainObject(filter[job.cursor_field]) ? filter[job.cursor_field] : {}),
       $gt: deserializeCursorValue(job.last_seen_value),
     };
   }
+  return filter;
+}
+
+function buildCursorPresenceFilter(sourceFilter: Record<string, any>, cursorField: string): Record<string, any> {
+  const filter: Record<string, any> = { ...(isPlainObject(sourceFilter) ? sourceFilter : {}) };
+  filter[cursorField] = {
+    ...(isPlainObject(filter[cursorField]) ? filter[cursorField] : {}),
+    $exists: true,
+    $ne: null,
+  };
   return filter;
 }
 

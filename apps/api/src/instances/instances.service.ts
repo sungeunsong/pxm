@@ -77,6 +77,30 @@ export class InstancesService {
     };
   }
 
+  async getTerminalOutputs(
+    id: string,
+    options: { nodeId?: string; after?: number; actor?: WorkflowHistoryActor } = {},
+  ) {
+    const instance = await this.getReadableInstance(id, options.actor);
+    const context = instance.context ?? instance.ctx ?? {};
+    const trace = await this.outboxRepo.fetchTrace(id, 500);
+    const commandNodes = collectCommandNodes(context, trace);
+    const outputs = [...commandNodes.values()]
+      .map((node) => buildTerminalOutputSnapshot(context, trace, node))
+      .filter((item) => item)
+      .filter((item) => !options.nodeId || item!.node_id === options.nodeId)
+      .filter((item) => !options.after || (item!.last_event_id ?? 0) > options.after)
+      .map((item) => item!);
+    const latestEventId = trace.reduce((max, event) => Math.max(max, Number(event.id || 0)), 0);
+
+    return {
+      instance_id: id,
+      status: instance.state ?? instance.status,
+      poll_after: latestEventId,
+      outputs,
+    };
+  }
+
   async terminateInstance(id: string, actor?: WorkflowHistoryActor) {
     await this.ensureReadableInstance(id, actor);
     const terminated = await this.terminateInstanceRecursive(id, new Set<string>());
@@ -491,6 +515,136 @@ function canReadInstance(instance: any, actor?: WorkflowHistoryActor): boolean {
   return false;
 }
 
+function collectCommandNodes(context: any, trace: any[]): Map<string, any> {
+  const nodes = new Map<string, any>();
+  for (const node of context?.runtime?.nodes || []) {
+    const data = node?.data || node?.config || {};
+    const nodeType = data.nodeType || node?.node_type || node?.type;
+    if (nodeType === 'command') {
+      nodes.set(String(node.id || node.node_id), node);
+    }
+  }
+
+  for (const event of trace || []) {
+    const nodeId = event.node_id || event.payload?.node_id;
+    const commandId = event.payload?.command_id;
+    if (!nodeId || !commandId) {
+      continue;
+    }
+    nodes.set(String(nodeId), nodes.get(String(nodeId)) || {
+      id: String(nodeId),
+      data: {
+        nodeType: 'command',
+        label: event.node_label || String(nodeId),
+        commandId,
+        outputPath: event.payload?.output_path,
+      },
+    });
+  }
+
+  return nodes;
+}
+
+function buildTerminalOutputSnapshot(context: any, trace: any[], node: any) {
+  const nodeId = String(node.id || node.node_id);
+  const data = node.data || node.config || {};
+  const relatedEvents = [...(trace || [])].filter((event) => event.node_id === nodeId || event.payload?.node_id === nodeId);
+  const latestCommandEvent = [...relatedEvents]
+    .reverse()
+    .find((event) => event.payload?.command_id || event.type === 'NODE_COMPLETED' || event.event_type === 'NODE_COMPLETED');
+  const outputPath =
+    latestCommandEvent?.payload?.output_path ||
+    data.outputPath ||
+    data.output_path ||
+    `commandResults.${nodeId}`;
+  const output =
+    getContextValueAtPath(context, outputPath) ||
+    getContextValueAtPath(context, `data.outputs.${outputPath}`);
+  const status = String(latestCommandEvent?.type || latestCommandEvent?.event_type || '').includes('FAILED')
+    ? 'FAILED'
+    : output
+      ? 'COMPLETED'
+      : 'PENDING';
+
+  return {
+    node_id: nodeId,
+    node_label: String(data.label || node.label || latestCommandEvent?.node_label || nodeId),
+    status,
+    command_id: sanitizeTerminalText(String(
+      output?.command_id ||
+      latestCommandEvent?.payload?.command_id ||
+      data.commandId ||
+      data.command_id ||
+      'command',
+    )),
+    output_path: outputPath,
+    exit_code: output?.exit_code ?? latestCommandEvent?.payload?.exit_code ?? null,
+    timed_out: Boolean(output?.timed_out ?? latestCommandEvent?.payload?.timed_out ?? false),
+    duration_ms: output?.duration_ms ?? latestCommandEvent?.payload?.duration_ms ?? null,
+    stdout: typeof output?.stdout === 'string' ? sanitizeTerminalText(output.stdout) : '',
+    stderr: typeof output?.stderr === 'string' ? sanitizeTerminalText(output.stderr) : '',
+    has_output: Boolean(output && typeof output === 'object'),
+    last_event_id: latestCommandEvent?.id ? Number(latestCommandEvent.id) : null,
+    updated_at: latestCommandEvent?.created_at || null,
+  };
+}
+
+function getContextValueAtPath(context: any, path: string) {
+  if (!context || !path) {
+    return undefined;
+  }
+  return path
+    .split('.')
+    .filter(Boolean)
+    .reduce((value, key) => {
+      if (value === undefined || value === null) {
+        return undefined;
+      }
+      return value[key];
+    }, context);
+}
+
+const TERMINAL_SECRET_PATTERN = /(password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|connection[_-]?uri|authorization|credential|passphrase)/i;
+const MONGODB_CREDENTIAL_PATTERN = new RegExp('(mongodb(?:\\\\+srv)?://[^:\\\\s/@]+:)[^@\\\\s]+(@)', 'gi');
+const POSTGRES_CREDENTIAL_PATTERN = new RegExp('(postgres(?:ql)?://[^:\\\\s/@]+:)[^@\\\\s]+(@)', 'gi');
+
+function sanitizeTerminalText(value: string) {
+  return maskTerminalSecrets(stripAnsiControlSequences(String(value || '')));
+}
+
+function stripAnsiControlSequences(value: string) {
+  return value
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, '')
+    .replace(/\u001b[PX^_].*?\u001b\\/g, '')
+    .replace(/\u001b[@-_]/g, '')
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '');
+}
+
+function maskTerminalSecrets(value: string) {
+  return value
+    .replace(/(authorization\s*[:=]\s*bearer\s+)[^\s"'`]+/gi, '$1***')
+    .replace(/(authorization\s*[:=]\s*basic\s+)[^\s"'`]+/gi, '$1***')
+    .replace(/((?:password|passwd|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|connection[_-]?uri|credential|passphrase)\s*[=:]\s*)[^\s"'`]+/gi, '$1***')
+    .replace(/([?&](?:token|secret|api[_-]?key|access[_-]?key|password|passphrase)=)[^&\s"'`]+/gi, '$1***')
+    .replace(MONGODB_CREDENTIAL_PATTERN, '$1***$2')
+    .replace(POSTGRES_CREDENTIAL_PATTERN, '$1***$2');
+}
+
+function sanitizeTerminalObject(value: any): any {
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'string') return sanitizeTerminalText(value);
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (Array.isArray(value)) return value.map((item) => sanitizeTerminalObject(item));
+  if (typeof value === 'object') {
+    return Object.entries(value).reduce<Record<string, any>>((acc, [key, item]) => {
+      acc[key] = TERMINAL_SECRET_PATTERN.test(key) ? '***' : sanitizeTerminalObject(item);
+      return acc;
+    }, {});
+  }
+  return String(value);
+}
+
 function buildSideEffectWarnings(nodes: any[]) {
   return nodes
     .map((node) => detectSideEffect(node))
@@ -525,6 +679,16 @@ function detectSideEffect(node: any): {
       node_type: nodeType,
       severity: 'low',
       message: 'Workflow Call 노드는 자식 워크플로우 실행을 다시 생성할 수 있습니다.',
+    };
+  }
+
+  if (nodeType === 'approval') {
+    return {
+      node_id: node.id,
+      node_label: label,
+      node_type: nodeType,
+      severity: 'high',
+      message: 'Approval 노드는 전체 재시도 시 승인 task를 다시 생성할 수 있습니다.',
     };
   }
 

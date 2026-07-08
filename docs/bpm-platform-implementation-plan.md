@@ -163,6 +163,93 @@
   - [ ] trusted source / signature 검증
   - [x] Plugin Control UI 연동
 
+## Workflow UX / Observability Roadmap
+
+- [~] 동시에 여러 workflow 보기
+  - [x] designer tab 모델 설계
+  - [x] unsaved changes guard
+  - [x] tab별 version/dirty state 표시
+  - [ ] workflow 간 복사/참조 UX 검토
+
+- [~] Command 실행 terminal view
+  - [x] command 실행 log API 정리
+  - [x] stdout/stderr streaming 또는 polling 조회 API 설계
+  - [x] ANSI escape 처리/마스킹 정책
+  - [x] instance trace에서 command terminal drawer 제공
+  - [ ] audit log와 terminal output 보관 기간 분리
+
+- [x] JS Node console / output view
+  - [x] JS Node `return` 결과를 실행 로그의 `Output JSON` 블록으로 표시
+  - [x] JS executor에서 `console.log/warn/error` 캡처
+  - [x] 실행 로그의 JS Node 카드에 `Console output` 블록 표시
+  - [x] console output line/byte limit 정책
+  - [x] console output secret masking 정책
+  - [x] 실패한 JS Node도 실행 전까지의 console output 표시
+
+- [~] 자주 쓰는 파라미터 세트
+  - [x] workflow별 input preset 모델
+  - [x] input preset DB 저장소 및 CRUD API
+  - [x] preset alias/id 기반 Start API 실행
+  - [x] preset 값 + 요청 input override 병합
+  - [ ] group/shared/private scope 정책
+  - [x] secret/credential 값 저장 금지 정책
+  - [x] request portal / start API에서 preset 선택 지원
+
+- [x] Workflow export version metadata 보강
+  - [x] workflow 현재 version 관리
+  - [x] workflow version history / diff / rollback
+  - [x] export JSON에 `workflow.version`, `workflow.definition_id`, `workflow.exported_version_note` 명시
+  - [x] import 시 원본 version metadata를 참고 정보로 보존
+
+- [x] Workflow version diff/rollback
+  - [x] workflow version history
+  - [x] JSON diff view
+  - [x] rollback API
+
+## Group / RBAC / API Key Roadmap
+
+- [ ] Group domain model
+  - [ ] group CRUD
+  - [ ] group owner / manager / member 모델
+  - [ ] workflow group ownership 연결
+  - [ ] group 삭제 정책: 기본은 soft delete + workflow archive, hard cascade delete는 최고관리자 확인 절차 필요
+  - [ ] group별 이력 조회 범위
+
+- [ ] Role model 재정리
+  - [ ] 최고관리자: group 생성/삭제, group role 부여, 전체 감사
+  - [ ] 그룹 관리자: 할당받은 group 안에서 workflow/API key/멤버 관리
+  - [ ] 일반 사용자/요청자/승인자 역할과 runtime role 분리
+  - [ ] 기존 admin/operator/workflow_owner/requester/approver/api_client 권한과 migration path 정리
+
+- [ ] Workflow ownership / audit
+  - [ ] workflow created_by / updated_by 실제 로그인 주체 반영
+  - [ ] workflow 생성/수정/삭제 audit event 저장
+  - [ ] group 변경/role 변경/API key 발급 audit event 저장
+
+- [ ] Group-scoped API key
+  - [ ] group별 API key 발급/폐기
+  - [ ] API key 발급자/발급 대상/service account 기록
+  - [ ] key prefix 기반 식별, secret hash 저장
+  - [ ] workflow start/result/history 권한 scope
+  - [ ] API key 사용 이력: actor, group, key_id, endpoint, workflow_id, instance_id
+  - [ ] rate limit / IP allowlist / 만료일 / rotation
+
+## Security Hardening Roadmap
+
+- [ ] Web/API backend 보안 기준 정리
+  - [ ] NestJS/API validation pipe와 DTO validation 일관 적용
+  - [ ] auth guard / permission guard 도입 범위 결정
+  - [ ] CSRF/CORS/session/JWT 정책 결정
+  - [ ] API key hashing/rotation/secret redaction 기준
+  - [ ] audit log tamper resistance 검토
+  - [ ] dependency vulnerability scan / lockfile audit 운영 기준
+
+- [ ] Script/Plugin execution 보안
+  - [ ] JS Node sandbox timeout/memory/output limit 재검토
+  - [ ] JS module import allowlist와 package version pin
+  - [ ] SSH/Command plugin network egress allowlist
+  - [ ] command/ssh output secret masking
+
 ## Plugin Runtime / SDK Roadmap
 
 - [ ] Plugin Runtime 상세 설계
@@ -172,6 +259,9 @@
   - [ ] credential/secret 전달 정책 설계
   - [ ] timeout/retry/cancel/result schema 정책 설계
   - [ ] sandbox/security policy 설계
+  - [ ] SSH plugin 실행 모델 결정 (engine direct vs agent_executed)
+  - [ ] SSH credential binding 정책 설계 (password/key/passphrase/known_hosts)
+  - [ ] JS Node module import 정책 설계 (기본 내장 모듈/allowlist package만 허용)
 
 - [ ] Plugin SDK / Package 모델
   - [ ] plugin developer guide 작성
@@ -180,11 +270,6 @@
   - [ ] execute/test context contract 설계
   - [ ] local validate/test/pack CLI 설계
   - [ ] bundle upload/private registry 전략 설계
-
-- [x] Workflow version diff/rollback
-  - [x] workflow version history
-  - [x] JSON diff view
-  - [x] rollback API
 
 ## PXM Agent Roadmap
 
@@ -219,8 +304,30 @@
   - [ ] metrics / alerting
   - [ ] artifact / 대용량 결과 처리
 
+## 3차 회의 반영 판단
+
+| 회의 의견 | 판단 | 이유 / 반영 위치 |
+|---|---|---|
+| 동시에 여러 워크플로우 보기 | 적용 | 운영자가 여러 정의를 비교/수정하는 UX 요구로 타당하다. `Workflow UX / Observability Roadmap`에 designer tab으로 반영한다. |
+| 워크플로우 export할 때 버전 정보 | 적용 | 현재 version history는 있으나 export document에는 workflow version/definition id가 명시되지 않는다. `Workflow export version metadata 보강`으로 반영한다. |
+| 명령어 노드 수행 내용을 터미널로 보여주는 화면 | 적용 | Command Node의 실사용 디버깅에 필요하다. 단, stdout/stderr 보관과 secret masking 정책이 필요하므로 observability 항목으로 분리한다. |
+| JS Node 로그 출력 | 적용 | Command Terminal과 섞지 않고 `Console output`으로 분리한다. `return` 결과는 workflow data이므로 `Output JSON`, `console.log/warn/error`는 debug trace로 표시한다. |
+| SSH 플러그인 | 적용 | 운영 자동화 connector로 필요성이 높다. 보안상 engine direct 실행보다 `agent_executed` 우선 검토로 Plugin Runtime/Agent 로드맵에 연결한다. |
+| JS module import 가능 여부 | 제한 적용 | 임의 npm import는 sandbox/package supply-chain 위험이 크다. 기본은 차단하고 allowlist + version pin 방식만 검토한다. |
+| 권한/이력 등을 그룹별로 | 적용 | 현재 role 기반 이력 권한은 있으나 group domain이 없다. `Group / RBAC / API Key Roadmap`에 신규 축으로 반영한다. |
+| 그룹 삭제시 포함된 워크플로우까지 삭제 | 제한 적용 | 무조건 hard delete는 실행 이력/감사/복구 관점에서 위험하다. 기본은 group soft delete + workflow archive, hard cascade는 최고관리자 확인 절차로 제한한다. |
+| 그룹별 API 키 발급 및 사용 추적 | 적용 | 외부 솔루션 연동에서 필수다. 발급자, service account, 사용 이력까지 포함해 group-scoped API key로 반영한다. |
+| 해당 그룹에서 누구에게 발급했는지 추적 | 적용 | API key governance 핵심이다. key owner/service account/issuer audit로 반영한다. |
+| 워크플로우 누가 추가/생성했는지 | 적용 | DTO에는 `created_by` 필드가 있으나 현재 기본값이 `admin`에 가깝다. 실제 로그인 주체/audit 반영 항목으로 추가한다. |
+| 롤은 두 개로: 최고관리자, 중간 관리자 | 부분 적용 | 제품 운영 role은 단순화하되 runtime role(요청자/승인자/API client)은 별도로 필요하다. 최고관리자/그룹관리자를 관리 role로 두고 기존 실행 role과 분리한다. |
+| 자주 쓰는 파라미터 세트 | 적용 | 반복 실행 UX와 외부 테스트에 유용하다. secret 저장 금지를 전제로 input preset 기능으로 반영한다. |
+| 웹 백엔드는 JS인데 보안은 어쩔까? | 적용 | 언어 문제가 아니라 API validation/auth/secret/audit/dependency/sandbox 기준 문제다. `Security Hardening Roadmap`으로 반영한다. |
+
 ## Next Recommended Work
 
-1. 운영 전 실제 목표 부하 기준으로 engine worker 수와 Mongo write capacity를 재검증한다.
-2. 회의 시연 전 `docs/bpm-platform-demo-guide.md` 기준으로 demo workflow와 sample data를 준비한다.
-3. PXM Agent는 별도 로드맵으로 상세 설계부터 진행한다.
+1. Workflow UX / Observability를 먼저 진행한다. 시작 순서는 동시에 여러 workflow 보기 -> Command 실행 terminal view -> 자주 쓰는 파라미터 세트다.
+2. Workflow export version metadata는 UX 흐름과 붙어 있으므로 같이 보강한다.
+3. Group / RBAC / API Key 상세 설계는 다음 큰 축으로 진행한다. 권한, 이력, API key, workflow ownership이 서로 묶여 있어서 별도 설계가 필요하다.
+4. Plugin Runtime / SDK는 우선순위를 뒤로 미룬다. SSH plugin과 JS module import는 보안/agent 실행 모델이 정리된 뒤 제한적으로 진행한다.
+5. 운영 전 실제 목표 부하 기준으로 engine worker 수와 Mongo write capacity를 재검증한다.
+6. 회의 시연 전 `docs/bpm-platform-demo-guide.md` 기준으로 demo workflow와 sample data를 준비한다.

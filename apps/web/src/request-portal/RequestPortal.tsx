@@ -9,8 +9,10 @@ import {
   Play,
   RefreshCw,
   Search,
+  Trash2,
   Workflow,
 } from 'lucide-react';
+import { deleteInputPreset, type InputPreset, listInputPresets, saveInputPreset } from '../input-presets';
 import './RequestPortal.css';
 
 interface Template {
@@ -35,7 +37,7 @@ type StartFormField = {
   defaultValue?: any;
 };
 
-type FilterMode = 'all' | 'manual' | 'schedule' | 'approval';
+type FilterMode = 'all' | 'manual' | 'schedule' | 'db_watch' | 'approval';
 
 type ScheduleStatus = {
   job: {
@@ -67,6 +69,9 @@ export const RequestPortal: React.FC = () => {
   const [filterMode, setFilterMode] = useState<FilterMode>('all');
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [formData, setFormData] = useState<Record<string, any>>({});
+  const [presetVersion, setPresetVersion] = useState(0);
+  const [selectedPresets, setSelectedPresets] = useState<InputPreset[]>([]);
+  const [presetsLoading, setPresetsLoading] = useState(false);
   const [successInstanceId, setSuccessInstanceId] = useState<string | null>(null);
   const [scheduleStatus, setScheduleStatus] = useState<ScheduleStatus | null>(null);
   const [scheduleStatusLoading, setScheduleStatusLoading] = useState(false);
@@ -103,6 +108,31 @@ export const RequestPortal: React.FC = () => {
   const summaries = useMemo(() => templates.map(buildTemplateSummary), [templates]);
   const selectedSummary = selectedTemplate ? buildTemplateSummary(selectedTemplate) : null;
 
+  useEffect(() => {
+    if (!selectedTemplate) {
+      setSelectedPresets([]);
+      return;
+    }
+
+    let cancelled = false;
+    setPresetsLoading(true);
+    listInputPresets(selectedTemplate.id)
+      .then((items) => {
+        if (!cancelled) setSelectedPresets(items);
+      })
+      .catch((error) => {
+        console.error('Failed to load input presets:', error);
+        if (!cancelled) setSelectedPresets([]);
+      })
+      .finally(() => {
+        if (!cancelled) setPresetsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedTemplate, presetVersion]);
+
   const filteredTemplates = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     return templates.filter((template) => {
@@ -124,6 +154,7 @@ export const RequestPortal: React.FC = () => {
         filterMode === 'all' ||
         (filterMode === 'manual' && summary.triggerType === 'manual') ||
         (filterMode === 'schedule' && summary.triggerType === 'schedule') ||
+        (filterMode === 'db_watch' && summary.triggerType === 'db_watch') ||
         (filterMode === 'approval' && summary.approvalNodes > 0);
 
       return matchesQuery && matchesFilter;
@@ -134,6 +165,7 @@ export const RequestPortal: React.FC = () => {
     () => ({
       total: templates.length,
       schedule: summaries.filter((item) => item.triggerType === 'schedule').length,
+      dbWatch: summaries.filter((item) => item.triggerType === 'db_watch').length,
       scheduleEnabled: summaries.filter((item) => item.scheduleEnabled).length,
       approval: summaries.filter((item) => item.approvalNodes > 0).length,
     }),
@@ -152,6 +184,41 @@ export const RequestPortal: React.FC = () => {
 
   const handleInputChange = (key: string, value: any) => {
     setFormData((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const refreshPresets = () => setPresetVersion((current) => current + 1);
+
+  const handleApplyPreset = (presetId: string) => {
+    const preset = selectedPresets.find((item) => item.id === presetId);
+    if (!preset) return;
+    setFormData((current) => ({ ...current, ...preset.values }));
+  };
+
+  const handleSavePreset = async () => {
+    if (!selectedTemplate) return;
+    const name = prompt('파라미터 세트 이름을 입력하세요.');
+    if (!name?.trim()) return;
+    try {
+      await saveInputPreset(selectedTemplate.id, name, formData);
+      refreshPresets();
+    } catch (error) {
+      console.error('Failed to save input preset:', error);
+      alert('파라미터 세트 저장에 실패했습니다.');
+    }
+  };
+
+  const handleDeletePreset = async (presetId: string) => {
+    const preset = selectedPresets.find((item) => item.id === presetId);
+    if (!preset) return;
+    if (!confirm(`파라미터 세트 "${preset.name}"을 삭제할까요?`)) return;
+    if (!selectedTemplate) return;
+    try {
+      await deleteInputPreset(selectedTemplate.id, presetId);
+      refreshPresets();
+    } catch (error) {
+      console.error('Failed to delete input preset:', error);
+      alert('파라미터 세트 삭제에 실패했습니다.');
+    }
   };
 
   const handleLaunch = async () => {
@@ -199,6 +266,53 @@ export const RequestPortal: React.FC = () => {
     }
   };
 
+  const handleToggleDbWatch = async (enabled: boolean) => {
+    if (!selectedTemplate) return;
+
+    try {
+      const res = await fetch(`/api/templates/${selectedTemplate.id}/db-watch/toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+
+      if (!res.ok) throw new Error('DB Watch toggle failed');
+      const data = await res.json();
+      const updated = data.template;
+
+      setTemplates((current) =>
+        current.map((template) => (template.id === updated.id ? updated : template)),
+      );
+      setSelectedTemplate(updated);
+      setSuccessInstanceId(null);
+    } catch (error) {
+      console.error('Failed to toggle DB Watch:', error);
+      alert('DB Watch 상태 변경에 실패했습니다.');
+    }
+  };
+
+  const handleDeleteTemplate = async () => {
+    if (!selectedTemplate) return;
+    const confirmed = window.confirm(`워크플로우 "${selectedTemplate.name}"을 삭제할까요?`);
+    if (!confirmed) return;
+
+    try {
+      const res = await fetch(`/api/templates/${selectedTemplate.id}`, {
+        method: 'DELETE',
+      });
+
+      if (!res.ok) throw new Error('Template delete failed');
+
+      setTemplates((current) => current.filter((template) => template.id !== selectedTemplate.id));
+      setSelectedTemplate(null);
+      setSuccessInstanceId(null);
+      setScheduleStatus(null);
+    } catch (error) {
+      console.error('Failed to delete workflow:', error);
+      alert('워크플로우 삭제에 실패했습니다.');
+    }
+  };
+
   const fetchScheduleStatus = async (templateId: string) => {
     setScheduleStatusLoading(true);
     try {
@@ -232,7 +346,7 @@ export const RequestPortal: React.FC = () => {
       <div className="workflow-metrics">
         <MetricCard icon={<FileText size={18} />} label="전체 템플릿" value={metrics.total} />
         <MetricCard icon={<CalendarClock size={18} />} label="스케줄 타입" value={metrics.schedule} />
-        <MetricCard icon={<Activity size={18} />} label="활성 스케줄" value={metrics.scheduleEnabled} />
+        <MetricCard icon={<Activity size={18} />} label="DB Watch 타입" value={metrics.dbWatch} />
         <MetricCard icon={<CheckCircle2 size={18} />} label="승인 포함" value={metrics.approval} />
       </div>
 
@@ -252,6 +366,7 @@ export const RequestPortal: React.FC = () => {
                 ['all', '전체'],
                 ['manual', 'Manual/API'],
                 ['schedule', 'Schedule'],
+                ['db_watch', 'DB Watch'],
                 ['approval', '승인 포함'],
               ].map(([value, label]) => (
                 <button
@@ -371,6 +486,22 @@ export const RequestPortal: React.FC = () => {
                 </div>
               )}
 
+              {selectedSummary.triggerType === 'db_watch' && (
+                <div className="detail-section schedule-control-section">
+                  <h4>DB Watch 운영</h4>
+                  <p className="form-info-text">
+                    활성화 상태에서는 저장된 database/collection 조건을 백그라운드에서 감시합니다.
+                  </p>
+                  <button
+                    className={`schedule-toggle-button ${selectedSummary.dbWatchEnabled ? 'danger' : 'primary'}`}
+                    onClick={() => handleToggleDbWatch(!selectedSummary.dbWatchEnabled)}
+                  >
+                    <Activity size={14} />
+                    {selectedSummary.dbWatchEnabled ? 'DB Watch 비활성화' : 'DB Watch 활성화'}
+                  </button>
+                </div>
+              )}
+
               <div className="detail-section">
                 <h4>수동 실행</h4>
                 {successInstanceId ? (
@@ -389,6 +520,11 @@ export const RequestPortal: React.FC = () => {
                       template={selectedTemplate}
                       formData={formData}
                       onInputChange={handleInputChange}
+                      presets={selectedPresets}
+                      presetsLoading={presetsLoading}
+                      onApplyPreset={handleApplyPreset}
+                      onSavePreset={handleSavePreset}
+                      onDeletePreset={handleDeletePreset}
                     />
                     <button className="btn-launch-execute" onClick={handleLaunch}>
                       <Play size={14} fill="currentColor" />
@@ -396,6 +532,17 @@ export const RequestPortal: React.FC = () => {
                     </button>
                   </div>
                 )}
+              </div>
+
+              <div className="detail-section danger-section">
+                <h4>워크플로우 삭제</h4>
+                <p className="form-info-text">
+                  삭제하면 목록에서 제거되고 연결된 스케줄/DB Watch job도 비활성화됩니다.
+                </p>
+                <button className="workflow-delete-button" onClick={handleDeleteTemplate}>
+                  <Trash2 size={14} />
+                  워크플로우 삭제
+                </button>
               </div>
             </>
           ) : (
@@ -493,6 +640,13 @@ function TriggerBadge({ summary }: { summary: ReturnType<typeof buildTemplateSum
       </span>
     );
   }
+  if (summary.triggerType === 'db_watch') {
+    return (
+      <span className={`trigger-badge db-watch ${summary.dbWatchEnabled ? 'enabled' : 'disabled'}`}>
+        DB Watch {summary.dbWatchEnabled ? 'On' : 'Off'}
+      </span>
+    );
+  }
   return <span className="trigger-badge manual">Manual/API</span>;
 }
 
@@ -517,10 +671,20 @@ function InputFields({
   template,
   formData,
   onInputChange,
+  presets,
+  presetsLoading,
+  onApplyPreset,
+  onSavePreset,
+  onDeletePreset,
 }: {
   template: Template;
   formData: Record<string, any>;
   onInputChange: (key: string, value: any) => void;
+  presets: InputPreset[];
+  presetsLoading: boolean;
+  onApplyPreset: (presetId: string) => void;
+  onSavePreset: () => void | Promise<void>;
+  onDeletePreset: (presetId: string) => void | Promise<void>;
 }) {
   const fields = getStartFields(template);
   if (fields.length === 0) {
@@ -533,6 +697,41 @@ function InputFields({
 
   return (
     <>
+      <div className="request-input-preset-bar">
+        <div className="request-input-preset-header">
+          <div>
+            <strong>파라미터 세트</strong>
+            <span>현재 입력값을 저장하거나 불러옵니다.</span>
+          </div>
+          <button type="button" onClick={onSavePreset}>
+            현재 값 저장
+          </button>
+        </div>
+        {presetsLoading ? (
+          <p className="request-input-preset-empty">파라미터 세트를 불러오는 중입니다.</p>
+        ) : presets.length > 0 ? (
+          <div className="request-input-preset-list">
+            {presets.map((preset) => (
+              <div key={preset.id} className="request-input-preset-item">
+                <button type="button" onClick={() => onApplyPreset(preset.id)}>
+                  {preset.name}
+                </button>
+                <button
+                  type="button"
+                  className="request-input-preset-delete"
+                  onClick={() => onDeletePreset(preset.id)}
+                  aria-label={`${preset.name} 삭제`}
+                  title="삭제"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="request-input-preset-empty">저장된 파라미터 세트가 없습니다.</p>
+        )}
+      </div>
       {fields.map((field: any) => {
         const id = field.id || field.name;
         return (
@@ -553,10 +752,15 @@ function InputFields({
 
 function buildTemplateSummary(template: Template) {
   const startNode = (template.nodes || []).find((node) => node.data?.nodeType === 'start');
-  const triggerType = startNode?.data?.triggerType === 'schedule' ? 'schedule' : 'manual';
+  const rawTriggerType = startNode?.data?.triggerType;
+  const triggerType =
+    rawTriggerType === 'schedule' || rawTriggerType === 'db_watch'
+      ? rawTriggerType
+      : 'manual';
   return {
     triggerType,
     scheduleEnabled: triggerType === 'schedule' && startNode?.data?.scheduleEnabled === true,
+    dbWatchEnabled: triggerType === 'db_watch' && startNode?.data?.dbWatchEnabled === true,
     nodeCount: template.nodes?.length || 0,
     edgeCount: template.edges?.length || 0,
     approvalNodes: (template.nodes || []).filter((node) => node.data?.nodeType === 'approval').length,

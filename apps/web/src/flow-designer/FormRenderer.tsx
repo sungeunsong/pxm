@@ -1,29 +1,68 @@
 // 동적 폼 렌더러 컴포넌트
 // apps/web/src/flow-designer/FormRenderer.tsx
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import type { FormSchema, FormField, FormValues, ValidationResult } from './form-types';
 import { Input } from '../components/Input';
 import { Select } from '../components/Select';
 import { Checkbox } from '../components/Checkbox';
 import { Button } from '../components/Button';
+import { deleteInputPreset, type InputPreset, listInputPresets, saveInputPreset } from '../input-presets';
 import './FormRenderer.css';
 
 interface FormRendererProps {
   schema?: FormSchema;
   initialData?: FormValues;
+  presetScopeId?: string;
   onSubmit: (data: FormValues) => void;
   onCancel?: () => void;
 }
 
+const EMPTY_FORM_VALUES: FormValues = {};
+
 export const FormRenderer: React.FC<FormRendererProps> = ({
   schema,
-  initialData = {},
+  initialData = EMPTY_FORM_VALUES,
+  presetScopeId,
   onSubmit,
   onCancel,
 }) => {
   const [formData, setFormData] = useState<FormValues>(initialData);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [presetVersion, setPresetVersion] = useState(0);
+  const [presets, setPresets] = useState<InputPreset[]>([]);
+  const [presetsLoading, setPresetsLoading] = useState(false);
+
+  useEffect(() => {
+    setFormData(initialData);
+  }, [initialData]);
+
+  useEffect(() => {
+    if (!presetScopeId) {
+      setPresets([]);
+      return;
+    }
+
+    let cancelled = false;
+    setPresetsLoading(true);
+    listInputPresets(presetScopeId)
+      .then((items) => {
+        if (!cancelled) setPresets(items);
+      })
+      .catch((error) => {
+        console.error('Failed to load input presets:', error);
+        if (!cancelled) setPresets([]);
+      })
+      .finally(() => {
+        if (!cancelled) setPresetsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [presetScopeId, presetVersion]);
+
+  const refreshPresets = () => setPresetVersion((current) => current + 1);
 
   if (!schema || !schema.fields || schema.fields.length === 0) {
     return (
@@ -47,6 +86,40 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
         delete newErrors[fieldId];
         return newErrors;
       });
+    }
+  };
+
+  const handleApplyPreset = (presetId: string) => {
+    const preset = presets.find((item) => item.id === presetId);
+    if (!preset) return;
+    setFormData((current) => ({ ...current, ...preset.values }));
+    setErrors({});
+  };
+
+  const handleSavePreset = async () => {
+    if (!presetScopeId) return;
+    const name = prompt('파라미터 세트 이름을 입력하세요.');
+    if (!name?.trim()) return;
+    try {
+      await saveInputPreset(presetScopeId, name, formData);
+      refreshPresets();
+    } catch (error) {
+      console.error('Failed to save input preset:', error);
+      alert('파라미터 세트 저장에 실패했습니다.');
+    }
+  };
+
+  const handleDeletePreset = async (presetId: string) => {
+    const preset = presets.find((item) => item.id === presetId);
+    if (!preset) return;
+    if (!confirm(`파라미터 세트 "${preset.name}"을 삭제할까요?`)) return;
+    try {
+      if (!presetScopeId) return;
+      await deleteInputPreset(presetScopeId, presetId);
+      refreshPresets();
+    } catch (error) {
+      console.error('Failed to delete input preset:', error);
+      alert('파라미터 세트 삭제에 실패했습니다.');
     }
   };
 
@@ -304,6 +377,43 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
 
   return (
     <form className="form-renderer" onSubmit={handleSubmit}>
+      {presetScopeId && (
+        <div className="input-preset-bar">
+          <div className="input-preset-header">
+            <div>
+              <strong>파라미터 세트</strong>
+              <span>현재 workflow에서 자주 쓰는 Start 입력값을 저장합니다.</span>
+            </div>
+            <Button type="button" variant="secondary" size="sm" onClick={handleSavePreset}>
+              현재 값 저장
+            </Button>
+          </div>
+          {presetsLoading ? (
+            <p className="input-preset-empty">파라미터 세트를 불러오는 중입니다.</p>
+          ) : presets.length > 0 ? (
+            <div className="input-preset-list">
+              {presets.map((preset) => (
+                <div key={preset.id} className="input-preset-item">
+                  <button type="button" onClick={() => handleApplyPreset(preset.id)}>
+                    {preset.name}
+                  </button>
+                  <button
+                    type="button"
+                    className="input-preset-delete"
+                    onClick={() => handleDeletePreset(preset.id)}
+                    aria-label={`${preset.name} 삭제`}
+                    title="삭제"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="input-preset-empty">저장된 파라미터 세트가 없습니다.</p>
+          )}
+        </div>
+      )}
       <div className="form-fields">
         {schema.fields.map(field => renderField(field))}
       </div>

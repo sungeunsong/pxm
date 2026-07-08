@@ -41,7 +41,8 @@ export class TemplatesService {
         return this.workflowRepo.getDefinition(def.id);
       })
     );
-    return items.filter(Boolean).map((item) => this.mapToDto(item));
+    const mapped = items.filter(Boolean).map((item) => this.mapToDto(item));
+    return activeOnly ? mapped.filter((item) => item.is_active !== false) : mapped;
   }
 
   async findOne(id: string): Promise<TemplateResponseDto | null> {
@@ -73,9 +74,15 @@ export class TemplatesService {
   }
 
   async delete(id: string): Promise<boolean> {
-    // V2 리포지토리에 소프트/하드 딜리트 구현 가능하나, 여기서는 단순 성공 처리
     const current = await this.workflowRepo.getDefinition(id);
-    return !!current;
+    if (!current) return false;
+
+    const deleted = await this.workflowRepo.deleteDefinition(id);
+    if (!deleted) return false;
+
+    await this.schedulesService.syncDefinitionSchedules(id, current.name || '', []);
+    await this.dbWatchService.syncDefinitionWatchJobs(id, current.name || '', []);
+    return true;
   }
 
   async export(id: string): Promise<WorkflowExportDocument | null> {
@@ -90,12 +97,16 @@ export class TemplatesService {
       schema_version: 'pxm.workflow.v1',
       exported_at: new Date().toISOString(),
       workflow: {
+        definition_id: template.id,
+        version: template.version || 1,
+        exported_version_note: template.version_note || '',
         name: template.name,
         metadata: {
           description: template.description || '',
           group: template.group || '',
           tags: template.tags || [],
           version_note: template.version_note || '',
+          imported_from: template.imported_from,
         },
         nodes,
         edges,
@@ -116,6 +127,7 @@ export class TemplatesService {
       group: parsed.workflow.metadata.group,
       tags: parsed.workflow.metadata.tags,
       version_note: parsed.workflow.metadata.version_note,
+      imported_from: buildImportSourceMetadata(parsed),
       nodes: parsed.workflow.nodes,
       edges: parsed.workflow.edges,
     });
@@ -181,10 +193,11 @@ export class TemplatesService {
       group: metadata.group || '',
       tags: metadata.tags || [],
       version_note: metadata.version_note || '',
+      imported_from: metadata.imported_from,
       nodes: row.nodes || [],
       edges: row.edges || [],
       version: row.version || 1,
-      is_active: row.is_active !== undefined ? row.is_active : true,
+      is_active: row.is_active !== undefined ? row.is_active : row.status !== 'DELETED',
       created_by: row.created_by || 'admin',
       updated_by: row.updated_by || 'admin',
       created_at: row.created_at || new Date(),
@@ -202,6 +215,7 @@ export class TemplatesService {
           ? input.tags.split(',').map((tag) => tag.trim()).filter(Boolean)
           : [],
       version_note: typeof input?.version_note === 'string' ? input.version_note : '',
+      imported_from: normalizeImportSourceMetadata(input?.imported_from),
     };
   }
 
@@ -469,12 +483,21 @@ function parseWorkflowExportDocument(document: any): WorkflowExportDocument {
     schema_version: 'pxm.workflow.v1',
     exported_at: typeof document.exported_at === 'string' ? document.exported_at : new Date().toISOString(),
     workflow: {
+      definition_id: typeof workflow.definition_id === 'string' ? workflow.definition_id : undefined,
+      version: Number.isInteger(workflow.version) && workflow.version > 0 ? workflow.version : undefined,
+      exported_version_note:
+        typeof workflow.exported_version_note === 'string'
+          ? workflow.exported_version_note
+          : typeof metadata.version_note === 'string'
+            ? metadata.version_note
+            : '',
       name: workflow.name.trim(),
       metadata: {
         description: typeof metadata.description === 'string' ? metadata.description : '',
         group: typeof metadata.group === 'string' ? metadata.group : '',
         tags: Array.isArray(metadata.tags) ? metadata.tags.map((tag) => String(tag).trim()).filter(Boolean) : [],
         version_note: typeof metadata.version_note === 'string' ? metadata.version_note : '',
+        imported_from: normalizeImportSourceMetadata(metadata.imported_from),
       },
       nodes: workflow.nodes,
       edges: workflow.edges,
@@ -489,4 +512,32 @@ function parseWorkflowExportDocument(document: any): WorkflowExportDocument {
         : [],
     },
   };
+}
+
+function buildImportSourceMetadata(document: WorkflowExportDocument) {
+  return normalizeImportSourceMetadata({
+    schema_version: document.schema_version,
+    definition_id: document.workflow.definition_id,
+    version: document.workflow.version,
+    exported_version_note: document.workflow.exported_version_note || document.workflow.metadata.version_note,
+    exported_at: document.exported_at,
+  });
+}
+
+function normalizeImportSourceMetadata(value: any) {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+
+  const version = Number(value.version);
+  const metadata = {
+    schema_version: typeof value.schema_version === 'string' ? value.schema_version : 'pxm.workflow.v1',
+    definition_id: typeof value.definition_id === 'string' ? value.definition_id : undefined,
+    version: Number.isInteger(version) && version > 0 ? version : undefined,
+    exported_version_note:
+      typeof value.exported_version_note === 'string' ? value.exported_version_note : undefined,
+    exported_at: typeof value.exported_at === 'string' ? value.exported_at : undefined,
+  };
+
+  return Object.values(metadata).some((item) => item !== undefined) ? metadata : undefined;
 }

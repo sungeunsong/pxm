@@ -10,6 +10,7 @@ import {
   OutboxRepositoryPort,
   EngineQueueRepositoryPort,
   WorkflowScheduleRepositoryPort,
+  WorkflowInputPresetRepositoryPort,
 } from './ports/db.ports';
 import { MONGO_DB } from './mongo.provider';
 
@@ -44,6 +45,10 @@ const isMongo = dbType === 'mongodb';
       provide: WorkflowScheduleRepositoryPort,
       useClass: isMongo ? MongodbAdapter : PostgresAdapter,
     },
+    {
+      provide: WorkflowInputPresetRepositoryPort,
+      useClass: isMongo ? MongodbAdapter : PostgresAdapter,
+    },
   ],
   exports: [
     MONGO_DB,
@@ -53,6 +58,7 @@ const isMongo = dbType === 'mongodb';
     OutboxRepositoryPort,
     EngineQueueRepositoryPort,
     WorkflowScheduleRepositoryPort,
+    WorkflowInputPresetRepositoryPort,
   ],
 })
 export class DbModule {}

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { 
   LayoutGrid, 
   Paintbrush, 
@@ -24,9 +24,84 @@ import { PluginControlPage } from './plugins/PluginControlPage';
 import { PluginRegistryPage } from './plugins/PluginRegistryPage';
 import './App.css';
 
+type ActiveTab =
+  | 'dashboard'
+  | 'designer'
+  | 'request'
+  | 'tracker'
+  | 'inbox'
+  | 'credentials'
+  | 'commands'
+  | 'plugins'
+  | 'pluginRegistry';
+
+const DEFAULT_TAB: ActiveTab = 'inbox';
+
+const ROUTE_TO_TAB: Record<string, ActiveTab> = {
+  dashboard: 'dashboard',
+  designer: 'designer',
+  request: 'request',
+  tracker: 'tracker',
+  inbox: 'inbox',
+  credentials: 'credentials',
+  commands: 'commands',
+  plugins: 'plugins',
+  'plugin-registry': 'pluginRegistry',
+};
+
+const TAB_TO_ROUTE: Record<ActiveTab, string> = {
+  dashboard: 'dashboard',
+  designer: 'designer',
+  request: 'request',
+  tracker: 'tracker',
+  inbox: 'inbox',
+  credentials: 'credentials',
+  commands: 'commands',
+  plugins: 'plugins',
+  pluginRegistry: 'plugin-registry',
+};
+
+const readTabFromHash = (): ActiveTab | null => {
+  if (typeof window === 'undefined') return null;
+  const route = window.location.hash.replace(/^#\/?/, '');
+  return ROUTE_TO_TAB[route] || null;
+};
+
+const readInitialTab = (): ActiveTab => {
+  if (typeof window === 'undefined') return DEFAULT_TAB;
+  const hashTab = readTabFromHash();
+  if (hashTab) return hashTab;
+
+  return DEFAULT_TAB;
+};
+
 function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'designer' | 'request' | 'tracker' | 'inbox' | 'credentials' | 'commands' | 'plugins' | 'pluginRegistry'>('inbox'); // 디폴트로 사용자가 원한 inbox를 켜둠
+  const [activeTab, setActiveTabState] = useState<ActiveTab>(readInitialTab);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
+
+  const setActiveTab = (tab: ActiveTab) => {
+    setActiveTabState(tab);
+    window.history.pushState(null, '', `#/${TAB_TO_ROUTE[tab]}`);
+  };
+
+  useEffect(() => {
+    if (!window.location.hash) {
+      window.history.replaceState(null, '', `#/${TAB_TO_ROUTE[activeTab]}`);
+    }
+
+    const syncTabFromLocation = () => {
+      const nextTab = readTabFromHash();
+      if (!nextTab) return;
+      setActiveTabState(nextTab);
+    };
+
+    window.addEventListener('hashchange', syncTabFromLocation);
+    window.addEventListener('popstate', syncTabFromLocation);
+    return () => {
+      window.removeEventListener('hashchange', syncTabFromLocation);
+      window.removeEventListener('popstate', syncTabFromLocation);
+    };
+  }, [activeTab]);
 
   // 실행 트래커에서 인스턴스를 선택해 실시간 모니터링을 시도할 때
   const handleSelectInstanceForTracking = (instanceId: string) => {

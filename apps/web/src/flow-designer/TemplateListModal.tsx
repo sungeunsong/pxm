@@ -167,161 +167,86 @@ export const TemplateListModal: React.FC<TemplateListModalProps> = ({
           {!loading && !error && templates.length > 0 && (
             <div className="template-list">
               {templates.map((template) => (
-                <div key={template.id} className="template-item">
-                  <div className="template-info" onClick={() => handleSelect(template)}>
-                    <div className="template-header">
-                      <h3 className="template-name">{template.name}</h3>
-                      <span className="template-version">v{template.version}</span>
-                    </div>
-                    {template.description && (
-                      <p className="template-description">{template.description}</p>
-                    )}
-                    <div className="template-id-row">
-                      <span className="template-id-label">Template ID</span>
-                      <code className="template-id-value">{template.id}</code>
-                      <button
-                        type="button"
-                        className="id-copy-button"
-                        onClick={(event) => handleCopyId(event, template.id)}
-                        title="Template ID 복사"
-                        aria-label="Template ID 복사"
-                      >
-                        <Copy size={13} />
-                      </button>
-                    </div>
-                    <div className="template-meta">
-                      <span className="template-meta-item">
-                        <Hash size={14} />
-                        {template.nodes.length} 노드
-                      </span>
-                      <span className="template-meta-item">
-                        <Calendar size={14} />
-                        {new Date(template.created_at).toLocaleDateString('ko-KR')}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="template-actions">
-                    <Button
-                      onClick={() => handleSelect(template)}
-                      variant="primary"
-                      size="sm"
-                    >
-                      불러오기
-                    </Button>
-                    <Button
-                      onClick={(event) => handleShowVersions(event, template)}
-                      variant="secondary"
-                      size="sm"
-                    >
-                      버전
-                    </Button>
-                    <Button
-                      onClick={() => handleDelete(template.id, template.name)}
-                      variant="ghost"
-                      size="sm"
-                    >
-                      삭제
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {versionTemplate && (
-            <div className="template-version-panel">
-              <div className="template-version-panel-header">
-                <div>
-                  <h3>{versionTemplate.name} 버전</h3>
-                  <p>현재 v{versionTemplate.version}</p>
-                </div>
-                <button
-                  type="button"
-                  className="template-version-panel-close"
-                  onClick={() => {
-                    setVersionTemplate(null);
-                    setVersions([]);
-                    setVersionDiff(null);
-                    setVersionsError(null);
-                  }}
-                  aria-label="버전 패널 닫기"
+                <div
+                  key={template.id}
+                  className={`template-item-group ${versionTemplate?.id === template.id ? 'is-expanded' : ''}`}
                 >
-                  <X size={16} />
-                </button>
-              </div>
-
-              {versionsLoading && <p className="template-version-state">처리 중...</p>}
-              {versionsError && <p className="template-version-error">{versionsError}</p>}
-
-              <div className="template-version-list">
-                {versions.map((item) => (
-                  <div key={item.version} className="template-version-row">
-                    <div>
-                      <div className="template-version-row-title">
-                        v{item.version}
-                        {item.version === versionTemplate.version && (
-                          <span className="template-version-current">현재</span>
-                        )}
+                  <div className={`template-item ${versionTemplate?.id === template.id ? 'is-selected' : ''}`}>
+                    <div className="template-info" onClick={() => handleSelect(template)}>
+                      <div className="template-header">
+                        <h3 className="template-name">{template.name}</h3>
+                        <span className="template-version">v{template.version}</span>
                       </div>
-                      <div className="template-version-row-meta">
-                        {item.node_count} 노드 · {item.edge_count} 엣지
-                        {item.created_at ? ` · ${new Date(item.created_at).toLocaleString('ko-KR')}` : ''}
-                      </div>
-                      {item.version_note && (
-                        <div className="template-version-note">{item.version_note}</div>
+                      {template.description && (
+                        <p className="template-description">{template.description}</p>
                       )}
-                    </div>
-                    <div className="template-version-actions">
-                      <button
-                        type="button"
-                        className="template-version-icon-button"
-                        onClick={(event) => handleDiffVersion(event, item.version)}
-                        title="현재 버전과 비교"
-                        aria-label="현재 버전과 비교"
-                      >
-                        <GitCompare size={15} />
-                      </button>
-                      {item.version !== versionTemplate.version && (
+                      <div className="template-id-row">
+                        <span className="template-id-label">Template ID</span>
+                        <code className="template-id-value">{template.id}</code>
                         <button
                           type="button"
-                          className="template-version-icon-button"
-                          onClick={(event) => handleRollbackVersion(event, item.version)}
-                          title="이 버전으로 롤백"
-                          aria-label="이 버전으로 롤백"
+                          className="id-copy-button"
+                          onClick={(event) => handleCopyId(event, template.id)}
+                          title="Template ID 복사"
+                          aria-label="Template ID 복사"
                         >
-                          <RotateCcw size={15} />
+                          <Copy size={13} />
                         </button>
-                      )}
+                      </div>
+                      <div className="template-meta">
+                        <span className="template-meta-item">
+                          <Hash size={14} />
+                          {template.nodes.length} 노드
+                        </span>
+                        <span className="template-meta-item">
+                          <Calendar size={14} />
+                          {new Date(template.created_at).toLocaleDateString('ko-KR')}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="template-actions">
+                      <Button
+                        onClick={() => handleSelect(template)}
+                        variant="primary"
+                        size="sm"
+                      >
+                        불러오기
+                      </Button>
+                      <Button
+                        onClick={(event) => handleShowVersions(event, template)}
+                        variant="secondary"
+                        size="sm"
+                      >
+                        버전
+                      </Button>
+                      <Button
+                        onClick={() => handleDelete(template.id, template.name)}
+                        variant="ghost"
+                        size="sm"
+                      >
+                        삭제
+                      </Button>
                     </div>
                   </div>
-                ))}
-              </div>
-
-              {versionDiff && (
-                <div className="template-version-diff">
-                  <div className="template-version-diff-header">
-                    <span>v{versionDiff.from_version} → v{versionDiff.to_version ?? versionTemplate.version}</span>
-                    <span>{versionDiff.changes.length} changes</span>
-                  </div>
-                  <div className="template-version-diff-list">
-                    {versionDiff.changes.length === 0 ? (
-                      <p>변경 사항이 없습니다.</p>
-                    ) : (
-                      versionDiff.changes.slice(0, 40).map((change, index) => (
-                        <div key={`${change.path}-${index}`} className="template-version-diff-row">
-                          <span className={`template-version-diff-type ${change.type}`}>{change.type}</span>
-                          <code>{change.path}</code>
-                        </div>
-                      ))
-                    )}
-                    {versionDiff.changes.length > 40 && (
-                      <p className="template-version-diff-more">
-                        나머지 {versionDiff.changes.length - 40}개 변경은 API 응답에서 확인할 수 있습니다.
-                      </p>
-                    )}
-                  </div>
+                  {versionTemplate?.id === template.id && (
+                    <TemplateVersionPanel
+                      versionTemplate={versionTemplate}
+                      versions={versions}
+                      versionDiff={versionDiff}
+                      versionsLoading={versionsLoading}
+                      versionsError={versionsError}
+                      onClose={() => {
+                        setVersionTemplate(null);
+                        setVersions([]);
+                        setVersionDiff(null);
+                        setVersionsError(null);
+                      }}
+                      onDiffVersion={handleDiffVersion}
+                      onRollbackVersion={handleRollbackVersion}
+                    />
+                  )}
                 </div>
-              )}
+              ))}
             </div>
           )}
         </div>
@@ -335,3 +260,117 @@ export const TemplateListModal: React.FC<TemplateListModalProps> = ({
     </div>
   );
 };
+
+function TemplateVersionPanel({
+  versionTemplate,
+  versions,
+  versionDiff,
+  versionsLoading,
+  versionsError,
+  onClose,
+  onDiffVersion,
+  onRollbackVersion,
+}: {
+  versionTemplate: WorkflowTemplate;
+  versions: WorkflowTemplateVersion[];
+  versionDiff: WorkflowVersionDiff | null;
+  versionsLoading: boolean;
+  versionsError: string | null;
+  onClose: () => void;
+  onDiffVersion: (event: React.MouseEvent, version: number) => void;
+  onRollbackVersion: (event: React.MouseEvent, version: number) => void;
+}) {
+  return (
+    <div className="template-version-panel">
+      <div className="template-version-panel-header">
+        <div>
+          <h3>{versionTemplate.name} 버전</h3>
+          <p>현재 v{versionTemplate.version}</p>
+        </div>
+        <button
+          type="button"
+          className="template-version-panel-close"
+          onClick={onClose}
+          aria-label="버전 패널 닫기"
+        >
+          <X size={16} />
+        </button>
+      </div>
+
+      {versionsLoading && <p className="template-version-state">처리 중...</p>}
+      {versionsError && <p className="template-version-error">{versionsError}</p>}
+
+      <div className="template-version-list">
+        {versions.map((item) => (
+          <div key={item.version} className="template-version-row">
+            <div>
+              <div className="template-version-row-title">
+                v{item.version}
+                {item.version === versionTemplate.version && (
+                  <span className="template-version-current">현재</span>
+                )}
+              </div>
+              <div className="template-version-row-meta">
+                {item.node_count} 노드 · {item.edge_count} 엣지
+                {item.created_at ? ` · ${new Date(item.created_at).toLocaleString('ko-KR')}` : ''}
+              </div>
+              {item.version_note && (
+                <div className="template-version-note">{item.version_note}</div>
+              )}
+            </div>
+            <div className="template-version-actions">
+              <button
+                type="button"
+                className="template-version-icon-button"
+                onClick={(event) => onDiffVersion(event, item.version)}
+                title="현재 버전과 비교"
+                aria-label="현재 버전과 비교"
+              >
+                <GitCompare size={15} />
+                <span>비교</span>
+              </button>
+              {item.version !== versionTemplate.version && (
+                <button
+                  type="button"
+                  className="template-version-icon-button"
+                  onClick={(event) => onRollbackVersion(event, item.version)}
+                  title="이 버전으로 롤백"
+                  aria-label="이 버전으로 롤백"
+                >
+                  <RotateCcw size={15} />
+                  <span>롤백</span>
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {versionDiff && (
+        <div className="template-version-diff">
+          <div className="template-version-diff-header">
+            <span>v{versionDiff.from_version} → v{versionDiff.to_version ?? versionTemplate.version}</span>
+            <span>{versionDiff.changes.length} changes</span>
+          </div>
+          <div className="template-version-diff-list">
+            {versionDiff.changes.length === 0 ? (
+              <p>변경 사항이 없습니다.</p>
+            ) : (
+              versionDiff.changes.slice(0, 40).map((change, index) => (
+                <div key={`${change.path}-${index}`} className="template-version-diff-row">
+                  <span className={`template-version-diff-type ${change.type}`}>{change.type}</span>
+                  <code>{change.path}</code>
+                </div>
+              ))
+            )}
+            {versionDiff.changes.length > 40 && (
+              <p className="template-version-diff-more">
+                나머지 {versionDiff.changes.length - 40}개 변경은 API 응답에서 확인할 수 있습니다.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

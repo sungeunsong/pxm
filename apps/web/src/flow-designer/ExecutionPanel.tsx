@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState, useRef } from 'react';
-import { CheckCircle, Circle, AlertCircle, Loader, Clock, X, Copy } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { CheckCircle, Circle, AlertCircle, Loader, Clock, X, Copy, Terminal } from 'lucide-react';
 import type { FormSchema } from './form-types';
 import { FormRenderer } from './FormRenderer';
 import { RetryScheduledCard, NodeFailedCard } from './RetryCards';
@@ -100,14 +100,29 @@ const getEventCategory = (event: ExecutionEvent) => {
 
 export interface ExecutionPanelProps {
   instanceId: string | null;
+  templateId?: string | null;
   templateName: string;
   formSchema?: FormSchema;
   onFormSubmit?: (formData: Record<string, any>) => void;
   onClose: () => void;
 }
 
+type CommandTerminalEntry = {
+  nodeId: string;
+  nodeLabel: string;
+  commandId: string;
+  outputPath: string;
+  exitCode?: number | string | null;
+  timedOut?: boolean;
+  durationMs?: number | string | null;
+  stdout: string;
+  stderr: string;
+  hasOutput: boolean;
+};
+
 export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
   instanceId,
+  templateId,
   templateName,
   formSchema,
   onFormSubmit,
@@ -116,6 +131,7 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
   const [events, setEvents] = useState<ExecutionEvent[]>([]);
   const [status, setStatus] = useState<string>('RUNNING');
   const [error, setError] = useState<string | null>(null);
+  const [instanceDetail, setInstanceDetail] = useState<any>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
 
   const loadTrace = useCallback(async () => {
@@ -141,16 +157,33 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
     }
   }, [instanceId]);
 
+  const loadInstanceDetail = useCallback(async () => {
+    if (!instanceId) {
+      return;
+    }
+
+    const response = await fetch(`/api/instances/${instanceId}`);
+    if (!response.ok) {
+      throw new Error(`instance api failed: ${response.status}`);
+    }
+
+    setInstanceDetail(await response.json());
+  }, [instanceId]);
+
   useEffect(() => {
     if (!instanceId) {
       return;
     }
 
     setEvents([]);
+    setInstanceDetail(null);
     setStatus('RUNNING');
     setError(null);
     loadTrace().catch((err) => {
       console.error('Failed to load trace:', err);
+    });
+    loadInstanceDetail().catch((err) => {
+      console.error('Failed to load instance detail:', err);
     });
 
     // SSE 연결
@@ -182,6 +215,9 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
 
         // 완료 또는 실패 시 연결 종료
         if (executionEvent.type === 'INSTANCE_COMPLETED' || executionEvent.type === 'INSTANCE_FAILED') {
+          loadInstanceDetail().catch((detailErr) => {
+            console.error('Failed to refresh instance detail:', detailErr);
+          });
           setTimeout(() => {
             eventSource.close();
           }, 1000);
@@ -221,13 +257,16 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
       loadTrace().catch((traceErr) => {
         console.error('Failed to load trace after SSE error:', traceErr);
       });
+      loadInstanceDetail().catch((detailErr) => {
+        console.error('Failed to load instance detail after SSE error:', detailErr);
+      });
       eventSource.close();
     };
 
     return () => {
       eventSource.close();
     };
-  }, [instanceId, loadTrace]);
+  }, [instanceId, loadInstanceDetail, loadTrace]);
 
   const getActivityStatus = (type: string) => {
     if (type.includes('COMPLETED')) return 'COMPLETED';
@@ -273,6 +312,10 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
 
   const visibleEvents = events.filter((event) => !internalEventTypes.has(event.type));
   const hiddenInternalCount = events.length - visibleEvents.length;
+  const commandTerminalEntriesByNodeId = useMemo(
+    () => new Map(buildCommandTerminalEntries(instanceDetail, visibleEvents).map((entry) => [entry.nodeId, entry])),
+    [instanceDetail, visibleEvents],
+  );
   const handleCopyInstanceId = async () => {
     if (instanceId) {
       await navigator.clipboard.writeText(instanceId);
@@ -300,6 +343,7 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
             </p>
             <FormRenderer
               schema={formSchema}
+              presetScopeId={templateId || undefined}
               onSubmit={(data) => {
                 onFormSubmit(data);
               }}
@@ -354,6 +398,11 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
               ) : (
                 <div className="timeline-events">
                   {visibleEvents.map((event, index) => {
+                    const commandTerminalEntry =
+                      event.type === 'NODE_COMPLETED' && event.node_id
+                        ? commandTerminalEntriesByNodeId.get(event.node_id)
+                        : undefined;
+
                     // RETRY_SCHEDULED 이벤트 특별 처리
                     if (event.type === 'RETRY_SCHEDULED' && event.payload?.retry_info) {
                       return (
@@ -411,6 +460,12 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
                             {getEventDescription(event)}
                           </div>
                         )}
+                        {commandTerminalEntry && (
+                          <CommandTerminalCard entry={commandTerminalEntry} compact />
+                        )}
+                        {isJsNodeEvent(event) && (
+                          <JsExecutionBlocks event={event} />
+                        )}
                         {/* 상세 정보 */}
                         <details className="timeline-event-payload">
                           <summary>상세</summary>
@@ -418,7 +473,7 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
                             type: event.type,
                             node_id: event.node_id,
                             status: event.status,
-                            payload: event.payload
+                            payload: sanitizeLogValue(event.payload)
                           }, null, 2)}</pre>
                         </details>
                       </div>
@@ -434,3 +489,229 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
     </div>
   );
 };
+
+const CommandTerminalCard: React.FC<{ entry: CommandTerminalEntry; compact?: boolean }> = ({ entry, compact = false }) => {
+  const sanitizedStdout = sanitizeTerminalText(entry.stdout);
+  const sanitizedStderr = sanitizeTerminalText(entry.stderr);
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText([
+      `$ ${sanitizeTerminalText(entry.commandId)}`,
+      sanitizedStdout ? `\n# stdout\n${sanitizedStdout}` : '',
+      sanitizedStderr ? `\n# stderr\n${sanitizedStderr}` : '',
+    ].join('\n').trim());
+  };
+
+  return (
+    <article className={`command-terminal-card ${compact ? 'compact' : ''} ${entry.exitCode === 0 ? 'success' : entry.hasOutput ? 'failed' : 'pending'}`}>
+      <div className="command-terminal-card-header">
+        <div className="command-terminal-card-title">
+          <Terminal size={13} />
+          <span>{compact ? 'Terminal output' : entry.nodeLabel}</span>
+        </div>
+        <button
+          type="button"
+          className="command-terminal-copy"
+          onClick={handleCopy}
+          title="terminal output 복사"
+          aria-label="terminal output 복사"
+        >
+          <Copy size={12} />
+        </button>
+      </div>
+      <div className="command-terminal-meta">
+        <code>{entry.commandId}</code>
+        <span>exit {entry.exitCode ?? '-'}</span>
+        <span>{entry.durationMs ?? '-'}ms</span>
+        {entry.timedOut && <span>timeout</span>}
+      </div>
+      <div className="command-terminal-output">
+        <div className="command-terminal-line prompt">$ {sanitizeTerminalText(entry.commandId)}</div>
+        {entry.hasOutput ? (
+          <>
+            {entry.stdout && (
+              <pre className="command-terminal-stream stdout">{sanitizedStdout}</pre>
+            )}
+            {entry.stderr && (
+              <pre className="command-terminal-stream stderr">{sanitizedStderr}</pre>
+            )}
+            {!entry.stdout && !entry.stderr && (
+              <div className="command-terminal-line muted">no stdout/stderr</div>
+            )}
+          </>
+        ) : (
+          <div className="command-terminal-line muted">
+            command output is not available yet
+          </div>
+        )}
+      </div>
+      <div className="command-terminal-path">output: {entry.outputPath}</div>
+    </article>
+  );
+};
+
+const JsExecutionBlocks: React.FC<{ event: ExecutionEvent }> = ({ event }) => {
+  const consoleEntries = Array.isArray(event.payload?.console) ? event.payload.console : [];
+  const hasOutput = event.type === 'NODE_COMPLETED' && Object.prototype.hasOwnProperty.call(event.payload || {}, 'output');
+
+  if (!hasOutput && consoleEntries.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="js-execution-blocks">
+      {hasOutput && (
+        <details className="js-output-block" open>
+          <summary>Output JSON</summary>
+          <pre>{JSON.stringify(sanitizeLogValue(event.payload.output), null, 2)}</pre>
+        </details>
+      )}
+      {consoleEntries.length > 0 && (
+        <div className="js-console-block">
+          <div className="js-console-title">Console output</div>
+          <div className="js-console-lines">
+            {consoleEntries.map((entry: any, index: number) => (
+              <div key={index} className={`js-console-line level-${String(entry.level || 'log').toLowerCase()}`}>
+                <span className="js-console-level">{String(entry.level || 'log')}</span>
+                <span className="js-console-message">{sanitizeTerminalText(String(entry.message || ''))}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+function isJsNodeEvent(event: ExecutionEvent) {
+  return (
+    (event.type === 'NODE_COMPLETED' || event.type === 'NODE_FAILED') &&
+    event.payload?.script_type === 'javascript'
+  );
+}
+
+function buildCommandTerminalEntries(instanceDetail: any, events: ExecutionEvent[]): CommandTerminalEntry[] {
+  const context = instanceDetail?.context || instanceDetail?.ctx || {};
+  const runtimeNodes = context?.runtime?.nodes || [];
+  const commandNodes = new Map<string, any>();
+
+  for (const node of runtimeNodes) {
+    const nodeType = node?.data?.nodeType || node?.node_type || node?.type;
+    if (nodeType === 'command') {
+      commandNodes.set(String(node.id || node.node_id), node);
+    }
+  }
+
+  for (const event of events) {
+    if (!event.node_id) continue;
+    const commandId = event.payload?.command_id;
+    if (commandId) {
+      commandNodes.set(event.node_id, commandNodes.get(event.node_id) || {
+        id: event.node_id,
+        data: {
+          label: event.node_label || event.node_id,
+          nodeType: 'command',
+          commandId,
+          outputPath: event.payload?.output_path,
+        },
+      });
+    }
+  }
+
+  return [...commandNodes.values()].map((node) => {
+    const nodeId = String(node.id || node.node_id);
+    const data = node.data || node.config || {};
+    const completedEvent = [...events]
+      .reverse()
+      .find((event) => event.node_id === nodeId && event.type === 'NODE_COMPLETED' && event.payload?.command_id);
+    const failedEvent = [...events]
+      .reverse()
+      .find((event) => event.node_id === nodeId && event.type === 'NODE_FAILED');
+    const outputPath =
+      completedEvent?.payload?.output_path ||
+      data.outputPath ||
+      data.output_path ||
+      `commandResults.${nodeId}`;
+    const output = getContextValueAtPath(context, outputPath) || getContextValueAtPath(context, `data.outputs.${outputPath}`);
+    const commandId =
+      String(output?.command_id || completedEvent?.payload?.command_id || failedEvent?.payload?.command_id || data.commandId || data.command_id || 'command');
+
+    return {
+      nodeId,
+      nodeLabel: String(data.label || node.label || completedEvent?.node_label || failedEvent?.node_label || nodeId),
+      commandId,
+      outputPath,
+      exitCode: output?.exit_code ?? completedEvent?.payload?.exit_code ?? failedEvent?.payload?.exit_code,
+      timedOut: Boolean(output?.timed_out ?? completedEvent?.payload?.timed_out ?? failedEvent?.payload?.timed_out),
+      durationMs: output?.duration_ms ?? completedEvent?.payload?.duration_ms ?? failedEvent?.payload?.duration_ms,
+      stdout: typeof output?.stdout === 'string' ? output.stdout : '',
+      stderr: typeof output?.stderr === 'string' ? output.stderr : '',
+      hasOutput: Boolean(output && typeof output === 'object'),
+    };
+  });
+}
+
+function getContextValueAtPath(context: any, path: string) {
+  if (!context || !path) {
+    return undefined;
+  }
+
+  return path
+    .split('.')
+    .filter(Boolean)
+    .reduce((value, key) => {
+      if (value === undefined || value === null) {
+        return undefined;
+      }
+      return value[key];
+    }, context);
+}
+
+const SECRET_FIELD_PATTERN = /(password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|connection[_-]?uri|authorization|credential|passphrase)/i;
+const MONGODB_CREDENTIAL_PATTERN = new RegExp('(mongodb(?:\\\\+srv)?://[^:\\\\s/@]+:)[^@\\\\s]+(@)', 'gi');
+const POSTGRES_CREDENTIAL_PATTERN = new RegExp('(postgres(?:ql)?://[^:\\\\s/@]+:)[^@\\\\s]+(@)', 'gi');
+
+function sanitizeTerminalText(value: string) {
+  return maskTerminalSecrets(stripAnsiControlSequences(String(value || '')));
+}
+
+function stripAnsiControlSequences(value: string) {
+  return value
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, '')
+    .replace(/\u001b[PX^_].*?\u001b\\/g, '')
+    .replace(/\u001b[@-_]/g, '')
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '');
+}
+
+function maskTerminalSecrets(value: string) {
+  return value
+    .replace(/(authorization\s*[:=]\s*bearer\s+)[^\s"'`]+/gi, '$1***')
+    .replace(/(authorization\s*[:=]\s*basic\s+)[^\s"'`]+/gi, '$1***')
+    .replace(/((?:password|passwd|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|connection[_-]?uri|credential|passphrase)\s*[=:]\s*)[^\s"'`]+/gi, '$1***')
+    .replace(/([?&](?:token|secret|api[_-]?key|access[_-]?key|password|passphrase)=)[^&\s"'`]+/gi, '$1***')
+    .replace(MONGODB_CREDENTIAL_PATTERN, '$1***$2')
+    .replace(POSTGRES_CREDENTIAL_PATTERN, '$1***$2');
+}
+
+function sanitizeLogValue(value: any): any {
+  if (value === null || value === undefined) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    return sanitizeTerminalText(value);
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeLogValue(item));
+  }
+  if (typeof value === 'object') {
+    return Object.entries(value).reduce<Record<string, any>>((acc, [key, item]) => {
+      acc[key] = SECRET_FIELD_PATTERN.test(key) ? '***' : sanitizeLogValue(item);
+      return acc;
+    }, {});
+  }
+  return String(value);
+}

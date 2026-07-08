@@ -83,6 +83,20 @@ export class InstancesController {
     return this.outbox.fetchTrace(id, 200);
   }
 
+  @Get('/instances/:id/terminal-outputs')
+  async terminalOutputs(
+    @Param('id') id: string,
+    @Query('node_id') nodeId: string | undefined,
+    @Query('after') after: string | undefined,
+    @Req() req: Request,
+  ) {
+    return this.instances.getTerminalOutputs(id, {
+      nodeId,
+      after: after ? Number(after) : undefined,
+      actor: actorFromRequest(req),
+    });
+  }
+
   @Sse('/instances/:id/stream')
   async stream(
     @Param('id') instanceId: string,

@@ -369,6 +369,34 @@
   line-height: 1.6;
 }
 
+.property-code-editor {
+  overflow: hidden;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.property-code-editor:focus-within {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--border-focus) 14%, transparent);
+}
+
+.property-code-editor .cm-editor {
+  min-height: 260px;
+}
+
+.property-code-editor .cm-scroller {
+  font-family: var(--font-mono);
+}
+
+.property-code-editor .cm-tooltip {
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+}
+
 .property-helper-text {
   color: var(--text-tertiary);
   font-size: var(--font-size-xs);
@@ -380,6 +408,120 @@
   color: var(--color-error);
   font-size: var(--font-size-xs);
   line-height: 1.45;
+}
+
+.command-argument-guide {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.command-argument-guide.compact {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+.command-argument-guide-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.command-argument-guide-title span {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-weight: var(--font-weight-normal);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-argument-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.command-argument-item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.command-argument-main,
+.command-argument-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.command-argument-main code {
+  color: var(--border-focus);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.command-argument-main span {
+  color: var(--text-primary);
+  font-size: var(--font-size-xs);
+}
+
+.command-argument-main strong {
+  padding: 2px 6px;
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 9%, transparent);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold);
+}
+
+.command-argument-source {
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: var(--font-weight-semibold);
+}
+
+.command-argument-source.is-json {
+  color: var(--border-focus);
+  background: color-mix(in srgb, var(--border-focus) 10%, transparent);
+}
+
+.command-argument-source.is-upstream {
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 11%, transparent);
+}
+
+.command-argument-source.is-missing {
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 9%, transparent);
+}
+
+.command-argument-source.is-optional {
+  color: var(--text-tertiary);
+  background: var(--bg-tertiary);
+}
+
+.command-argument-meta,
+.command-argument-description {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .gateway-rule-list {

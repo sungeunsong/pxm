@@ -15,6 +15,7 @@ export abstract class WorkflowRepositoryPort {
     version: number,
     metadata?: WorkflowDefinitionMetadata,
   ): Promise<any>;
+  abstract deleteDefinition(id: string): Promise<boolean>;
 }
 
 export type WorkflowDefinitionMetadata = {
@@ -22,6 +23,15 @@ export type WorkflowDefinitionMetadata = {
   group?: string;
   tags?: string[];
   version_note?: string;
+  imported_from?: WorkflowImportSourceMetadata;
+};
+
+export type WorkflowImportSourceMetadata = {
+  schema_version: string;
+  definition_id?: string;
+  version?: number;
+  exported_version_note?: string;
+  exported_at?: string;
 };
 
 export type WorkflowDefinitionVersion = {
@@ -203,4 +213,43 @@ export abstract class WorkflowScheduleRepositoryPort {
     definitionId: string,
     limit?: number,
   ): Promise<WorkflowScheduleStatus>;
+}
+
+export type WorkflowInputPresetScope = 'private' | 'group' | 'public';
+
+export type WorkflowInputPreset = {
+  id: string;
+  workflow_id: string;
+  alias: string;
+  name: string;
+  description?: string;
+  values: Record<string, any>;
+  scope: WorkflowInputPresetScope;
+  group_id?: string | null;
+  enabled: boolean;
+  created_by?: string | null;
+  updated_by?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type UpsertWorkflowInputPreset = {
+  id?: string;
+  alias?: string;
+  name: string;
+  description?: string;
+  values: Record<string, any>;
+  scope?: WorkflowInputPresetScope;
+  group_id?: string | null;
+  actor?: string | null;
+};
+
+export abstract class WorkflowInputPresetRepositoryPort {
+  abstract listInputPresets(workflowId: string): Promise<WorkflowInputPreset[]>;
+  abstract getInputPreset(workflowId: string, idOrAlias: string): Promise<WorkflowInputPreset | null>;
+  abstract upsertInputPreset(
+    workflowId: string,
+    preset: UpsertWorkflowInputPreset,
+  ): Promise<WorkflowInputPreset>;
+  abstract deleteInputPreset(workflowId: string, presetId: string): Promise<boolean>;
 }
