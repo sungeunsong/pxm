@@ -186,6 +186,47 @@ Response:
 
 ANSI control sequence와 secret성 값은 응답 단계에서 제거/마스킹한다. 원본 stdout/stderr의 장기 보관/삭제 정책은 운영 retention 정책에서 별도로 결정한다.
 
+`POST /api/instances/terminal-outputs/retention/scrub`
+
+Command Node stdout/stderr 보관 기간을 audit log와 분리해서 정리한다. 이 API는 command audit log를 삭제하지 않고, process instance context에 저장된 terminal output만 비운다.
+
+Request:
+
+```json
+{
+  "instance_id": "170cc5be-a754-459d-8049-65f820ab45cf",
+  "older_than_days": 7,
+  "dry_run": true,
+  "limit": 50
+}
+```
+
+Rules:
+
+- `instance_id`가 있으면 해당 instance만 검사한다.
+- `instance_id`가 없으면 최근 조회 가능한 instance 중 `limit`개를 검사한다.
+- `older_than_days` 기본값은 `TERMINAL_OUTPUT_RETENTION_DAYS`, 미설정 시 7일이다.
+- audit log 보관 기간은 `AUDIT_LOG_RETENTION_DAYS` 또는 `unbounded`로 별도 표기만 하며 이 API에서 삭제하지 않는다.
+- scrub 대상은 context 안에서 `command_id`와 `stdout`/`stderr`를 가진 command output 객체다.
+
+Response:
+
+```json
+{
+  "retention": {
+    "terminal_output_days": 7,
+    "audit_log_days": "unbounded",
+    "cutoff_at": "2026-07-01T00:00:00.000Z",
+    "dry_run": true
+  },
+  "scanned": 1,
+  "scrubbed_instances": 1,
+  "scrubbed_outputs": 1,
+  "scrubbed_bytes": 4096,
+  "results": []
+}
+```
+
 ## Import Workflow
 
 `POST /api/templates/import`

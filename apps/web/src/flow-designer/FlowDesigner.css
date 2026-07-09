@@ -127,6 +127,48 @@
   flex: 0 0 auto;
 }
 
+.workflow-tab-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border-subtle);
+  flex: 0 0 auto;
+}
+
+.workflow-tab-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 8px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.workflow-tab-tool:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border-color: var(--border-strong);
+}
+
+.workflow-tab-tool:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.workflow-tab-tool span {
+  font-size: 11px;
+  font-weight: var(--font-weight-semibold);
+  line-height: 1;
+}
+
 /* ===== Content Area (3-Column Layout) ===== */
 .flow-designer-content {
   display: grid;

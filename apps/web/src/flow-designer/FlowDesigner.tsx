@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useRef } from 'react';
 import type { Node } from 'reactflow';
 import type { Edge } from 'reactflow';
-import { Braces, CheckSquare, CircleCheck, Clock, Diamond, Inbox, PanelRightClose, PanelRightOpen, Play, Plus, Search, Star, Terminal, Workflow, X } from 'lucide-react';
+import { Braces, CheckSquare, CircleCheck, Clipboard, ClipboardPaste, Clock, Diamond, Inbox, PanelRightClose, PanelRightOpen, Play, Plus, Search, Star, Terminal, Workflow, X } from 'lucide-react';
 import { Button } from '../components/Button';
 import { Header } from '../components/Header';
 import { Input } from '../components/Input';
@@ -43,6 +43,14 @@ type DesignerTab = {
 
 const INITIAL_DESIGNER_TAB_ID = 'designer-tab-initial';
 
+type WorkflowClipboard = {
+  sourceTabId: string;
+  sourceTemplateName: string;
+  copiedAt: string;
+  nodes: Node<CustomNodeData>[];
+  edges: Edge[];
+};
+
 export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, initialMonitorInstanceId }) => {
   const [darkMode, setDarkMode] = useState(true);
   const [selectedNode, setSelectedNode] = useState<Node<CustomNodeData> | null>(null);
@@ -68,6 +76,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
   const [nodeTestError, setNodeTestError] = useState<string | null>(null);
   const [designerTabs, setDesignerTabs] = useState<DesignerTab[]>(() => [createBlankDesignerTab(INITIAL_DESIGNER_TAB_ID)]);
   const [activeDesignerTabId, setActiveDesignerTabId] = useState(INITIAL_DESIGNER_TAB_ID);
+  const [workflowClipboard, setWorkflowClipboard] = useState<WorkflowClipboard | null>(null);
   const [favoritePluginIds, setFavoritePluginIds] = useState<string[]>(() => {
     try {
       return JSON.parse(localStorage.getItem('pxm.favoritePlugins') || '[]');
@@ -260,6 +269,44 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
       tabs.map((tab) => (tab.tabId === activeDesignerTabId ? { ...tab, isDirty: true } : tab)),
     );
   }, [activeDesignerTabId]);
+
+  const handleCopySelectedSubflow = React.useCallback(() => {
+    const nodes = (flowCanvasRef.current?.getNodes() || canvasNodes) as Node<CustomNodeData>[];
+    const edges = flowCanvasRef.current?.getEdges() || canvasEdges;
+    const selectedNodes = nodes.filter((node) => node.selected || node.id === selectedNode?.id);
+    if (selectedNodes.length === 0) {
+      window.alert('복사할 노드를 먼저 선택하세요.');
+      return;
+    }
+
+    const selectedIds = new Set(selectedNodes.map((node) => node.id));
+    const selectedEdges = edges.filter((edge) => selectedIds.has(edge.source) && selectedIds.has(edge.target));
+    setWorkflowClipboard({
+      sourceTabId: activeDesignerTabId,
+      sourceTemplateName: currentTemplateName || 'Untitled Workflow',
+      copiedAt: new Date().toISOString(),
+      nodes: selectedNodes.map(cloneNodeForClipboard),
+      edges: selectedEdges.map(cloneEdgeForClipboard),
+    });
+  }, [activeDesignerTabId, canvasEdges, canvasNodes, currentTemplateName, selectedNode]);
+
+  const handlePasteSubflow = React.useCallback(() => {
+    if (!workflowClipboard) {
+      return;
+    }
+    const currentNodes = (flowCanvasRef.current?.getNodes() || canvasNodes) as Node<CustomNodeData>[];
+    const currentEdges = flowCanvasRef.current?.getEdges() || canvasEdges;
+    const existingIds = new Set([
+      ...currentNodes.map((node) => node.id),
+      ...currentEdges.map((edge) => edge.id),
+    ]);
+    const pasted = remapClipboardGraph(workflowClipboard, existingIds);
+    flowCanvasRef.current?.appendNodesAndEdges(pasted.nodes, pasted.edges);
+    setCanvasNodes((nodes) => nodes.concat(pasted.nodes));
+    setCanvasEdges((edges) => edges.concat(pasted.edges));
+    setSelectedNode(pasted.nodes[0] || null);
+    markActiveDesignerTabDirty();
+  }, [canvasEdges, canvasNodes, markActiveDesignerTabDirty, workflowClipboard]);
 
   const handleCanvasNodesChange = React.useCallback(
     (nodes: Node[]) => {
@@ -861,6 +908,32 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
         >
           <Plus size={15} />
         </button>
+        <div className="workflow-tab-tools" aria-label="워크플로우 복사 도구">
+          <button
+            type="button"
+            className="workflow-tab-tool"
+            onClick={handleCopySelectedSubflow}
+            title="선택 노드 복사"
+            aria-label="선택 노드 복사"
+          >
+            <Clipboard size={14} />
+          </button>
+          <button
+            type="button"
+            className="workflow-tab-tool"
+            onClick={handlePasteSubflow}
+            disabled={!workflowClipboard}
+            title={
+              workflowClipboard
+                ? `${workflowClipboard.sourceTemplateName}에서 복사한 ${workflowClipboard.nodes.length}개 노드 붙여넣기`
+                : '복사한 노드가 없습니다'
+            }
+            aria-label="복사한 노드 붙여넣기"
+          >
+            <ClipboardPaste size={14} />
+            {workflowClipboard && <span>{workflowClipboard.nodes.length}</span>}
+          </button>
+        </div>
       </div>
       <input
         ref={importFileInputRef}
@@ -1279,6 +1352,73 @@ function downloadJson(data: unknown, filename: string) {
 function safeFileName(value: string) {
   const trimmed = value.trim().replace(/[^a-zA-Z0-9가-힣._-]+/g, '-').replace(/^-+|-+$/g, '');
   return trimmed || 'workflow';
+}
+
+function cloneNodeForClipboard(node: Node<CustomNodeData>): Node<CustomNodeData> {
+  return {
+    ...node,
+    selected: false,
+    dragging: false,
+    data: {
+      ...node.data,
+      executionStatus: undefined,
+    },
+  };
+}
+
+function cloneEdgeForClipboard(edge: Edge): Edge {
+  return {
+    ...edge,
+    selected: false,
+    animated: edge.animated,
+    data: edge.data ? { ...edge.data } : edge.data,
+    style: edge.style ? { ...edge.style } : edge.style,
+  };
+}
+
+function remapClipboardGraph(clipboard: WorkflowClipboard, existingIds: Set<string>) {
+  const idMap = new Map<string, string>();
+  const timestamp = Date.now();
+  const nextId = (prefix: string) => {
+    let index = 0;
+    let candidate = '';
+    do {
+      candidate = `${prefix}-${timestamp}-${index++}`;
+    } while (existingIds.has(candidate));
+    existingIds.add(candidate);
+    return candidate;
+  };
+
+  const nodes = clipboard.nodes.map((node, index) => {
+    const nodeId = nextId(`copy-${node.id}`);
+    idMap.set(node.id, nodeId);
+    return {
+      ...cloneNodeForClipboard(node),
+      id: nodeId,
+      position: {
+        x: node.position.x + 56,
+        y: node.position.y + 56 + index * 4,
+      },
+      selected: index === 0,
+      data: {
+        ...node.data,
+        label: node.data?.label ? `${node.data.label} copy` : 'Copied node',
+        executionStatus: undefined,
+      },
+    };
+  });
+
+  const edges = clipboard.edges
+    .filter((edge) => idMap.has(edge.source) && idMap.has(edge.target))
+    .map((edge) => ({
+      ...cloneEdgeForClipboard(edge),
+      id: nextId(`copy-${edge.id}`),
+      source: idMap.get(edge.source)!,
+      target: idMap.get(edge.target)!,
+      selected: false,
+    }));
+
+  return { nodes, edges };
 }
 
 function WorkflowMetadataForm({

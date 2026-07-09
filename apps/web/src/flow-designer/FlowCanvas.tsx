@@ -49,6 +49,7 @@ export interface FlowCanvasRef {
   getNodes: () => Node[];
   getEdges: () => Edge[];
   setNodesAndEdges: (nodes: Node[], edges: Edge[]) => void;
+  appendNodesAndEdges: (nodes: Node[], edges: Edge[]) => void;
   updateEdgesByNodeStatus: (nodeId: string, status: string) => void;
 }
 
@@ -142,6 +143,15 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
       [setNodes, setEdges, onNodeSelect]
     );
 
+    const appendNodesAndEdges = useCallback(
+      (newNodes: Node[], newEdges: Edge[]) => {
+        setNodes((currentNodes) => currentNodes.concat(newNodes));
+        setEdges((currentEdges) => currentEdges.concat(newEdges));
+        onNodeSelect?.(newNodes[0] || null);
+      },
+      [setNodes, setEdges, onNodeSelect]
+    );
+
     // 노드 상태에 따른 엣지 업데이트
     const updateEdgesByNodeStatus = useCallback(
       (nodeId: string, status: string) => {
@@ -216,9 +226,10 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
         getNodes,
         getEdges,
         setNodesAndEdges,
+        appendNodesAndEdges,
         updateEdgesByNodeStatus,
       }),
-      [updateNodeData, updateEdgeData, getNodes, getEdges, setNodesAndEdges, updateEdgesByNodeStatus]
+      [updateNodeData, updateEdgeData, getNodes, getEdges, setNodesAndEdges, appendNodesAndEdges, updateEdgesByNodeStatus]
     );
 
   const onConnect = useCallback(

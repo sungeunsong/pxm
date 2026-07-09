@@ -169,14 +169,14 @@
   - [x] designer tab 모델 설계
   - [x] unsaved changes guard
   - [x] tab별 version/dirty state 표시
-  - [ ] workflow 간 복사/참조 UX 검토
+  - [x] workflow 간 복사/참조 UX 검토
 
-- [~] Command 실행 terminal view
+- [x] Command 실행 terminal view
   - [x] command 실행 log API 정리
   - [x] stdout/stderr streaming 또는 polling 조회 API 설계
   - [x] ANSI escape 처리/마스킹 정책
   - [x] instance trace에서 command terminal drawer 제공
-  - [ ] audit log와 terminal output 보관 기간 분리
+  - [x] audit log와 terminal output 보관 기간 분리
 
 - [x] JS Node console / output view
   - [x] JS Node `return` 결과를 실행 로그의 `Output JSON` 블록으로 표시

@@ -101,6 +101,82 @@ export class InstancesService {
     };
   }
 
+  async scrubTerminalOutputs(options: {
+    instanceId?: string;
+    olderThanDays?: number;
+    dryRun?: boolean;
+    limit?: number;
+    actor?: WorkflowHistoryActor;
+  }) {
+    const olderThanDays = clampRetentionDays(
+      options.olderThanDays,
+      Number(process.env.TERMINAL_OUTPUT_RETENTION_DAYS ?? 7),
+    );
+    const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
+    const dryRun = options.dryRun === true;
+    const limit = Math.min(Math.max(Number(options.limit || 50), 1), 500);
+    const candidates = options.instanceId
+      ? [await this.getReadableInstance(options.instanceId, options.actor)]
+      : (await this.findAll(options.actor)).slice(0, limit);
+
+    const results: Array<{
+      instance_id: string;
+      status: string;
+      updated_at?: string;
+      scrubbed_outputs: number;
+      scrubbed_bytes: number;
+      skipped_reason?: string;
+    }> = [];
+
+    for (const instance of candidates) {
+      const instanceId = String(instance.id || instance._id || instance.instance_id);
+      const updatedAt = parseDate(instance.updated_at || instance.completed_at || instance.created_at);
+      const status = String(instance.state || instance.status || '').toUpperCase();
+      if (!options.instanceId && updatedAt && updatedAt > cutoff) {
+        results.push({
+          instance_id: instanceId,
+          status,
+          updated_at: instance.updated_at,
+          scrubbed_outputs: 0,
+          scrubbed_bytes: 0,
+          skipped_reason: 'newer_than_cutoff',
+        });
+        continue;
+      }
+
+      const context = instance.context ?? instance.ctx ?? {};
+      const scrubbed = scrubContextTerminalOutputs(context, {
+        scrubbedAt: new Date().toISOString(),
+        retentionDays: olderThanDays,
+      });
+      if (scrubbed.scrubbedOutputs > 0 && !dryRun) {
+        await this.instanceRepo.updateInstanceCtx(instanceId, context);
+      }
+      results.push({
+        instance_id: instanceId,
+        status,
+        updated_at: instance.updated_at,
+        scrubbed_outputs: scrubbed.scrubbedOutputs,
+        scrubbed_bytes: scrubbed.scrubbedBytes,
+        skipped_reason: scrubbed.scrubbedOutputs > 0 ? undefined : 'no_terminal_output',
+      });
+    }
+
+    return {
+      retention: {
+        terminal_output_days: olderThanDays,
+        audit_log_days: process.env.AUDIT_LOG_RETENTION_DAYS || 'unbounded',
+        cutoff_at: cutoff.toISOString(),
+        dry_run: dryRun,
+      },
+      scanned: candidates.length,
+      scrubbed_instances: results.filter((item) => item.scrubbed_outputs > 0).length,
+      scrubbed_outputs: results.reduce((sum, item) => sum + item.scrubbed_outputs, 0),
+      scrubbed_bytes: results.reduce((sum, item) => sum + item.scrubbed_bytes, 0),
+      results,
+    };
+  }
+
   async terminateInstance(id: string, actor?: WorkflowHistoryActor) {
     await this.ensureReadableInstance(id, actor);
     const terminated = await this.terminateInstanceRecursive(id, new Set<string>());
@@ -643,6 +719,70 @@ function sanitizeTerminalObject(value: any): any {
     }, {});
   }
   return String(value);
+}
+
+function scrubContextTerminalOutputs(
+  context: any,
+  options: { scrubbedAt: string; retentionDays: number },
+): { scrubbedOutputs: number; scrubbedBytes: number } {
+  let scrubbedOutputs = 0;
+  let scrubbedBytes = 0;
+
+  const visit = (value: any) => {
+    if (!value || typeof value !== 'object') {
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+
+    const hasCommandShape =
+      typeof value.command_id === 'string' &&
+      (typeof value.stdout === 'string' || typeof value.stderr === 'string');
+    if (hasCommandShape) {
+      scrubbedBytes += Buffer.byteLength(value.stdout || '', 'utf8');
+      scrubbedBytes += Buffer.byteLength(value.stderr || '', 'utf8');
+      value.stdout = '';
+      value.stderr = '';
+      value.terminal_output_scrubbed_at = options.scrubbedAt;
+      value.terminal_output_retention_days = options.retentionDays;
+      scrubbedOutputs += 1;
+      return;
+    }
+
+    Object.values(value).forEach(visit);
+  };
+
+  visit(context);
+  if (scrubbedOutputs > 0) {
+    context.runtime = {
+      ...(context.runtime || {}),
+      terminal_output_retention: {
+        terminal_output_days: options.retentionDays,
+        last_scrubbed_at: options.scrubbedAt,
+        scrubbed_outputs: scrubbedOutputs,
+      },
+    };
+  }
+
+  return { scrubbedOutputs, scrubbedBytes };
+}
+
+function clampRetentionDays(value: any, fallback: number) {
+  const days = Number(value);
+  if (!Number.isFinite(days) || days <= 0) {
+    return Math.min(Math.max(fallback || 7, 1), 3650);
+  }
+  return Math.min(Math.max(Math.floor(days), 1), 3650);
+}
+
+function parseDate(value: any): Date | null {
+  if (!value) {
+    return null;
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function buildSideEffectWarnings(nodes: any[]) {

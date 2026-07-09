@@ -97,6 +97,25 @@ export class InstancesController {
     });
   }
 
+  @Post('/instances/terminal-outputs/retention/scrub')
+  async scrubTerminalOutputs(
+    @Body() body: {
+      instance_id?: string;
+      older_than_days?: number;
+      dry_run?: boolean;
+      limit?: number;
+    },
+    @Req() req: Request,
+  ) {
+    return this.instances.scrubTerminalOutputs({
+      instanceId: body?.instance_id,
+      olderThanDays: body?.older_than_days,
+      dryRun: body?.dry_run === true,
+      limit: body?.limit,
+      actor: actorFromRequest(req),
+    });
+  }
+
   @Sse('/instances/:id/stream')
   async stream(
     @Param('id') instanceId: string,
