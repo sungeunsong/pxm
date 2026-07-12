@@ -17,6 +17,17 @@ import {
   WorkflowInputPreset,
   WorkflowInputPresetRepositoryPort,
   UpsertWorkflowInputPreset,
+  AppendPxmApiKeyUsageLog,
+  AuthzRepositoryPort,
+  CreatePxmApiKey,
+  PxmApiKey,
+  PxmApiKeyUsageLog,
+  PxmGroup,
+  PxmServiceAccount,
+  PxmUser,
+  UpsertPxmGroup,
+  UpsertPxmServiceAccount,
+  UpsertPxmUser,
 } from '../ports/db.ports';
 
 @Injectable()
@@ -28,10 +39,12 @@ export class MongodbAdapter
     OutboxRepositoryPort,
     EngineQueueRepositoryPort,
     WorkflowScheduleRepositoryPort,
-    WorkflowInputPresetRepositoryPort
+    WorkflowInputPresetRepositoryPort,
+    AuthzRepositoryPort
 {
   constructor(@Inject(MONGO_DB) private readonly db: Db) {}
   private inputPresetIndexesReady = false;
+  private authzIndexesReady = false;
 
   private async loadNodeLabels(instanceId: string): Promise<Map<string, string>> {
     const inst = await this.db
@@ -100,6 +113,7 @@ export class MongodbAdapter
           version: nextVersion,
           description: metadata.description || '',
           group: metadata.group || '',
+          group_id: metadata.group_id || null,
           tags: metadata.tags || [],
           version_note: metadata.version_note || '',
           metadata,
@@ -121,6 +135,7 @@ export class MongodbAdapter
       name,
       description: metadata.description || '',
       group: metadata.group || '',
+      group_id: metadata.group_id || null,
       tags: metadata.tags || [],
       version_note: metadata.version_note || '',
       metadata,
@@ -143,6 +158,7 @@ export class MongodbAdapter
       name: doc.name,
       description: doc.description || doc.metadata?.description || '',
       group: doc.group || doc.metadata?.group || '',
+      group_id: doc.group_id || doc.metadata?.group_id || null,
       tags: doc.tags || doc.metadata?.tags || [],
       version_note: doc.version_note || doc.metadata?.version_note || '',
       metadata: doc.metadata || {},
@@ -164,6 +180,7 @@ export class MongodbAdapter
       name: doc.name,
       description: doc.description || doc.metadata?.description || '',
       group: doc.group || doc.metadata?.group || '',
+      group_id: doc.group_id || doc.metadata?.group_id || null,
       tags: doc.tags || doc.metadata?.tags || [],
       version_note: doc.version_note || doc.metadata?.version_note || '',
       metadata: doc.metadata || {},
@@ -205,6 +222,7 @@ export class MongodbAdapter
       name: doc.name,
       description: doc.description || doc.metadata?.description || '',
       group: doc.group || doc.metadata?.group || '',
+      group_id: doc.group_id || doc.metadata?.group_id || null,
       tags: doc.tags || doc.metadata?.tags || [],
       version_note: doc.version_note || doc.metadata?.version_note || '',
       created_at: doc.created_at,
@@ -268,6 +286,7 @@ export class MongodbAdapter
       name: doc.name,
       description: doc.description || doc.metadata?.description || '',
       group: doc.group || doc.metadata?.group || '',
+      group_id: doc.group_id || doc.metadata?.group_id || null,
       tags: doc.tags || doc.metadata?.tags || [],
       version_note: doc.version_note || doc.metadata?.version_note || '',
       metadata: doc.metadata || {},
@@ -315,9 +334,13 @@ export class MongodbAdapter
       status: status,
       context: normalizedAccess ? applyAccessToContext(ctx, normalizedAccess) : ctx,
       workspace_id: normalizedAccess?.workspace_id,
+      group_id: normalizedAccess?.group_id || null,
       requester_id: normalizedAccess?.requester_id,
       client_id: normalizedAccess?.client_id,
       approver_ids: normalizedAccess?.approver_ids || [],
+      caller: normalizedAccess?.caller || null,
+      business_actor: normalizedAccess?.business_actor || null,
+      workflow_version_id: normalizedAccess?.workflow_version_id || null,
       lock_owner: null,
       lock_until: null,
       heartbeat_at: null,
@@ -353,9 +376,13 @@ export class MongodbAdapter
         status: inst.state || inst.status,
         context: inst.context,
         workspace_id: inst.workspace_id || inst.context?.runtime?.access?.workspace_id || 'default',
+        group_id: inst.group_id || inst.context?.runtime?.access?.group_id || null,
         requester_id: inst.requester_id || inst.context?.runtime?.access?.requester_id || null,
         client_id: inst.client_id || inst.context?.runtime?.access?.client_id || null,
         approver_ids: inst.approver_ids || inst.context?.runtime?.access?.approver_ids || [],
+        caller: inst.caller || inst.context?.runtime?.access?.caller || null,
+        business_actor: inst.business_actor || inst.context?.runtime?.access?.business_actor || null,
+        workflow_version_id: inst.workflow_version_id || inst.context?.runtime?.access?.workflow_version_id || null,
         created_at: inst.created_at,
         updated_at: inst.updated_at,
         template_name: templateName,
@@ -379,9 +406,13 @@ export class MongodbAdapter
       status: inst.state || inst.status,
       context: inst.context,
       workspace_id: inst.workspace_id || inst.context?.runtime?.access?.workspace_id || 'default',
+      group_id: inst.group_id || inst.context?.runtime?.access?.group_id || null,
       requester_id: inst.requester_id || inst.context?.runtime?.access?.requester_id || null,
       client_id: inst.client_id || inst.context?.runtime?.access?.client_id || null,
       approver_ids: inst.approver_ids || inst.context?.runtime?.access?.approver_ids || [],
+      caller: inst.caller || inst.context?.runtime?.access?.caller || null,
+      business_actor: inst.business_actor || inst.context?.runtime?.access?.business_actor || null,
+      workflow_version_id: inst.workflow_version_id || inst.context?.runtime?.access?.workflow_version_id || null,
       created_at: inst.created_at,
       updated_at: inst.updated_at,
       template_id: inst.process_definition_id,
@@ -403,9 +434,13 @@ export class MongodbAdapter
       status: inst.state || inst.status,
       context: inst.context,
       workspace_id: inst.workspace_id || inst.context?.runtime?.access?.workspace_id || 'default',
+      group_id: inst.group_id || inst.context?.runtime?.access?.group_id || null,
       requester_id: inst.requester_id || inst.context?.runtime?.access?.requester_id || null,
       client_id: inst.client_id || inst.context?.runtime?.access?.client_id || null,
       approver_ids: inst.approver_ids || inst.context?.runtime?.access?.approver_ids || [],
+      caller: inst.caller || inst.context?.runtime?.access?.caller || null,
+      business_actor: inst.business_actor || inst.context?.runtime?.access?.business_actor || null,
+      workflow_version_id: inst.workflow_version_id || inst.context?.runtime?.access?.workflow_version_id || null,
       created_at: inst.created_at,
       updated_at: inst.updated_at,
       template_id: inst.process_definition_id,
@@ -1077,12 +1112,273 @@ export class MongodbAdapter
     return result.matchedCount > 0;
   }
 
+  async upsertGroup(group: UpsertPxmGroup): Promise<PxmGroup> {
+    await this.ensureAuthzIndexes();
+    const now = new Date().toISOString();
+    const id = group.id || crypto.randomUUID();
+    await this.db.collection<any>('pxm_groups').updateOne(
+      { _id: id },
+      {
+        $set: {
+          name: group.name.trim(),
+          description: group.description || '',
+          status: 'active',
+          updated_by: group.actor || null,
+          updated_at: now,
+        },
+        $setOnInsert: {
+          _id: id,
+          created_by: group.actor || null,
+          created_at: now,
+          deleted_at: null,
+        },
+      },
+      { upsert: true },
+    );
+    return mapGroupDoc(await this.db.collection<any>('pxm_groups').findOne({ _id: id }));
+  }
+
+  async listGroups(includeDeleted = false): Promise<PxmGroup[]> {
+    await this.ensureAuthzIndexes();
+    const docs = await this.db
+      .collection<any>('pxm_groups')
+      .find(includeDeleted ? {} : { status: { $ne: 'deleted' } })
+      .sort({ created_at: -1 })
+      .toArray();
+    return docs.map(mapGroupDoc);
+  }
+
+  async getGroup(id: string): Promise<PxmGroup | null> {
+    await this.ensureAuthzIndexes();
+    const doc = await this.db.collection<any>('pxm_groups').findOne({ _id: id });
+    return doc ? mapGroupDoc(doc) : null;
+  }
+
+  async softDeleteGroup(id: string, actor?: string | null): Promise<boolean> {
+    await this.ensureAuthzIndexes();
+    const now = new Date().toISOString();
+    const result = await this.db.collection<any>('pxm_groups').updateOne(
+      { _id: id, status: { $ne: 'deleted' } },
+      {
+        $set: {
+          status: 'deleted',
+          deleted_at: now,
+          updated_by: actor || null,
+          updated_at: now,
+        },
+      },
+    );
+    if (result.matchedCount > 0) {
+      await this.db.collection<any>('pxm_api_keys').updateMany(
+        { group_id: id, status: 'active' },
+        {
+          $set: {
+            status: 'disabled',
+            disabled_at: now,
+            updated_at: now,
+          },
+        },
+      );
+    }
+    return result.matchedCount > 0;
+  }
+
+  async restoreGroup(id: string, actor?: string | null): Promise<boolean> {
+    await this.ensureAuthzIndexes();
+    const now = new Date().toISOString();
+    const result = await this.db.collection<any>('pxm_groups').updateOne(
+      { _id: id, status: 'deleted' },
+      {
+        $set: {
+          status: 'active',
+          deleted_at: null,
+          updated_by: actor || null,
+          updated_at: now,
+        },
+      },
+    );
+    return result.matchedCount > 0;
+  }
+
+  async upsertUser(user: UpsertPxmUser): Promise<PxmUser> {
+    await this.ensureAuthzIndexes();
+    const now = new Date().toISOString();
+    const id = user.id || crypto.randomUUID();
+    await this.db.collection<any>('pxm_users').updateOne(
+      { _id: id },
+      {
+        $set: {
+          display_name: user.display_name.trim(),
+          email: user.email || null,
+          role: user.role || 'user',
+          group_ids: user.group_ids || [],
+          status: user.status || 'active',
+          updated_by: user.actor || null,
+          updated_at: now,
+        },
+        $setOnInsert: {
+          _id: id,
+          created_by: user.actor || null,
+          created_at: now,
+        },
+      },
+      { upsert: true },
+    );
+    return mapUserDoc(await this.db.collection<any>('pxm_users').findOne({ _id: id }));
+  }
+
+  async listUsers(groupId?: string): Promise<PxmUser[]> {
+    await this.ensureAuthzIndexes();
+    const filter = groupId ? { group_ids: groupId } : {};
+    const docs = await this.db.collection<any>('pxm_users').find(filter).sort({ created_at: -1 }).toArray();
+    return docs.map(mapUserDoc);
+  }
+
+  async getUser(id: string): Promise<PxmUser | null> {
+    await this.ensureAuthzIndexes();
+    const doc = await this.db.collection<any>('pxm_users').findOne({ _id: id });
+    return doc ? mapUserDoc(doc) : null;
+  }
+
+  async upsertServiceAccount(account: UpsertPxmServiceAccount): Promise<PxmServiceAccount> {
+    await this.ensureAuthzIndexes();
+    const now = new Date().toISOString();
+    const id = account.id || crypto.randomUUID();
+    await this.db.collection<any>('pxm_service_accounts').updateOne(
+      { _id: id },
+      {
+        $set: {
+          name: account.name.trim(),
+          group_id: account.group_id,
+          description: account.description || '',
+          status: account.status || 'active',
+          updated_by: account.actor || null,
+          updated_at: now,
+        },
+        $setOnInsert: {
+          _id: id,
+          created_by: account.actor || null,
+          created_at: now,
+        },
+      },
+      { upsert: true },
+    );
+    return mapServiceAccountDoc(await this.db.collection<any>('pxm_service_accounts').findOne({ _id: id }));
+  }
+
+  async listServiceAccounts(groupId?: string): Promise<PxmServiceAccount[]> {
+    await this.ensureAuthzIndexes();
+    const filter = groupId ? { group_id: groupId } : {};
+    const docs = await this.db.collection<any>('pxm_service_accounts').find(filter).sort({ created_at: -1 }).toArray();
+    return docs.map(mapServiceAccountDoc);
+  }
+
+  async getServiceAccount(id: string): Promise<PxmServiceAccount | null> {
+    await this.ensureAuthzIndexes();
+    const doc = await this.db.collection<any>('pxm_service_accounts').findOne({ _id: id });
+    return doc ? mapServiceAccountDoc(doc) : null;
+  }
+
+  async createApiKey(key: CreatePxmApiKey): Promise<PxmApiKey> {
+    await this.ensureAuthzIndexes();
+    const now = new Date().toISOString();
+    const id = key.id || crypto.randomUUID();
+    const doc = {
+      _id: id,
+      name: key.name.trim(),
+      owner_type: key.owner_type,
+      owner_id: key.owner_id,
+      group_id: key.group_id,
+      key_prefix: key.key_prefix,
+      key_hash: key.key_hash,
+      scopes: key.scopes || [],
+      allowed_workflow_ids: key.allowed_workflow_ids || [],
+      status: 'active',
+      expires_at: key.expires_at || null,
+      last_used_at: null,
+      created_by: key.actor || null,
+      disabled_at: null,
+      created_at: now,
+      updated_at: now,
+    };
+    await this.db.collection<any>('pxm_api_keys').insertOne(doc);
+    return mapApiKeyDoc(doc);
+  }
+
+  async listApiKeys(groupId?: string): Promise<PxmApiKey[]> {
+    await this.ensureAuthzIndexes();
+    const filter = groupId ? { group_id: groupId } : {};
+    const docs = await this.db.collection<any>('pxm_api_keys').find(filter).sort({ created_at: -1 }).toArray();
+    return docs.map(mapApiKeyDoc);
+  }
+
+  async getApiKey(id: string): Promise<PxmApiKey | null> {
+    await this.ensureAuthzIndexes();
+    const doc = await this.db.collection<any>('pxm_api_keys').findOne({ _id: id });
+    return doc ? mapApiKeyDoc(doc) : null;
+  }
+
+  async findApiKeyByHash(keyHash: string): Promise<PxmApiKey | null> {
+    await this.ensureAuthzIndexes();
+    const doc = await this.db.collection<any>('pxm_api_keys').findOne({ key_hash: keyHash });
+    return doc ? mapApiKeyDoc(doc) : null;
+  }
+
+  async disableApiKey(id: string, actor?: string | null): Promise<boolean> {
+    await this.ensureAuthzIndexes();
+    const now = new Date().toISOString();
+    const result = await this.db.collection<any>('pxm_api_keys').updateOne(
+      { _id: id, status: { $ne: 'disabled' } },
+      {
+        $set: {
+          status: 'disabled',
+          disabled_at: now,
+          updated_by: actor || null,
+          updated_at: now,
+        },
+      },
+    );
+    return result.matchedCount > 0;
+  }
+
+  async touchApiKey(id: string, usedAt: string): Promise<void> {
+    await this.ensureAuthzIndexes();
+    await this.db.collection<any>('pxm_api_keys').updateOne(
+      { _id: id },
+      { $set: { last_used_at: usedAt, updated_at: usedAt } },
+    );
+  }
+
+  async appendApiKeyUsageLog(log: AppendPxmApiKeyUsageLog): Promise<PxmApiKeyUsageLog> {
+    await this.ensureAuthzIndexes();
+    const now = new Date().toISOString();
+    const doc = {
+      _id: log.id || crypto.randomUUID(),
+      ...log,
+      created_at: now,
+    };
+    await this.db.collection<any>('pxm_api_key_usage_logs').insertOne(doc);
+    return mapApiKeyUsageLogDoc(doc);
+  }
+
   private async ensureInputPresetIndexes(): Promise<void> {
     if (this.inputPresetIndexesReady) return;
     const collection = this.db.collection<any>('workflow_input_presets');
     await collection.createIndex({ workflow_id: 1, alias: 1 }, { unique: true });
     await collection.createIndex({ workflow_id: 1, updated_at: -1 });
     this.inputPresetIndexesReady = true;
+  }
+
+  private async ensureAuthzIndexes(): Promise<void> {
+    if (this.authzIndexesReady) return;
+    await this.db.collection<any>('pxm_groups').createIndex({ name: 1 }, { unique: true });
+    await this.db.collection<any>('pxm_users').createIndex({ group_ids: 1 });
+    await this.db.collection<any>('pxm_service_accounts').createIndex({ group_id: 1 });
+    await this.db.collection<any>('pxm_api_keys').createIndex({ key_hash: 1 }, { unique: true });
+    await this.db.collection<any>('pxm_api_keys').createIndex({ group_id: 1, status: 1 });
+    await this.db.collection<any>('pxm_api_key_usage_logs').createIndex({ api_key_id: 1, created_at: -1 });
+    await this.db.collection<any>('pxm_api_key_usage_logs').createIndex({ group_id: 1, created_at: -1 });
+    this.authzIndexesReady = true;
   }
 }
 
@@ -1101,6 +1397,88 @@ function mapInputPresetDoc(doc: any): WorkflowInputPreset {
     updated_by: doc.updated_by || null,
     created_at: doc.created_at,
     updated_at: doc.updated_at,
+  };
+}
+
+function mapGroupDoc(doc: any): PxmGroup {
+  return {
+    id: doc._id,
+    name: doc.name,
+    description: doc.description || '',
+    status: doc.status || 'active',
+    created_by: doc.created_by || null,
+    updated_by: doc.updated_by || null,
+    deleted_at: doc.deleted_at || null,
+    created_at: doc.created_at,
+    updated_at: doc.updated_at,
+  };
+}
+
+function mapUserDoc(doc: any): PxmUser {
+  return {
+    id: doc._id,
+    display_name: doc.display_name,
+    email: doc.email || null,
+    role: doc.role || 'user',
+    group_ids: Array.isArray(doc.group_ids) ? doc.group_ids : [],
+    status: doc.status || 'active',
+    created_by: doc.created_by || null,
+    updated_by: doc.updated_by || null,
+    created_at: doc.created_at,
+    updated_at: doc.updated_at,
+  };
+}
+
+function mapServiceAccountDoc(doc: any): PxmServiceAccount {
+  return {
+    id: doc._id,
+    name: doc.name,
+    group_id: doc.group_id,
+    description: doc.description || '',
+    status: doc.status || 'active',
+    created_by: doc.created_by || null,
+    updated_by: doc.updated_by || null,
+    created_at: doc.created_at,
+    updated_at: doc.updated_at,
+  };
+}
+
+function mapApiKeyDoc(doc: any): PxmApiKey {
+  return {
+    id: doc._id,
+    name: doc.name,
+    owner_type: doc.owner_type,
+    owner_id: doc.owner_id,
+    group_id: doc.group_id,
+    key_prefix: doc.key_prefix,
+    key_hash: doc.key_hash,
+    scopes: Array.isArray(doc.scopes) ? doc.scopes : [],
+    allowed_workflow_ids: Array.isArray(doc.allowed_workflow_ids) ? doc.allowed_workflow_ids : [],
+    status: doc.status || 'active',
+    expires_at: doc.expires_at || null,
+    last_used_at: doc.last_used_at || null,
+    created_by: doc.created_by || null,
+    disabled_at: doc.disabled_at || null,
+    created_at: doc.created_at,
+    updated_at: doc.updated_at,
+  };
+}
+
+function mapApiKeyUsageLogDoc(doc: any): PxmApiKeyUsageLog {
+  return {
+    id: doc._id,
+    api_key_id: doc.api_key_id,
+    owner_type: doc.owner_type,
+    owner_id: doc.owner_id,
+    group_id: doc.group_id,
+    endpoint: doc.endpoint,
+    workflow_id: doc.workflow_id || null,
+    instance_id: doc.instance_id || null,
+    request_id: doc.request_id || null,
+    ip: doc.ip || null,
+    user_agent: doc.user_agent || null,
+    business_actor: doc.business_actor || null,
+    created_at: doc.created_at,
   };
 }
 
@@ -1140,14 +1518,27 @@ function normalizeAccess(ctx: any, access?: WorkflowInstanceAccess): WorkflowIns
     ...existing,
     ...(access || {}),
   };
-  if (!merged.workspace_id && !merged.requester_id && !merged.client_id && !merged.approver_ids) {
+  if (
+    !merged.workspace_id &&
+    !merged.group_id &&
+    !merged.requester_id &&
+    !merged.client_id &&
+    !merged.approver_ids &&
+    !merged.caller &&
+    !merged.business_actor &&
+    !merged.workflow_version_id
+  ) {
     return null;
   }
   return {
     workspace_id: merged.workspace_id || 'default',
+    group_id: merged.group_id || null,
     requester_id: merged.requester_id || null,
     client_id: merged.client_id || null,
     approver_ids: Array.isArray(merged.approver_ids) ? merged.approver_ids : [],
+    caller: merged.caller || null,
+    business_actor: merged.business_actor || null,
+    workflow_version_id: merged.workflow_version_id || null,
   };
 }
 
@@ -1178,6 +1569,11 @@ function buildMongoHistoryFilter(actor?: WorkflowHistoryActor): Record<string, a
     }
   }
 
+  if (actor.roles.includes('group_manager') && (actor.group_ids || []).length > 0) {
+    or.push({ group_id: { $in: actor.group_ids } });
+    or.push({ 'context.runtime.access.group_id': { $in: actor.group_ids } });
+  }
+
   if (actor.roles.includes('workflow_owner') && actor.owned_workflow_ids.length > 0) {
     or.push({ process_definition_id: { $in: actor.owned_workflow_ids } });
   }
@@ -1203,6 +1599,14 @@ function buildMongoHistoryFilter(actor?: WorkflowHistoryActor): Record<string, a
     if (actor.allowed_workflow_ids.length > 0) {
       or.push({ process_definition_id: { $in: actor.allowed_workflow_ids } });
     }
+  }
+
+  if (
+    (actor.roles.includes('user') || actor.actor_type === 'service_account') &&
+    (actor.scopes || []).includes('workflow:read') &&
+    actor.allowed_workflow_ids.length > 0
+  ) {
+    or.push({ process_definition_id: { $in: actor.allowed_workflow_ids } });
   }
 
   return or.length > 0 ? { $or: or } : { _id: '__no_authorized_instances__' };

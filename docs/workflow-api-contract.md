@@ -255,17 +255,118 @@ Response:
 
 ## Authentication And Permission Draft
 
-Phase 1에서는 인증/권한 구현은 포함하지 않는다. 계약 초안은 아래 기준으로 둔다.
+초기 인증/권한 모델은 API-first 운영을 기준으로 둔다. 웹 콘솔 사용자는 일반 업무 사용자가 아니라 최고관리자와 그룹관리자 중심이며, workflow 실행은 대부분 API key 기반이다.
 
-- 외부 start API는 API client credential 또는 bearer token 기반으로 보호한다.
-- API client는 허용된 workflow/template만 start할 수 있어야 한다.
-- result/trace/stream 조회는 requester, owner, operator/admin 범위로 제한한다.
-- 모든 external start 요청은 requester/client id, source, request id를 audit field로 남긴다.
+### Principal Model
+
+- `USER`: BPM 콘솔에 로그인하거나 개인 API key를 발급받는 사람. 기본 대상은 `admin`, `group_manager`, 개발/운영 담당자다. 일반 업무 사용자를 모두 BPM user로 등록하지 않는다.
+- `SERVICE_ACCOUNT`: 외부 시스템, 배치, bot, 연동 서버를 대표하는 실행 주체다. 운영/연동용 API key는 기본적으로 service account에 발급한다.
+- `API_KEY`: `USER` 또는 `SERVICE_ACCOUNT`에 발급되는 인증 수단이다. key scope는 owner 권한을 늘리지 않고 줄이는 용도로만 사용한다.
+
+관리 role은 아래 3단계로 고정한다.
+
+- `admin`: 전체 최고관리자. 모든 group/user/service account/API key/workflow/audit 관리 권한을 가진다.
+- `group_manager`: 특정 group 관리자. 본인 group 안에서 user/service account/API key/workflow를 관리한다.
+- `user`: 일반 실행 주체 또는 개인 API key owner. 기본적으로 관리 권한은 없다.
+
+`actor_type`은 인증 주체 종류를 나타내고, `role`은 사람 사용자의 관리 권한을 나타낸다. `SERVICE_ACCOUNT`는 관리 role을 갖지 않으며 API key scope와 group/resource policy로만 권한을 계산한다.
+
+권한 계산은 아래 교집합으로 한다.
+
+```text
+final permission =
+owner group permission
+∩ api key scope
+∩ resource policy
+```
+
+API key는 HTTP `Authorization` header의 bearer token으로 전달한다.
+
+```http
+Authorization: Bearer pxm_live_xxxxxxxxx
+```
+
+### API Key Owner
+
+API key는 둘 중 하나를 owner로 가진다.
+
+```json
+{
+  "owner_type": "SERVICE_ACCOUNT",
+  "owner_id": "nit-system",
+  "group_id": "it",
+  "scopes": ["workflow:execute", "workflow:read"],
+  "allowed_workflow_ids": ["workflow-uuid"]
+}
+```
+
+- 개인 실행 추적이 필요한 API 호출은 `USER` owner의 개인 API key를 사용한다.
+- 공용 시스템/외부 서비스가 실행하는 호출은 `SERVICE_ACCOUNT` owner의 API key를 사용한다.
+- 공용 시스템 내부에서 누가 버튼을 눌렀는지는 원칙적으로 해당 시스템의 audit 책임이다.
+- `scopes`는 행위 제한이고, `allowed_workflow_ids`는 대상 workflow 제한이다.
+- 기본 발급 화면은 owner group에서 접근 가능한 workflow 전체를 선택하되, 발급자가 일부 workflow만 남기도록 축소할 수 있어야 한다.
+- API key 만료일은 optional이다. 기본은 만료 없음이며, 만료일이 있으면 만료 임박/만료 상태를 표시하고 만료된 key는 사용할 수 없다.
+
+API key 지원 scope는 초기 버전에서 아래로 둔다.
+
+- `workflow:read`: workflow metadata와 허용된 instance/result/trace 조회.
+- `workflow:execute`: 허용된 workflow start.
+- `task:approve`: 승인 대기 task approve/reject API 호출. 승인 주체 추적이 중요하므로 개인 `USER` owner API key로만 허용한다.
+
+`workflow:manage`는 API key scope로 제공하지 않는다. Workflow 생성/수정/삭제/버전 관리는 PXM 웹 콘솔에 로그인한 `admin` 또는 `group_manager`만 수행한다.
+
+### Soft Delete And Version Retention
+
+group과 workflow 삭제는 기본적으로 soft delete다. Hard delete는 MVP 범위에서 제공하지 않는다.
+
+- 삭제된 group/workflow는 일반 목록에서 숨기고 새 실행을 막는다.
+- 삭제된 group에 속한 API key는 비활성화한다.
+- 실행 이력, audit log, workflow version은 보존한다.
+- 삭제 항목 조회/복구는 `admin`만 가능하다.
+- 삭제된 group/workflow를 복구해도 비활성화된 API key는 자동 복구하지 않는다. 필요한 key는 관리자가 별도로 재활성화하거나 재발급한다.
+- workflow 실행 instance는 실행 당시 `workflow_version_id`를 저장한다.
+- workflow 실행 시점에는 immutable workflow version을 생성하거나 기존 immutable version을 참조한다.
+- version 저장소에는 실행 당시 workflow definition을 보관해 현재 workflow가 수정/삭제되어도 과거 실행을 재현할 수 있게 한다.
+- instance에는 `workflow_name_snapshot`, `group_name_snapshot`, `caller_snapshot`, `api_key_name_snapshot` 같은 표시용 snapshot을 함께 저장한다.
+
+### Optional Business Actor
+
+`business_actor`는 workflow 권한 판단에 사용하지 않는 참고용 audit metadata다. 외부 시스템이 “업무상 요청자/수행자”를 함께 넘기고 싶을 때만 사용한다.
+
+```json
+{
+  "caller": {
+    "type": "SERVICE_ACCOUNT",
+    "id": "nit-system",
+    "api_key_id": "key_123"
+  },
+  "business_actor": {
+    "external_user_id": "song-sungeun",
+    "display_name": "송성은",
+    "email": "song@example.com",
+    "trust_level": "asserted",
+    "verification_method": "caller_provided"
+  }
+}
+```
+
+정책:
+
+- 기본 권한 판단은 항상 API key owner 기준이다.
+- `business_actor`가 없으면 실행자는 API key owner로만 기록한다.
+- `business_actor`가 있으면 “NIT 시스템이 송성은 요청으로 실행”처럼 표시할 수 있으나, PXM이 직접 송성은을 인증한 것으로 간주하지 않는다.
+- 강한 검증이 필요한 경우 별도 단계에서 signed user assertion/JWT를 추가한다. 이 경우에만 `trust_level = verified`로 기록한다.
+
+### API Key Storage And Usage Audit
+
+- API key 원문은 최초 1회만 노출한다.
+- DB에는 `key_hash`만 저장하고, `key_prefix`는 조회/식별용으로만 저장한다.
+- 모든 external start 요청은 `api_key_id`, owner snapshot, group, workflow, endpoint, request id, IP/user-agent를 usage log에 남긴다.
 - secret 원문은 request/response/result/trace에 노출하지 않는다.
 
 ## History API Permission Model
 
-Phase 2의 이력 API 권한 모델은 `/api/instances`, `/api/instances/:id`, `/api/instances/:id/trace`, `/api/instances/:id/result`, `/api/instances/:id/stream`에 동일하게 적용한다. 목록 API는 조회 가능한 instance만 반환하고, 단건/trace/result/stream API는 조회 권한이 없으면 `404 Not Found`를 반환한다. 권한 없는 instance의 존재 여부를 노출하지 않기 위해 `403 Forbidden`은 사용하지 않는다.
+이력 API 권한 모델은 `/api/instances`, `/api/instances/:id`, `/api/instances/:id/trace`, `/api/instances/:id/result`, `/api/instances/:id/stream`에 동일하게 적용한다. 목록 API는 조회 가능한 instance만 반환하고, 단건/trace/result/stream API는 조회 권한이 없으면 `404 Not Found`를 반환한다. 권한 없는 instance의 존재 여부를 노출하지 않기 위해 `403 Forbidden`은 사용하지 않는다.
 
 ### Actor Context
 
@@ -273,23 +374,27 @@ Phase 2의 이력 API 권한 모델은 `/api/instances`, `/api/instances/:id`, `
 
 ```json
 {
-  "actor_type": "user",
-  "actor_id": "kim",
-  "roles": ["requester"],
-  "workspace_ids": ["default"],
-  "owned_workflow_ids": ["workflow-uuid"],
+  "actor_type": "service_account",
+  "actor_id": "nit-system",
+  "api_key_id": "key_123",
+  "group_ids": ["it"],
   "allowed_workflow_ids": ["workflow-uuid"],
-  "allowed_instance_ids": ["instance-uuid"]
+  "business_actor": {
+    "external_user_id": "song-sungeun",
+    "display_name": "송성은",
+    "trust_level": "asserted"
+  }
 }
 ```
 
-- `actor_type`: `user` 또는 `api_client`.
-- `actor_id`: 사용자 id 또는 API client id.
-- `roles`: `admin`, `operator`, `workflow_owner`, `requester`, `approver` 중 하나 이상.
-- `workspace_ids`: actor가 접근 가능한 workspace 범위. workspace를 아직 저장하지 않는 instance는 `default` workspace로 취급한다.
-- `owned_workflow_ids`: workflow owner가 관리하는 workflow/template id 목록.
-- `allowed_workflow_ids`: API client 또는 제한 사용자에게 명시적으로 허용된 workflow/template id 목록.
-- `allowed_instance_ids`: API client 또는 task 위임으로 명시적으로 허용된 instance id 목록.
+- `actor_type`: `user` 또는 `service_account`.
+- `actor_id`: BPM user id 또는 service account id.
+- `api_key_id`: API key로 인증한 요청이면 사용한 key id.
+- `group_ids`: actor가 속한 group 목록.
+- `roles`: 사람 user의 관리 role 목록. 신규 관리 role은 `admin`, `group_manager`, `user`로 정리한다. `service_account` actor는 보통 빈 배열 또는 생략으로 둔다. Legacy 호환 중에는 `workflow_owner`, `requester`, `approver`, `api_client`가 남을 수 있다.
+- `allowed_workflow_ids`: API key scope 또는 group permission 교집합으로 허용된 workflow/template id 목록.
+- `allowed_instance_ids`: MVP에서는 사용하지 않는 future field. task 위임이나 임시 공유 기능이 필요할 때 추가한다.
+- `business_actor`: optional audit metadata. 권한 판단에는 사용하지 않는다.
 
 인증이 없는 개발 환경에서는 actor context가 없으면 기존 UI 호환을 위해 operator-equivalent read로 처리할 수 있다. 운영 환경에서는 actor context가 없는 요청을 `401 Unauthorized`로 거부한다.
 
@@ -297,22 +402,24 @@ Phase 2의 이력 API 권한 모델은 `/api/instances`, `/api/instances/:id`, `
 
 권한 판단에 필요한 instance 필드는 아래 기준으로 저장한다.
 
-- `workspace_id`: workflow가 속한 workspace. 없으면 `default`.
+- `group_id`: workflow가 속한 group. group 미지정 legacy workflow는 `default`로 취급한다.
 - `process_definition_id` 또는 `template_id`: workflow/template id.
-- `requester_id`: start 요청의 최종 신청자. UI 신청은 로그인 사용자 id, 외부 API 신청은 payload의 requester가 아니라 인증된 subject에서 결정한다.
-- `client_id`: API client로 시작한 경우의 client id.
+- `workflow_version_id`: 실행 당시 workflow definition version id.
+- `caller`: 실행을 인증한 user/service account/API key snapshot.
+- `business_actor`: optional 업무상 실행자/요청자 snapshot. 권한 판단에는 사용하지 않는다.
 - `approver_ids`: 현재 또는 과거 user task assignee 목록. task repository에서 조인하거나 instance context에 denormalize한다.
 
-외부 start payload의 `input.requester`는 업무 데이터로만 취급하고 권한 판단 subject로 사용하지 않는다.
+외부 start payload의 `input.requester`나 `business_actor`는 업무 데이터/audit metadata로만 취급하고 권한 판단 subject로 사용하지 않는다.
 
 ### Role Scopes
 
-- `admin`: 모든 workspace의 instance, trace, result, stream 조회 가능.
-- `operator`: 본인 `workspace_ids`에 포함된 workspace의 모든 instance 조회 가능.
-- `workflow_owner`: `owned_workflow_ids`에 포함된 workflow/template에서 생성된 instance 조회 가능. trace/result/stream도 같은 범위로 허용한다.
-- `requester`: `requester_id === actor_id`인 instance 조회 가능.
+- `admin`: 모든 group의 instance, trace, result, stream 조회 가능.
+- `group_manager`: 본인 `group_ids`에 포함된 group의 workflow/instance 조회 가능.
+- `user`: 본인에게 허용된 API key scope와 `allowed_workflow_ids` 범위에서만 workflow 실행/조회 가능.
+- `workflow_owner`: legacy role. `owned_workflow_ids`에 포함된 workflow/template에서 생성된 instance 조회 가능.
+- `requester`: legacy/user-portal role. `requester_id === actor_id`인 instance 조회 가능.
 - `approver`: `approver_ids`에 `actor_id`가 포함된 instance 조회 가능. 본인에게 배정된 task와 그 관련 instance의 trace/result/stream을 볼 수 있다.
-- `api_client`: `client_id === actor_id`인 instance, `allowed_instance_ids`에 포함된 instance, 또는 `allowed_workflow_ids`에 포함된 workflow/template에서 생성된 instance만 조회 가능.
+- `api_client`: API key owner가 속한 group permission과 key scope 교집합에서 허용된 workflow/instance만 조회 가능.
 
 여러 role이 있으면 허용 범위는 합집합으로 계산한다.
 
@@ -321,11 +428,12 @@ Phase 2의 이력 API 권한 모델은 `/api/instances`, `/api/instances/:id`, `
 `GET /api/instances`
 
 - `admin`: 전체 목록.
-- `operator`: `workspace_id in actor.workspace_ids`.
+- `group_manager`: `group_id in actor.group_ids`.
+- `user`: API key scope와 `allowed_workflow_ids`로 허용된 instance.
 - `workflow_owner`: `process_definition_id/template_id in actor.owned_workflow_ids`.
 - `requester`: `requester_id = actor.actor_id`.
 - `approver`: `approver_ids contains actor.actor_id`.
-- `api_client`: `client_id = actor.actor_id` 또는 명시 허용 workflow/instance.
+- `api_client`: 명시 허용 workflow/instance와 group permission 교집합.
 
 `GET /api/instances/:id`
 

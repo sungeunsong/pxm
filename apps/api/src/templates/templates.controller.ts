@@ -8,8 +8,9 @@ import {
   WorkflowScheduleRepositoryPort,
 } from '../db/ports/db.ports';
 import { InstancesService } from '../instances/instances.service';
-import { instanceAccessFromRequest } from '../instances/history-auth';
+import { actorFromRequest, instanceAccessFromRequest } from '../instances/history-auth';
 import { randomUUID } from 'crypto';
+import { assertCanManageGroup } from '../authz/management-auth';
 
 @Controller('templates')
 export class TemplatesController {
@@ -22,7 +23,8 @@ export class TemplatesController {
   ) {}
 
   @Post()
-  async create(@Body() dto: CreateTemplateDto) {
+  async create(@Body() dto: CreateTemplateDto, @Req() req: Request) {
+    assertCanManageGroup(actorFromRequest(req), dto.group_id);
     return this.templatesService.create(dto);
   }
 
@@ -33,7 +35,8 @@ export class TemplatesController {
   }
 
   @Post('import')
-  async import(@Body() body: any) {
+  async import(@Body() body: any, @Req() req: Request) {
+    assertCanManageGroup(actorFromRequest(req), body?.workflow?.metadata?.group_id || null);
     try {
       return await this.templatesService.import(body);
     } catch (error) {
@@ -111,7 +114,12 @@ export class TemplatesController {
   }
 
   @Put(':id')
-  async update(@Param('id') id: string, @Body() dto: UpdateTemplateDto) {
+  async update(@Param('id') id: string, @Body() dto: UpdateTemplateDto, @Req() req: Request) {
+    const current = await this.templatesService.findOne(id);
+    if (!current) {
+      throw new Error('Template not found');
+    }
+    assertCanManageGroup(actorFromRequest(req), dto.group_id !== undefined ? dto.group_id : current.group_id);
     const template = await this.templatesService.update(id, dto);
     if (!template) {
       throw new Error('Template not found');
@@ -126,16 +134,24 @@ export class TemplatesController {
       name?: string;
       description?: string;
       group?: string;
+      group_id?: string | null;
       tags?: string[];
       version_note?: string;
       nodes: any[];
       edges: any[];
     },
+    @Req() req: Request,
   ) {
+    const current = await this.templatesService.findOne(id);
+    if (!current) {
+      throw new Error('Template not found');
+    }
+    assertCanManageGroup(actorFromRequest(req), body.group_id !== undefined ? body.group_id : current.group_id);
     const template = await this.templatesService.update(id, {
       name: body.name,
       description: body.description,
       group: body.group,
+      group_id: body.group_id,
       tags: body.tags,
       version_note: body.version_note,
       nodes: body.nodes,
@@ -152,11 +168,13 @@ export class TemplatesController {
   async toggleSchedule(
     @Param('id') id: string,
     @Body() body: { enabled?: boolean },
+    @Req() req: Request,
   ) {
     const template = await this.templatesService.findOne(id);
     if (!template) {
       throw new NotFoundException('Template not found');
     }
+    assertCanManageGroup(actorFromRequest(req), template.group_id);
 
     const nodes = (template.nodes || []).map((node: any) => {
       if (node.data?.nodeType !== 'start' || node.data?.triggerType !== 'schedule') {
@@ -175,6 +193,7 @@ export class TemplatesController {
       name: template.name,
       description: template.description,
       group: template.group,
+      group_id: template.group_id,
       tags: template.tags,
       version_note: template.version_note,
       nodes,
@@ -192,11 +211,13 @@ export class TemplatesController {
   async toggleDbWatch(
     @Param('id') id: string,
     @Body() body: { enabled?: boolean },
+    @Req() req: Request,
   ) {
     const template = await this.templatesService.findOne(id);
     if (!template) {
       throw new NotFoundException('Template not found');
     }
+    assertCanManageGroup(actorFromRequest(req), template.group_id);
 
     const nodes = (template.nodes || []).map((node: any) => {
       if (node.data?.nodeType !== 'start' || node.data?.triggerType !== 'db_watch') {
@@ -215,6 +236,7 @@ export class TemplatesController {
       name: template.name,
       description: template.description,
       group: template.group,
+      group_id: template.group_id,
       tags: template.tags,
       version_note: template.version_note,
       nodes,
@@ -298,7 +320,12 @@ export class TemplatesController {
   }
 
   @Delete(':id')
-  async delete(@Param('id') id: string) {
+  async delete(@Param('id') id: string, @Req() req: Request) {
+    const template = await this.templatesService.findOne(id);
+    if (!template) {
+      throw new Error('Template not found');
+    }
+    assertCanManageGroup(actorFromRequest(req), template.group_id);
     const success = await this.templatesService.delete(id);
     if (!success) {
       throw new Error('Template not found');
@@ -328,6 +355,7 @@ export class TemplatesController {
     if (!template) {
       throw new Error('Template not found');
     }
+    assertCanExecuteWorkflow(actorFromRequest(req), id);
 
     // 실행 요청마다 새로운 인스턴스를 발급한다
     const instanceId = randomUUID();
@@ -353,7 +381,12 @@ export class TemplatesController {
       ...(inputPreset?.values || {}),
       ...inputOverrides,
     };
-    const access = instanceAccessFromRequest(req, formData);
+    const requestAccess = instanceAccessFromRequest(req, formData);
+    const access = {
+      ...requestAccess,
+      group_id: template.group_id || requestAccess.group_id,
+      workflow_version_id: template.version ? `${template.id}:${template.version}` : null,
+    };
     const ctx = {
       runtime: {
         cursor: startNode.id,
@@ -563,4 +596,16 @@ function normalizePresetAlias(value: string): string {
 function getRequestActor(req?: Request): string | null {
   const headerActor = req?.header('x-user-id') || req?.header('x-api-client-id');
   return headerActor || null;
+}
+
+function assertCanExecuteWorkflow(actor: ReturnType<typeof actorFromRequest>, workflowId: string) {
+  if (!actor.api_key_id) {
+    return;
+  }
+  if (!actor.scopes?.includes('workflow:execute')) {
+    throw new NotFoundException('Template not found');
+  }
+  if (!actor.allowed_workflow_ids.includes(workflowId)) {
+    throw new NotFoundException('Template not found');
+  }
 }

@@ -5,6 +5,7 @@ export interface WorkflowTemplate {
   name: string;
   description?: string;
   group?: string;
+  group_id?: string | null;
   tags: string[];
   version_note?: string;
   nodes: Node[];
@@ -21,6 +22,7 @@ export interface CreateTemplateRequest {
   name: string;
   description?: string;
   group?: string;
+  group_id?: string | null;
   tags?: string[];
   version_note?: string;
   nodes: Node[];
@@ -31,6 +33,7 @@ export interface UpdateTemplateRequest {
   name?: string;
   description?: string;
   group?: string;
+  group_id?: string | null;
   tags?: string[];
   version_note?: string;
   nodes?: Node[];
@@ -71,6 +74,7 @@ export interface WorkflowExportDocument {
     metadata: {
       description?: string;
       group?: string;
+      group_id?: string | null;
       tags: string[];
       version_note?: string;
       imported_from?: WorkflowImportSourceMetadata;
@@ -103,6 +107,7 @@ export interface WorkflowTemplateVersion {
   name: string;
   description?: string;
   group?: string;
+  group_id?: string | null;
   tags?: string[];
   version_note?: string;
   created_at?: string;

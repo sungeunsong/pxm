@@ -10,6 +10,7 @@ import { EngineModule } from './engine/engine.module';
 import { SchedulesModule } from './schedules/schedules.module';
 import { CommandsModule } from './commands/commands.module';
 import { DbWatchModule } from './db-watch/db-watch.module';
+import { AuthzModule } from './authz/authz.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { DbWatchModule } from './db-watch/db-watch.module';
     EngineModule,
     SchedulesModule,
     DbWatchModule,
+    AuthzModule,
   ],
 })
 export class AppModule {}

@@ -17,6 +17,17 @@ import {
   WorkflowInputPreset,
   WorkflowInputPresetRepositoryPort,
   UpsertWorkflowInputPreset,
+  AppendPxmApiKeyUsageLog,
+  AuthzRepositoryPort,
+  CreatePxmApiKey,
+  PxmApiKey,
+  PxmApiKeyUsageLog,
+  PxmGroup,
+  PxmServiceAccount,
+  PxmUser,
+  UpsertPxmGroup,
+  UpsertPxmServiceAccount,
+  UpsertPxmUser,
 } from '../ports/db.ports';
 
 @Injectable()
@@ -28,12 +39,14 @@ export class PostgresAdapter
     OutboxRepositoryPort,
     EngineQueueRepositoryPort,
     WorkflowScheduleRepositoryPort,
-    WorkflowInputPresetRepositoryPort
+    WorkflowInputPresetRepositoryPort,
+    AuthzRepositoryPort
 {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
   private scheduleTableReady = false;
   private definitionVersionTableReady = false;
   private inputPresetTableReady = false;
+  private authzTablesReady = false;
 
   private async loadNodeLabels(instanceId: string): Promise<Map<string, string>> {
     const { rows } = await this.pool.query(
@@ -182,6 +195,7 @@ export class PostgresAdapter
       ...definition,
       description: definition.metadata?.description || '',
       group: definition.metadata?.group || '',
+      group_id: definition.metadata?.group_id || null,
       tags: definition.metadata?.tags || [],
       version_note: definition.metadata?.version_note || '',
       nodes: nodesRes.rows.map((n) => n.config),
@@ -213,6 +227,7 @@ export class PostgresAdapter
       name: row.name,
       description: row.metadata?.description || '',
       group: row.metadata?.group || '',
+      group_id: row.metadata?.group_id || null,
       tags: row.metadata?.tags || [],
       version_note: row.metadata?.version_note || '',
       created_at: row.created_at,
@@ -240,6 +255,7 @@ export class PostgresAdapter
       name: row.name,
       description: row.metadata?.description || '',
       group: row.metadata?.group || '',
+      group_id: row.metadata?.group_id || null,
       tags: row.metadata?.tags || [],
       version_note: row.metadata?.version_note || '',
       metadata: row.metadata || {},
@@ -1067,6 +1083,298 @@ export class PostgresAdapter
     return (rowCount || 0) > 0;
   }
 
+  async upsertGroup(group: UpsertPxmGroup): Promise<PxmGroup> {
+    await this.ensureAuthzTables();
+    const id = group.id || crypto.randomUUID();
+    const { rows } = await this.pool.query(
+      `
+      INSERT INTO pxm_groups
+        (id, name, description, status, created_by, updated_by, created_at, updated_at)
+      VALUES
+        ($1, $2, $3, 'active', $4, $4, NOW(), NOW())
+      ON CONFLICT (id)
+      DO UPDATE SET
+        name = EXCLUDED.name,
+        description = EXCLUDED.description,
+        status = 'active',
+        updated_by = EXCLUDED.updated_by,
+        updated_at = NOW()
+      RETURNING *
+      `,
+      [id, group.name.trim(), group.description || '', group.actor || null],
+    );
+    return mapGroupRow(rows[0]);
+  }
+
+  async listGroups(includeDeleted = false): Promise<PxmGroup[]> {
+    await this.ensureAuthzTables();
+    const { rows } = await this.pool.query(
+      `
+      SELECT * FROM pxm_groups
+      ${includeDeleted ? '' : `WHERE status <> 'deleted'`}
+      ORDER BY created_at DESC
+      `,
+    );
+    return rows.map(mapGroupRow);
+  }
+
+  async getGroup(id: string): Promise<PxmGroup | null> {
+    await this.ensureAuthzTables();
+    const { rows } = await this.pool.query(`SELECT * FROM pxm_groups WHERE id = $1`, [id]);
+    return rows[0] ? mapGroupRow(rows[0]) : null;
+  }
+
+  async softDeleteGroup(id: string, actor?: string | null): Promise<boolean> {
+    await this.ensureAuthzTables();
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rowCount } = await client.query(
+        `
+        UPDATE pxm_groups
+        SET status = 'deleted', deleted_at = NOW(), updated_by = $2, updated_at = NOW()
+        WHERE id = $1 AND status <> 'deleted'
+        `,
+        [id, actor || null],
+      );
+      if ((rowCount || 0) > 0) {
+        await client.query(
+          `
+          UPDATE pxm_api_keys
+          SET status = 'disabled', disabled_at = NOW(), updated_at = NOW()
+          WHERE group_id = $1 AND status = 'active'
+          `,
+          [id],
+        );
+      }
+      await client.query('COMMIT');
+      return (rowCount || 0) > 0;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async restoreGroup(id: string, actor?: string | null): Promise<boolean> {
+    await this.ensureAuthzTables();
+    const { rowCount } = await this.pool.query(
+      `
+      UPDATE pxm_groups
+      SET status = 'active', deleted_at = NULL, updated_by = $2, updated_at = NOW()
+      WHERE id = $1 AND status = 'deleted'
+      `,
+      [id, actor || null],
+    );
+    return (rowCount || 0) > 0;
+  }
+
+  async upsertUser(user: UpsertPxmUser): Promise<PxmUser> {
+    await this.ensureAuthzTables();
+    const id = user.id || crypto.randomUUID();
+    const { rows } = await this.pool.query(
+      `
+      INSERT INTO pxm_users
+        (id, display_name, email, role, group_ids, status, created_by, updated_by, created_at, updated_at)
+      VALUES
+        ($1, $2, $3, $4, $5::jsonb, $6, $7, $7, NOW(), NOW())
+      ON CONFLICT (id)
+      DO UPDATE SET
+        display_name = EXCLUDED.display_name,
+        email = EXCLUDED.email,
+        role = EXCLUDED.role,
+        group_ids = EXCLUDED.group_ids,
+        status = EXCLUDED.status,
+        updated_by = EXCLUDED.updated_by,
+        updated_at = NOW()
+      RETURNING *
+      `,
+      [
+        id,
+        user.display_name.trim(),
+        user.email || null,
+        user.role || 'user',
+        JSON.stringify(user.group_ids || []),
+        user.status || 'active',
+        user.actor || null,
+      ],
+    );
+    return mapUserRow(rows[0]);
+  }
+
+  async listUsers(groupId?: string): Promise<PxmUser[]> {
+    await this.ensureAuthzTables();
+    const { rows } = await this.pool.query(
+      `
+      SELECT * FROM pxm_users
+      ${groupId ? `WHERE group_ids ? $1` : ''}
+      ORDER BY created_at DESC
+      `,
+      groupId ? [groupId] : [],
+    );
+    return rows.map(mapUserRow);
+  }
+
+  async getUser(id: string): Promise<PxmUser | null> {
+    await this.ensureAuthzTables();
+    const { rows } = await this.pool.query(`SELECT * FROM pxm_users WHERE id = $1`, [id]);
+    return rows[0] ? mapUserRow(rows[0]) : null;
+  }
+
+  async upsertServiceAccount(account: UpsertPxmServiceAccount): Promise<PxmServiceAccount> {
+    await this.ensureAuthzTables();
+    const id = account.id || crypto.randomUUID();
+    const { rows } = await this.pool.query(
+      `
+      INSERT INTO pxm_service_accounts
+        (id, name, group_id, description, status, created_by, updated_by, created_at, updated_at)
+      VALUES
+        ($1, $2, $3, $4, $5, $6, $6, NOW(), NOW())
+      ON CONFLICT (id)
+      DO UPDATE SET
+        name = EXCLUDED.name,
+        group_id = EXCLUDED.group_id,
+        description = EXCLUDED.description,
+        status = EXCLUDED.status,
+        updated_by = EXCLUDED.updated_by,
+        updated_at = NOW()
+      RETURNING *
+      `,
+      [
+        id,
+        account.name.trim(),
+        account.group_id,
+        account.description || '',
+        account.status || 'active',
+        account.actor || null,
+      ],
+    );
+    return mapServiceAccountRow(rows[0]);
+  }
+
+  async listServiceAccounts(groupId?: string): Promise<PxmServiceAccount[]> {
+    await this.ensureAuthzTables();
+    const { rows } = await this.pool.query(
+      `
+      SELECT * FROM pxm_service_accounts
+      ${groupId ? `WHERE group_id = $1` : ''}
+      ORDER BY created_at DESC
+      `,
+      groupId ? [groupId] : [],
+    );
+    return rows.map(mapServiceAccountRow);
+  }
+
+  async getServiceAccount(id: string): Promise<PxmServiceAccount | null> {
+    await this.ensureAuthzTables();
+    const { rows } = await this.pool.query(`SELECT * FROM pxm_service_accounts WHERE id = $1`, [id]);
+    return rows[0] ? mapServiceAccountRow(rows[0]) : null;
+  }
+
+  async createApiKey(key: CreatePxmApiKey): Promise<PxmApiKey> {
+    await this.ensureAuthzTables();
+    const id = key.id || crypto.randomUUID();
+    const { rows } = await this.pool.query(
+      `
+      INSERT INTO pxm_api_keys
+        (id, name, owner_type, owner_id, group_id, key_prefix, key_hash, scopes, allowed_workflow_ids, status, expires_at, created_by, created_at, updated_at)
+      VALUES
+        ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, 'active', $10, $11, NOW(), NOW())
+      RETURNING *
+      `,
+      [
+        id,
+        key.name.trim(),
+        key.owner_type,
+        key.owner_id,
+        key.group_id,
+        key.key_prefix,
+        key.key_hash,
+        JSON.stringify(key.scopes || []),
+        JSON.stringify(key.allowed_workflow_ids || []),
+        key.expires_at || null,
+        key.actor || null,
+      ],
+    );
+    return mapApiKeyRow(rows[0]);
+  }
+
+  async listApiKeys(groupId?: string): Promise<PxmApiKey[]> {
+    await this.ensureAuthzTables();
+    const { rows } = await this.pool.query(
+      `
+      SELECT * FROM pxm_api_keys
+      ${groupId ? `WHERE group_id = $1` : ''}
+      ORDER BY created_at DESC
+      `,
+      groupId ? [groupId] : [],
+    );
+    return rows.map(mapApiKeyRow);
+  }
+
+  async getApiKey(id: string): Promise<PxmApiKey | null> {
+    await this.ensureAuthzTables();
+    const { rows } = await this.pool.query(`SELECT * FROM pxm_api_keys WHERE id = $1`, [id]);
+    return rows[0] ? mapApiKeyRow(rows[0]) : null;
+  }
+
+  async findApiKeyByHash(keyHash: string): Promise<PxmApiKey | null> {
+    await this.ensureAuthzTables();
+    const { rows } = await this.pool.query(`SELECT * FROM pxm_api_keys WHERE key_hash = $1`, [keyHash]);
+    return rows[0] ? mapApiKeyRow(rows[0]) : null;
+  }
+
+  async disableApiKey(id: string, actor?: string | null): Promise<boolean> {
+    await this.ensureAuthzTables();
+    const { rowCount } = await this.pool.query(
+      `
+      UPDATE pxm_api_keys
+      SET status = 'disabled', disabled_at = NOW(), updated_by = $2, updated_at = NOW()
+      WHERE id = $1 AND status <> 'disabled'
+      `,
+      [id, actor || null],
+    );
+    return (rowCount || 0) > 0;
+  }
+
+  async touchApiKey(id: string, usedAt: string): Promise<void> {
+    await this.ensureAuthzTables();
+    await this.pool.query(
+      `UPDATE pxm_api_keys SET last_used_at = $2, updated_at = $2 WHERE id = $1`,
+      [id, usedAt],
+    );
+  }
+
+  async appendApiKeyUsageLog(log: AppendPxmApiKeyUsageLog): Promise<PxmApiKeyUsageLog> {
+    await this.ensureAuthzTables();
+    const id = log.id || crypto.randomUUID();
+    const { rows } = await this.pool.query(
+      `
+      INSERT INTO pxm_api_key_usage_logs
+        (id, api_key_id, owner_type, owner_id, group_id, endpoint, workflow_id, instance_id, request_id, ip, user_agent, business_actor, created_at)
+      VALUES
+        ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, NOW())
+      RETURNING *
+      `,
+      [
+        id,
+        log.api_key_id,
+        log.owner_type,
+        log.owner_id,
+        log.group_id,
+        log.endpoint,
+        log.workflow_id || null,
+        log.instance_id || null,
+        log.request_id || null,
+        log.ip || null,
+        log.user_agent || null,
+        JSON.stringify(log.business_actor || null),
+      ],
+    );
+    return mapApiKeyUsageLogRow(rows[0]);
+  }
+
   private async ensureInputPresetTable(): Promise<void> {
     if (this.inputPresetTableReady) return;
     await this.pool.query(`
@@ -1093,6 +1401,94 @@ export class PostgresAdapter
     `);
     this.inputPresetTableReady = true;
   }
+
+  private async ensureAuthzTables(): Promise<void> {
+    if (this.authzTablesReady) return;
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS pxm_groups (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        description TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'active',
+        created_by TEXT NULL,
+        updated_by TEXT NULL,
+        deleted_at TIMESTAMPTZ NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS pxm_users (
+        id TEXT PRIMARY KEY,
+        display_name TEXT NOT NULL,
+        email TEXT NULL,
+        role TEXT NOT NULL DEFAULT 'user',
+        group_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_by TEXT NULL,
+        updated_by TEXT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS pxm_service_accounts (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        group_id TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'active',
+        created_by TEXT NULL,
+        updated_by TEXT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS pxm_api_keys (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        owner_type TEXT NOT NULL,
+        owner_id TEXT NOT NULL,
+        group_id TEXT NOT NULL,
+        key_prefix TEXT NOT NULL,
+        key_hash TEXT NOT NULL UNIQUE,
+        scopes JSONB NOT NULL DEFAULT '[]'::jsonb,
+        allowed_workflow_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+        status TEXT NOT NULL DEFAULT 'active',
+        expires_at TIMESTAMPTZ NULL,
+        last_used_at TIMESTAMPTZ NULL,
+        created_by TEXT NULL,
+        updated_by TEXT NULL,
+        disabled_at TIMESTAMPTZ NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS pxm_api_key_usage_logs (
+        id TEXT PRIMARY KEY,
+        api_key_id TEXT NOT NULL,
+        owner_type TEXT NOT NULL,
+        owner_id TEXT NOT NULL,
+        group_id TEXT NOT NULL,
+        endpoint TEXT NOT NULL,
+        workflow_id TEXT NULL,
+        instance_id TEXT NULL,
+        request_id TEXT NULL,
+        ip TEXT NULL,
+        user_agent TEXT NULL,
+        business_actor JSONB NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_pxm_users_group_ids ON pxm_users USING GIN (group_ids)`);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_pxm_service_accounts_group ON pxm_service_accounts (group_id)`);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_pxm_api_keys_group_status ON pxm_api_keys (group_id, status)`);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_pxm_usage_logs_key_created ON pxm_api_key_usage_logs (api_key_id, created_at DESC)`);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_pxm_usage_logs_group_created ON pxm_api_key_usage_logs (group_id, created_at DESC)`);
+    this.authzTablesReady = true;
+  }
 }
 
 function mapInputPresetRow(row: any): WorkflowInputPreset {
@@ -1110,6 +1506,88 @@ function mapInputPresetRow(row: any): WorkflowInputPreset {
     updated_by: row.updated_by || null,
     created_at: row.created_at?.toISOString?.() || row.created_at,
     updated_at: row.updated_at?.toISOString?.() || row.updated_at,
+  };
+}
+
+function mapGroupRow(row: any): PxmGroup {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description || '',
+    status: row.status || 'active',
+    created_by: row.created_by || null,
+    updated_by: row.updated_by || null,
+    deleted_at: row.deleted_at?.toISOString?.() || row.deleted_at || null,
+    created_at: row.created_at?.toISOString?.() || row.created_at,
+    updated_at: row.updated_at?.toISOString?.() || row.updated_at,
+  };
+}
+
+function mapUserRow(row: any): PxmUser {
+  return {
+    id: row.id,
+    display_name: row.display_name,
+    email: row.email || null,
+    role: row.role || 'user',
+    group_ids: Array.isArray(row.group_ids) ? row.group_ids : [],
+    status: row.status || 'active',
+    created_by: row.created_by || null,
+    updated_by: row.updated_by || null,
+    created_at: row.created_at?.toISOString?.() || row.created_at,
+    updated_at: row.updated_at?.toISOString?.() || row.updated_at,
+  };
+}
+
+function mapServiceAccountRow(row: any): PxmServiceAccount {
+  return {
+    id: row.id,
+    name: row.name,
+    group_id: row.group_id,
+    description: row.description || '',
+    status: row.status || 'active',
+    created_by: row.created_by || null,
+    updated_by: row.updated_by || null,
+    created_at: row.created_at?.toISOString?.() || row.created_at,
+    updated_at: row.updated_at?.toISOString?.() || row.updated_at,
+  };
+}
+
+function mapApiKeyRow(row: any): PxmApiKey {
+  return {
+    id: row.id,
+    name: row.name,
+    owner_type: row.owner_type,
+    owner_id: row.owner_id,
+    group_id: row.group_id,
+    key_prefix: row.key_prefix,
+    key_hash: row.key_hash,
+    scopes: Array.isArray(row.scopes) ? row.scopes : [],
+    allowed_workflow_ids: Array.isArray(row.allowed_workflow_ids) ? row.allowed_workflow_ids : [],
+    status: row.status || 'active',
+    expires_at: row.expires_at?.toISOString?.() || row.expires_at || null,
+    last_used_at: row.last_used_at?.toISOString?.() || row.last_used_at || null,
+    created_by: row.created_by || null,
+    disabled_at: row.disabled_at?.toISOString?.() || row.disabled_at || null,
+    created_at: row.created_at?.toISOString?.() || row.created_at,
+    updated_at: row.updated_at?.toISOString?.() || row.updated_at,
+  };
+}
+
+function mapApiKeyUsageLogRow(row: any): PxmApiKeyUsageLog {
+  return {
+    id: row.id,
+    api_key_id: row.api_key_id,
+    owner_type: row.owner_type,
+    owner_id: row.owner_id,
+    group_id: row.group_id,
+    endpoint: row.endpoint,
+    workflow_id: row.workflow_id || null,
+    instance_id: row.instance_id || null,
+    request_id: row.request_id || null,
+    ip: row.ip || null,
+    user_agent: row.user_agent || null,
+    business_actor: row.business_actor || null,
+    created_at: row.created_at?.toISOString?.() || row.created_at,
   };
 }
 
@@ -1149,14 +1627,27 @@ function normalizeAccess(ctx: any, access?: WorkflowInstanceAccess): WorkflowIns
     ...existing,
     ...(access || {}),
   };
-  if (!merged.workspace_id && !merged.requester_id && !merged.client_id && !merged.approver_ids) {
+  if (
+    !merged.workspace_id &&
+    !merged.group_id &&
+    !merged.requester_id &&
+    !merged.client_id &&
+    !merged.approver_ids &&
+    !merged.caller &&
+    !merged.business_actor &&
+    !merged.workflow_version_id
+  ) {
     return null;
   }
   return {
     workspace_id: merged.workspace_id || 'default',
+    group_id: merged.group_id || null,
     requester_id: merged.requester_id || null,
     client_id: merged.client_id || null,
     approver_ids: Array.isArray(merged.approver_ids) ? merged.approver_ids : [],
+    caller: merged.caller || null,
+    business_actor: merged.business_actor || null,
+    workflow_version_id: merged.workflow_version_id || null,
   };
 }
 
@@ -1174,9 +1665,13 @@ function accessProjection(row: any): WorkflowInstanceAccess {
   const access = row.context?.runtime?.access || {};
   return {
     workspace_id: access.workspace_id || 'default',
+    group_id: access.group_id || null,
     requester_id: access.requester_id || null,
     client_id: access.client_id || null,
     approver_ids: Array.isArray(access.approver_ids) ? access.approver_ids : [],
+    caller: access.caller || null,
+    business_actor: access.business_actor || null,
+    workflow_version_id: access.workflow_version_id || null,
   };
 }
 
@@ -1201,6 +1696,11 @@ function buildPostgresHistoryScope(actor?: WorkflowHistoryActor): {
     const workspaceIds = actor.workspace_ids.length ? actor.workspace_ids : ['default'];
     const param = addParam(workspaceIds);
     clauses.push(`COALESCE(i.context->'runtime'->'access'->>'workspace_id', 'default') = ANY(${param}::text[])`);
+  }
+
+  if (actor.roles.includes('group_manager') && (actor.group_ids || []).length > 0) {
+    const param = addParam(actor.group_ids || []);
+    clauses.push(`COALESCE(i.context->'runtime'->'access'->>'group_id', '') = ANY(${param}::text[])`);
   }
 
   if (actor.roles.includes('workflow_owner') && actor.owned_workflow_ids.length > 0) {
@@ -1231,6 +1731,15 @@ function buildPostgresHistoryScope(actor?: WorkflowHistoryActor): {
       const param = addParam(actor.allowed_workflow_ids);
       clauses.push(`i.process_definition_id::text = ANY(${param}::text[])`);
     }
+  }
+
+  if (
+    (actor.roles.includes('user') || actor.actor_type === 'service_account') &&
+    (actor.scopes || []).includes('workflow:read') &&
+    actor.allowed_workflow_ids.length > 0
+  ) {
+    const param = addParam(actor.allowed_workflow_ids);
+    clauses.push(`i.process_definition_id::text = ANY(${param}::text[])`);
   }
 
   return clauses.length > 0

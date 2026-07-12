@@ -546,9 +546,13 @@ function accessFromInstance(instance: any): WorkflowInstanceAccess {
   const access = instance.context?.runtime?.access || instance.ctx?.runtime?.access || {};
   return {
     workspace_id: instance.workspace_id || access.workspace_id,
+    group_id: instance.group_id || access.group_id || null,
     requester_id: instance.requester_id || access.requester_id || null,
     client_id: instance.client_id || access.client_id || null,
     approver_ids: instance.approver_ids || access.approver_ids || [],
+    caller: instance.caller || access.caller || null,
+    business_actor: instance.business_actor || access.business_actor || null,
+    workflow_version_id: instance.workflow_version_id || access.workflow_version_id || null,
   };
 }
 
@@ -571,6 +575,9 @@ function canReadInstance(instance: any, actor?: WorkflowHistoryActor): boolean {
   if (roles.has('operator') && actor.workspace_ids.includes(workspaceId)) {
     return true;
   }
+  if (roles.has('group_manager') && actor.group_ids?.includes(access.group_id || '')) {
+    return true;
+  }
   if (roles.has('workflow_owner') && actor.owned_workflow_ids.includes(definitionId)) {
     return true;
   }
@@ -586,6 +593,13 @@ function canReadInstance(instance: any, actor?: WorkflowHistoryActor): boolean {
         actor.allowed_instance_ids.includes(instanceId) ||
         actor.allowed_workflow_ids.includes(definitionId),
     );
+  }
+  if (
+    (roles.has('user') || actor.actor_type === 'service_account') &&
+    (actor.scopes || []).includes('workflow:read') &&
+    actor.allowed_workflow_ids.includes(definitionId)
+  ) {
+    return true;
   }
 
   return false;

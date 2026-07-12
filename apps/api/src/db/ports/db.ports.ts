@@ -21,6 +21,7 @@ export abstract class WorkflowRepositoryPort {
 export type WorkflowDefinitionMetadata = {
   description?: string;
   group?: string;
+  group_id?: string | null;
   tags?: string[];
   version_note?: string;
   imported_from?: WorkflowImportSourceMetadata;
@@ -40,6 +41,7 @@ export type WorkflowDefinitionVersion = {
   name: string;
   description?: string;
   group?: string;
+  group_id?: string | null;
   tags?: string[];
   version_note?: string;
   created_at?: string;
@@ -49,20 +51,28 @@ export type WorkflowDefinitionVersion = {
 };
 
 export type WorkflowHistoryActor = {
-  actor_type: 'user' | 'api_client';
+  actor_type: 'user' | 'service_account' | 'api_client';
   actor_id: string | null;
   roles: string[];
+  scopes?: string[];
   workspace_ids: string[];
+  group_ids?: string[];
   owned_workflow_ids: string[];
   allowed_workflow_ids: string[];
   allowed_instance_ids: string[];
+  api_key_id?: string | null;
+  business_actor?: Record<string, any> | null;
 };
 
 export type WorkflowInstanceAccess = {
   workspace_id?: string;
+  group_id?: string | null;
   requester_id?: string | null;
   client_id?: string | null;
   approver_ids?: string[];
+  caller?: Record<string, any> | null;
+  business_actor?: Record<string, any> | null;
+  workflow_version_id?: string | null;
 };
 
 export abstract class WorkflowInstanceRepositoryPort {
@@ -252,4 +262,151 @@ export abstract class WorkflowInputPresetRepositoryPort {
     preset: UpsertWorkflowInputPreset,
   ): Promise<WorkflowInputPreset>;
   abstract deleteInputPreset(workflowId: string, presetId: string): Promise<boolean>;
+}
+
+export type PxmRole = 'admin' | 'group_manager' | 'user';
+export type PxmGroupStatus = 'active' | 'deleted';
+export type PxmPrincipalStatus = 'active' | 'disabled' | 'deleted';
+export type PxmApiKeyOwnerType = 'USER' | 'SERVICE_ACCOUNT';
+export type PxmApiKeyStatus = 'active' | 'disabled' | 'expired';
+export type PxmApiKeyScope = 'workflow:read' | 'workflow:execute' | 'task:approve';
+
+export type PxmGroup = {
+  id: string;
+  name: string;
+  description?: string;
+  status: PxmGroupStatus;
+  created_by?: string | null;
+  updated_by?: string | null;
+  deleted_at?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PxmUser = {
+  id: string;
+  display_name: string;
+  email?: string | null;
+  role: PxmRole;
+  group_ids: string[];
+  status: PxmPrincipalStatus;
+  created_by?: string | null;
+  updated_by?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PxmServiceAccount = {
+  id: string;
+  name: string;
+  group_id: string;
+  description?: string;
+  status: PxmPrincipalStatus;
+  created_by?: string | null;
+  updated_by?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PxmApiKey = {
+  id: string;
+  name: string;
+  owner_type: PxmApiKeyOwnerType;
+  owner_id: string;
+  group_id: string;
+  key_prefix: string;
+  key_hash: string;
+  scopes: PxmApiKeyScope[];
+  allowed_workflow_ids: string[];
+  status: PxmApiKeyStatus;
+  expires_at?: string | null;
+  last_used_at?: string | null;
+  created_by?: string | null;
+  disabled_at?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PxmApiKeyUsageLog = {
+  id: string;
+  api_key_id: string;
+  owner_type: PxmApiKeyOwnerType;
+  owner_id: string;
+  group_id: string;
+  endpoint: string;
+  workflow_id?: string | null;
+  instance_id?: string | null;
+  request_id?: string | null;
+  ip?: string | null;
+  user_agent?: string | null;
+  business_actor?: Record<string, any> | null;
+  created_at: string;
+};
+
+export type UpsertPxmGroup = {
+  id?: string;
+  name: string;
+  description?: string;
+  actor?: string | null;
+};
+
+export type UpsertPxmUser = {
+  id?: string;
+  display_name: string;
+  email?: string | null;
+  role?: PxmRole;
+  group_ids?: string[];
+  status?: PxmPrincipalStatus;
+  actor?: string | null;
+};
+
+export type UpsertPxmServiceAccount = {
+  id?: string;
+  name: string;
+  group_id: string;
+  description?: string;
+  status?: PxmPrincipalStatus;
+  actor?: string | null;
+};
+
+export type CreatePxmApiKey = {
+  id?: string;
+  name: string;
+  owner_type: PxmApiKeyOwnerType;
+  owner_id: string;
+  group_id: string;
+  key_prefix: string;
+  key_hash: string;
+  scopes: PxmApiKeyScope[];
+  allowed_workflow_ids: string[];
+  expires_at?: string | null;
+  actor?: string | null;
+};
+
+export type AppendPxmApiKeyUsageLog = Omit<PxmApiKeyUsageLog, 'id' | 'created_at'> & {
+  id?: string;
+};
+
+export abstract class AuthzRepositoryPort {
+  abstract upsertGroup(group: UpsertPxmGroup): Promise<PxmGroup>;
+  abstract listGroups(includeDeleted?: boolean): Promise<PxmGroup[]>;
+  abstract getGroup(id: string): Promise<PxmGroup | null>;
+  abstract softDeleteGroup(id: string, actor?: string | null): Promise<boolean>;
+  abstract restoreGroup(id: string, actor?: string | null): Promise<boolean>;
+
+  abstract upsertUser(user: UpsertPxmUser): Promise<PxmUser>;
+  abstract listUsers(groupId?: string): Promise<PxmUser[]>;
+  abstract getUser(id: string): Promise<PxmUser | null>;
+
+  abstract upsertServiceAccount(account: UpsertPxmServiceAccount): Promise<PxmServiceAccount>;
+  abstract listServiceAccounts(groupId?: string): Promise<PxmServiceAccount[]>;
+  abstract getServiceAccount(id: string): Promise<PxmServiceAccount | null>;
+
+  abstract createApiKey(key: CreatePxmApiKey): Promise<PxmApiKey>;
+  abstract listApiKeys(groupId?: string): Promise<PxmApiKey[]>;
+  abstract getApiKey(id: string): Promise<PxmApiKey | null>;
+  abstract findApiKeyByHash(keyHash: string): Promise<PxmApiKey | null>;
+  abstract disableApiKey(id: string, actor?: string | null): Promise<boolean>;
+  abstract touchApiKey(id: string, usedAt: string): Promise<void>;
+  abstract appendApiKeyUsageLog(log: AppendPxmApiKeyUsageLog): Promise<PxmApiKeyUsageLog>;
 }

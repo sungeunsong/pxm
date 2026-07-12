@@ -61,6 +61,7 @@ export class TemplatesService {
     const updatedMetadata = this.normalizeMetadata({
       description: dto.description !== undefined ? dto.description : current.description,
       group: dto.group !== undefined ? dto.group : current.group,
+      group_id: dto.group_id !== undefined ? dto.group_id : current.group_id,
       tags: dto.tags !== undefined ? dto.tags : current.tags,
       version_note: dto.version_note !== undefined ? dto.version_note : current.version_note,
     });
@@ -104,6 +105,7 @@ export class TemplatesService {
         metadata: {
           description: template.description || '',
           group: template.group || '',
+          group_id: template.group_id || null,
           tags: template.tags || [],
           version_note: template.version_note || '',
           imported_from: template.imported_from,
@@ -125,6 +127,7 @@ export class TemplatesService {
       name: parsed.workflow.name,
       description: parsed.workflow.metadata.description,
       group: parsed.workflow.metadata.group,
+      group_id: parsed.workflow.metadata.group_id,
       tags: parsed.workflow.metadata.tags,
       version_note: parsed.workflow.metadata.version_note,
       imported_from: buildImportSourceMetadata(parsed),
@@ -182,6 +185,7 @@ export class TemplatesService {
       ...(row.metadata || {}),
       description: row.description ?? row.metadata?.description,
       group: row.group ?? row.metadata?.group,
+      group_id: row.group_id ?? row.metadata?.group_id,
       tags: row.tags ?? row.metadata?.tags,
       version_note: row.version_note ?? row.metadata?.version_note,
     });
@@ -191,6 +195,7 @@ export class TemplatesService {
       name: row.name,
       description: metadata.description || '',
       group: metadata.group || '',
+      group_id: metadata.group_id || null,
       tags: metadata.tags || [],
       version_note: metadata.version_note || '',
       imported_from: metadata.imported_from,
@@ -209,6 +214,7 @@ export class TemplatesService {
     return {
       description: typeof input?.description === 'string' ? input.description : '',
       group: typeof input?.group === 'string' ? input.group : '',
+      group_id: typeof input?.group_id === 'string' && input.group_id.trim() ? input.group_id.trim() : null,
       tags: Array.isArray(input?.tags)
         ? input.tags.map((tag) => String(tag).trim()).filter(Boolean)
         : typeof input?.tags === 'string'

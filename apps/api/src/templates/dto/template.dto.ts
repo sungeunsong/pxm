@@ -2,6 +2,7 @@ export class CreateTemplateDto {
   name: string;
   description?: string;
   group?: string;
+  group_id?: string | null;
   tags?: string[];
   version_note?: string;
   imported_from?: WorkflowImportSourceMetadata;
@@ -13,6 +14,7 @@ export class UpdateTemplateDto {
   name?: string;
   description?: string;
   group?: string;
+  group_id?: string | null;
   tags?: string[];
   version_note?: string;
   nodes?: any[];
@@ -25,6 +27,7 @@ export class TemplateResponseDto {
   name: string;
   description?: string;
   group?: string;
+  group_id?: string | null;
   tags: string[];
   version_note?: string;
   imported_from?: WorkflowImportSourceMetadata;
@@ -49,6 +52,7 @@ export type WorkflowExportDocument = {
     metadata: {
       description?: string;
       group?: string;
+      group_id?: string | null;
       tags: string[];
       version_note?: string;
       imported_from?: WorkflowImportSourceMetadata;

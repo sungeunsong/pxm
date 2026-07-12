@@ -209,30 +209,67 @@
 ## Group / RBAC / API Key Roadmap
 
 - [ ] Group domain model
-  - [ ] group CRUD
-  - [ ] group owner / manager / member 모델
-  - [ ] workflow group ownership 연결
-  - [ ] group 삭제 정책: 기본은 soft delete + workflow archive, hard cascade delete는 최고관리자 확인 절차 필요
+  - [x] group CRUD API/storage skeleton
+  - [x] role 모델: `admin`, `group_manager`, `user`
+  - [x] workflow group ownership 연결: `group_id` metadata/definition/version/export/start access 반영
+  - [x] group 삭제 정책: soft delete, API key 비활성화, 실행 이력/version 보존 기반
+  - [x] 삭제된 group/workflow 조회/복구는 `admin`만 허용하는 guard 적용
+  - [x] group 복구 시 비활성화된 API key는 자동 복구하지 않음
   - [ ] group별 이력 조회 범위
 
 - [ ] Role model 재정리
-  - [ ] 최고관리자: group 생성/삭제, group role 부여, 전체 감사
-  - [ ] 그룹 관리자: 할당받은 group 안에서 workflow/API key/멤버 관리
-  - [ ] 일반 사용자/요청자/승인자 역할과 runtime role 분리
-  - [ ] 기존 admin/operator/workflow_owner/requester/approver/api_client 권한과 migration path 정리
+  - [x] `admin`: group 생성/삭제/복구, group role 부여, 전체 감사
+  - [x] `group_manager`: 할당받은 group 안에서 workflow/API key/멤버 관리
+  - [ ] `user`: 개인 API key owner 또는 일반 실행 주체. 관리 권한 없음
+  - [ ] 웹 콘솔 user는 최고관리자/그룹관리자/개인 API 사용자 중심으로 제한
+  - [ ] 일반 업무 사용자는 기본적으로 BPM user로 등록하지 않음
+  - [ ] 요청자/승인자 같은 runtime role은 관리 role과 분리
+  - [ ] 기존 operator/workflow_owner/requester/approver/api_client 권한과 호환 path 정리
 
 - [ ] Workflow ownership / audit
   - [ ] workflow created_by / updated_by 실제 로그인 주체 반영
   - [ ] workflow 생성/수정/삭제 audit event 저장
   - [ ] group 변경/role 변경/API key 발급 audit event 저장
+  - [x] workflow 실행 instance에 `workflow_version_id` 저장
+  - [x] workflow 실행 시 immutable workflow version 생성/참조
+  - [ ] workflow version 저장소에 실행 당시 definition 보관
+  - [ ] instance 표시용 snapshot 저장: workflow/group/caller/API key 이름
 
 - [ ] Group-scoped API key
-  - [ ] group별 API key 발급/폐기
-  - [ ] API key 발급자/발급 대상/service account 기록
-  - [ ] key prefix 기반 식별, secret hash 저장
-  - [ ] workflow start/result/history 권한 scope
-  - [ ] API key 사용 이력: actor, group, key_id, endpoint, workflow_id, instance_id
-  - [ ] rate limit / IP allowlist / 만료일 / rotation
+  - [x] group별 API key 발급/비활성화 API/storage skeleton
+  - [x] API key owner 모델: `USER` 또는 `SERVICE_ACCOUNT`
+  - [x] 인증 방식: `Authorization: Bearer pxm_live_xxx`
+  - [ ] 운영/연동용 API key는 기본적으로 service account에 발급
+  - [ ] 개인 실행 추적이 필요한 API 호출은 user owner 개인 API key 사용
+  - [x] API key 발급자/발급 대상/service account 기록
+  - [x] key prefix 기반 식별, secret hash 저장
+  - [ ] API key scope는 owner/group 권한을 늘리지 않고 줄이는 용도로만 사용
+  - [x] key scope는 행위 제한(`workflow:read`, `workflow:execute`, `task:approve`)과 대상 제한(`allowed_workflow_ids`)을 분리
+  - [x] workflow 생성/수정/삭제/버전 관리는 API key로 열지 않고 웹 콘솔 `admin`/`group_manager` 권한으로만 처리
+  - [x] `task:approve`는 승인 주체 추적을 위해 개인 `USER` owner API key로만 허용
+  - [x] workflow start/result/history 권한 scope 1차 적용: API key scope ∩ allowed workflow
+  - [ ] 기본 key scope는 owner group workflow 전체 선택, 발급자가 축소 가능
+  - [ ] optional `business_actor`는 권한 판단이 아니라 audit metadata로만 저장
+  - [ ] 공용 시스템 내부 버튼 클릭자는 기본적으로 해당 시스템 audit 책임
+  - [x] API key 사용 이력: owner, group, key_id, endpoint, workflow_id, optional business_actor
+  - [ ] 기본 만료 없음, optional 만료일, 만료 임박/만료 표시, rotation
+  - [ ] rate limit / IP allowlist
+
+### Group / RBAC / API Key Handoff
+
+현재 상태:
+
+- Group/RBAC/API Key 백엔드 1차 구현 완료: group/user/service account/API key 저장소, 관리 API, Bearer API key 인증 middleware, scope/allowed workflow 권한 체크가 연결되어 있다.
+- Access Management 웹 화면 1차 구현 완료: group 중심으로 group member, service account, API key를 관리하며 group ID는 자동 생성, user ID는 운영 식별자로 직접 입력한다.
+- API 권한 smoke 테스트 완료: 잘못된 key 차단, workflow scope/allowed workflow 제한, service account `task:approve` 차단, user `task:approve` 허용, group 삭제 후 key 차단까지 확인했다.
+
+다음 작업:
+
+- Workflow 생성/수정 화면에 `group_id` 지정 UX를 연결한다.
+- API key 발급 화면의 `allowed_workflow_ids` 직접 입력을 group workflow 목록 체크박스 선택으로 바꾼다.
+- 로그인/세션 연동 후 `admin`/`group_manager`별 화면 노출과 관리 가능 group 범위를 제한한다.
+- `task:approve` scope를 실제 승인 API end-to-end 흐름에 연결하고 권한 테스트를 자동화한다.
+- 최고관리자용 전체 사용자 디렉터리와 API key 만료/rotation/IP allowlist는 후속 운영 UX로 검토한다.
 
 ## Security Hardening Roadmap
 
@@ -315,11 +352,11 @@
 | SSH 플러그인 | 적용 | 운영 자동화 connector로 필요성이 높다. 보안상 engine direct 실행보다 `agent_executed` 우선 검토로 Plugin Runtime/Agent 로드맵에 연결한다. |
 | JS module import 가능 여부 | 제한 적용 | 임의 npm import는 sandbox/package supply-chain 위험이 크다. 기본은 차단하고 allowlist + version pin 방식만 검토한다. |
 | 권한/이력 등을 그룹별로 | 적용 | 현재 role 기반 이력 권한은 있으나 group domain이 없다. `Group / RBAC / API Key Roadmap`에 신규 축으로 반영한다. |
-| 그룹 삭제시 포함된 워크플로우까지 삭제 | 제한 적용 | 무조건 hard delete는 실행 이력/감사/복구 관점에서 위험하다. 기본은 group soft delete + workflow archive, hard cascade는 최고관리자 확인 절차로 제한한다. |
+| 그룹 삭제시 포함된 워크플로우까지 삭제 | 제한 적용 | 무조건 hard delete는 실행 이력/감사/복구 관점에서 위험하다. 기본은 group/workflow soft delete와 API key 비활성화로 처리하고, 실행 이력과 workflow version은 보존한다. |
 | 그룹별 API 키 발급 및 사용 추적 | 적용 | 외부 솔루션 연동에서 필수다. 발급자, service account, 사용 이력까지 포함해 group-scoped API key로 반영한다. |
 | 해당 그룹에서 누구에게 발급했는지 추적 | 적용 | API key governance 핵심이다. key owner/service account/issuer audit로 반영한다. |
 | 워크플로우 누가 추가/생성했는지 | 적용 | DTO에는 `created_by` 필드가 있으나 현재 기본값이 `admin`에 가깝다. 실제 로그인 주체/audit 반영 항목으로 추가한다. |
-| 롤은 두 개로: 최고관리자, 중간 관리자 | 부분 적용 | 제품 운영 role은 단순화하되 runtime role(요청자/승인자/API client)은 별도로 필요하다. 최고관리자/그룹관리자를 관리 role로 두고 기존 실행 role과 분리한다. |
+| 롤은 두 개로: 최고관리자, 중간 관리자 | 부분 적용 | 제품 운영 role은 `admin`, `group_manager`, `user` 3단계로 둔다. runtime role(요청자/승인자/API client)은 관리 role과 분리한다. |
 | 자주 쓰는 파라미터 세트 | 적용 | 반복 실행 UX와 외부 테스트에 유용하다. secret 저장 금지를 전제로 input preset 기능으로 반영한다. |
 | 웹 백엔드는 JS인데 보안은 어쩔까? | 적용 | 언어 문제가 아니라 API validation/auth/secret/audit/dependency/sandbox 기준 문제다. `Security Hardening Roadmap`으로 반영한다. |
 

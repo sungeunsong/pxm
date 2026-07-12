@@ -11,7 +11,8 @@ import {
   KeyRound,
   Plug,
   Terminal,
-  HelpCircle
+  HelpCircle,
+  Shield
 } from 'lucide-react';
 import { DashboardPage } from './dashboard/DashboardPage';
 import { FlowDesigner } from './flow-designer/FlowDesigner';
@@ -22,6 +23,7 @@ import { CredentialsPage } from './credentials/CredentialsPage';
 import { CommandRegistryPage } from './commands/CommandRegistryPage';
 import { PluginControlPage } from './plugins/PluginControlPage';
 import { PluginRegistryPage } from './plugins/PluginRegistryPage';
+import { AccessManagementPage } from './authz/AccessManagementPage';
 import './App.css';
 
 type ActiveTab =
@@ -33,7 +35,8 @@ type ActiveTab =
   | 'credentials'
   | 'commands'
   | 'plugins'
-  | 'pluginRegistry';
+  | 'pluginRegistry'
+  | 'access';
 
 const DEFAULT_TAB: ActiveTab = 'inbox';
 
@@ -47,6 +50,7 @@ const ROUTE_TO_TAB: Record<string, ActiveTab> = {
   commands: 'commands',
   plugins: 'plugins',
   'plugin-registry': 'pluginRegistry',
+  access: 'access',
 };
 
 const TAB_TO_ROUTE: Record<ActiveTab, string> = {
@@ -59,6 +63,7 @@ const TAB_TO_ROUTE: Record<ActiveTab, string> = {
   commands: 'commands',
   plugins: 'plugins',
   pluginRegistry: 'plugin-registry',
+  access: 'access',
 };
 
 const readTabFromHash = (): ActiveTab | null => {
@@ -175,6 +180,14 @@ function App() {
           </button>
 
           <button
+            className={`sidebar-menu-item ${activeTab === 'access' ? 'active' : ''}`}
+            onClick={() => setActiveTab('access')}
+          >
+            <Shield size={16} />
+            <span>Access Management</span>
+          </button>
+
+          <button
             className={`sidebar-menu-item ${activeTab === 'commands' ? 'active' : ''}`}
             onClick={() => setActiveTab('commands')}
           >
@@ -230,6 +243,7 @@ function App() {
               {activeTab === 'tracker' && "운영자 / 모니터링 담당 상세 화면 구성"}
               {activeTab === 'inbox' && "내 결재함"}
               {activeTab === 'credentials' && "Credential Store 관리"}
+              {activeTab === 'access' && "Access Management"}
               {activeTab === 'commands' && "Command Registry 관리"}
               {activeTab === 'plugins' && "Plugin Control 관리"}
               {activeTab === 'pluginRegistry' && "Plugin Registry 관리"}
@@ -241,6 +255,7 @@ function App() {
               {activeTab === 'tracker' && "실행 모니터링, 실패 대응, 재시도/운영 조치 및 로그 분석"}
               {activeTab === 'inbox' && "승인 대기 Task 확인 및 처리"}
               {activeTab === 'credentials' && "외부 연동 secret을 안전하게 관리하고 노드에서는 credential ID만 참조합니다"}
+              {activeTab === 'access' && "그룹, 유저, 서비스계정, API key 발급과 폐기를 관리합니다"}
               {activeTab === 'commands' && "workflow에서 사용할 allowlist command를 최고관리자가 등록하고 통제합니다"}
               {activeTab === 'plugins' && "Flow Designer에서 사용할 플러그인의 활성 상태와 workspace 정책을 관리합니다"}
               {activeTab === 'pluginRegistry' && "플러그인 manifest를 등록, 검증, hot reload합니다"}
@@ -266,6 +281,11 @@ function App() {
             {activeTab === 'credentials' && (
               <div className="info-banner-bubble">
                 Secret 원문은 저장 후 다시 노출하지 않으며, 사용 이력은 audit log에 기록됩니다.
+              </div>
+            )}
+            {activeTab === 'access' && (
+              <div className="info-banner-bubble">
+                API key 원문은 생성 직후 한 번만 표시되며, 이후에는 prefix만 조회됩니다.
               </div>
             )}
             {activeTab === 'commands' && (
@@ -337,6 +357,8 @@ function App() {
           )}
 
           {activeTab === 'credentials' && <CredentialsPage />}
+
+          {activeTab === 'access' && <AccessManagementPage />}
 
           {activeTab === 'commands' && <CommandRegistryPage />}
 

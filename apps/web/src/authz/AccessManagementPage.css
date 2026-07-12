@@ -1,0 +1,404 @@
+.access-page {
+  height: 100%;
+  padding: 24px;
+  overflow: auto;
+  background: #f8fafc;
+  color: #172033;
+}
+
+.access-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.access-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.access-title h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.access-header p {
+  margin: 6px 0 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.access-alert {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  margin-bottom: 14px;
+  font-size: 13px;
+}
+
+.access-alert.error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+}
+
+.access-alert.success {
+  background: #ecfdf5;
+  border: 1px solid #bbf7d0;
+  color: #065f46;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.access-alert code,
+.key-row code {
+  background: #0f172a;
+  color: #dbeafe;
+  border-radius: 6px;
+  padding: 4px 7px;
+  font-size: 12px;
+}
+
+.access-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.access-summary-card,
+.access-panel {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.access-summary-card {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.access-summary-card span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.access-summary-card strong {
+  font-size: 24px;
+}
+
+.access-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.42fr) minmax(520px, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.access-panel {
+  padding: 14px;
+  min-width: 0;
+}
+
+.detail-panel {
+  min-height: 520px;
+}
+
+.access-tabs {
+  display: flex;
+  gap: 8px;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid #e2e8f0;
+  overflow-x: auto;
+}
+
+.access-tabs button {
+  height: 36px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #334155;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 11px;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.access-tabs button.active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.access-tabs button span {
+  min-width: 20px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #475569;
+  font-size: 11px;
+  text-align: center;
+}
+
+.access-tabs button.active span {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.access-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.access-panel-header h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.selected-group-card {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+}
+
+.selected-group-card > span:first-child {
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.selected-group-card strong {
+  color: #172033;
+  font-size: 14px;
+}
+
+.selected-group-card small {
+  color: #475569;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.selected-group-card .status-badge {
+  justify-self: start;
+}
+
+.access-context {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  font-size: 12px;
+}
+
+.access-context strong {
+  font-size: 12px;
+}
+
+.access-context span,
+.access-context small {
+  overflow-wrap: anywhere;
+}
+
+.access-context small {
+  color: #475569;
+}
+
+.access-form {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.access-form.compact {
+  grid-template-columns: minmax(120px, 0.8fr) minmax(140px, 1fr) minmax(140px, 1fr) minmax(120px, 0.7fr) auto;
+}
+
+.access-form.key-form {
+  grid-template-columns: minmax(160px, 1fr) minmax(150px, 0.7fr) minmax(170px, 1fr);
+}
+
+.access-form input,
+.access-form select {
+  height: 34px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  padding: 0 10px;
+  font-size: 13px;
+  min-width: 0;
+  background: #ffffff;
+}
+
+.scope-box {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  padding: 8px;
+}
+
+.scope-box label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #334155;
+  font-size: 12px;
+}
+
+.access-list,
+.entity-table,
+.key-table {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.access-list-row,
+.entity-row,
+.key-row {
+  width: 100%;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+}
+
+.access-list-row {
+  cursor: pointer;
+}
+
+.access-list-row.selected {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+.access-list-row:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.access-list-row span,
+.entity-row span,
+.key-row div {
+  min-width: 0;
+}
+
+.access-list-row strong,
+.entity-row strong,
+.key-row strong {
+  display: block;
+  font-size: 13px;
+}
+
+.access-list-row small,
+.entity-row small,
+.key-row small {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.status-badge,
+.type-badge {
+  align-self: flex-start;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.status-badge.active {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.status-badge.disabled,
+.status-badge.deleted,
+.status-badge.expired {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.type-badge {
+  background: #e0f2fe;
+  color: #075985;
+}
+
+.entity-badges,
+.key-row-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.key-row {
+  align-items: flex-start;
+}
+
+.access-row-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.access-empty {
+  padding: 18px 10px;
+  color: #64748b;
+  font-size: 13px;
+  text-align: center;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+}
+
+@media (max-width: 1280px) {
+  .access-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .access-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .access-form,
+  .access-form.compact,
+  .access-form.key-form {
+    grid-template-columns: 1fr;
+  }
+}
