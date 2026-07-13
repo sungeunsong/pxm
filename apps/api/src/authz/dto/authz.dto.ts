@@ -20,6 +20,7 @@ export class UpsertUserDto {
   group_ids?: string[];
   status?: PxmPrincipalStatus;
   actor?: string;
+  password?: string;
 }
 
 export class UpsertServiceAccountDto {

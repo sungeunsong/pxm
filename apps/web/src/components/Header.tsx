@@ -31,15 +31,18 @@ export const Header: React.FC<HeaderProps> = ({
   actions,
 }) => {
   return (
-    <header className="header">
-      <div className="header-left">
-        <div className="header-logo">
-          <div className="logo-icon">PXM</div>
+    <header className="designer-header">
+      <div className="designer-header-left">
+        <div className="designer-header-logo">
+          <img className="designer-logo-icon" src="/brand/pxm-app-icon.png" alt="" />
         </div>
-        <h1 className="header-title">{title}</h1>
+        <div className="designer-title-group">
+          <h1 className="designer-header-title">{title}</h1>
+          <span>Build, test and operate workflows</span>
+        </div>
       </div>
 
-      <div className="header-right">
+      <div className="designer-header-right">
         {actions}
         {onRun && (
           <Button

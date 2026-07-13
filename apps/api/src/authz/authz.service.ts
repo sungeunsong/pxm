@@ -17,6 +17,7 @@ import {
   UpsertServiceAccountDto,
   UpsertUserDto,
 } from './dto/authz.dto';
+import { hashPassword } from './password';
 
 const API_KEY_PREFIX = 'pxm_live_';
 const API_KEY_VISIBLE_PREFIX_LENGTH = 18;
@@ -79,6 +80,9 @@ export class AuthzService {
       throw new BadRequestException('role is invalid');
     }
     const groupIds = normalizeStringArray(dto.group_ids);
+    if (dto.password !== undefined && dto.password.length < 8) {
+      throw new BadRequestException('password must be at least 8 characters');
+    }
     await this.assertGroupsExist(groupIds);
     return this.authzRepo.upsertUser({
       id: optionalId(dto.id),
@@ -88,6 +92,7 @@ export class AuthzService {
       group_ids: groupIds,
       status: normalizePrincipalStatus(dto.status),
       actor: optionalString(dto.actor),
+      password_hash: dto.password ? await hashPassword(dto.password) : undefined,
     });
   }
 

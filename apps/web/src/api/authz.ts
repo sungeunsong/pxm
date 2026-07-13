@@ -56,16 +56,12 @@ export type CreatedApiKey = PxmApiKey & {
 
 const API_BASE_URL = '/api/authz';
 
-const adminHeaders = {
-  'Content-Type': 'application/json',
-  'x-actor-id': 'admin',
-  'x-actor-roles': 'admin',
-};
+const jsonHeaders = { 'Content-Type': 'application/json' };
 
 export const authzApi = {
   async listGroups(includeDeleted = true): Promise<PxmGroup[]> {
     const response = await fetch(`${API_BASE_URL}/groups?includeDeleted=${includeDeleted ? 'true' : 'false'}`, {
-      headers: adminHeaders,
+      credentials: 'include',
     });
     return readJson(response, 'group list failed');
   },
@@ -73,8 +69,8 @@ export const authzApi = {
   async saveGroup(payload: { id?: string; name: string; description?: string }): Promise<PxmGroup> {
     const response = await fetch(`${API_BASE_URL}/groups`, {
       method: 'POST',
-      headers: adminHeaders,
-      body: JSON.stringify({ ...payload, actor: 'admin' }),
+      headers: jsonHeaders, credentials: 'include',
+      body: JSON.stringify(payload),
     });
     return readJson(response, 'group save failed');
   },
@@ -82,7 +78,7 @@ export const authzApi = {
   async deleteGroup(id: string): Promise<void> {
     const response = await fetch(`${API_BASE_URL}/groups/${encodeURIComponent(id)}?actor=admin`, {
       method: 'DELETE',
-      headers: adminHeaders,
+      credentials: 'include',
     });
     await readJson(response, 'group delete failed');
   },
@@ -90,14 +86,14 @@ export const authzApi = {
   async restoreGroup(id: string): Promise<void> {
     const response = await fetch(`${API_BASE_URL}/groups/${encodeURIComponent(id)}/restore?actor=admin`, {
       method: 'POST',
-      headers: adminHeaders,
+      credentials: 'include',
     });
     await readJson(response, 'group restore failed');
   },
 
   async listUsers(groupId?: string): Promise<PxmUser[]> {
     const params = groupId ? `?groupId=${encodeURIComponent(groupId)}` : '';
-    const response = await fetch(`${API_BASE_URL}/users${params}`, { headers: adminHeaders });
+    const response = await fetch(`${API_BASE_URL}/users${params}`, { credentials: 'include' });
     return readJson(response, 'user list failed');
   },
 
@@ -107,18 +103,19 @@ export const authzApi = {
     email?: string;
     role: PxmRole;
     group_ids: string[];
+    password?: string;
   }): Promise<PxmUser> {
     const response = await fetch(`${API_BASE_URL}/users`, {
       method: 'POST',
-      headers: adminHeaders,
-      body: JSON.stringify({ ...payload, actor: 'admin' }),
+      headers: jsonHeaders, credentials: 'include',
+      body: JSON.stringify(payload),
     });
     return readJson(response, 'user save failed');
   },
 
   async listServiceAccounts(groupId?: string): Promise<PxmServiceAccount[]> {
     const params = groupId ? `?groupId=${encodeURIComponent(groupId)}` : '';
-    const response = await fetch(`${API_BASE_URL}/service-accounts${params}`, { headers: adminHeaders });
+    const response = await fetch(`${API_BASE_URL}/service-accounts${params}`, { credentials: 'include' });
     return readJson(response, 'service account list failed');
   },
 
@@ -130,15 +127,15 @@ export const authzApi = {
   }): Promise<PxmServiceAccount> {
     const response = await fetch(`${API_BASE_URL}/service-accounts`, {
       method: 'POST',
-      headers: adminHeaders,
-      body: JSON.stringify({ ...payload, actor: 'admin' }),
+      headers: jsonHeaders, credentials: 'include',
+      body: JSON.stringify(payload),
     });
     return readJson(response, 'service account save failed');
   },
 
   async listApiKeys(groupId?: string): Promise<PxmApiKey[]> {
     const params = groupId ? `?groupId=${encodeURIComponent(groupId)}` : '';
-    const response = await fetch(`${API_BASE_URL}/api-keys${params}`, { headers: adminHeaders });
+    const response = await fetch(`${API_BASE_URL}/api-keys${params}`, { credentials: 'include' });
     return readJson(response, 'api key list failed');
   },
 
@@ -153,8 +150,8 @@ export const authzApi = {
   }): Promise<CreatedApiKey> {
     const response = await fetch(`${API_BASE_URL}/api-keys`, {
       method: 'POST',
-      headers: adminHeaders,
-      body: JSON.stringify({ ...payload, actor: 'admin' }),
+      headers: jsonHeaders, credentials: 'include',
+      body: JSON.stringify(payload),
     });
     return readJson(response, 'api key create failed');
   },
@@ -162,7 +159,7 @@ export const authzApi = {
   async disableApiKey(id: string): Promise<void> {
     const response = await fetch(`${API_BASE_URL}/api-keys/${encodeURIComponent(id)}/disable?actor=admin`, {
       method: 'PUT',
-      headers: adminHeaders,
+      credentials: 'include',
     });
     await readJson(response, 'api key disable failed');
   },

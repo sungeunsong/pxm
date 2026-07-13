@@ -21,17 +21,23 @@ export class AuthzController {
 
   @Post('groups')
   async upsertGroup(@Body() dto: UpsertGroupDto, @Req() req: Request) {
-    assertAdmin(actorFromRequest(req));
-    return this.authzService.upsertGroup(dto);
+    const actor = actorFromRequest(req); assertAdmin(actor);
+    return this.authzService.upsertGroup({ ...dto, actor: actor.actor_id || undefined });
   }
 
   @Get('groups')
-  async listGroups(@Query('includeDeleted') includeDeleted?: string) {
-    return this.authzService.listGroups(includeDeleted === 'true');
+  async listGroups(@Query('includeDeleted') includeDeleted: string | undefined, @Req() req: Request) {
+    const actor = actorFromRequest(req);
+    const groups = await this.authzService.listGroups(actor.roles.includes('admin') && includeDeleted === 'true');
+    if (actor.roles.includes('admin')) return groups;
+    if (actor.roles.includes('group_manager')) return groups.filter(group => (actor.group_ids || []).includes(group.id));
+    assertCanManageGroup(actor, null);
+    return [];
   }
 
   @Get('groups/:id')
-  async getGroup(@Param('id') id: string) {
+  async getGroup(@Param('id') id: string, @Req() req: Request) {
+    assertCanManageGroup(actorFromRequest(req), id);
     return this.authzService.getGroup(id);
   }
 
@@ -41,8 +47,8 @@ export class AuthzController {
     @Query('actor') actor?: string,
     @Req() req?: Request,
   ) {
-    assertAdmin(actorFromRequest(req));
-    return this.authzService.deleteGroup(id, actor);
+    const authenticated = actorFromRequest(req); assertAdmin(authenticated);
+    return this.authzService.deleteGroup(id, authenticated.actor_id || actor);
   }
 
   @Post('groups/:id/restore')
@@ -51,14 +57,14 @@ export class AuthzController {
     @Query('actor') actor?: string,
     @Req() req?: Request,
   ) {
-    assertAdmin(actorFromRequest(req));
-    return this.authzService.restoreGroup(id, actor);
+    const authenticated = actorFromRequest(req); assertAdmin(authenticated);
+    return this.authzService.restoreGroup(id, authenticated.actor_id || actor);
   }
 
   @Post('users')
   async upsertUser(@Body() dto: UpsertUserDto, @Req() req: Request) {
-    assertCanIssueUser(actorFromRequest(req), dto.role, dto.group_ids || []);
-    return this.authzService.upsertUser(dto);
+    const actor = actorFromRequest(req); assertCanIssueUser(actor, dto.role, dto.group_ids || []);
+    return this.authzService.upsertUser({ ...dto, actor: actor.actor_id || undefined });
   }
 
   @Get('users')
@@ -67,14 +73,16 @@ export class AuthzController {
   }
 
   @Get('users/:id')
-  async getUser(@Param('id') id: string) {
-    return this.authzService.getUser(id);
+  async getUser(@Param('id') id: string, @Req() req: Request) {
+    const user = await this.authzService.getUser(id);
+    for (const groupId of user.group_ids) assertCanManageGroup(actorFromRequest(req), groupId);
+    return user;
   }
 
   @Post('service-accounts')
   async upsertServiceAccount(@Body() dto: UpsertServiceAccountDto, @Req() req: Request) {
     assertCanManageGroup(actorFromRequest(req), dto.group_id);
-    return this.authzService.upsertServiceAccount(dto);
+    return this.authzService.upsertServiceAccount({ ...dto, actor: actorFromRequest(req).actor_id || undefined });
   }
 
   @Get('service-accounts')
@@ -83,14 +91,16 @@ export class AuthzController {
   }
 
   @Get('service-accounts/:id')
-  async getServiceAccount(@Param('id') id: string) {
-    return this.authzService.getServiceAccount(id);
+  async getServiceAccount(@Param('id') id: string, @Req() req: Request) {
+    const account = await this.authzService.getServiceAccount(id);
+    assertCanManageGroup(actorFromRequest(req), account.group_id);
+    return account;
   }
 
   @Post('api-keys')
   async createApiKey(@Body() dto: CreateApiKeyDto, @Req() req: Request) {
     assertCanManageGroup(actorFromRequest(req), dto.group_id);
-    return this.authzService.createApiKey(dto);
+    return this.authzService.createApiKey({ ...dto, actor: actorFromRequest(req).actor_id || undefined });
   }
 
   @Get('api-keys')
@@ -106,6 +116,6 @@ export class AuthzController {
   ) {
     const key = await this.authzService.getApiKey(id);
     assertCanManageGroup(actorFromRequest(req), key.group_id);
-    return this.authzService.disableApiKey(id, actor);
+    return this.authzService.disableApiKey(id, actorFromRequest(req).actor_id || actor);
   }
 }

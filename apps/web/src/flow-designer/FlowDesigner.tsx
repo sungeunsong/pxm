@@ -16,6 +16,7 @@ import { ExecutionPanel } from './ExecutionPanel';
 import { HistoryListModal } from './HistoryListModal';
 import { templatesApi } from '../api/templates';
 import type { WorkflowTemplate } from '../api/templates';
+import { authzApi, type PxmGroup } from '../api/authz';
 import { pluginsApi } from '../api/plugins';
 import type { PluginManifest, PluginTestResponse } from '../api/plugins';
 import { PluginIcon } from './plugin-icons';
@@ -34,6 +35,7 @@ type DesignerTab = {
   templateVersion?: number;
   description: string;
   group: string;
+  groupId: string;
   tags: string;
   versionNote: string;
   nodes: Node<CustomNodeData>[];
@@ -60,6 +62,10 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
   const [currentTemplateName, setCurrentTemplateName] = useState<string>('');
   const [workflowDescription, setWorkflowDescription] = useState('');
   const [workflowGroup, setWorkflowGroup] = useState('');
+  const [workflowGroupId, setWorkflowGroupId] = useState('');
+  const [availableGroups, setAvailableGroups] = useState<PxmGroup[]>([]);
+  const [groupsLoading, setGroupsLoading] = useState(true);
+  const [groupsError, setGroupsError] = useState<string | null>(null);
   const [workflowTags, setWorkflowTags] = useState('');
   const [workflowVersionNote, setWorkflowVersionNote] = useState('');
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
@@ -92,6 +98,15 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
   const suppressCanvasDirtyRef = useRef(true);
 
   // SSE 연결 정리
+  React.useEffect(() => {
+    let cancelled = false;
+    authzApi.listGroups(false)
+      .then((groups) => { if (!cancelled) { setAvailableGroups(groups.filter((group) => group.status === 'active')); setGroupsError(null); } })
+      .catch((error) => { if (!cancelled) setGroupsError(error instanceof Error ? error.message : '그룹 목록을 불러오지 못했습니다.'); })
+      .finally(() => { if (!cancelled) setGroupsLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
   React.useEffect(() => {
     return () => {
       if (eventSourceRef.current) {
@@ -161,6 +176,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
         templateName: currentTemplateName,
         description: workflowDescription,
         group: workflowGroup,
+        groupId: workflowGroupId,
         tags: workflowTags,
         versionNote: workflowVersionNote,
         nodes: (flowCanvasRef.current?.getNodes() || canvasNodes) as Node<CustomNodeData>[],
@@ -178,6 +194,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
       designerTabs,
       workflowDescription,
       workflowGroup,
+      workflowGroupId,
       workflowTags,
       workflowVersionNote,
     ],
@@ -200,6 +217,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
     setCurrentTemplateName(tab.templateName);
     setWorkflowDescription(tab.description);
     setWorkflowGroup(tab.group);
+    setWorkflowGroupId(tab.groupId);
     setWorkflowTags(tab.tags);
     setWorkflowVersionNote(tab.versionNote);
     setSelectedNode(null);
@@ -340,6 +358,15 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
           : tab,
       ),
     );
+  };
+
+  const handleGroupSelection = (groupId: string) => {
+    const group = availableGroups.find((item) => item.id === groupId);
+    setWorkflowGroupId(groupId);
+    setWorkflowGroup(group?.name || '');
+    setDesignerTabs((tabs) => tabs.map((tab) => tab.tabId === activeDesignerTabId
+      ? { ...tab, groupId, group: group?.name || '', isDirty: true }
+      : tab));
   };
 
   const handleRun = async (formData?: Record<string, any>) => {
@@ -526,6 +553,12 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
 
     const templateName = prompt('템플릿 이름을 입력하세요:', currentTemplateName || 'New Workflow');
     if (!templateName) return;
+    if (!workflowGroupId) {
+      alert('워크플로우를 저장하려면 관리 그룹을 선택해야 합니다.');
+      setSelectedNode(null);
+      setIsPropertiesPanelOpen(true);
+      return;
+    }
 
     try {
       if (currentTemplateId) {
@@ -533,6 +566,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
           name: templateName,
           description: workflowDescription,
           group: workflowGroup,
+          group_id: workflowGroupId,
           tags: parseTagList(workflowTags),
           version_note: workflowVersionNote,
           nodes,
@@ -549,6 +583,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
                   templateVersion: updated.version,
                   description: updated.description || '',
                   group: updated.group || '',
+                  groupId: updated.group_id || '',
                   tags: (updated.tags || []).join(', '),
                   versionNote: updated.version_note || '',
                   nodes: updated.nodes as Node<CustomNodeData>[],
@@ -564,6 +599,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
           name: templateName,
           description: workflowDescription,
           group: workflowGroup,
+          group_id: workflowGroupId,
           tags: parseTagList(workflowTags),
           version_note: workflowVersionNote,
           nodes,
@@ -581,6 +617,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
                   templateVersion: created.version,
                   description: created.description || '',
                   group: created.group || '',
+                  groupId: created.group_id || '',
                   tags: (created.tags || []).join(', '),
                   versionNote: created.version_note || '',
                   nodes: created.nodes as Node<CustomNodeData>[],
@@ -1125,10 +1162,14 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
                     <WorkflowMetadataForm
                       description={workflowDescription}
                       group={workflowGroup}
+                      groupId={workflowGroupId}
+                      groups={availableGroups}
+                      groupsLoading={groupsLoading}
+                      groupsError={groupsError}
                       tags={workflowTags}
                       versionNote={workflowVersionNote}
                       onDescriptionChange={handleMetadataChange('description', setWorkflowDescription)}
-                      onGroupChange={handleMetadataChange('group', setWorkflowGroup)}
+                      onGroupChange={handleGroupSelection}
                       onTagsChange={handleMetadataChange('tags', setWorkflowTags)}
                       onVersionNoteChange={handleMetadataChange('versionNote', setWorkflowVersionNote)}
                     />
@@ -1185,6 +1226,7 @@ function createBlankDesignerTab(tabId = createDesignerTabId()): DesignerTab {
     templateName: '',
     description: '',
     group: '',
+    groupId: '',
     tags: '',
     versionNote: '',
     nodes: cloneWorkflowNodes(DEFAULT_DESIGNER_NODES),
@@ -1201,6 +1243,7 @@ function createDesignerTabFromTemplate(template: WorkflowTemplate, tabId = creat
     templateVersion: template.version,
     description: template.description || '',
     group: template.group || '',
+    groupId: template.group_id || '',
     tags: (template.tags || []).join(', '),
     versionNote: template.version_note || '',
     nodes: cloneWorkflowNodes(template.nodes as Node<CustomNodeData>[]),
@@ -1424,6 +1467,10 @@ function remapClipboardGraph(clipboard: WorkflowClipboard, existingIds: Set<stri
 function WorkflowMetadataForm({
   description,
   group,
+  groupId,
+  groups,
+  groupsLoading,
+  groupsError,
   tags,
   versionNote,
   onDescriptionChange,
@@ -1433,6 +1480,10 @@ function WorkflowMetadataForm({
 }: {
   description: string;
   group: string;
+  groupId: string;
+  groups: PxmGroup[];
+  groupsLoading: boolean;
+  groupsError: string | null;
   tags: string;
   versionNote: string;
   onDescriptionChange: (value: string) => void;
@@ -1454,13 +1505,23 @@ function WorkflowMetadataForm({
             rows={4}
           />
         </div>
-        <Input
-          label="Group"
-          value={group}
-          onChange={(event) => onGroupChange(event.target.value)}
-          placeholder="예: HR, IT, Finance"
-          fullWidth
-        />
+        <div className="property-group">
+          <label className="property-label" htmlFor="workflow-group-id">관리 그룹</label>
+          <select
+            id="workflow-group-id"
+            className="property-select"
+            value={groupId}
+            onChange={(event) => onGroupChange(event.target.value)}
+            disabled={groupsLoading || Boolean(groupsError)}
+          >
+            <option value="">{groupsLoading ? '그룹 불러오는 중…' : '그룹을 선택하세요'}</option>
+            {groups.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
+          {groupId && <span className="property-helper-text">Group ID: {groupId}</span>}
+          {!groupId && group && <span className="property-warning-text">기존 그룹명 “{group}”은 권한 그룹과 연결되지 않았습니다. 저장 전 그룹을 선택하세요.</span>}
+          {groupsError && <span className="property-warning-text">{groupsError}</span>}
+          {!groupsLoading && !groupsError && groups.length === 0 && <span className="property-warning-text">관리 가능한 활성 그룹이 없습니다. Access Management에서 그룹을 먼저 생성하세요.</span>}
+        </div>
         <Input
           label="Tags"
           value={tags}

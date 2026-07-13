@@ -73,7 +73,7 @@ export function isAdmin(actor: WorkflowHistoryActor): boolean {
 
 function isDevelopmentBypass(actor: WorkflowHistoryActor): boolean {
   return (
-    process.env.AUTHZ_ENFORCE_MANAGEMENT !== 'true' &&
+    process.env.AUTHZ_ALLOW_DEVELOPMENT_BYPASS === 'true' &&
     !actor.api_key_id &&
     !actor.actor_id &&
     actor.roles.includes('operator')

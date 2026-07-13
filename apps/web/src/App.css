@@ -9,6 +9,42 @@
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
+.login-page { min-height: 100vh; display: grid; place-items: center; background: radial-gradient(circle at 20% 10%, #18345f 0, #081324 45%, #050b14 100%); padding: 24px; }
+.login-card { box-sizing: border-box; width: min(440px, 100%); padding: 36px; border-radius: 18px; background: #fff; box-shadow: 0 28px 80px rgba(0,0,0,.38); display: grid; gap: 18px; }
+.login-card h1 { margin: 0; font-size: 25px; line-height: 1.05; color: #101828; }
+.login-card p { margin: 0; color: #667085; font-size: 14px; }
+.login-description { line-height: 1.55; }
+.login-mark { width: 48px; height: 48px; border-radius: 13px; display: grid; place-items: center; color: #fff; background: linear-gradient(135deg, #2563eb, #7c3aed); }
+.login-card label { display: grid; gap: 8px; color: #344054; font-size: 13px; font-weight: 650; }
+.login-card input { box-sizing: border-box; height: 44px; border: 1px solid #cfd6e4; border-radius: 9px; padding: 0 12px; color: #101828; background: #fff; font-size: 14px; outline: none; transition: border-color .15s, box-shadow .15s; }
+.login-card input:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+.login-card button { height: 44px; border: 0; border-radius: 9px; color: #fff; background: #2458d6; font-weight: 700; cursor: pointer; transition: background .15s, transform .15s; }
+.login-card button:not(:disabled):hover { background: #1d4ed8; }
+.login-card button:not(:disabled):active { transform: translateY(1px); }
+.login-card button:disabled { opacity: .55; cursor: default; }
+.login-brand { display: flex; align-items: center; gap: 14px; }
+.login-brand-copy { display: grid; gap: 3px; }
+.login-brand img { width: 54px; height: 54px; border-radius: 14px; object-fit: cover; box-shadow: 0 8px 24px rgba(37,99,235,.24); }
+.login-brand span { color: #667085; font-size: 12px; line-height: 1.2; letter-spacing: .025em; }
+.login-error { padding: 10px 12px; border-radius: 8px; background: #fef3f2; color: #b42318; font-size: 13px; }
+.login-loading { color: #dbeafe; font-size: 14px; }
+.header-logout { border: 1px solid var(--border-color); background: #fff; border-radius: 7px; padding: 7px 10px; color: var(--text-secondary); cursor: pointer; white-space: nowrap; }
+.account-backdrop { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 24px; background: rgba(3,10,24,.58); backdrop-filter: blur(4px); }
+.account-dialog { width: min(560px, 100%); max-height: calc(100vh - 48px); overflow: auto; border-radius: 16px; padding: 24px; background: #fff; box-shadow: 0 30px 90px rgba(0,0,0,.34); display: grid; gap: 18px; }
+.account-dialog > header { display: flex; align-items: start; justify-content: space-between; }
+.account-dialog > header div { display: grid; gap: 4px; }
+.account-dialog > header strong { font-size: 20px; }
+.account-dialog > header span { color: #667085; font-size: 12px; }
+.account-dialog > header button { border: 0; background: transparent; cursor: pointer; color: #667085; }
+.account-dialog form { display: grid; gap: 12px; padding-top: 18px; border-top: 1px solid #eaecf0; }
+.account-dialog h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 15px; }
+.account-dialog label { display: grid; gap: 7px; color: #344054; font-size: 13px; font-weight: 600; }
+.account-dialog input { height: 41px; padding: 0 11px; border: 1px solid #d0d5dd; border-radius: 8px; font-size: 14px; }
+.account-dialog small { color: #667085; font-weight: 400; }
+.account-dialog form > button { justify-self: end; height: 38px; padding: 0 16px; border: 0; border-radius: 8px; color: #fff; background: #2563eb; font-weight: 700; cursor: pointer; }
+.account-dialog form > button:disabled { opacity: .5; cursor: default; }
+.account-message { padding: 10px 12px; border-radius: 8px; background: #ecfdf3; color: #027a48; font-size: 13px; }
+
 /* 1. Left Sidebar (Deep Navy) */
 .app-sidebar {
   width: 260px;
@@ -18,13 +54,17 @@
   border-right: 1px solid rgba(255, 255, 255, 0.05);
   flex-shrink: 0;
   z-index: 100;
+  transition: width 180ms ease;
 }
+
+.app-sidebar.collapsed { width: 72px; }
 
 .sidebar-logo {
   height: 64px;
   display: flex;
   align-items: center;
-  padding: 0 24px;
+  padding: 0 14px;
+  justify-content: space-between;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 
@@ -37,6 +77,9 @@
   gap: 8px;
   letter-spacing: 0.5px;
 }
+.sidebar-logo-text img { width: 30px; height: 30px; border-radius: 8px; object-fit: cover; }
+.sidebar-collapse-button { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; border: 0; border-radius: 7px; color: #94a3b8; background: rgba(255,255,255,.06); cursor: pointer; }
+.sidebar-collapse-button:hover { color: #fff; background: rgba(255,255,255,.12); }
 
 .sidebar-logo-dot {
   width: 8px;
@@ -71,6 +114,20 @@
   transition: all 0.2s ease;
   width: 100%;
 }
+
+.app-sidebar.collapsed .sidebar-logo { padding: 0 8px; gap: 4px; }
+.app-sidebar.collapsed .sidebar-logo-text { flex: 0 0 auto; }
+.app-sidebar.collapsed .sidebar-logo-text img { width: 24px; height: 24px; }
+.app-sidebar.collapsed .sidebar-collapse-button { width: 24px; height: 24px; }
+.app-sidebar.collapsed .sidebar-logo-text span,
+.app-sidebar.collapsed .sidebar-menu-item span,
+.app-sidebar.collapsed .sidebar-user-info { display: none; }
+.app-sidebar.collapsed .sidebar-menu { padding: 18px 10px; align-items: center; }
+.app-sidebar.collapsed .sidebar-menu-item { width: 44px; min-height: 42px; padding: 0; justify-content: center; gap: 0; }
+.app-sidebar.collapsed .sidebar-menu-item svg { width: 18px; height: 18px; }
+.app-sidebar.collapsed .sidebar-separator { width: 28px; height: 1px; margin: 10px 0 6px; padding: 0; overflow: hidden; background: rgba(255,255,255,.1); color: transparent; }
+.app-sidebar.collapsed .sidebar-footer { padding: 14px 0; justify-content: center; }
+.app-sidebar.collapsed .sidebar-avatar { width: 34px; height: 34px; }
 
 .sidebar-menu-item:hover {
   color: #ffffff;
@@ -152,13 +209,13 @@
 
 /* 3. White Top Header */
 .app-top-header {
-  height: 70px;
+  height: 64px;
   background-color: #ffffff;
   border-bottom: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 24px;
+  padding: 0 20px;
   flex-shrink: 0;
   z-index: 90;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
@@ -171,7 +228,7 @@
 }
 
 .header-title {
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 700;
   color: var(--text-primary);
   margin: 0;
@@ -187,7 +244,8 @@
 .header-right {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 9px;
+  min-width: 0;
 }
 
 /* Elegant Informative Banner Bubble */
@@ -280,9 +338,16 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding-left: 8px;
+  padding: 3px 8px 3px 10px;
   border-left: 1px solid var(--border-subtle);
+  border-top: 0;
+  border-right: 0;
+  border-bottom: 0;
+  background: transparent;
+  cursor: pointer;
 }
+.header-profile:hover { background: #f8fafc; border-radius: 8px; }
+.header-profile-avatar { width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; order: 2; border-radius: 9px; color: #fff; background: linear-gradient(135deg,#2563eb,#7c3aed); font-size: 12px; font-weight: 700; }
 
 .profile-text {
   display: flex;

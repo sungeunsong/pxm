@@ -21,11 +21,7 @@ export type CommandRegistryPayload = Partial<CommandRegistryItem> & {
   executable: string;
 };
 
-const adminHeaders = {
-  'Content-Type': 'application/json',
-  'x-actor-id': 'admin',
-  'x-actor-roles': 'admin',
-};
+const jsonHeaders = { 'Content-Type': 'application/json' };
 
 export const commandsApi = {
   async list(activeOnly = false): Promise<CommandRegistryItem[]> {
@@ -39,7 +35,7 @@ export const commandsApi = {
   async save(payload: CommandRegistryPayload): Promise<CommandRegistryItem> {
     const response = await fetch('/api/commands', {
       method: 'POST',
-      headers: adminHeaders,
+      headers: jsonHeaders, credentials: 'include',
       body: JSON.stringify(payload),
     });
     const data = await response.json().catch(() => null);
@@ -52,7 +48,7 @@ export const commandsApi = {
   async update(commandId: string, payload: Partial<CommandRegistryPayload>): Promise<CommandRegistryItem> {
     const response = await fetch(`/api/commands/${encodeURIComponent(commandId)}`, {
       method: 'PUT',
-      headers: adminHeaders,
+      headers: jsonHeaders, credentials: 'include',
       body: JSON.stringify(payload),
     });
     const data = await response.json().catch(() => null);
@@ -65,7 +61,7 @@ export const commandsApi = {
   async disable(commandId: string): Promise<void> {
     const response = await fetch(`/api/commands/${encodeURIComponent(commandId)}`, {
       method: 'DELETE',
-      headers: adminHeaders,
+      credentials: 'include',
     });
     if (!response.ok) {
       const data = await response.json().catch(() => null);

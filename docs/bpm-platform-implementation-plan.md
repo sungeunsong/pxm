@@ -212,6 +212,7 @@
   - [x] group CRUD API/storage skeleton
   - [x] role 모델: `admin`, `group_manager`, `user`
   - [x] workflow group ownership 연결: `group_id` metadata/definition/version/export/start access 반영
+  - [x] Flow Designer 생성/수정 화면의 관리 group 선택 UX
   - [x] group 삭제 정책: soft delete, API key 비활성화, 실행 이력/version 보존 기반
   - [x] 삭제된 group/workflow 조회/복구는 `admin`만 허용하는 guard 적용
   - [x] group 복구 시 비활성화된 API key는 자동 복구하지 않음
@@ -220,6 +221,15 @@
 - [ ] Role model 재정리
   - [x] `admin`: group 생성/삭제/복구, group role 부여, 전체 감사
   - [x] `group_manager`: 할당받은 group 안에서 workflow/API key/멤버 관리
+  - [x] 로그인/서버 저장형 opaque session 연동 및 `/api/auth/me`, logout 구현
+  - [x] session token hash 저장, idle 30분/absolute 8시간 만료
+  - [x] 세션별 폐기, 다른 세션 전체 폐기, 활성 세션 조회 API
+  - [x] unsafe method CSRF token 검증과 HttpOnly/Secure/SameSite cookie 정책
+  - [x] 로그인 실패 5회/15분 제한 1차 적용
+  - [x] 임시 `x-actor-*` admin header 제거, session actor 기반 관리 권한 적용
+  - [x] `admin`/`group_manager`/`user`별 관리 메뉴 노출 제한
+  - [x] PXM / Penta eXecute Manager 로그인 브랜딩과 앱 아이콘 적용
+  - [x] 내 정보 수정과 비밀번호 변경, 변경 시 다른 세션 폐기
   - [ ] `user`: 개인 API key owner 또는 일반 실행 주체. 관리 권한 없음
   - [ ] 웹 콘솔 user는 최고관리자/그룹관리자/개인 API 사용자 중심으로 제한
   - [ ] 일반 업무 사용자는 기본적으로 BPM user로 등록하지 않음
@@ -265,9 +275,10 @@
 
 다음 작업:
 
-- Workflow 생성/수정 화면에 `group_id` 지정 UX를 연결한다.
+- Workflow 생성/수정 화면의 `group_id` 선택 UX 완료. 레거시 group name-only workflow는 저장 전 실제 관리 group을 선택한다.
 - API key 발급 화면의 `allowed_workflow_ids` 직접 입력을 group workflow 목록 체크박스 선택으로 바꾼다.
-- 로그인/세션 연동 후 `admin`/`group_manager`별 화면 노출과 관리 가능 group 범위를 제한한다.
+- 서버 저장형 세션과 CSRF 1차 연동 완료. 운영 배포 전 OIDC/SSO 전환 여부, Redis 기반 분산 로그인 제한, reverse proxy/trusted IP 정책을 확정한다.
+- 로컬 최초 로그인은 기본 `admin` / `admin1234`이며, 운영에서는 `PXM_BOOTSTRAP_ADMIN_ID`, `PXM_BOOTSTRAP_ADMIN_PASSWORD`를 반드시 지정한다. 세션 원문은 256-bit 난수이고 서버에는 SHA-256 hash만 저장한다.
 - `task:approve` scope를 실제 승인 API end-to-end 흐름에 연결하고 권한 테스트를 자동화한다.
 - 최고관리자용 전체 사용자 디렉터리와 API key 만료/rotation/IP allowlist는 후속 운영 UX로 검토한다.
 

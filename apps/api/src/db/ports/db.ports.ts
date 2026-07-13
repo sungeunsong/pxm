@@ -358,6 +358,7 @@ export type UpsertPxmUser = {
   group_ids?: string[];
   status?: PxmPrincipalStatus;
   actor?: string | null;
+  password_hash?: string;
 };
 
 export type UpsertPxmServiceAccount = {
@@ -387,6 +388,23 @@ export type AppendPxmApiKeyUsageLog = Omit<PxmApiKeyUsageLog, 'id' | 'created_at
   id?: string;
 };
 
+export type PxmSession = {
+  id: string;
+  token_hash: string;
+  csrf_hash: string;
+  user_id: string;
+  ip?: string | null;
+  user_agent?: string | null;
+  created_at: string;
+  last_seen_at: string;
+  idle_expires_at: string;
+  absolute_expires_at: string;
+  revoked_at?: string | null;
+  revoke_reason?: string | null;
+};
+
+export type CreatePxmSession = Omit<PxmSession, 'created_at' | 'last_seen_at' | 'revoked_at' | 'revoke_reason'>;
+
 export abstract class AuthzRepositoryPort {
   abstract upsertGroup(group: UpsertPxmGroup): Promise<PxmGroup>;
   abstract listGroups(includeDeleted?: boolean): Promise<PxmGroup[]>;
@@ -397,6 +415,9 @@ export abstract class AuthzRepositoryPort {
   abstract upsertUser(user: UpsertPxmUser): Promise<PxmUser>;
   abstract listUsers(groupId?: string): Promise<PxmUser[]>;
   abstract getUser(id: string): Promise<PxmUser | null>;
+  abstract getUserPasswordHash(id: string): Promise<string | null>;
+  abstract updateUserPasswordHash(id: string, passwordHash: string, actor?: string | null): Promise<boolean>;
+  abstract updateUserProfile(id: string, displayName: string, email?: string | null): Promise<PxmUser | null>;
 
   abstract upsertServiceAccount(account: UpsertPxmServiceAccount): Promise<PxmServiceAccount>;
   abstract listServiceAccounts(groupId?: string): Promise<PxmServiceAccount[]>;
@@ -409,4 +430,10 @@ export abstract class AuthzRepositoryPort {
   abstract disableApiKey(id: string, actor?: string | null): Promise<boolean>;
   abstract touchApiKey(id: string, usedAt: string): Promise<void>;
   abstract appendApiKeyUsageLog(log: AppendPxmApiKeyUsageLog): Promise<PxmApiKeyUsageLog>;
+  abstract createSession(session: CreatePxmSession): Promise<PxmSession>;
+  abstract findSessionByTokenHash(tokenHash: string): Promise<PxmSession | null>;
+  abstract touchSession(id: string, lastSeenAt: string, idleExpiresAt: string): Promise<void>;
+  abstract revokeSession(id: string, reason: string): Promise<boolean>;
+  abstract revokeUserSessions(userId: string, reason: string, exceptId?: string): Promise<number>;
+  abstract listUserSessions(userId: string): Promise<PxmSession[]>;
 }

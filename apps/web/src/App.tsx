@@ -12,7 +12,9 @@ import {
   Plug,
   Terminal,
   HelpCircle,
-  Shield
+  Shield,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react';
 import { DashboardPage } from './dashboard/DashboardPage';
 import { FlowDesigner } from './flow-designer/FlowDesigner';
@@ -24,6 +26,9 @@ import { CommandRegistryPage } from './commands/CommandRegistryPage';
 import { PluginControlPage } from './plugins/PluginControlPage';
 import { PluginRegistryPage } from './plugins/PluginRegistryPage';
 import { AccessManagementPage } from './authz/AccessManagementPage';
+import { LoginPage } from './auth/LoginPage';
+import { AccountDialog } from './auth/AccountDialog';
+import { sessionApi, type SessionUser } from './api/session';
 import './App.css';
 
 type ActiveTab =
@@ -80,14 +85,27 @@ const readInitialTab = (): ActiveTab => {
   return DEFAULT_TAB;
 };
 
-function App() {
+function WorkspaceApp({ user, onUserChange, onLogout }: { user: SessionUser; onUserChange: (user: SessionUser) => void; onLogout: () => void }) {
   const [activeTab, setActiveTabState] = useState<ActiveTab>(readInitialTab);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('pxm.sidebar.collapsed') === 'true');
+
+  const toggleSidebar = () => setSidebarCollapsed((current) => {
+    localStorage.setItem('pxm.sidebar.collapsed', String(!current));
+    return !current;
+  });
 
   const setActiveTab = (tab: ActiveTab) => {
     setActiveTabState(tab);
     window.history.pushState(null, '', `#/${TAB_TO_ROUTE[tab]}`);
   };
+
+  useEffect(() => {
+    if (user.role === 'user' && !['request', 'tracker', 'inbox'].includes(activeTab)) {
+      setActiveTab('inbox');
+    }
+  }, [activeTab, user.role]);
 
   useEffect(() => {
     if (!window.location.hash) {
@@ -117,24 +135,28 @@ function App() {
   return (
     <div className="app-container">
       {/* 1. Left Sidebar (Deep Navy) */}
-      <aside className="app-sidebar">
+      <aside className={`app-sidebar${sidebarCollapsed ? ' collapsed' : ''}`}>
         <div className="sidebar-logo">
           <div className="sidebar-logo-text">
-            <div className="sidebar-logo-dot" />
-            BPM Web
+            <img src="/brand/pxm-app-icon.png" alt="" /><span>PXM</span>
           </div>
+          <button className="sidebar-collapse-button" onClick={toggleSidebar} title={sidebarCollapsed ? '사이드바 펼치기' : '사이드바 접기'} aria-label={sidebarCollapsed ? '사이드바 펼치기' : '사이드바 접기'}>
+            {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+          </button>
         </div>
         
         <nav className="sidebar-menu">
-          <button 
+          {user.role !== 'user' && <button
+            title="대시보드"
             className={`sidebar-menu-item ${activeTab === 'dashboard' ? 'active' : ''}`}
             onClick={() => setActiveTab('dashboard')}
           >
             <LayoutGrid size={16} />
             <span>대시보드</span>
-          </button>
+          </button>}
           
-          <button 
+          {user.role !== 'user' && <button
+            title="Flow Designer"
             className={`sidebar-menu-item ${activeTab === 'designer' ? 'active' : ''}`}
             onClick={() => {
               setActiveTab('designer');
@@ -143,9 +165,10 @@ function App() {
           >
             <Paintbrush size={16} />
             <span>Flow Designer</span>
-          </button>
+          </button>}
 
-          <button 
+          <button
+            title="워크플로우 관리"
             className={`sidebar-menu-item ${activeTab === 'request' ? 'active' : ''}`}
             onClick={() => setActiveTab('request')}
           >
@@ -153,7 +176,8 @@ function App() {
             <span>워크플로우 관리</span>
           </button>
 
-          <button 
+          <button
+            title="실행 모니터링"
             className={`sidebar-menu-item ${activeTab === 'tracker' ? 'active' : ''}`}
             onClick={() => setActiveTab('tracker')}
           >
@@ -161,7 +185,8 @@ function App() {
             <span>실행 모니터링</span>
           </button>
 
-          <button 
+          <button
+            title="승인자 / 결재자"
             className={`sidebar-menu-item ${activeTab === 'inbox' ? 'active' : ''}`}
             onClick={() => setActiveTab('inbox')}
           >
@@ -171,47 +196,52 @@ function App() {
           
           <div className="sidebar-separator">설정 및 감사</div>
           
-          <button 
+          {user.role !== 'user' && <button
+            title="Credential Store"
             className={`sidebar-menu-item ${activeTab === 'credentials' ? 'active' : ''}`}
             onClick={() => setActiveTab('credentials')}
           >
             <KeyRound size={16} />
             <span>Credential Store</span>
-          </button>
+          </button>}
 
-          <button
+          {user.role !== 'user' && <button
+            title="Access Management"
             className={`sidebar-menu-item ${activeTab === 'access' ? 'active' : ''}`}
             onClick={() => setActiveTab('access')}
           >
             <Shield size={16} />
             <span>Access Management</span>
-          </button>
+          </button>}
 
-          <button
+          {user.role === 'admin' && <button
+            title="Command Registry"
             className={`sidebar-menu-item ${activeTab === 'commands' ? 'active' : ''}`}
             onClick={() => setActiveTab('commands')}
           >
             <Terminal size={16} />
             <span>Command Registry</span>
-          </button>
+          </button>}
 
-          <button
+          {user.role === 'admin' && <button
+            title="Plugin Control"
             className={`sidebar-menu-item ${activeTab === 'plugins' ? 'active' : ''}`}
             onClick={() => setActiveTab('plugins')}
           >
             <Plug size={16} />
             <span>Plugin Control</span>
-          </button>
+          </button>}
 
-          <button
+          {user.role === 'admin' && <button
+            title="Plugin Registry"
             className={`sidebar-menu-item ${activeTab === 'pluginRegistry' ? 'active' : ''}`}
             onClick={() => setActiveTab('pluginRegistry')}
           >
             <FileJson size={16} />
             <span>Plugin Registry</span>
-          </button>
+          </button>}
           
-          <button className="sidebar-menu-item disabled">
+          <button className="sidebar-menu-item disabled" title="감사 로그">
             <FileText size={16} />
             <span>감사 로그</span>
           </button>
@@ -219,14 +249,14 @@ function App() {
         
         <div className="sidebar-footer">
           <div className="sidebar-avatar">
-            {activeTab === 'inbox' ? "결" : activeTab === 'tracker' ? "운" : "설"}
+            {user.display_name.slice(0, 1)}
           </div>
           <div className="sidebar-user-info">
             <span className="sidebar-user-name">
-              {activeTab === 'inbox' ? "김결재 부장" : activeTab === 'tracker' ? "운영자" : "설계자"}
+              {user.display_name}
             </span>
             <span className="sidebar-user-dept">
-              {activeTab === 'inbox' ? "경영지원본부" : activeTab === 'tracker' ? "시스템관리팀" : "프로세스혁신팀"}
+              {user.role === 'admin' ? '최고관리자' : user.role === 'group_manager' ? '그룹 관리자' : '사용자'}
             </span>
           </div>
         </div>
@@ -238,7 +268,7 @@ function App() {
           <div className="header-left">
             <h1 className="header-title">
               {activeTab === 'dashboard' && "종합 상황실 / 대시보드"}
-              {activeTab === 'designer' && "설계자 / 관리자 상세 화면 구성"}
+              {activeTab === 'designer' && "Flow Designer"}
               {activeTab === 'request' && "워크플로우 관리"}
               {activeTab === 'tracker' && "운영자 / 모니터링 담당 상세 화면 구성"}
               {activeTab === 'inbox' && "내 결재함"}
@@ -271,11 +301,6 @@ function App() {
             {activeTab === 'tracker' && (
               <div className="info-banner-bubble info-orange">
                 운영자/모니터링 담당은 실행 현황 모니터링, 실패 원인 분석, 재시도 및 로그 확인을 통해 안정적인 운영을 지원합니다.
-              </div>
-            )}
-            {activeTab === 'designer' && (
-              <div className="info-banner-bubble info-purple">
-                설계자/관리자는 드래그 & 드롭으로 손쉽게 프로세스를 구성하고, 속성 설정 및 버전을 관리합니다.
               </div>
             )}
             {activeTab === 'credentials' && (
@@ -317,19 +342,18 @@ function App() {
               <HelpCircle size={16} />
             </button>
             
-            <div className="header-profile">
+            <button className="header-profile" onClick={() => setAccountOpen(true)}>
+              <span className="header-profile-avatar">{user.display_name.slice(0, 1)}</span>
               <div className="profile-text">
                 <span className="profile-name">
-                  {activeTab === 'inbox' ? "김결재 부장" : activeTab === 'tracker' ? "운영자" : "설계자"}
+                  {user.display_name}
                 </span>
                 <span className="profile-role">
-                  {activeTab === 'inbox' ? "경영지원본부" : activeTab === 'tracker' ? "모니터링팀" : "프로세스설계팀"}
+                  {user.id}
                 </span>
               </div>
-              <div className="profile-avatar-img">
-                {activeTab === 'inbox' ? "👨‍💼" : activeTab === 'tracker' ? "👩‍💻" : "🧙‍♂️"}
-              </div>
-            </div>
+            </button>
+            <button className="header-logout" onClick={onLogout}>로그아웃</button>
           </div>
         </header>
 
@@ -367,8 +391,17 @@ function App() {
           {activeTab === 'pluginRegistry' && <PluginRegistryPage />}
         </main>
       </div>
+      {accountOpen && <AccountDialog user={user} onChange={onUserChange} onClose={() => setAccountOpen(false)} />}
     </div>
   );
+}
+
+function App() {
+  const [user, setUser] = useState<SessionUser | null | undefined>(undefined);
+  useEffect(() => { sessionApi.me().then(setUser).catch(() => setUser(null)); }, []);
+  if (user === undefined) return <main className="login-page"><div className="login-loading">세션 확인 중…</div></main>;
+  if (!user) return <LoginPage onLogin={setUser} />;
+  return <WorkspaceApp user={user} onUserChange={setUser} onLogout={async () => { await sessionApi.logout(); setUser(null); }} />;
 }
 
 export default App;

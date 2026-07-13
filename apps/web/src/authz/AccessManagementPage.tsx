@@ -383,25 +383,28 @@ function UserForm({
 }: {
   groupId: string;
   disabled?: boolean;
-  onSave: (payload: { id?: string; display_name: string; email?: string; role: PxmRole; group_ids: string[] }) => void;
+  onSave: (payload: { id?: string; display_name: string; email?: string; role: PxmRole; group_ids: string[]; password?: string }) => void;
 }) {
   const [id, setId] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<PxmRole>('user');
+  const [password, setPassword] = useState('');
   return (
     <form className="access-form compact" onSubmit={(event) => {
       event.preventDefault();
       if (!displayName.trim() || !groupId) return;
-      onSave({ id: id.trim() || undefined, display_name: displayName.trim(), email: email.trim(), role, group_ids: [groupId] });
+      onSave({ id: id.trim() || undefined, display_name: displayName.trim(), email: email.trim(), role, group_ids: [groupId], password: password || undefined });
       setId('');
       setDisplayName('');
       setEmail('');
       setRole('user');
+      setPassword('');
     }}>
       <input value={id} onChange={(event) => setId(event.target.value)} placeholder="사용자 ID" />
       <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="멤버 이름" />
       <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="이메일" />
+      <input type="password" minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="초기 비밀번호 (8자 이상)" />
       <select value={role} onChange={(event) => setRole(event.target.value as PxmRole)}>
         <option value="user">일반 사용자</option>
         <option value="group_manager">그룹 관리자</option>

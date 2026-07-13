@@ -20,11 +20,13 @@ import {
   AppendPxmApiKeyUsageLog,
   AuthzRepositoryPort,
   CreatePxmApiKey,
+  CreatePxmSession,
   PxmApiKey,
   PxmApiKeyUsageLog,
   PxmGroup,
   PxmServiceAccount,
   PxmUser,
+  PxmSession,
   UpsertPxmGroup,
   UpsertPxmServiceAccount,
   UpsertPxmUser,
@@ -1176,9 +1178,9 @@ export class PostgresAdapter
     const { rows } = await this.pool.query(
       `
       INSERT INTO pxm_users
-        (id, display_name, email, role, group_ids, status, created_by, updated_by, created_at, updated_at)
+        (id, display_name, email, role, group_ids, status, created_by, updated_by, created_at, updated_at, password_hash)
       VALUES
-        ($1, $2, $3, $4, $5::jsonb, $6, $7, $7, NOW(), NOW())
+        ($1, $2, $3, $4, $5::jsonb, $6, $7, $7, NOW(), NOW(), $8)
       ON CONFLICT (id)
       DO UPDATE SET
         display_name = EXCLUDED.display_name,
@@ -1187,6 +1189,7 @@ export class PostgresAdapter
         group_ids = EXCLUDED.group_ids,
         status = EXCLUDED.status,
         updated_by = EXCLUDED.updated_by,
+        password_hash = COALESCE(EXCLUDED.password_hash, pxm_users.password_hash),
         updated_at = NOW()
       RETURNING *
       `,
@@ -1198,6 +1201,7 @@ export class PostgresAdapter
         JSON.stringify(user.group_ids || []),
         user.status || 'active',
         user.actor || null,
+        user.password_hash || null,
       ],
     );
     return mapUserRow(rows[0]);
@@ -1220,6 +1224,49 @@ export class PostgresAdapter
     await this.ensureAuthzTables();
     const { rows } = await this.pool.query(`SELECT * FROM pxm_users WHERE id = $1`, [id]);
     return rows[0] ? mapUserRow(rows[0]) : null;
+  }
+
+  async getUserPasswordHash(id: string): Promise<string | null> {
+    await this.ensureAuthzTables();
+    const { rows } = await this.pool.query(`SELECT password_hash FROM pxm_users WHERE id = $1`, [id]);
+    return rows[0]?.password_hash || null;
+  }
+
+  async updateUserPasswordHash(id: string, passwordHash: string, actor?: string | null): Promise<boolean> {
+    await this.ensureAuthzTables();
+    const { rowCount } = await this.pool.query(
+      `UPDATE pxm_users SET password_hash=$2, updated_by=$3, updated_at=NOW() WHERE id=$1 AND status='active'`,
+      [id, passwordHash, actor || id],
+    );
+    return (rowCount || 0) > 0;
+  }
+
+  async updateUserProfile(id: string, displayName: string, email?: string | null): Promise<PxmUser | null> {
+    await this.ensureAuthzTables();
+    const { rows } = await this.pool.query(
+      `UPDATE pxm_users SET display_name=$2, email=$3, updated_by=$1, updated_at=NOW() WHERE id=$1 AND status='active' RETURNING *`,
+      [id, displayName, email || null],
+    );
+    return rows[0] ? mapUserRow(rows[0]) : null;
+  }
+
+  async createSession(session: CreatePxmSession): Promise<PxmSession> {
+    await this.ensureAuthzTables(); const { rows } = await this.pool.query(`INSERT INTO pxm_sessions (id, token_hash, csrf_hash, user_id, ip, user_agent, idle_expires_at, absolute_expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`, [session.id, session.token_hash, session.csrf_hash, session.user_id, session.ip || null, session.user_agent || null, session.idle_expires_at, session.absolute_expires_at]); return mapSessionRow(rows[0]);
+  }
+  async findSessionByTokenHash(tokenHash: string): Promise<PxmSession | null> {
+    await this.ensureAuthzTables(); const { rows } = await this.pool.query(`SELECT * FROM pxm_sessions WHERE token_hash = $1`, [tokenHash]); return rows[0] ? mapSessionRow(rows[0]) : null;
+  }
+  async touchSession(id: string, lastSeenAt: string, idleExpiresAt: string): Promise<void> {
+    await this.pool.query(`UPDATE pxm_sessions SET last_seen_at=$2, idle_expires_at=$3 WHERE id=$1 AND revoked_at IS NULL`, [id, lastSeenAt, idleExpiresAt]);
+  }
+  async revokeSession(id: string, reason: string): Promise<boolean> {
+    const { rowCount } = await this.pool.query(`UPDATE pxm_sessions SET revoked_at=NOW(), revoke_reason=$2 WHERE id=$1 AND revoked_at IS NULL`, [id, reason]); return (rowCount || 0) > 0;
+  }
+  async revokeUserSessions(userId: string, reason: string, exceptId?: string): Promise<number> {
+    const { rowCount } = await this.pool.query(`UPDATE pxm_sessions SET revoked_at=NOW(), revoke_reason=$2 WHERE user_id=$1 AND revoked_at IS NULL AND ($3::text IS NULL OR id <> $3)`, [userId, reason, exceptId || null]); return rowCount || 0;
+  }
+  async listUserSessions(userId: string): Promise<PxmSession[]> {
+    await this.ensureAuthzTables(); const { rows } = await this.pool.query(`SELECT * FROM pxm_sessions WHERE user_id=$1 ORDER BY created_at DESC`, [userId]); return rows.map(mapSessionRow);
   }
 
   async upsertServiceAccount(account: UpsertPxmServiceAccount): Promise<PxmServiceAccount> {
@@ -1431,6 +1478,9 @@ export class PostgresAdapter
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+    await this.pool.query(`ALTER TABLE pxm_users ADD COLUMN IF NOT EXISTS password_hash TEXT NULL`);
+    await this.pool.query(`CREATE TABLE IF NOT EXISTS pxm_sessions (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, csrf_hash TEXT NOT NULL, user_id TEXT NOT NULL, ip TEXT NULL, user_agent TEXT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), idle_expires_at TIMESTAMPTZ NOT NULL, absolute_expires_at TIMESTAMPTZ NOT NULL, revoked_at TIMESTAMPTZ NULL, revoke_reason TEXT NULL)`);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_pxm_sessions_user_created ON pxm_sessions (user_id, created_at DESC)`);
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS pxm_service_accounts (
         id TEXT PRIMARY KEY,
@@ -1536,6 +1586,11 @@ function mapUserRow(row: any): PxmUser {
     created_at: row.created_at?.toISOString?.() || row.created_at,
     updated_at: row.updated_at?.toISOString?.() || row.updated_at,
   };
+}
+
+function mapSessionRow(row: any): PxmSession {
+  const iso = (v: any) => v?.toISOString?.() || v;
+  return { id: row.id, token_hash: row.token_hash, csrf_hash: row.csrf_hash, user_id: row.user_id, ip: row.ip || null, user_agent: row.user_agent || null, created_at: iso(row.created_at), last_seen_at: iso(row.last_seen_at), idle_expires_at: iso(row.idle_expires_at), absolute_expires_at: iso(row.absolute_expires_at), revoked_at: iso(row.revoked_at) || null, revoke_reason: row.revoke_reason || null };
 }
 
 function mapServiceAccountRow(row: any): PxmServiceAccount {

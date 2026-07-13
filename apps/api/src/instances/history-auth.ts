@@ -12,9 +12,10 @@ export function actorFromRequest(req?: Request): WorkflowHistoryActor {
     return authenticatedActor;
   }
 
-  const actorId = headerValue(req, 'x-actor-id');
+  const allowActorHeaders = process.env.AUTHZ_ALLOW_ACTOR_HEADERS === 'true';
+  const actorId = allowActorHeaders ? headerValue(req, 'x-actor-id') : null;
   const actorType = normalizeActorType(headerValue(req, 'x-actor-type'));
-  const roles = splitHeader(req, 'x-actor-roles');
+  const roles = allowActorHeaders ? splitHeader(req, 'x-actor-roles') : [];
 
   if (!actorId && roles.length === 0) {
     return {
@@ -52,7 +53,7 @@ export function instanceAccessFromRequest(
   input?: Record<string, any>,
 ): WorkflowInstanceAccess {
   const actor = actorFromRequest(req);
-  const groupIds = splitHeader(req, 'x-group-ids');
+  const groupIds = actor.group_ids || [];
   const requesterId =
     headerValue(req, 'x-requester-id') ||
     actor.actor_id ||

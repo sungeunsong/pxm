@@ -2,7 +2,7 @@
    Header Component Styles
    ============================================ */
 
-.header {
+.designer-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -16,33 +16,33 @@
 }
 
 /* ===== Left Section ===== */
-.header-left {
+.designer-header-left {
   display: flex;
   align-items: center;
   gap: var(--space-lg);
 }
 
-.header-logo {
+.designer-header-logo {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
 }
 
-.logo-icon {
+.designer-logo-icon {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 40px;
   height: 40px;
-  background: linear-gradient(135deg, var(--color-info), var(--color-success));
   border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-bold);
-  color: white;
+  object-fit: cover;
   box-shadow: var(--shadow-md);
 }
 
-.header-title {
+.designer-title-group { display: grid; gap: 2px; }
+.designer-title-group span { color: var(--text-tertiary); font-size: 11px; }
+
+.designer-header-title {
   margin: 0;
   font-size: var(--font-size-lg);
   font-weight: var(--font-weight-semibold);
@@ -50,7 +50,7 @@
 }
 
 /* ===== Right Section ===== */
-.header-right {
+.designer-header-right {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
@@ -58,15 +58,15 @@
 
 /* ===== Responsive ===== */
 @media (max-width: 768px) {
-  .header {
+  .designer-header {
     padding: 0 var(--space-md);
   }
 
-  .header-title {
+  .designer-header-title {
     font-size: var(--font-size-base);
   }
 
-  .logo-icon {
+  .designer-logo-icon {
     width: 36px;
     height: 36px;
     font-size: var(--font-size-xs);

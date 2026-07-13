@@ -20,11 +20,13 @@ import {
   AppendPxmApiKeyUsageLog,
   AuthzRepositoryPort,
   CreatePxmApiKey,
+  CreatePxmSession,
   PxmApiKey,
   PxmApiKeyUsageLog,
   PxmGroup,
   PxmServiceAccount,
   PxmUser,
+  PxmSession,
   UpsertPxmGroup,
   UpsertPxmServiceAccount,
   UpsertPxmUser,
@@ -1215,6 +1217,7 @@ export class MongodbAdapter
           status: user.status || 'active',
           updated_by: user.actor || null,
           updated_at: now,
+          ...(user.password_hash ? { password_hash: user.password_hash } : {}),
         },
         $setOnInsert: {
           _id: id,
@@ -1238,6 +1241,55 @@ export class MongodbAdapter
     await this.ensureAuthzIndexes();
     const doc = await this.db.collection<any>('pxm_users').findOne({ _id: id });
     return doc ? mapUserDoc(doc) : null;
+  }
+
+  async getUserPasswordHash(id: string): Promise<string | null> {
+    await this.ensureAuthzIndexes();
+    const doc = await this.db.collection<any>('pxm_users').findOne(
+      { _id: id },
+      { projection: { password_hash: 1 } },
+    );
+    return doc?.password_hash || null;
+  }
+
+  async updateUserPasswordHash(id: string, passwordHash: string, actor?: string | null): Promise<boolean> {
+    const result = await this.db.collection<any>('pxm_users').updateOne(
+      { _id: id, status: 'active' },
+      { $set: { password_hash: passwordHash, updated_by: actor || id, updated_at: new Date().toISOString() } },
+    );
+    return result.matchedCount > 0;
+  }
+
+  async updateUserProfile(id: string, displayName: string, email?: string | null): Promise<PxmUser | null> {
+    const result = await this.db.collection<any>('pxm_users').findOneAndUpdate(
+      { _id: id, status: 'active' },
+      { $set: { display_name: displayName, email: email || null, updated_by: id, updated_at: new Date().toISOString() } },
+      { returnDocument: 'after' },
+    );
+    return result ? mapUserDoc(result) : null;
+  }
+
+  async createSession(session: CreatePxmSession): Promise<PxmSession> {
+    await this.ensureAuthzIndexes(); const now = new Date().toISOString();
+    const doc = { _id: session.id, ...session, created_at: now, last_seen_at: now, revoked_at: null, revoke_reason: null };
+    await this.db.collection<any>('pxm_sessions').insertOne(doc); return mapSessionDoc(doc);
+  }
+  async findSessionByTokenHash(tokenHash: string): Promise<PxmSession | null> {
+    await this.ensureAuthzIndexes(); const doc = await this.db.collection<any>('pxm_sessions').findOne({ token_hash: tokenHash });
+    return doc ? mapSessionDoc(doc) : null;
+  }
+  async touchSession(id: string, lastSeenAt: string, idleExpiresAt: string): Promise<void> {
+    await this.db.collection<any>('pxm_sessions').updateOne({ _id: id, revoked_at: null }, { $set: { last_seen_at: lastSeenAt, idle_expires_at: idleExpiresAt } });
+  }
+  async revokeSession(id: string, reason: string): Promise<boolean> {
+    const result = await this.db.collection<any>('pxm_sessions').updateOne({ _id: id, revoked_at: null }, { $set: { revoked_at: new Date().toISOString(), revoke_reason: reason } }); return result.modifiedCount > 0;
+  }
+  async revokeUserSessions(userId: string, reason: string, exceptId?: string): Promise<number> {
+    const filter: any = { user_id: userId, revoked_at: null }; if (exceptId) filter._id = { $ne: exceptId };
+    const result = await this.db.collection<any>('pxm_sessions').updateMany(filter, { $set: { revoked_at: new Date().toISOString(), revoke_reason: reason } }); return result.modifiedCount;
+  }
+  async listUserSessions(userId: string): Promise<PxmSession[]> {
+    await this.ensureAuthzIndexes(); return (await this.db.collection<any>('pxm_sessions').find({ user_id: userId }).sort({ created_at: -1 }).toArray()).map(mapSessionDoc);
   }
 
   async upsertServiceAccount(account: UpsertPxmServiceAccount): Promise<PxmServiceAccount> {
@@ -1378,6 +1430,9 @@ export class MongodbAdapter
     await this.db.collection<any>('pxm_api_keys').createIndex({ group_id: 1, status: 1 });
     await this.db.collection<any>('pxm_api_key_usage_logs').createIndex({ api_key_id: 1, created_at: -1 });
     await this.db.collection<any>('pxm_api_key_usage_logs').createIndex({ group_id: 1, created_at: -1 });
+    await this.db.collection<any>('pxm_sessions').createIndex({ token_hash: 1 }, { unique: true });
+    await this.db.collection<any>('pxm_sessions').createIndex({ user_id: 1, created_at: -1 });
+    await this.db.collection<any>('pxm_sessions').createIndex({ absolute_expires_at: 1 }, { expireAfterSeconds: 86400 });
     this.authzIndexesReady = true;
   }
 }
@@ -1427,6 +1482,10 @@ function mapUserDoc(doc: any): PxmUser {
     created_at: doc.created_at,
     updated_at: doc.updated_at,
   };
+}
+
+function mapSessionDoc(doc: any): PxmSession {
+  return { id: doc._id, token_hash: doc.token_hash, csrf_hash: doc.csrf_hash, user_id: doc.user_id, ip: doc.ip || null, user_agent: doc.user_agent || null, created_at: doc.created_at, last_seen_at: doc.last_seen_at, idle_expires_at: doc.idle_expires_at, absolute_expires_at: doc.absolute_expires_at, revoked_at: doc.revoked_at || null, revoke_reason: doc.revoke_reason || null };
 }
 
 function mapServiceAccountDoc(doc: any): PxmServiceAccount {

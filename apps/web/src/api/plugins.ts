@@ -83,9 +83,7 @@ export const pluginsApi = {
   },
 
   async controlList(): Promise<PluginManifest[]> {
-    const response = await fetch('/api/plugins/control', {
-      headers: adminHeaders(),
-    });
+    const response = await fetch('/api/plugins/control');
     if (!response.ok) {
       throw new Error(`plugin control api failed: ${response.status}`);
     }
@@ -105,7 +103,6 @@ export const pluginsApi = {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
-        ...adminHeaders(),
       },
       body: JSON.stringify(payload),
     });
@@ -117,9 +114,7 @@ export const pluginsApi = {
   },
 
   async registryList(): Promise<PluginManifest[]> {
-    const response = await fetch('/api/plugins/registry', {
-      headers: adminHeaders(),
-    });
+    const response = await fetch('/api/plugins/registry');
     if (!response.ok) {
       throw new Error(`plugin registry api failed: ${response.status}`);
     }
@@ -131,7 +126,6 @@ export const pluginsApi = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...adminHeaders(),
       },
       body: JSON.stringify(manifest),
     });
@@ -147,7 +141,6 @@ export const pluginsApi = {
       `/api/plugins/registry/${encodeURIComponent(pluginId)}/${encodeURIComponent(version)}`,
       {
         method: 'DELETE',
-        headers: adminHeaders(),
       },
     );
     const body = await response.json().catch(() => null);
@@ -156,10 +149,3 @@ export const pluginsApi = {
     }
   },
 };
-
-function adminHeaders() {
-  return {
-    'x-actor-id': 'admin',
-    'x-actor-roles': 'admin',
-  };
-}
