@@ -56,7 +56,7 @@ export function ExecutionPresetsPage({ currentUser }: Props) {
   const manageableGroupIds = useMemo(() => new Set(
     currentUser.role === 'admin'
       ? groups.map((group) => group.id)
-      : currentUser.group_ids,
+      : currentUser.memberships.filter((membership) => membership.role === 'group_manager').map((membership) => membership.group_id),
   ), [currentUser, groups]);
 
   const manageableTemplates = useMemo(() => templates.filter((template) =>
@@ -69,7 +69,7 @@ export function ExecutionPresetsPage({ currentUser }: Props) {
       const [templateItems, presetItems, groupItems] = await Promise.all([
         templatesApi.list(),
         listAllInputPresets(),
-        authzApi.listGroups(false),
+        authzApi.listGroups(false, true),
       ]);
       setTemplates(templateItems);
       setPresets(presetItems);

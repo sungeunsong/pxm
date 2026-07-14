@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { KeyRound, Plus, RotateCw, ShieldCheck, Trash2 } from 'lucide-react';
+import { KeyRound, Plus, RotateCw, Search, Share2, ShieldCheck, Trash2 } from 'lucide-react';
 import { Button, Input, Select, Checkbox } from '../components';
 import {
   credentialsApi,
@@ -7,10 +7,14 @@ import {
   type CredentialProfile,
   type CredentialType,
 } from '../api/credentials';
+import { authzApi, type PxmGroup } from '../api/authz';
+import type { SessionUser } from '../api/session';
 import './CredentialsPage.css';
 
 type CredentialFormState = {
   id?: string;
+  groupId: string;
+  sharedGroupIds: string[];
   name: string;
   type: CredentialType;
   description: string;
@@ -21,6 +25,8 @@ type CredentialFormState = {
 };
 
 const emptyForm: CredentialFormState = {
+  groupId: '',
+  sharedGroupIds: [],
   name: '',
   type: 'api_key',
   description: '',
@@ -30,13 +36,14 @@ const emptyForm: CredentialFormState = {
   active: true,
 };
 
-export const CredentialsPage: React.FC = () => {
+export const CredentialsPage: React.FC<{ currentUser: SessionUser }> = ({ currentUser }) => {
   const [credentials, setCredentials] = useState<CredentialProfile[]>([]);
   const [auditLogs, setAuditLogs] = useState<CredentialAuditLog[]>([]);
   const [form, setForm] = useState<CredentialFormState>(emptyForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [groups, setGroups] = useState<PxmGroup[]>([]);
 
   const activeCount = useMemo(
     () => credentials.filter((credential) => credential.active).length,
@@ -62,6 +69,15 @@ export const CredentialsPage: React.FC = () => {
 
   useEffect(() => {
     void loadData();
+    void authzApi.listGroups(false, true).then((items) => {
+      const allowed = currentUser.role === 'admin'
+        ? items
+        : items.filter((group) => currentUser.group_ids.includes(group.id));
+      setGroups(allowed);
+      if (allowed.length === 1) {
+        setForm((current) => current.id || current.groupId ? current : { ...current, groupId: allowed[0].id });
+      }
+    }).catch((err) => setError(err instanceof Error ? err.message : 'Group data load failed'));
   }, []);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -79,7 +95,7 @@ export const CredentialsPage: React.FC = () => {
         }
         await credentialsApi.create({ ...payload, secret_value: payload.secret_value });
       }
-      setForm(emptyForm);
+      setForm(newCredentialForm(groups));
       await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Credential save failed');
@@ -91,6 +107,8 @@ export const CredentialsPage: React.FC = () => {
   const handleEdit = (credential: CredentialProfile) => {
     setForm({
       id: credential.id,
+      groupId: credential.group_id || '',
+      sharedGroupIds: credential.shared_group_ids || [],
       name: credential.name,
       type: credential.type,
       description: credential.description,
@@ -107,7 +125,7 @@ export const CredentialsPage: React.FC = () => {
       await credentialsApi.deactivate(credential.id);
       await loadData();
       if (form.id === credential.id) {
-        setForm(emptyForm);
+        setForm(newCredentialForm(groups));
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Credential deactivate failed');
@@ -122,7 +140,7 @@ export const CredentialsPage: React.FC = () => {
             <KeyRound size={20} />
             <h2>Credential Store</h2>
           </div>
-          <p>외부 API, DB, 토큰 값을 프로필로 관리하고 워크플로우 노드에서는 ID만 참조합니다.</p>
+          <p>Credential은 한 그룹이 소유하며, 다른 관리 그룹에는 Secret 노출 없이 실행 권한만 공유합니다.</p>
         </div>
         <Button variant="secondary" size="sm" icon={<RotateCw size={14} />} onClick={loadData}>
           새로고침
@@ -154,7 +172,7 @@ export const CredentialsPage: React.FC = () => {
               variant="ghost"
               size="sm"
               icon={<Plus size={14} />}
-              onClick={() => setForm(emptyForm)}
+              onClick={() => setForm(newCredentialForm(groups))}
             >
               신규
             </Button>
@@ -173,9 +191,12 @@ export const CredentialsPage: React.FC = () => {
                   <button className="credential-row-main" onClick={() => handleEdit(credential)}>
                     <span className="credential-name">{credential.name}</span>
                     <span className="credential-meta">
-                      {credential.type} · {credential.scopes.length ? credential.scopes.join(', ') : 'scope 없음'}
+                      소유: {groupName(groups, credential.group_id)} · {credential.type} · {credential.scopes.length ? credential.scopes.join(', ') : 'scope 없음'}
                     </span>
                   </button>
+                  {credential.access_level === 'shared' && (
+                    <span className="credential-access shared"><Share2 size={11} /> 공유됨</span>
+                  )}
                   <span className={`credential-status ${credential.active ? 'active' : 'inactive'}`}>
                     {credential.active ? 'active' : 'inactive'}
                   </span>
@@ -184,7 +205,7 @@ export const CredentialsPage: React.FC = () => {
                     size="sm"
                     icon={<Trash2 size={14} />}
                     onClick={() => void handleDeactivate(credential)}
-                    disabled={!credential.active}
+                    disabled={!credential.active || credential.access_level === 'shared'}
                   />
                 </div>
               ))}
@@ -197,7 +218,28 @@ export const CredentialsPage: React.FC = () => {
             <h3>{form.id ? '프로필 수정' : '프로필 생성'}</h3>
             {form.id && <span className="credential-form-id">{form.id}</span>}
           </div>
-          <form className="credential-form" onSubmit={(event) => void handleSubmit(event)}>
+          {form.id && credentials.find((credential) => credential.id === form.id)?.access_level === 'shared' ? (
+            <SharedCredentialDetail
+              credential={credentials.find((credential) => credential.id === form.id)!}
+              groups={groups}
+              onClose={() => setForm(newCredentialForm(groups))}
+            />
+          ) : <form className="credential-form" onSubmit={(event) => void handleSubmit(event)}>
+            <Select
+              label="Group"
+              value={form.groupId}
+              onChange={(event) => setForm((prev) => ({
+                ...prev,
+                groupId: event.target.value,
+                sharedGroupIds: prev.sharedGroupIds.filter((groupId) => groupId !== event.target.value),
+              }))}
+              options={[
+                { value: '', label: '관리 그룹 선택' },
+                ...groups.map((group) => ({ value: group.id, label: group.name })),
+              ]}
+              required
+              fullWidth
+            />
             <Input
               label="Name"
               value={form.name}
@@ -243,6 +285,12 @@ export const CredentialsPage: React.FC = () => {
               scopesText={form.scopesText}
               onChange={(scopesText) => setForm((prev) => ({ ...prev, scopesText }))}
             />
+            <CredentialSharePicker
+              groups={groups}
+              ownerGroupId={form.groupId}
+              selectedGroupIds={form.sharedGroupIds}
+              onChange={(sharedGroupIds) => setForm((prev) => ({ ...prev, sharedGroupIds }))}
+            />
             <Input
               label={form.id ? 'Secret Value 변경' : 'Secret Value'}
               type="password"
@@ -273,11 +321,11 @@ export const CredentialsPage: React.FC = () => {
               <Button type="submit" disabled={saving} icon={<ShieldCheck size={14} />}>
                 {saving ? '저장 중...' : '저장'}
               </Button>
-              <Button variant="secondary" onClick={() => setForm(emptyForm)}>
+              <Button variant="secondary" onClick={() => setForm(newCredentialForm(groups))}>
                 취소
               </Button>
             </div>
-          </form>
+          </form>}
         </section>
       </div>
 
@@ -304,8 +352,124 @@ export const CredentialsPage: React.FC = () => {
   );
 };
 
+function SharedCredentialDetail({
+  credential,
+  groups,
+  onClose,
+}: {
+  credential: CredentialProfile;
+  groups: PxmGroup[];
+  onClose: () => void;
+}) {
+  return (
+    <div className="shared-credential-detail">
+      <div className="shared-credential-notice">
+        <Share2 size={18} />
+        <div>
+          <strong>다른 그룹에서 공유한 Credential입니다.</strong>
+          <p>워크플로우에서 사용할 수 있지만 설정·Secret·공유 범위·활성 상태는 변경할 수 없습니다.</p>
+        </div>
+      </div>
+      <dl>
+        <div><dt>이름</dt><dd>{credential.name}</dd></div>
+        <div><dt>소유 그룹</dt><dd>{groupName(groups, credential.group_id)}</dd></div>
+        <div><dt>유형</dt><dd>{credential.type}</dd></div>
+        <div><dt>설명</dt><dd>{credential.description || '-'}</dd></div>
+        <div><dt>Scope</dt><dd>{credential.scopes.join(', ') || '-'}</dd></div>
+        <div><dt>상태</dt><dd>{credential.active ? 'active' : 'inactive'}</dd></div>
+      </dl>
+      <div className="credential-form-actions">
+        <Button variant="secondary" onClick={onClose}>닫기</Button>
+      </div>
+    </div>
+  );
+}
+
+function CredentialSharePicker({
+  groups,
+  ownerGroupId,
+  selectedGroupIds,
+  onChange,
+}: {
+  groups: PxmGroup[];
+  ownerGroupId: string;
+  selectedGroupIds: string[];
+  onChange: (groupIds: string[]) => void;
+}) {
+  const [search, setSearch] = useState('');
+  const availableGroups = useMemo(
+    () => groups.filter((group) => group.id !== ownerGroupId),
+    [groups, ownerGroupId],
+  );
+  const normalizedSearch = search.trim().toLowerCase();
+  const visibleGroups = useMemo(() => availableGroups
+    .filter((group) => !normalizedSearch
+      || group.name.toLowerCase().includes(normalizedSearch)
+      || group.id.toLowerCase().includes(normalizedSearch))
+    .sort((left, right) => {
+      const selectedOrder = Number(selectedGroupIds.includes(right.id)) - Number(selectedGroupIds.includes(left.id));
+      return selectedOrder || left.name.localeCompare(right.name);
+    }), [availableGroups, normalizedSearch, selectedGroupIds]);
+
+  const toggleGroup = (groupId: string, checked: boolean) => {
+    onChange(checked
+      ? Array.from(new Set([...selectedGroupIds, groupId]))
+      : selectedGroupIds.filter((id) => id !== groupId));
+  };
+
+  return (
+    <div className="credential-form-group credential-share-group">
+      <div className="credential-share-heading">
+        <label>공유 그룹</label>
+        <span>{selectedGroupIds.length}개 선택</span>
+      </div>
+      <p>공유 그룹은 Secret을 볼 수 없으며 워크플로우 실행에만 사용할 수 있습니다.</p>
+      {availableGroups.length > 0 ? (
+        <div className="credential-share-picker">
+          <div className="credential-share-search">
+            <Search size={14} />
+            <input
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="그룹 이름 또는 ID 검색"
+              aria-label="공유 그룹 검색"
+            />
+          </div>
+          <div className="credential-share-list">
+            {visibleGroups.map((group) => {
+              const checked = selectedGroupIds.includes(group.id);
+              return (
+                <label key={group.id} className={`credential-share-option ${checked ? 'selected' : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(event) => toggleGroup(group.id, event.target.checked)}
+                  />
+                  <span className="credential-share-check" aria-hidden="true">{checked ? '✓' : ''}</span>
+                  <span className="credential-share-label">
+                    <strong>{group.name}</strong>
+                    <small>{group.id}</small>
+                  </span>
+                </label>
+              );
+            })}
+            {visibleGroups.length === 0 && (
+              <div className="credential-share-empty">검색 결과가 없습니다.</div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="credential-share-empty standalone">공유할 수 있는 다른 관리 그룹이 없습니다.</div>
+      )}
+    </div>
+  );
+}
+
 function buildCredentialPayload(form: CredentialFormState) {
   const payload = {
+    group_id: form.groupId,
+    shared_group_ids: form.sharedGroupIds,
     name: form.name.trim(),
     type: form.type,
     description: form.description.trim(),
@@ -320,7 +484,19 @@ function buildCredentialPayload(form: CredentialFormState) {
   if (!payload.name) {
     throw new Error('name이 필요합니다.');
   }
+  if (!payload.group_id) {
+    throw new Error('관리 group을 선택해야 합니다.');
+  }
   return payload;
+}
+
+function newCredentialForm(groups: PxmGroup[]): CredentialFormState {
+  return { ...emptyForm, groupId: groups.length === 1 ? groups[0].id : '' };
+}
+
+function groupName(groups: PxmGroup[], groupId: string | null) {
+  if (!groupId) return 'Legacy / group 미지정';
+  return groups.find((group) => group.id === groupId)?.name || groupId;
 }
 
 function ScopeSuggestions({

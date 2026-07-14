@@ -4,6 +4,7 @@ export type SessionUser = {
   email?: string | null;
   role: 'admin' | 'group_manager' | 'user';
   group_ids: string[];
+  memberships: Array<{ group_id: string; role: 'group_manager' | 'user' }>;
 };
 
 export const sessionApi = {

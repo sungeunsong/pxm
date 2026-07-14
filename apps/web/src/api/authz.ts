@@ -1,4 +1,6 @@
 export type PxmRole = 'admin' | 'group_manager' | 'user';
+export type PxmGroupRole = Exclude<PxmRole, 'admin'>;
+export type PxmGroupMembership = { group_id: string; role: PxmGroupRole };
 export type PrincipalStatus = 'active' | 'disabled' | 'deleted';
 export type ApiKeyOwnerType = 'USER' | 'SERVICE_ACCOUNT';
 export type ApiKeyScope = 'workflow:read' | 'workflow:execute' | 'task:approve';
@@ -18,6 +20,7 @@ export type PxmUser = {
   email?: string | null;
   role: PxmRole;
   group_ids: string[];
+  memberships: PxmGroupMembership[];
   status: PrincipalStatus;
   created_at: string;
   updated_at: string;
@@ -42,6 +45,8 @@ export type PxmApiKey = {
   key_prefix: string;
   scopes: ApiKeyScope[];
   allowed_workflow_ids: string[];
+  ip_allowlist: string[];
+  rate_limit_per_minute?: number | null;
   status: string;
   expires_at?: string | null;
   last_used_at?: string | null;
@@ -59,8 +64,8 @@ const API_BASE_URL = '/api/authz';
 const jsonHeaders = { 'Content-Type': 'application/json' };
 
 export const authzApi = {
-  async listGroups(includeDeleted = true): Promise<PxmGroup[]> {
-    const response = await fetch(`${API_BASE_URL}/groups?includeDeleted=${includeDeleted ? 'true' : 'false'}`, {
+  async listGroups(includeDeleted = true, manageableOnly = false): Promise<PxmGroup[]> {
+    const response = await fetch(`${API_BASE_URL}/groups?includeDeleted=${includeDeleted ? 'true' : 'false'}&manageableOnly=${manageableOnly ? 'true' : 'false'}`, {
       credentials: 'include',
     });
     return readJson(response, 'group list failed');
@@ -103,6 +108,7 @@ export const authzApi = {
     email?: string;
     role: PxmRole;
     group_ids: string[];
+    memberships?: PxmGroupMembership[];
     password?: string;
   }): Promise<PxmUser> {
     const response = await fetch(`${API_BASE_URL}/users`, {
@@ -146,6 +152,8 @@ export const authzApi = {
     group_id: string;
     scopes: ApiKeyScope[];
     allowed_workflow_ids: string[];
+    ip_allowlist?: string[];
+    rate_limit_per_minute?: number | null;
     expires_at?: string | null;
   }): Promise<CreatedApiKey> {
     const response = await fetch(`${API_BASE_URL}/api-keys`, {
@@ -162,6 +170,14 @@ export const authzApi = {
       credentials: 'include',
     });
     await readJson(response, 'api key disable failed');
+  },
+
+  async rotateApiKey(id: string): Promise<CreatedApiKey> {
+    const response = await fetch(`${API_BASE_URL}/api-keys/${encodeURIComponent(id)}/rotate`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+    return readJson(response, 'api key rotation failed');
   },
 };
 

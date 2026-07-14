@@ -9,10 +9,13 @@ import {
   type CreatedApiKey,
   type PxmApiKey,
   type PxmGroup,
+  type PxmGroupRole,
   type PxmRole,
   type PxmServiceAccount,
   type PxmUser,
 } from '../api/authz';
+import { templatesApi, type WorkflowTemplate } from '../api/templates';
+import type { SessionUser } from '../api/session';
 import './AccessManagementPage.css';
 
 const scopeOptions: ApiKeyScope[] = ['workflow:execute', 'workflow:read', 'task:approve'];
@@ -28,11 +31,12 @@ const roleLabels: Record<PxmRole, string> = {
 };
 type AccessDetailTab = 'users' | 'serviceAccounts' | 'apiKeys';
 
-export function AccessManagementPage() {
+export function AccessManagementPage({ currentUser }: { currentUser: SessionUser }) {
   const [groups, setGroups] = useState<PxmGroup[]>([]);
   const [users, setUsers] = useState<PxmUser[]>([]);
   const [serviceAccounts, setServiceAccounts] = useState<PxmServiceAccount[]>([]);
   const [apiKeys, setApiKeys] = useState<PxmApiKey[]>([]);
+  const [workflows, setWorkflows] = useState<WorkflowTemplate[]>([]);
   const [selectedGroupId, setSelectedGroupId] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -57,27 +61,36 @@ export function AccessManagementPage() {
     () => apiKeys.filter((key) => selectedGroupFilterId && key.group_id === selectedGroupFilterId),
     [apiKeys, selectedGroupFilterId],
   );
+  const groupWorkflows = useMemo(
+    () => workflows.filter((workflow) => workflow.group_id === selectedGroupFilterId),
+    [workflows, selectedGroupFilterId],
+  );
 
-  const loadData = async () => {
+  const loadData = async (requestedGroupId = selectedGroupId) => {
     setLoading(true);
     setError(null);
     try {
-      const [nextGroups, nextUsers, nextAccounts, nextKeys] = await Promise.all([
-        authzApi.listGroups(true),
-        authzApi.listUsers(),
-        authzApi.listServiceAccounts(),
-        authzApi.listApiKeys(),
+      const [nextGroups, nextWorkflows] = await Promise.all([
+        authzApi.listGroups(true, true),
+        templatesApi.list(true),
       ]);
+      const firstActive = nextGroups.find((group) => group.status !== 'deleted');
+      const targetGroupId = requestedGroupId && nextGroups.some((group) => group.id === requestedGroupId)
+        ? requestedGroupId
+        : firstActive?.id || '';
+      const [nextUsers, nextAccounts, nextKeys] = targetGroupId
+        ? await Promise.all([
+            authzApi.listUsers(targetGroupId),
+            authzApi.listServiceAccounts(targetGroupId),
+            authzApi.listApiKeys(targetGroupId),
+          ])
+        : [[], [], []];
       setGroups(nextGroups);
       setUsers(nextUsers);
       setServiceAccounts(nextAccounts);
       setApiKeys(nextKeys);
-      const firstActive = nextGroups.find((group) => group.status !== 'deleted');
-      setSelectedGroupId((current) =>
-        current && nextGroups.some((group) => group.id === current && group.status !== 'deleted')
-          ? current
-          : firstActive?.id || '',
-      );
+      setWorkflows(nextWorkflows);
+      setSelectedGroupId(targetGroupId);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Access data load failed');
     } finally {
@@ -86,7 +99,7 @@ export function AccessManagementPage() {
   };
 
   useEffect(() => {
-    void loadData();
+    void loadData('');
   }, []);
 
   const run = async (operation: () => Promise<unknown>) => {
@@ -94,7 +107,7 @@ export function AccessManagementPage() {
     setError(null);
     try {
       await operation();
-      await loadData();
+      await loadData(selectedGroupId);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Operation failed');
     } finally {
@@ -112,7 +125,7 @@ export function AccessManagementPage() {
           </div>
           <p>그룹, 실행 주체, API key scope를 한 곳에서 관리합니다.</p>
         </div>
-        <Button variant="secondary" size="sm" icon={<RefreshCw size={14} />} onClick={loadData} disabled={loading}>
+        <Button variant="secondary" size="sm" icon={<RefreshCw size={14} />} onClick={() => void loadData()} disabled={loading}>
           새로고침
         </Button>
       </div>
@@ -128,9 +141,9 @@ export function AccessManagementPage() {
 
       <div className="access-summary">
         <SummaryCard label="활성 그룹" value={activeGroups.length} />
-        <SummaryCard label="전체 등록 사용자" value={users.length} />
-        <SummaryCard label="서비스 계정" value={serviceAccounts.length} />
-        <SummaryCard label="API Key" value={apiKeys.length} />
+        <SummaryCard label="선택 그룹 사용자" value={users.length} />
+        <SummaryCard label="선택 그룹 서비스 계정" value={serviceAccounts.length} />
+        <SummaryCard label="선택 그룹 API Key" value={apiKeys.length} />
       </div>
 
       <div className="access-layout">
@@ -150,7 +163,7 @@ export function AccessManagementPage() {
               <button
                 key={group.id}
                 className={`access-list-row ${group.id === selectedGroup?.id ? 'selected' : ''}`}
-                onClick={() => setSelectedGroupId(group.id)}
+                onClick={() => void loadData(group.id)}
               >
                 <span>
                   <strong>{group.name}</strong>
@@ -221,6 +234,7 @@ export function AccessManagementPage() {
               />
               <UserForm
                 groupId={currentGroupId}
+                canAssignManager={currentUser.role === 'admin'}
                 disabled={saving || !currentGroupId}
                 onSave={(payload) => run(() => authzApi.saveUser(payload))}
               />
@@ -230,10 +244,10 @@ export function AccessManagementPage() {
                   primary: user.display_name,
                   secondary: user.email || undefined,
                   meta:
-                    user.role === 'group_manager'
+                    membershipRole(user, selectedGroupFilterId) === 'group_manager'
                       ? `${selectedGroup?.name || '현재 그룹'} 관리 가능`
                       : `${selectedGroup?.name || '현재 그룹'} 멤버`,
-                  badge: roleLabels[user.role] || user.role,
+                  badge: roleLabels[membershipRole(user, selectedGroupFilterId)] || membershipRole(user, selectedGroupFilterId),
                   status: user.status,
                 }))}
               />
@@ -283,6 +297,7 @@ export function AccessManagementPage() {
                 groupId={currentGroupId}
                 users={groupUsers}
                 serviceAccounts={groupServiceAccounts}
+                workflows={groupWorkflows}
                 disabled={saving || !currentGroupId}
                 onSave={(payload) =>
                   run(async () => {
@@ -304,6 +319,15 @@ export function AccessManagementPage() {
                     <div className="key-row-meta">
                       <span className={`status-badge ${key.status}`}>{key.status}</span>
                       <span>{key.scopes.map((scope) => scopeLabels[scope] || scope).join(', ') || '권한 없음'}</span>
+                      <span>{key.expires_at ? `만료 ${new Date(key.expires_at).toLocaleDateString()}` : '만료 없음'}</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => run(async () => setCreatedKey(await authzApi.rotateApiKey(key.id)))}
+                        disabled={key.status !== 'active'}
+                      >
+                        Rotation
+                      </Button>
                       <Button
                         variant="ghost"
                         size="sm"
@@ -353,6 +377,11 @@ function ContextNotice({ group, text }: { group: PxmGroup | null; text: string }
   );
 }
 
+function membershipRole(user: PxmUser, groupId: string): PxmGroupRole {
+  return user.memberships?.find((membership) => membership.group_id === groupId)?.role
+    || (user.role === 'group_manager' ? 'group_manager' : 'user');
+}
+
 function GroupForm({ disabled, onSave }: { disabled?: boolean; onSave: (payload: { id?: string; name: string; description?: string }) => void }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -378,12 +407,14 @@ function GroupForm({ disabled, onSave }: { disabled?: boolean; onSave: (payload:
 
 function UserForm({
   groupId,
+  canAssignManager,
   disabled,
   onSave,
 }: {
   groupId: string;
+  canAssignManager: boolean;
   disabled?: boolean;
-  onSave: (payload: { id?: string; display_name: string; email?: string; role: PxmRole; group_ids: string[]; password?: string }) => void;
+  onSave: (payload: { id?: string; display_name: string; email?: string; role: PxmRole; group_ids: string[]; memberships: Array<{ group_id: string; role: PxmGroupRole }>; password?: string }) => void;
 }) {
   const [id, setId] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -394,7 +425,15 @@ function UserForm({
     <form className="access-form compact" onSubmit={(event) => {
       event.preventDefault();
       if (!displayName.trim() || !groupId) return;
-      onSave({ id: id.trim() || undefined, display_name: displayName.trim(), email: email.trim(), role, group_ids: [groupId], password: password || undefined });
+      onSave({
+        id: id.trim() || undefined,
+        display_name: displayName.trim(),
+        email: email.trim(),
+        role,
+        group_ids: [groupId],
+        memberships: [{ group_id: groupId, role: role === 'group_manager' ? 'group_manager' : 'user' }],
+        password: password || undefined,
+      });
       setId('');
       setDisplayName('');
       setEmail('');
@@ -407,8 +446,8 @@ function UserForm({
       <input type="password" minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="초기 비밀번호 (8자 이상)" />
       <select value={role} onChange={(event) => setRole(event.target.value as PxmRole)}>
         <option value="user">일반 사용자</option>
-        <option value="group_manager">그룹 관리자</option>
-        <option value="admin">최고 관리자</option>
+        {canAssignManager && <option value="group_manager">그룹 관리자</option>}
+        {canAssignManager && <option value="admin">최고 관리자</option>}
       </select>
       <Button type="submit" variant="primary" size="sm" disabled={disabled || !displayName.trim()}>멤버 추가</Button>
     </form>
@@ -448,12 +487,14 @@ function ApiKeyForm({
   groupId,
   users,
   serviceAccounts,
+  workflows,
   disabled,
   onSave,
 }: {
   groupId: string;
   users: PxmUser[];
   serviceAccounts: PxmServiceAccount[];
+  workflows: WorkflowTemplate[];
   disabled?: boolean;
   onSave: (payload: {
     name: string;
@@ -462,6 +503,8 @@ function ApiKeyForm({
     group_id: string;
     scopes: ApiKeyScope[];
     allowed_workflow_ids: string[];
+    ip_allowlist?: string[];
+    rate_limit_per_minute?: number | null;
     expires_at?: string | null;
   }) => void;
 }) {
@@ -469,13 +512,19 @@ function ApiKeyForm({
   const [ownerType, setOwnerType] = useState<ApiKeyOwnerType>('SERVICE_ACCOUNT');
   const [ownerId, setOwnerId] = useState('');
   const [scopes, setScopes] = useState<ApiKeyScope[]>(['workflow:execute']);
-  const [workflowIds, setWorkflowIds] = useState('');
+  const [workflowIds, setWorkflowIds] = useState<string[]>([]);
   const [expiresAt, setExpiresAt] = useState('');
+  const [ipAllowlist, setIpAllowlist] = useState('');
+  const [rateLimit, setRateLimit] = useState('');
   const owners = ownerType === 'USER' ? users : serviceAccounts;
 
   useEffect(() => {
     setOwnerId(owners[0]?.id || '');
   }, [ownerType, groupId, owners.length]);
+
+  useEffect(() => {
+    setWorkflowIds(workflows.map((workflow) => workflow.id));
+  }, [groupId, workflows]);
 
   return (
     <form className="access-form key-form" onSubmit={(event) => {
@@ -487,12 +536,16 @@ function ApiKeyForm({
         owner_id: ownerId,
         group_id: groupId,
         scopes,
-        allowed_workflow_ids: workflowIds.split(',').map((item) => item.trim()).filter(Boolean),
+        allowed_workflow_ids: workflowIds,
+        ip_allowlist: ipAllowlist.split(',').map((item) => item.trim()).filter(Boolean),
+        rate_limit_per_minute: rateLimit ? Number(rateLimit) : null,
         expires_at: expiresAt || null,
       });
       setName('');
-      setWorkflowIds('');
+      setWorkflowIds(workflows.map((workflow) => workflow.id));
       setExpiresAt('');
+      setIpAllowlist('');
+      setRateLimit('');
     }}>
       <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Key 이름" />
       <select value={ownerType} onChange={(event) => setOwnerType(event.target.value as ApiKeyOwnerType)}>
@@ -522,8 +575,28 @@ function ApiKeyForm({
           </label>
         ))}
       </div>
-      <input value={workflowIds} onChange={(event) => setWorkflowIds(event.target.value)} placeholder="허용 워크플로우 ID, 쉼표 구분" />
+      <div className="scope-box workflow-scope-box">
+        <strong>허용 워크플로우</strong>
+        {workflows.length === 0 ? (
+          <small>현재 그룹에 활성 워크플로우가 없습니다.</small>
+        ) : workflows.map((workflow) => (
+          <label key={workflow.id}>
+            <input
+              type="checkbox"
+              checked={workflowIds.includes(workflow.id)}
+              onChange={(event) => setWorkflowIds((current) =>
+                event.target.checked
+                  ? Array.from(new Set([...current, workflow.id]))
+                  : current.filter((id) => id !== workflow.id),
+              )}
+            />
+            {workflow.name}
+          </label>
+        ))}
+      </div>
       <input type="date" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} />
+      <input value={ipAllowlist} onChange={(event) => setIpAllowlist(event.target.value)} placeholder="허용 IP/CIDR, 쉼표 구분 (선택)" />
+      <input type="number" min="1" max="100000" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} placeholder="분당 요청 제한 (선택)" />
       <Button type="submit" variant="primary" size="sm" disabled={disabled || !name.trim() || !ownerId || scopes.length === 0}>
         발급
       </Button>

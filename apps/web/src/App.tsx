@@ -31,6 +31,7 @@ import { LoginPage } from './auth/LoginPage';
 import { AccountDialog } from './auth/AccountDialog';
 import { ExecutionPresetsPage } from './input-presets/ExecutionPresetsPage';
 import { sessionApi, type SessionUser } from './api/session';
+import { approvalSampleUiEnabled } from './config/features';
 import './App.css';
 
 type ActiveTab =
@@ -46,7 +47,7 @@ type ActiveTab =
   | 'pluginRegistry'
   | 'access';
 
-const DEFAULT_TAB: ActiveTab = 'inbox';
+const DEFAULT_TAB: ActiveTab = 'dashboard';
 
 const ROUTE_TO_TAB: Record<string, ActiveTab> = {
   dashboard: 'dashboard',
@@ -79,7 +80,8 @@ const TAB_TO_ROUTE: Record<ActiveTab, string> = {
 const readTabFromHash = (): ActiveTab | null => {
   if (typeof window === 'undefined') return null;
   const route = window.location.hash.replace(/^#\/?/, '').split('?')[0];
-  return ROUTE_TO_TAB[route] || null;
+  const tab = ROUTE_TO_TAB[route] || null;
+  return tab === 'inbox' && !approvalSampleUiEnabled ? null : tab;
 };
 
 const readInitialTab = (): ActiveTab => {
@@ -102,13 +104,19 @@ function WorkspaceApp({ user, onUserChange, onLogout }: { user: SessionUser; onU
   });
 
   const setActiveTab = (tab: ActiveTab) => {
-    setActiveTabState(tab);
-    window.history.pushState(null, '', `#/${TAB_TO_ROUTE[tab]}`);
+    const nextTab = tab === 'inbox' && !approvalSampleUiEnabled ? 'request' : tab;
+    setActiveTabState(nextTab);
+    window.history.pushState(null, '', `#/${TAB_TO_ROUTE[nextTab]}`);
   };
 
   useEffect(() => {
-    if (user.role === 'user' && !['request', 'tracker', 'inbox'].includes(activeTab)) {
-      setActiveTab('inbox');
+    const userTabs: ActiveTab[] = approvalSampleUiEnabled
+      ? ['request', 'tracker', 'inbox']
+      : ['request', 'tracker'];
+    if (user.role === 'user' && !userTabs.includes(activeTab)) {
+      setActiveTab('request');
+    } else if (!approvalSampleUiEnabled && activeTab === 'inbox') {
+      setActiveTab(user.role === 'user' ? 'request' : 'dashboard');
     }
   }, [activeTab, user.role]);
 
@@ -199,16 +207,16 @@ function WorkspaceApp({ user, onUserChange, onLogout }: { user: SessionUser; onU
             <span>실행 모니터링</span>
           </button>
 
-          <button
+          {approvalSampleUiEnabled && <button
             title="승인자 / 결재자"
             className={`sidebar-menu-item ${activeTab === 'inbox' ? 'active' : ''}`}
             onClick={() => setActiveTab('inbox')}
           >
             <Inbox size={16} />
             <span>승인자 / 결재자</span>
-          </button>
+          </button>}
           
-          <div className="sidebar-separator">설정 및 감사</div>
+          {user.role !== 'user' && <div className="sidebar-separator">설정 및 감사</div>}
           
           {user.role !== 'user' && <button
             title="Credential Store"
@@ -255,10 +263,10 @@ function WorkspaceApp({ user, onUserChange, onLogout }: { user: SessionUser; onU
             <span>Plugin Registry</span>
           </button>}
           
-          <button className="sidebar-menu-item disabled" title="감사 로그">
+          {user.role !== 'user' && <button className="sidebar-menu-item disabled" title="감사 로그">
             <FileText size={16} />
             <span>감사 로그</span>
-          </button>
+          </button>}
         </nav>
         
         <div className="sidebar-footer">
@@ -380,13 +388,14 @@ function WorkspaceApp({ user, onUserChange, onLogout }: { user: SessionUser; onU
           {activeTab === 'designer' && (
             <div style={{ height: '100%' }}>
               <FlowDesigner 
-                onSwitchToInbox={() => setActiveTab('inbox')}
+                currentUser={user}
+                onSwitchToInbox={approvalSampleUiEnabled ? () => setActiveTab('inbox') : undefined}
                 initialMonitorInstanceId={selectedInstanceId || undefined}
               />
             </div>
           )}
 
-          {activeTab === 'request' && <RequestPortal />}
+          {activeTab === 'request' && <RequestPortal currentUser={user} />}
 
           {activeTab === 'presets' && <ExecutionPresetsPage currentUser={user} />}
 
@@ -394,13 +403,13 @@ function WorkspaceApp({ user, onUserChange, onLogout }: { user: SessionUser; onU
             <InstanceTracker onSelectInstance={handleSelectInstanceForTracking} />
           )}
 
-          {activeTab === 'inbox' && (
+          {approvalSampleUiEnabled && activeTab === 'inbox' && (
             <InboxPage onSwitchToDesigner={() => setActiveTab('designer')} />
           )}
 
-          {activeTab === 'credentials' && <CredentialsPage />}
+          {activeTab === 'credentials' && <CredentialsPage currentUser={user} />}
 
-          {activeTab === 'access' && <AccessManagementPage />}
+          {activeTab === 'access' && <AccessManagementPage currentUser={user} />}
 
           {activeTab === 'commands' && <CommandRegistryPage />}
 

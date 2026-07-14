@@ -27,6 +27,7 @@ export interface NodePropertiesFormProps {
   testRunning?: boolean;
   testResult?: PluginTestResponse | null;
   testError?: string | null;
+  credentialGroupId?: string;
 }
 
 export interface NodePathSuggestion {
@@ -107,6 +108,7 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
   testRunning = false,
   testResult,
   testError,
+  credentialGroupId,
 }) => {
   const scriptEditorRef = React.useRef<ReactCodeMirrorRef | null>(null);
   const [credentials, setCredentials] = React.useState<CredentialProfile[]>([]);
@@ -134,9 +136,15 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
 
   React.useEffect(() => {
     let cancelled = false;
+    if (!credentialGroupId) {
+      setCredentials([]);
+      setCredentialsError('Workflow 관리 그룹을 먼저 선택하세요.');
+      setCredentialsLoading(false);
+      return () => { cancelled = true; };
+    }
     setCredentialsLoading(true);
     credentialsApi
-      .list(true)
+      .list(true, credentialGroupId)
       .then((items) => {
         if (!cancelled) {
           setCredentials(items);
@@ -157,7 +165,7 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [credentialGroupId]);
 
   React.useEffect(() => {
     if (node.data.nodeType !== 'workflow_call') {

@@ -14,6 +14,8 @@ import {
 } from 'lucide-react';
 import { type InputPreset, listInputPresets, saveInputPreset } from '../input-presets';
 import { InputPresetManager } from '../input-presets/InputPresetManager';
+import { authzApi, type PxmGroup } from '../api/authz';
+import type { SessionUser } from '../api/session';
 import './RequestPortal.css';
 
 interface Template {
@@ -21,6 +23,7 @@ interface Template {
   name: string;
   description: string;
   group?: string;
+  group_id?: string | null;
   tags?: string[];
   version: number;
   nodes: any[];
@@ -63,11 +66,13 @@ type ScheduleStatus = {
   }>;
 };
 
-export const RequestPortal: React.FC = () => {
+export const RequestPortal: React.FC<{ currentUser: SessionUser }> = ({ currentUser }) => {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState('');
   const [filterMode, setFilterMode] = useState<FilterMode>('all');
+  const [groupFilter, setGroupFilter] = useState('all');
+  const [groups, setGroups] = useState<PxmGroup[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [presetVersion, setPresetVersion] = useState(0);
@@ -105,6 +110,10 @@ export const RequestPortal: React.FC = () => {
 
   useEffect(() => {
     fetchTemplates();
+  }, []);
+
+  useEffect(() => {
+    authzApi.listGroups(false).then((items) => setGroups(items.filter((item) => item.status === 'active'))).catch((error) => console.error('Failed to load groups:', error));
   }, []);
 
   const summaries = useMemo(() => templates.map(buildTemplateSummary), [templates]);
@@ -158,10 +167,11 @@ export const RequestPortal: React.FC = () => {
         (filterMode === 'schedule' && summary.triggerType === 'schedule') ||
         (filterMode === 'db_watch' && summary.triggerType === 'db_watch') ||
         (filterMode === 'approval' && summary.approvalNodes > 0);
+      const matchesGroup = groupFilter === 'all' || (groupFilter === 'unassigned' ? !template.group_id : template.group_id === groupFilter);
 
-      return matchesQuery && matchesFilter;
+      return matchesQuery && matchesFilter && matchesGroup;
     });
-  }, [filterMode, query, templates]);
+  }, [filterMode, groupFilter, query, templates]);
 
   const metrics = useMemo(
     () => ({
@@ -201,7 +211,7 @@ export const RequestPortal: React.FC = () => {
     const name = prompt('파라미터 세트 이름을 입력하세요.');
     if (!name?.trim()) return;
     try {
-      await saveInputPreset(selectedTemplate.id, name, formData);
+      await saveInputPreset(selectedTemplate.id, name, formData, undefined, currentUser.role === 'user' ? 'private' : 'group');
       refreshPresets();
     } catch (error) {
       console.error('Failed to save input preset:', error);
@@ -301,6 +311,25 @@ export const RequestPortal: React.FC = () => {
     }
   };
 
+  const handleChangeGroup = async (groupId: string) => {
+    if (!selectedTemplate || currentUser.role !== 'admin') return;
+    const group = groups.find((item) => item.id === groupId);
+    if (!group || !window.confirm(`워크플로우 “${selectedTemplate.name}”을 ${group.name} 그룹으로 이동할까요?`)) return;
+    try {
+      const response = await fetch(`/api/templates/${selectedTemplate.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ group_id: group.id, group: group.name, version_note: `Move workflow to group ${group.name}` }),
+      });
+      const updated = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(updated?.message || 'Group change failed');
+      setTemplates((items) => items.map((item) => item.id === updated.id ? updated : item));
+      setSelectedTemplate(updated);
+    } catch (error) {
+      console.error('Failed to change workflow group:', error);
+      alert(error instanceof Error ? error.message : '관리 그룹 변경에 실패했습니다.');
+    }
+  };
+
   const fetchScheduleStatus = async (templateId: string) => {
     setScheduleStatusLoading(true);
     try {
@@ -366,6 +395,11 @@ export const RequestPortal: React.FC = () => {
                 </button>
               ))}
             </div>
+            <select className="workflow-group-filter" value={groupFilter} onChange={(event) => setGroupFilter(event.target.value)} aria-label="관리 그룹 필터">
+              <option value="all">모든 관리 그룹</option>
+              {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+              {currentUser.role === 'admin' && <option value="unassigned">미지정 (Legacy)</option>}
+            </select>
           </div>
 
           <div className="workflow-table-wrap">
@@ -375,7 +409,8 @@ export const RequestPortal: React.FC = () => {
                   <th>워크플로우</th>
                   <th>트리거</th>
                   <th>구성</th>
-                  <th>그룹/태그</th>
+                  <th>관리 그룹</th>
+                  <th>태그</th>
                   <th>업데이트</th>
                   <th />
                 </tr>
@@ -383,11 +418,11 @@ export const RequestPortal: React.FC = () => {
               <tbody>
                 {loading && filteredTemplates.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="workflow-empty">템플릿 목록을 불러오는 중입니다.</td>
+                    <td colSpan={7} className="workflow-empty">템플릿 목록을 불러오는 중입니다.</td>
                   </tr>
                 ) : filteredTemplates.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="workflow-empty">조건에 맞는 워크플로우가 없습니다.</td>
+                    <td colSpan={7} className="workflow-empty">조건에 맞는 워크플로우가 없습니다.</td>
                   </tr>
                 ) : (
                   filteredTemplates.map((template) => {
@@ -414,8 +449,10 @@ export const RequestPortal: React.FC = () => {
                           </div>
                         </td>
                         <td>
+                          <span className={`workflow-group-badge${template.group_id ? '' : ' legacy'}`}>{template.group || '미지정'}</span>
+                        </td>
+                        <td>
                           <div className="workflow-tags">
-                            {template.group && <span>{template.group}</span>}
                             {(template.tags || []).slice(0, 2).map((tag) => (
                               <span key={tag}>{tag}</span>
                             ))}
@@ -454,6 +491,19 @@ export const RequestPortal: React.FC = () => {
                 <DetailItem label="Edges" value={String(selectedSummary.edgeCount)} />
                 <DetailItem label="Approval Nodes" value={String(selectedSummary.approvalNodes)} />
                 <DetailItem label="Service Nodes" value={String(selectedSummary.serviceNodes)} />
+              </div>
+
+              <div className="detail-section workflow-group-section">
+                <h4>관리 그룹</h4>
+                {currentUser.role === 'admin' ? (
+                  <select value={selectedTemplate.group_id || ''} onChange={(event) => void handleChangeGroup(event.target.value)}>
+                    <option value="" disabled>관리 그룹을 선택하세요</option>
+                    {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+                  </select>
+                ) : (
+                  <div className="workflow-group-readonly">{selectedTemplate.group || '미지정'}<small>{selectedTemplate.group_id || 'Legacy workflow'}</small></div>
+                )}
+                {currentUser.role === 'admin' && <p className="form-info-text">그룹 변경은 새 워크플로 버전으로 저장됩니다.</p>}
               </div>
 
               {selectedSummary.triggerType === 'schedule' && (
@@ -512,7 +562,9 @@ export const RequestPortal: React.FC = () => {
                       presetsLoading={presetsLoading}
                       onApplyPreset={handleApplyPreset}
                       onSavePreset={handleSavePreset}
-                      onManagePresets={() => setPresetManagerOpen(true)}
+                      onManagePresets={() => currentUser.role === 'user'
+                        ? setPresetManagerOpen(true)
+                        : (window.location.hash = `#/presets?workflow=${encodeURIComponent(selectedTemplate.id)}`)}
                     />
                     <button className="btn-launch-execute" onClick={handleLaunch}>
                       <Play size={14} fill="currentColor" />

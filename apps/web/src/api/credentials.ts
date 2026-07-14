@@ -7,6 +7,9 @@ export type CredentialType =
 
 export interface CredentialProfile {
   id: string;
+  group_id: string | null;
+  shared_group_ids: string[];
+  access_level: 'owner' | 'shared';
   name: string;
   type: CredentialType;
   description: string;
@@ -17,19 +20,25 @@ export interface CredentialProfile {
   created_at: string;
   updated_at: string;
   last_used_at?: string | null;
+  created_by?: string | null;
+  updated_by?: string | null;
 }
 
 export interface CredentialAuditLog {
   id: string;
   credential_id: string;
+  group_id?: string | null;
   action: string;
   actor: string;
   node_id?: string | null;
   workflow_id?: string | null;
+  details?: Record<string, unknown> | null;
   created_at: string;
 }
 
 export interface SaveCredentialRequest {
+  group_id: string;
+  shared_group_ids?: string[];
   name: string;
   type: CredentialType;
   description?: string;
@@ -42,9 +51,10 @@ export interface SaveCredentialRequest {
 const API_BASE_URL = '/api';
 
 export const credentialsApi = {
-  async list(activeOnly = false): Promise<CredentialProfile[]> {
+  async list(activeOnly = false, groupId?: string): Promise<CredentialProfile[]> {
     const params = new URLSearchParams();
     params.set('activeOnly', String(activeOnly));
+    if (groupId) params.set('groupId', groupId);
     const response = await fetch(`${API_BASE_URL}/credentials?${params.toString()}`);
     if (!response.ok) {
       throw new Error(`Failed to fetch credentials: ${response.statusText}`);

@@ -9,12 +9,14 @@ export interface TemplateListModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSelect: (template: WorkflowTemplate) => void;
+  allowedGroupIds?: string[];
 }
 
 export const TemplateListModal: React.FC<TemplateListModalProps> = ({
   isOpen,
   onClose,
   onSelect,
+  allowedGroupIds,
 }) => {
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [loading, setLoading] = useState(false);
@@ -24,19 +26,20 @@ export const TemplateListModal: React.FC<TemplateListModalProps> = ({
   const [versionDiff, setVersionDiff] = useState<WorkflowVersionDiff | null>(null);
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [versionsError, setVersionsError] = useState<string | null>(null);
+  const allowedGroupKey = allowedGroupIds?.join(',');
 
   useEffect(() => {
     if (isOpen) {
       loadTemplates();
     }
-  }, [isOpen]);
+  }, [isOpen, allowedGroupKey]);
 
   const loadTemplates = async () => {
     setLoading(true);
     setError(null);
     try {
       const data = await templatesApi.list(true);
-      setTemplates(data);
+      setTemplates(allowedGroupIds ? data.filter((template) => template.group_id && allowedGroupIds.includes(template.group_id)) : data);
     } catch (err) {
       console.error('Failed to load templates:', err);
       setError('템플릿 목록을 불러오는데 실패했습니다.');

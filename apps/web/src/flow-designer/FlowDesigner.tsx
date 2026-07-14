@@ -17,6 +17,8 @@ import { HistoryListModal } from './HistoryListModal';
 import { templatesApi } from '../api/templates';
 import type { WorkflowTemplate } from '../api/templates';
 import { authzApi, type PxmGroup } from '../api/authz';
+import type { SessionUser } from '../api/session';
+import { approvalSampleUiEnabled } from '../config/features';
 import { pluginsApi } from '../api/plugins';
 import type { PluginManifest, PluginTestResponse } from '../api/plugins';
 import { PluginIcon } from './plugin-icons';
@@ -26,6 +28,7 @@ export interface FlowDesignerProps {
   children?: React.ReactNode;
   onSwitchToInbox?: () => void;
   initialMonitorInstanceId?: string;
+  currentUser: SessionUser;
 }
 
 type DesignerTab = {
@@ -53,7 +56,7 @@ type WorkflowClipboard = {
   edges: Edge[];
 };
 
-export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, initialMonitorInstanceId }) => {
+export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, initialMonitorInstanceId, currentUser }) => {
   const [darkMode, setDarkMode] = useState(true);
   const [selectedNode, setSelectedNode] = useState<Node<CustomNodeData> | null>(null);
   const [canvasNodes, setCanvasNodes] = useState<Node<CustomNodeData>[]>([]);
@@ -100,7 +103,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
   // SSE 연결 정리
   React.useEffect(() => {
     let cancelled = false;
-    authzApi.listGroups(false)
+    authzApi.listGroups(false, true)
       .then((groups) => { if (!cancelled) { setAvailableGroups(groups.filter((group) => group.status === 'active')); setGroupsError(null); } })
       .catch((error) => { if (!cancelled) setGroupsError(error instanceof Error ? error.message : '그룹 목록을 불러오지 못했습니다.'); })
       .finally(() => { if (!cancelled) setGroupsLoading(false); });
@@ -368,6 +371,17 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
       ? { ...tab, groupId, group: group?.name || '', isDirty: true }
       : tab));
   };
+
+  React.useEffect(() => {
+    if (
+      currentUser.role === 'group_manager' &&
+      availableGroups.length === 1 &&
+      !workflowGroupId &&
+      !currentTemplateId
+    ) {
+      handleGroupSelection(availableGroups[0].id);
+    }
+  }, [availableGroups, currentTemplateId, currentUser.role, workflowGroupId]);
 
   const handleRun = async (formData?: Record<string, any>) => {
     if (!currentTemplateId) {
@@ -885,11 +899,16 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
     <div className="flow-designer">
       <Header
         title="PXM Flow Designer"
-        actions={
-          <Button variant="ghost" icon={<Inbox />} onClick={() => onSwitchToInbox?.()}>
-            내 결재함
-          </Button>
-        }
+        actions={(
+          <>
+            {currentTemplateId && <Button variant="ghost" icon={<Braces />} onClick={() => { window.location.hash = `#/presets?workflow=${encodeURIComponent(currentTemplateId)}`; }}>
+              실행 프리셋
+            </Button>}
+            {approvalSampleUiEnabled && <Button variant="ghost" icon={<Inbox />} onClick={() => onSwitchToInbox?.()}>
+              내 결재함
+            </Button>}
+          </>
+        )}
         onRun={() => handleRun()}
         onSave={handleSave}
         onLoad={handleLoad}
@@ -1157,6 +1176,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
                     testRunning={isNodeTestRunning}
                     testResult={nodeTestResult}
                     testError={nodeTestError}
+                    credentialGroupId={workflowGroupId}
                   />
                   ) : (
                     <WorkflowMetadataForm
@@ -1185,6 +1205,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
         isOpen={isTemplateModalOpen}
         onClose={() => setIsTemplateModalOpen(false)}
         onSelect={handleTemplateSelect}
+        allowedGroupIds={currentUser.role === 'admin' ? undefined : availableGroups.map((group) => group.id)}
       />
 
       <HistoryListModal
