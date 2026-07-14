@@ -186,12 +186,19 @@
   - [x] console output secret masking 정책
   - [x] 실패한 JS Node도 실행 전까지의 console output 표시
 
-- [~] 자주 쓰는 파라미터 세트
+- [x] 자주 쓰는 파라미터 세트
   - [x] workflow별 input preset 모델
   - [x] input preset DB 저장소 및 CRUD API
+  - [x] API 실행 프리셋 독립 관리 페이지와 전체 조회 API
+  - [x] workflow 선택 기반 생성, Start 입력 스키마 안내, API alias/호출 예시 제공
+  - [x] Designer/워크플로우 관리에서 해당 workflow 프리셋 바로가기
   - [x] preset alias/id 기반 Start API 실행
   - [x] preset 값 + 요청 input override 병합
-  - [ ] group/shared/private scope 정책
+  - [x] 소유 group 기본 + 개인 테스트 고급 scope 정책
+  - [x] 로그인 session actor 기반 created_by/updated_by 소유권
+  - [x] 관리자는 소유 group 기본, 일반 user 빠른 저장은 private 적용
+  - [x] 지정 group 공유 신규 생성 중단: workflow 실행 권한 공유 모델 도입 전까지 legacy 조회/소유 group 전환만 지원
+  - [x] Start 입력 스키마 기반 JSON 골격 자동 생성과 필수값/타입/허용 키 검증
   - [x] secret/credential 값 저장 금지 정책
   - [x] request portal / start API에서 preset 선택 지원
 
@@ -208,19 +215,25 @@
 
 ## Group / RBAC / API Key Roadmap
 
-- [ ] Group domain model
+- [x] Group domain model
   - [x] group CRUD API/storage skeleton
   - [x] role 모델: `admin`, `group_manager`, `user`
   - [x] workflow group ownership 연결: `group_id` metadata/definition/version/export/start access 반영
   - [x] Flow Designer 생성/수정 화면의 관리 group 선택 UX
+  - [x] workflow 관리/Designer 목록의 actor group 기반 서버 필터
+  - [x] 최고관리자 workflow 관리 화면의 group 표시/필터/변경
+  - [x] 단일 group manager 신규 workflow group 자동 지정
   - [x] group 삭제 정책: soft delete, API key 비활성화, 실행 이력/version 보존 기반
   - [x] 삭제된 group/workflow 조회/복구는 `admin`만 허용하는 guard 적용
   - [x] group 복구 시 비활성화된 API key는 자동 복구하지 않음
-  - [ ] group별 이력 조회 범위
+  - [x] group별 이력 조회 범위
 
-- [ ] Role model 재정리
+- [x] Role model 재정리
   - [x] `admin`: group 생성/삭제/복구, group role 부여, 전체 감사
   - [x] `group_manager`: 할당받은 group 안에서 workflow/API key/멤버 관리
+  - [x] 사용자별 다중 group membership 및 group별 `group_manager`/`user` role 적용
+  - [x] 기존 `role`/`group_ids` 데이터의 membership 자동 호환
+  - [x] Access Management 그룹 전환 시 선택 group 기준 사용자/service account/API key 조회
   - [x] 로그인/서버 저장형 opaque session 연동 및 `/api/auth/me`, logout 구현
   - [x] session token hash 저장, idle 30분/absolute 8시간 만료
   - [x] 세션별 폐기, 다른 세션 전체 폐기, 활성 세션 조회 API
@@ -230,40 +243,56 @@
   - [x] `admin`/`group_manager`/`user`별 관리 메뉴 노출 제한
   - [x] PXM / Penta eXecute Manager 로그인 브랜딩과 앱 아이콘 적용
   - [x] 내 정보 수정과 비밀번호 변경, 변경 시 다른 세션 폐기
-  - [ ] `user`: 개인 API key owner 또는 일반 실행 주체. 관리 권한 없음
-  - [ ] 웹 콘솔 user는 최고관리자/그룹관리자/개인 API 사용자 중심으로 제한
-  - [ ] 일반 업무 사용자는 기본적으로 BPM user로 등록하지 않음
-  - [ ] 요청자/승인자 같은 runtime role은 관리 role과 분리
-  - [ ] 기존 operator/workflow_owner/requester/approver/api_client 권한과 호환 path 정리
+  - [x] Approval 노드는 기본 제공하고 요청/승인 포털과 결재함은 sample UI feature flag로 분리
+  - [x] `user`: 개인 API key owner 또는 일반 실행 주체. 관리 권한 없음
+  - [x] 웹 콘솔 user는 최고관리자/그룹관리자/개인 API 사용자 중심으로 제한
+  - [x] 일반 업무 사용자는 기본적으로 BPM user로 등록하지 않음
+  - [x] 요청자/승인자 같은 runtime role은 관리 role과 분리
+  - [x] legacy operator/workflow_owner/requester/approver/api_client는 session 관리 role에서 제외하고 opt-in actor header/runtime 호환 path로만 유지
 
-- [ ] Workflow ownership / audit
-  - [ ] workflow created_by / updated_by 실제 로그인 주체 반영
-  - [ ] workflow 생성/수정/삭제 audit event 저장
-  - [ ] group 변경/role 변경/API key 발급 audit event 저장
+- [x] Workflow ownership / audit
+  - [x] workflow created_by / updated_by 실제 로그인 주체 반영
+  - [x] workflow 생성/수정/삭제 audit event 저장
+  - [x] group 변경/role 변경/API key 발급 audit event 저장
   - [x] workflow 실행 instance에 `workflow_version_id` 저장
   - [x] workflow 실행 시 immutable workflow version 생성/참조
-  - [ ] workflow version 저장소에 실행 당시 definition 보관
-  - [ ] instance 표시용 snapshot 저장: workflow/group/caller/API key 이름
+  - [x] workflow version 저장소에 실행 당시 definition 보관
+  - [x] instance 표시용 snapshot 저장: workflow/group/caller/API key 이름
 
-- [ ] Group-scoped API key
+- [x] Group-scoped API key
   - [x] group별 API key 발급/비활성화 API/storage skeleton
   - [x] API key owner 모델: `USER` 또는 `SERVICE_ACCOUNT`
   - [x] 인증 방식: `Authorization: Bearer pxm_live_xxx`
-  - [ ] 운영/연동용 API key는 기본적으로 service account에 발급
-  - [ ] 개인 실행 추적이 필요한 API 호출은 user owner 개인 API key 사용
+  - [x] 운영/연동용 API key는 기본적으로 service account에 발급
+  - [x] 개인 실행 추적이 필요한 API 호출은 user owner 개인 API key 사용
   - [x] API key 발급자/발급 대상/service account 기록
   - [x] key prefix 기반 식별, secret hash 저장
-  - [ ] API key scope는 owner/group 권한을 늘리지 않고 줄이는 용도로만 사용
+  - [x] API key scope는 owner/group 권한을 늘리지 않고 줄이는 용도로만 사용
   - [x] key scope는 행위 제한(`workflow:read`, `workflow:execute`, `task:approve`)과 대상 제한(`allowed_workflow_ids`)을 분리
   - [x] workflow 생성/수정/삭제/버전 관리는 API key로 열지 않고 웹 콘솔 `admin`/`group_manager` 권한으로만 처리
   - [x] `task:approve`는 승인 주체 추적을 위해 개인 `USER` owner API key로만 허용
   - [x] workflow start/result/history 권한 scope 1차 적용: API key scope ∩ allowed workflow
-  - [ ] 기본 key scope는 owner group workflow 전체 선택, 발급자가 축소 가능
-  - [ ] optional `business_actor`는 권한 판단이 아니라 audit metadata로만 저장
-  - [ ] 공용 시스템 내부 버튼 클릭자는 기본적으로 해당 시스템 audit 책임
+  - [x] 기본 key scope는 owner group workflow 전체 선택, 발급자가 축소 가능
+  - [x] optional `business_actor`는 권한 판단이 아니라 audit metadata로만 저장
+  - [x] 공용 시스템 내부 버튼 클릭자는 기본적으로 해당 시스템 audit 책임
   - [x] API key 사용 이력: owner, group, key_id, endpoint, workflow_id, optional business_actor
-  - [ ] 기본 만료 없음, optional 만료일, 만료 임박/만료 표시, rotation
-  - [ ] rate limit / IP allowlist
+  - [x] 기본 만료 없음, optional 만료일, 만료/rotation
+  - [x] rate limit / IP allowlist 1차: 분당 DB usage count, exact IP/IPv4 CIDR
+
+- [x] Group-scoped Credential Store
+  - [x] credential profile에 `group_id`, created_by/updated_by 저장
+  - [x] admin 전체 관리, group_manager 본인 group만 조회/생성/수정/폐기
+  - [x] 단일 owner group + `shared_group_ids` 사용 grant 모델
+  - [x] 공유 group은 workflow 사용만 허용하고 수정/폐기/재공유 차단
+  - [x] 공유 회수 후 workflow 저장/DB Watch/engine runtime에서 사용 차단
+  - [x] 공유 대상 group 삭제 시 credential grant 자동 회수, group 복구 시 자동 복원하지 않음
+  - [x] 소유 group은 공유 group의 사용 이력까지 조회, 공유 group은 자기 group 사용 이력만 조회
+  - [x] API key와 일반 user의 credential 관리 API 접근 차단
+  - [x] workflow 저장 및 plugin/DB Watch test/runtime에서 credential group 재검증
+  - [x] secret 원문 재노출 금지와 AES-256-GCM 암호화 유지
+  - [x] 운영 환경 `CREDENTIAL_SECRET_KEY` 필수화
+  - [x] metadata의 password/token/connection string 계열 평문 저장 차단
+  - [x] credential 사용 audit log를 group 범위로 제한
 
 ### Group / RBAC / API Key Handoff
 
@@ -276,21 +305,43 @@
 다음 작업:
 
 - Workflow 생성/수정 화면의 `group_id` 선택 UX 완료. 레거시 group name-only workflow는 저장 전 실제 관리 group을 선택한다.
-- API key 발급 화면의 `allowed_workflow_ids` 직접 입력을 group workflow 목록 체크박스 선택으로 바꾼다.
+- API key 발급 화면의 `allowed_workflow_ids`를 group workflow 목록 체크박스 선택으로 전환 완료했다.
+- Credential은 단일 group 소유 자원이며 다른 관리 group에는 실행 사용 권한만 공유할 수 있다. 공유 group은 secret/설정/공유 범위를 변경할 수 없고, 기존 `group_id` 없는 credential은 admin에게만 보인다.
+- API key optional 만료일/rotation/exact IP·IPv4 CIDR allowlist/분당 rate limit을 관리 화면과 인증 middleware에 연결했다.
 - 서버 저장형 세션과 CSRF 1차 연동 완료. 운영 배포 전 OIDC/SSO 전환 여부, Redis 기반 분산 로그인 제한, reverse proxy/trusted IP 정책을 확정한다.
 - 로컬 최초 로그인은 기본 `admin` / `admin1234`이며, 운영에서는 `PXM_BOOTSTRAP_ADMIN_ID`, `PXM_BOOTSTRAP_ADMIN_PASSWORD`를 반드시 지정한다. 세션 원문은 256-bit 난수이고 서버에는 SHA-256 hash만 저장한다.
 - `task:approve` scope를 실제 승인 API end-to-end 흐름에 연결하고 권한 테스트를 자동화한다.
-- 최고관리자용 전체 사용자 디렉터리와 API key 만료/rotation/IP allowlist는 후속 운영 UX로 검토한다.
+- 최고관리자용 전체 사용자 디렉터리와 reverse proxy trusted IP/Redis 기반 고정밀 분산 rate limit은 후속 운영 UX·인프라 항목으로 검토한다.
 
 ## Security Hardening Roadmap
 
-- [ ] Web/API backend 보안 기준 정리
-  - [ ] NestJS/API validation pipe와 DTO validation 일관 적용
-  - [ ] auth guard / permission guard 도입 범위 결정
-  - [ ] CSRF/CORS/session/JWT 정책 결정
-  - [ ] API key hashing/rotation/secret redaction 기준
+- [~] Web/API backend 보안 기준 정리
+  - [~] NestJS/API validation pipe와 DTO validation 일관 적용
+    - [x] 전역 `ValidationPipe`의 transform/whitelist/unknown field 차단 적용
+    - [x] 로그인/profile/password/group/user/service account/API key/credential/workflow DTO 검증 적용
+    - [ ] legacy inline body/interface DTO를 class DTO로 순차 전환
+  - [~] auth guard / permission guard 도입 범위 결정
+    - [x] 전역 authentication guard 적용: session/API key가 없는 요청은 기본 `401`
+    - [x] 공개 endpoint를 login/logout/health로 명시하고 production 개발 우회 차단
+    - [ ] controller별 수동 권한 검사를 resource permission guard/decorator로 표준화
+  - [x] CSRF/CORS/session/JWT 정책 결정
+    - [x] 브라우저는 서버 저장형 opaque session + CSRF double-submit token 사용
+    - [x] 외부 연동은 JWT 대신 group-scoped API key 사용
+    - [x] production CORS default deny 및 `PXM_CORS_ORIGINS` allowlist 적용
+    - [x] reverse proxy 신뢰는 `PXM_TRUST_PROXY` 명시 설정일 때만 적용
+  - [x] API key hashing/rotation/secret redaction 기준
   - [ ] audit log tamper resistance 검토
-  - [ ] dependency vulnerability scan / lockfile audit 운영 기준
+  - [x] dependency vulnerability scan / lockfile audit 운영 기준
+    - [x] API/plugin-host NestJS 및 전이 의존성 보안 패치 적용
+    - [x] `pnpm audit:prod` 기준 production dependency 취약점 0건 확인
+
+운영 설정 기준:
+
+- 동일 origin 배포는 `PXM_CORS_ORIGINS` 없이 사용하며, Web/API origin이 다르면 허용할 origin만 쉼표로 지정한다.
+- reverse proxy 뒤에서는 실제 proxy hop 수 또는 신뢰할 proxy IP 목록을 `PXM_TRUST_PROXY`에 지정한다. 설정이 없으면 forwarded IP를 신뢰하지 않는다.
+- Helmet 보안 응답 헤더를 기본 적용하고, DTO에 선언되지 않은 body 필드는 `400 Bad Request`로 차단한다.
+- `AUTHZ_ALLOW_DEVELOPMENT_BYPASS`와 `AUTHZ_ALLOW_ACTOR_HEADERS`는 로컬 호환 테스트 전용이며 production에서는 항상 무시한다.
+- production dependency 취약점 검사는 배포 전 `pnpm audit:prod`로 실행하며 High/Critical 발견 시 배포를 중단한다.
 
 - [ ] Script/Plugin execution 보안
   - [ ] JS Node sandbox timeout/memory/output limit 재검토
@@ -373,9 +424,9 @@
 
 ## Next Recommended Work
 
-1. Workflow UX / Observability를 먼저 진행한다. 시작 순서는 동시에 여러 workflow 보기 -> Command 실행 terminal view -> 자주 쓰는 파라미터 세트다.
-2. Workflow export version metadata는 UX 흐름과 붙어 있으므로 같이 보강한다.
-3. Group / RBAC / API Key 상세 설계는 다음 큰 축으로 진행한다. 권한, 이력, API key, workflow ownership이 서로 묶여 있어서 별도 설계가 필요하다.
-4. Plugin Runtime / SDK는 우선순위를 뒤로 미룬다. SSH plugin과 JS module import는 보안/agent 실행 모델이 정리된 뒤 제한적으로 진행한다.
-5. 운영 전 실제 목표 부하 기준으로 engine worker 수와 Mongo write capacity를 재검증한다.
-6. 회의 시연 전 `docs/bpm-platform-demo-guide.md` 기준으로 demo workflow와 sample data를 준비한다.
+1. Web/API 보안의 남은 항목인 resource permission guard 표준화와 audit log tamper resistance를 진행한다.
+2. `task:approve` scope를 실제 승인 API end-to-end 흐름에 연결하고 자동 권한 테스트를 보강한다.
+3. Plugin Manifest Registry의 trusted source/signature 검증을 완료한다.
+4. Plugin Runtime / SDK 상세 설계를 진행하되 SSH와 임의 JS module import는 agent·sandbox 정책 확정 전까지 제한한다.
+5. PXM Agent는 후순위로 유지하고, 우선 registration/heartbeat/outbound polling 계약부터 문서화한다.
+6. 운영 전 실제 목표 부하 기준으로 engine worker 수, Mongo write capacity, API key rate-limit 저장소를 재검증한다.

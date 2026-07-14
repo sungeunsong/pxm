@@ -54,9 +54,10 @@ PXM은 두 가지 방식으로 사용할 수 있다.
 예:
 
 - 관리자가 프로세스 template을 설계한다.
-- 요청자가 신청서를 작성하고 workflow를 실행한다.
-- 승인자가 task 목록에서 승인/반려한다.
+- 관리자가 workflow를 직접 실행하거나 외부 시스템이 API로 실행한다.
 - 운영자가 실행 이력과 trace를 확인한다.
+
+Approval 노드는 기본 Flow Designer 팔레트에 제공한다. 다만 요청/승인 포털과 결재함은 기본 제품 화면이 아니라 샘플 또는 reference UI이며, `VITE_ENABLE_APPROVAL_SAMPLE_UI=true`로 실행한 경우에만 별도 메뉴로 노출한다.
 
 이 방식은 BPM 제품형 사용 방식에 가깝다.
 
@@ -92,18 +93,19 @@ PXM Web에 사람이 로그인해서 사용하는 인증이다.
 
 대상:
 
-- 관리자
-- 요청자
-- 승인자
-- 운영자
+- 최고관리자(`admin`)
+- 그룹 관리자(`group_manager`)
+- 개인 API key 소유자 등 제한된 일반 사용자(`user`)
+
+요청자와 승인자는 기본 관리 role이 아니다. Approval 실행 데이터와 샘플 포털에서 사용하는 runtime actor로 분리한다.
 
 필요한 기능:
 
 - Session 또는 JWT 기반 로그인
 - SSO / LDAP / AD / OAuth / OIDC 연동 가능성
 - 사용자 role / permission
-- workspace 또는 tenant 단위 접근 제어
-- 프로세스 설계, 실행, 승인, 운영 권한 분리
+- group 단위 접근 제어
+- 프로세스 설계, 실행, 운영 권한 분리
 
 ### 3.2 외부 시스템 API 호출 기반 인증
 
@@ -151,7 +153,7 @@ PXM은 사람이 Web에 로그인해서 쓰는 제품형 접근과,
 예시:
 
 ```text
-Start -> Approval -> Service Plugin -> End
+Start -> Gateway -> Service Plugin -> End
 ```
 
 실행 흐름:
@@ -161,10 +163,11 @@ Start -> Approval -> Service Plugin -> End
 3. 사용자가 template을 실행하면 process instance가 생성된다.
 4. Engine이 job을 polling한다.
 5. Engine이 token을 따라 node를 실행한다.
-6. approval node에서는 task를 만들고 대기한다.
-7. task가 승인되면 Engine이 resume job을 처리한다.
-8. service node에서는 `plugin_id`를 기준으로 plugin executor를 호출한다.
-9. 모든 node가 완료되면 instance가 `COMPLETED`가 된다.
+6. gateway node에서는 조건에 따라 다음 token을 선택하거나 분기한다.
+7. service node에서는 `plugin_id`를 기준으로 plugin executor를 호출한다.
+8. 모든 node가 완료되면 instance가 `COMPLETED`가 된다.
+
+Approval runtime과 노드 설계는 기본 제공한다. 사람이 task를 처리하는 결재함 화면만 별도 샘플 UI로 제공한다.
 
 ## 5. BPMN 기준 노드 매핑
 
@@ -173,7 +176,7 @@ Start -> Approval -> Service Plugin -> End
 | PXM node | BPMN 기준 | 설명 |
 |---|---|---|
 | Start | Start Event | 프로세스 시작점 |
-| Approval | User Task | 사람이 승인/반려하는 작업 |
+| Approval | User Task | 사람이 승인/반려하는 작업. 처리 포털은 별도 샘플 UI로 제공 |
 | Gateway | Gateway | 조건에 따라 다음 경로 선택 |
 | Service | Service Task | 시스템/API/plugin 실행 |
 | Executable / Command | Service Task 확장 | 서버/에이전트에 등록된 실행파일 또는 명령 실행 |
@@ -841,11 +844,12 @@ GET /api/instances/:id/stream
 
 권한 기준:
 
-- admin/operator: 전체 또는 workspace 단위 조회
-- workflow owner: 본인이 관리하는 workflow 이력 조회
-- requester: 본인이 실행한 instance 조회
-- approver: 본인에게 배정된 task와 관련 instance 조회
+- admin: 전체 group 이력 조회
+- group_manager: 본인에게 할당된 group의 workflow 이력 조회
+- user/API key owner: 본인 또는 허용된 workflow 실행 범위만 조회
 - API client: 권한이 부여된 workflow/instance 범위만 조회
+
+requester/approver runtime actor는 `admin`, `group_manager`, `user` 관리 role과 별개다. 기본 엔진과 API에서 지원하며, 별도 샘플 결재 UI에서도 사용한다.
 
 필요 API:
 

@@ -104,3 +104,15 @@ Explicit environment refs are also supported:
 ```json
 { "token": "env://SLACK_BOT_TOKEN" }
 ```
+
+## Credential encryption key
+
+Credential secret은 MongoDB에 AES-256-GCM 암호문으로 저장한다. 로컬 개발은 개발용 fallback key를 사용할 수 있지만, 운영 환경에서는 서버 시작 전에 32자 이상의 전용 키를 반드시 지정한다.
+
+```bash
+NODE_ENV=production \
+CREDENTIAL_SECRET_KEY='replace-with-a-random-32-byte-or-longer-secret' \
+pnpm --filter api start:prod
+```
+
+키 원문은 DB나 workflow export에 저장하지 않는다. 운영에서는 배포 secret/KMS를 통해 주입하고, 키 변경 전 기존 credential 재암호화 절차를 별도로 수행해야 한다.

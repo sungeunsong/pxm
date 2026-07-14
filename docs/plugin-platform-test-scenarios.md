@@ -6,6 +6,8 @@
 
 ## 실행 환경
 
+Approval 노드는 기본 Flow Designer에서 사용할 수 있다. 별도 샘플 결재함까지 확인하는 경우에만 `VITE_ENABLE_APPROVAL_SAMPLE_UI=true pnpm dev:web`으로 Web을 실행한다.
+
 필요한 로컬 서비스:
 
 ```bash

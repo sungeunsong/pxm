@@ -353,6 +353,7 @@ group과 workflow 삭제는 기본적으로 soft delete다. Hard delete는 MVP �
 정책:
 
 - 기본 권한 판단은 항상 API key owner 기준이다.
+- 공용 시스템 내부 버튼을 누른 최종 사용자를 PXM이 직접 인증하지 않았다면, 실행과 오남용에 대한 기본 audit 책임은 API key를 소유한 공용 시스템에 있다.
 - `business_actor`가 없으면 실행자는 API key owner로만 기록한다.
 - `business_actor`가 있으면 “NIT 시스템이 송성은 요청으로 실행”처럼 표시할 수 있으나, PXM이 직접 송성은을 인증한 것으로 간주하지 않는다.
 - 강한 검증이 필요한 경우 별도 단계에서 signed user assertion/JWT를 추가한다. 이 경우에만 `trust_level = verified`로 기록한다.
@@ -391,7 +392,7 @@ group과 workflow 삭제는 기본적으로 soft delete다. Hard delete는 MVP �
 - `actor_id`: BPM user id 또는 service account id.
 - `api_key_id`: API key로 인증한 요청이면 사용한 key id.
 - `group_ids`: actor가 속한 group 목록.
-- `roles`: 사람 user의 관리 role 목록. 신규 관리 role은 `admin`, `group_manager`, `user`로 정리한다. `service_account` actor는 보통 빈 배열 또는 생략으로 둔다. Legacy 호환 중에는 `workflow_owner`, `requester`, `approver`, `api_client`가 남을 수 있다.
+- `roles`: 사람 user의 관리 role 목록은 `admin`, `group_manager`, `user`만 사용한다. `service_account` actor는 보통 빈 배열 또는 생략으로 둔다. `operator`, `workflow_owner`, `requester`, `approver`, `api_client`는 session role로 발급하지 않고, 기본 비활성인 actor header 또는 샘플 runtime 호환 경로에서만 유지한다.
 - `allowed_workflow_ids`: API key scope 또는 group permission 교집합으로 허용된 workflow/template id 목록.
 - `allowed_instance_ids`: MVP에서는 사용하지 않는 future field. task 위임이나 임시 공유 기능이 필요할 때 추가한다.
 - `business_actor`: optional audit metadata. 권한 판단에는 사용하지 않는다.
