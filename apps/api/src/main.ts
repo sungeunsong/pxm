@@ -1,8 +1,11 @@
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import { ValidationPipe } from '@nestjs/common';
 import { existsSync } from 'fs';
+import helmet from 'helmet';
 import { join, resolve } from 'path';
 import { AppModule } from './app.module';
+import { corsOptions, trustProxySetting } from './security/http-security';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -10,11 +13,20 @@ async function bootstrap() {
   // Global prefix 설정 (/api/...)
   app.setGlobalPrefix('api');
 
-  // CORS 활성화 (개발 환경)
-  app.enableCors({
-    origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175'],
-    credentials: true,
-  });
+  const trustProxy = trustProxySetting();
+  if (trustProxy !== false) app.set('trust proxy', trustProxy);
+
+  app.use(helmet({
+    crossOriginResourcePolicy: { policy: 'same-origin' },
+  }));
+  app.enableCors(corsOptions());
+  app.useGlobalPipes(new ValidationPipe({
+    transform: true,
+    whitelist: true,
+    forbidNonWhitelisted: true,
+    forbidUnknownValues: false,
+    stopAtFirstError: false,
+  }));
 
   const webDistDir = resolveWebDistDir();
   if (webDistDir) {

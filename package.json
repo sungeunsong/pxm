@@ -16,6 +16,7 @@
     "benchmark:immediate": "cd apps/api && node scripts/benchmark-immediate-nodes.mjs",
     "benchmark:schedule": "cd apps/api && node scripts/benchmark-schedule-start.mjs",
     "benchmark:cleanup": "cd apps/api && node scripts/cleanup-benchmark-data.mjs",
+    "audit:prod": "pnpm audit --prod",
     "dev": "pnpm -r --parallel dev",
     "dev:api:mongo": "cd apps/api && PORT=${PORT:-3011} DB_TYPE=mongodb MONGODB_URL=${MONGODB_URL:-mongodb://127.0.0.1:27017/?replicaSet=rs0} MONGO_DB_NAME=${MONGO_DB_NAME:-pxm_db} pnpm dev",
     "dev:engine:mongo": "cd apps/engine && DB_TYPE=mongodb MONGODB_URL=${MONGODB_URL:-mongodb://127.0.0.1:27017/?replicaSet=rs0} MONGO_DB_NAME=${MONGO_DB_NAME:-pxm_db} cargo run",
