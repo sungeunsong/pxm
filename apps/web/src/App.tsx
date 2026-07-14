@@ -16,6 +16,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Braces,
+  LockKeyhole,
 } from 'lucide-react';
 import { DashboardPage } from './dashboard/DashboardPage';
 import { FlowDesigner } from './flow-designer/FlowDesigner';
@@ -29,8 +30,11 @@ import { PluginRegistryPage } from './plugins/PluginRegistryPage';
 import { AccessManagementPage } from './authz/AccessManagementPage';
 import { LoginPage } from './auth/LoginPage';
 import { AccountDialog } from './auth/AccountDialog';
+import { SessionActivityGuard } from './auth/SessionActivityGuard';
 import { ExecutionPresetsPage } from './input-presets/ExecutionPresetsPage';
+import { SecurityPolicyPage } from './security/SecurityPolicyPage';
 import { sessionApi, type SessionUser } from './api/session';
+import { AUTH_REQUIRED_EVENT } from './api/fetch-security';
 import { approvalSampleUiEnabled } from './config/features';
 import './App.css';
 
@@ -45,7 +49,8 @@ type ActiveTab =
   | 'commands'
   | 'plugins'
   | 'pluginRegistry'
-  | 'access';
+  | 'access'
+  | 'security';
 
 const DEFAULT_TAB: ActiveTab = 'dashboard';
 
@@ -61,6 +66,7 @@ const ROUTE_TO_TAB: Record<string, ActiveTab> = {
   plugins: 'plugins',
   'plugin-registry': 'pluginRegistry',
   access: 'access',
+  security: 'security',
 };
 
 const TAB_TO_ROUTE: Record<ActiveTab, string> = {
@@ -75,6 +81,7 @@ const TAB_TO_ROUTE: Record<ActiveTab, string> = {
   plugins: 'plugins',
   pluginRegistry: 'plugin-registry',
   access: 'access',
+  security: 'security',
 };
 
 const readTabFromHash = (): ActiveTab | null => {
@@ -92,7 +99,7 @@ const readInitialTab = (): ActiveTab => {
   return DEFAULT_TAB;
 };
 
-function WorkspaceApp({ user, onUserChange, onLogout }: { user: SessionUser; onUserChange: (user: SessionUser) => void; onLogout: () => void }) {
+function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessionExpired }: { user: SessionUser; onUserChange: (user: SessionUser) => void; onLogout: () => void; onSessionRevoked: () => void; onSessionExpired: () => void }) {
   const [activeTab, setActiveTabState] = useState<ActiveTab>(readInitialTab);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
   const [accountOpen, setAccountOpen] = useState(false);
@@ -166,6 +173,15 @@ function WorkspaceApp({ user, onUserChange, onLogout }: { user: SessionUser; onU
           >
             <LayoutGrid size={16} />
             <span>대시보드</span>
+          </button>}
+
+          {user.role === 'admin' && <button
+            title="보안 정책"
+            className={`sidebar-menu-item ${activeTab === 'security' ? 'active' : ''}`}
+            onClick={() => setActiveTab('security')}
+          >
+            <LockKeyhole size={16} />
+            <span>보안 정책</span>
           </button>}
           
           {user.role !== 'user' && <button
@@ -297,6 +313,7 @@ function WorkspaceApp({ user, onUserChange, onLogout }: { user: SessionUser; onU
               {activeTab === 'inbox' && "내 결재함"}
               {activeTab === 'credentials' && "Credential Store 관리"}
               {activeTab === 'access' && "Access Management"}
+              {activeTab === 'security' && "보안 정책"}
               {activeTab === 'commands' && "Command Registry 관리"}
               {activeTab === 'plugins' && "Plugin Control 관리"}
               {activeTab === 'pluginRegistry' && "Plugin Registry 관리"}
@@ -310,6 +327,7 @@ function WorkspaceApp({ user, onUserChange, onLogout }: { user: SessionUser; onU
               {activeTab === 'inbox' && "승인 대기 Task 확인 및 처리"}
               {activeTab === 'credentials' && "외부 연동 secret을 안전하게 관리하고 노드에서는 credential ID만 참조합니다"}
               {activeTab === 'access' && "그룹, 유저, 서비스계정, API key 발급과 폐기를 관리합니다"}
+              {activeTab === 'security' && "로그인 세션의 비활동·절대 만료 정책과 기존 세션 처리를 관리합니다"}
               {activeTab === 'commands' && "workflow에서 사용할 allowlist command를 최고관리자가 등록하고 통제합니다"}
               {activeTab === 'plugins' && "Flow Designer에서 사용할 플러그인의 활성 상태와 workspace 정책을 관리합니다"}
               {activeTab === 'pluginRegistry' && "플러그인 manifest를 등록, 검증, hot reload합니다"}
@@ -335,6 +353,11 @@ function WorkspaceApp({ user, onUserChange, onLogout }: { user: SessionUser; onU
             {activeTab === 'access' && (
               <div className="info-banner-bubble">
                 API key 원문은 생성 직후 한 번만 표시되며, 이후에는 prefix만 조회됩니다.
+              </div>
+            )}
+            {activeTab === 'security' && (
+              <div className="info-banner-bubble">
+                정책 변경은 최고관리자 비밀번호 재확인 후 감사 로그에 기록됩니다.
               </div>
             )}
             {activeTab === 'commands' && (
@@ -411,6 +434,8 @@ function WorkspaceApp({ user, onUserChange, onLogout }: { user: SessionUser; onU
 
           {activeTab === 'access' && <AccessManagementPage currentUser={user} />}
 
+          {activeTab === 'security' && <SecurityPolicyPage onCurrentSessionRevoked={onSessionRevoked} />}
+
           {activeTab === 'commands' && <CommandRegistryPage />}
 
           {activeTab === 'plugins' && <PluginControlPage />}
@@ -419,16 +444,32 @@ function WorkspaceApp({ user, onUserChange, onLogout }: { user: SessionUser; onU
         </main>
       </div>
       {accountOpen && <AccountDialog user={user} onChange={onUserChange} onClose={() => setAccountOpen(false)} />}
+      <SessionActivityGuard user={user} onUserChange={onUserChange} onExpired={onSessionExpired} />
     </div>
   );
 }
 
 function App() {
   const [user, setUser] = useState<SessionUser | null | undefined>(undefined);
-  useEffect(() => { sessionApi.me().then(setUser).catch(() => setUser(null)); }, []);
+  const [loginNotice, setLoginNotice] = useState('');
+  useEffect(() => {
+    const handleAuthRequired = () => {
+      setLoginNotice('세션이 만료되었습니다. 다시 로그인해 주세요.');
+      setUser(null);
+    };
+    window.addEventListener(AUTH_REQUIRED_EVENT, handleAuthRequired);
+    sessionApi.me().then(setUser).catch(() => setUser(null));
+    return () => window.removeEventListener(AUTH_REQUIRED_EVENT, handleAuthRequired);
+  }, []);
   if (user === undefined) return <main className="login-page"><div className="login-loading">세션 확인 중…</div></main>;
-  if (!user) return <LoginPage onLogin={setUser} />;
-  return <WorkspaceApp user={user} onUserChange={setUser} onLogout={async () => { await sessionApi.logout(); setUser(null); }} />;
+  if (!user) return <LoginPage notice={loginNotice} onLogin={(nextUser) => { setLoginNotice(''); setUser(nextUser); }} />;
+  return <WorkspaceApp
+    user={user}
+    onUserChange={setUser}
+    onLogout={async () => { await sessionApi.logout(); setUser(null); }}
+    onSessionRevoked={() => { setLoginNotice('보안 정책 변경으로 세션이 종료되었습니다. 다시 로그인해 주세요.'); setUser(null); }}
+    onSessionExpired={() => { setLoginNotice('비활동 또는 절대 만료시간이 지나 세션이 종료되었습니다. 다시 로그인해 주세요.'); setUser(null); }}
+  />;
 }
 
 export default App;

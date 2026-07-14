@@ -236,6 +236,14 @@
   - [x] Access Management 그룹 전환 시 선택 group 기준 사용자/service account/API key 조회
   - [x] 로그인/서버 저장형 opaque session 연동 및 `/api/auth/me`, logout 구현
   - [x] session token hash 저장, idle 30분/absolute 8시간 만료
+  - [x] 최고관리자 세션 만료 정책 관리: idle 5~120분, absolute 1~24시간 제한
+  - [x] 초기 기본값 30분/8시간과 DB 저장 정책 우선 적용
+  - [x] 정책 변경 시 현재 비밀번호 재확인, 변경 사유/전후값 감사 로그
+  - [x] 기존 세션 유지/현재 세션 제외 전체 폐기/모든 세션 폐기 선택
+  - [x] 기존 세션은 로그인 당시 정책 유지, 신규 세션부터 변경 정책 snapshot 적용
+  - [x] 일반 API polling/SSE는 비활동 시간을 연장하지 않도록 분리
+  - [x] 키보드/포인터/터치/휠 사용자 활동 기반 전용 heartbeat 적용
+  - [x] 브라우저 만료 타이머와 만료 2분 전 경고/계속 사용 UX
   - [x] 세션별 폐기, 다른 세션 전체 폐기, 활성 세션 조회 API
   - [x] unsafe method CSRF token 검증과 HttpOnly/Secure/SameSite cookie 정책
   - [x] 로그인 실패 5회/15분 제한 1차 적용
@@ -342,6 +350,8 @@
 - Helmet 보안 응답 헤더를 기본 적용하고, DTO에 선언되지 않은 body 필드는 `400 Bad Request`로 차단한다.
 - `AUTHZ_ALLOW_DEVELOPMENT_BYPASS`와 `AUTHZ_ALLOW_ACTOR_HEADERS`는 로컬 호환 테스트 전용이며 production에서는 항상 무시한다.
 - production dependency 취약점 검사는 배포 전 `pnpm audit:prod`로 실행하며 High/Critical 발견 시 배포를 중단한다.
+- 세션 정책 DB 값이 없을 때는 `PXM_SESSION_IDLE_MINUTES`(기본 30분), `PXM_SESSION_ABSOLUTE_HOURS`(기본 8시간)를 초기값으로 사용한다. 범위 또는 상호 관계가 잘못되면 API 서버 시작을 중단한다.
+- 비활동 타임아웃은 별도 scheduler가 아니라 모든 인증 요청에서 만료 여부를 검사한다. 일반 API polling/SSE는 시간을 연장하지 않으며, 실제 키보드·포인터·터치·휠 활동이 발생한 브라우저가 `/api/auth/activity` heartbeat를 보낼 때만 `last_seen_at`과 `idle_expires_at`을 최대 1분 간격으로 갱신한다.
 
 - [ ] Script/Plugin execution 보안
   - [ ] JS Node sandbox timeout/memory/output limit 재검토

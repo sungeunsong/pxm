@@ -419,11 +419,25 @@ export type PxmSession = {
   last_seen_at: string;
   idle_expires_at: string;
   absolute_expires_at: string;
+  idle_timeout_minutes?: number;
+  security_policy_version?: number;
   revoked_at?: string | null;
   revoke_reason?: string | null;
 };
 
 export type CreatePxmSession = Omit<PxmSession, 'created_at' | 'last_seen_at' | 'revoked_at' | 'revoke_reason'>;
+
+export type PxmSessionSecurityPolicy = {
+  idle_timeout_minutes: number;
+  absolute_timeout_hours: number;
+  version: number;
+  updated_by?: string | null;
+  updated_at: string;
+};
+
+export type UpsertPxmSessionSecurityPolicy = Pick<PxmSessionSecurityPolicy, 'idle_timeout_minutes' | 'absolute_timeout_hours'> & {
+  updated_by: string;
+};
 
 export abstract class AuthzRepositoryPort {
   abstract upsertGroup(group: UpsertPxmGroup): Promise<PxmGroup>;
@@ -456,5 +470,8 @@ export abstract class AuthzRepositoryPort {
   abstract touchSession(id: string, lastSeenAt: string, idleExpiresAt: string): Promise<void>;
   abstract revokeSession(id: string, reason: string): Promise<boolean>;
   abstract revokeUserSessions(userId: string, reason: string, exceptId?: string): Promise<number>;
+  abstract revokeAllSessions(reason: string, exceptId?: string): Promise<number>;
   abstract listUserSessions(userId: string): Promise<PxmSession[]>;
+  abstract getSessionSecurityPolicy(): Promise<PxmSessionSecurityPolicy | null>;
+  abstract upsertSessionSecurityPolicy(policy: UpsertPxmSessionSecurityPolicy): Promise<PxmSessionSecurityPolicy>;
 }

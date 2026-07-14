@@ -27,9 +27,11 @@ import {
   PxmServiceAccount,
   PxmUser,
   PxmSession,
+  PxmSessionSecurityPolicy,
   UpsertPxmGroup,
   UpsertPxmServiceAccount,
   UpsertPxmUser,
+  UpsertPxmSessionSecurityPolicy,
 } from '../ports/db.ports';
 
 @Injectable()
@@ -1313,8 +1315,31 @@ export class MongodbAdapter
     const filter: any = { user_id: userId, revoked_at: null }; if (exceptId) filter._id = { $ne: exceptId };
     const result = await this.db.collection<any>('pxm_sessions').updateMany(filter, { $set: { revoked_at: new Date().toISOString(), revoke_reason: reason } }); return result.modifiedCount;
   }
+  async revokeAllSessions(reason: string, exceptId?: string): Promise<number> {
+    const filter: any = { revoked_at: null }; if (exceptId) filter._id = { $ne: exceptId };
+    const result = await this.db.collection<any>('pxm_sessions').updateMany(filter, { $set: { revoked_at: new Date().toISOString(), revoke_reason: reason } }); return result.modifiedCount;
+  }
   async listUserSessions(userId: string): Promise<PxmSession[]> {
     await this.ensureAuthzIndexes(); return (await this.db.collection<any>('pxm_sessions').find({ user_id: userId }).sort({ created_at: -1 }).toArray()).map(mapSessionDoc);
+  }
+  async getSessionSecurityPolicy(): Promise<PxmSessionSecurityPolicy | null> {
+    await this.ensureAuthzIndexes();
+    const doc = await this.db.collection<any>('pxm_security_policies').findOne({ _id: 'session' });
+    return doc ? mapSessionSecurityPolicyDoc(doc) : null;
+  }
+  async upsertSessionSecurityPolicy(policy: UpsertPxmSessionSecurityPolicy): Promise<PxmSessionSecurityPolicy> {
+    await this.ensureAuthzIndexes();
+    const now = new Date().toISOString();
+    const doc = await this.db.collection<any>('pxm_security_policies').findOneAndUpdate(
+      { _id: 'session' },
+      {
+        $set: { ...policy, updated_at: now },
+        $setOnInsert: { created_at: now },
+        $inc: { version: 1 },
+      },
+      { upsert: true, returnDocument: 'after' },
+    );
+    return mapSessionSecurityPolicyDoc(doc);
   }
 
   async upsertServiceAccount(account: UpsertPxmServiceAccount): Promise<PxmServiceAccount> {
@@ -1529,7 +1554,11 @@ function mapUserDoc(doc: any): PxmUser {
 }
 
 function mapSessionDoc(doc: any): PxmSession {
-  return { id: doc._id, token_hash: doc.token_hash, csrf_hash: doc.csrf_hash, user_id: doc.user_id, ip: doc.ip || null, user_agent: doc.user_agent || null, created_at: doc.created_at, last_seen_at: doc.last_seen_at, idle_expires_at: doc.idle_expires_at, absolute_expires_at: doc.absolute_expires_at, revoked_at: doc.revoked_at || null, revoke_reason: doc.revoke_reason || null };
+  return { id: doc._id, token_hash: doc.token_hash, csrf_hash: doc.csrf_hash, user_id: doc.user_id, ip: doc.ip || null, user_agent: doc.user_agent || null, created_at: doc.created_at, last_seen_at: doc.last_seen_at, idle_expires_at: doc.idle_expires_at, absolute_expires_at: doc.absolute_expires_at, idle_timeout_minutes: Number(doc.idle_timeout_minutes) || undefined, security_policy_version: Number(doc.security_policy_version) || undefined, revoked_at: doc.revoked_at || null, revoke_reason: doc.revoke_reason || null };
+}
+
+function mapSessionSecurityPolicyDoc(doc: any): PxmSessionSecurityPolicy {
+  return { idle_timeout_minutes: Number(doc.idle_timeout_minutes), absolute_timeout_hours: Number(doc.absolute_timeout_hours), version: Number(doc.version) || 1, updated_by: doc.updated_by || null, updated_at: doc.updated_at };
 }
 
 function mapServiceAccountDoc(doc: any): PxmServiceAccount {

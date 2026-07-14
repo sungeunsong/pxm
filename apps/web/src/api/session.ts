@@ -5,6 +5,34 @@ export type SessionUser = {
   role: 'admin' | 'group_manager' | 'user';
   group_ids: string[];
   memberships: Array<{ group_id: string; role: 'group_manager' | 'user' }>;
+  session?: SessionTiming;
+};
+
+export type SessionTiming = {
+  idle_expires_at: string;
+  absolute_expires_at: string;
+  last_seen_at: string;
+};
+
+export type SessionSecurityPolicy = {
+  idle_timeout_minutes: number;
+  absolute_timeout_hours: number;
+  version: number;
+  updated_by?: string | null;
+  updated_at: string;
+  source: 'default' | 'database';
+  limits: {
+    idle_min_minutes: number;
+    idle_max_minutes: number;
+    absolute_min_hours: number;
+    absolute_max_hours: number;
+  };
+};
+
+export type SessionPolicyUpdateResult = {
+  policy: SessionSecurityPolicy;
+  revoked_sessions: number;
+  current_session_revoked: boolean;
 };
 
 export const sessionApi = {
@@ -30,6 +58,23 @@ export const sessionApi = {
   async changePassword(current_password: string, new_password: string): Promise<{ success: true; revoked_sessions: number }> {
     const response = await fetch('/api/auth/change-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ current_password, new_password }) });
     return read(response);
+  },
+  async getSecurityPolicy(): Promise<SessionSecurityPolicy> {
+    return read(await fetch('/api/auth/security-policy', { credentials: 'include' }));
+  },
+  async updateSecurityPolicy(payload: {
+    idle_timeout_minutes: number;
+    absolute_timeout_hours: number;
+    existing_sessions: 'keep' | 'revoke_others' | 'revoke_all';
+    reason: string;
+    current_password: string;
+  }): Promise<SessionPolicyUpdateResult> {
+    return read(await fetch('/api/auth/security-policy', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(payload),
+    }));
+  },
+  async recordActivity(): Promise<SessionTiming> {
+    return read(await fetch('/api/auth/activity', { method: 'POST', credentials: 'include' }));
   },
 };
 

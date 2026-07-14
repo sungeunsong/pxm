@@ -27,6 +27,7 @@
 .login-brand img { width: 54px; height: 54px; border-radius: 14px; object-fit: cover; box-shadow: 0 8px 24px rgba(37,99,235,.24); }
 .login-brand span { color: #667085; font-size: 12px; line-height: 1.2; letter-spacing: .025em; }
 .login-error { padding: 10px 12px; border-radius: 8px; background: #fef3f2; color: #b42318; font-size: 13px; }
+.login-notice { padding: 10px 12px; border: 1px solid #bfdbfe; border-radius: 8px; background: #eff6ff; color: #1d4ed8; font-size: 13px; }
 .login-loading { color: #dbeafe; font-size: 14px; }
 .header-logout { border: 1px solid var(--border-color); background: #fff; border-radius: 7px; padding: 7px 10px; color: var(--text-secondary); cursor: pointer; white-space: nowrap; }
 .account-backdrop { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 24px; background: rgba(3,10,24,.58); backdrop-filter: blur(4px); }

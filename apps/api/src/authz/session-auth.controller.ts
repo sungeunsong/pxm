@@ -1,18 +1,21 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Post, Req, Res, UnauthorizedException } from '@nestjs/common';
 import type { Request, Response } from 'express';
-import { ChangePasswordDto, LoginDto, UpdateProfileDto } from './dto/session-auth.dto';
+import { ChangePasswordDto, LoginDto, UpdateProfileDto, UpdateSessionSecurityPolicyDto } from './dto/session-auth.dto';
 import { Public } from './public-route';
 import { SessionAuthService } from './session-auth.service';
+import { actorFromRequest } from '../instances/history-auth';
+import { assertAdmin } from './management-auth';
+import { ManagementAuditService } from '../audit/management-audit.service';
 
 @Controller('auth')
 export class SessionAuthController {
-  constructor(private readonly sessions: SessionAuthService) {}
+  constructor(private readonly sessions: SessionAuthService, private readonly audit: ManagementAuditService) {}
 
   @Public() @Post('login') @HttpCode(200)
   async login(@Body() body: LoginDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const login = await this.sessions.login(body.user_id, body.password, req);
-    this.sessions.setCookies(res, login.rawToken, login.csrfToken);
-    return publicUser(login.user);
+    this.sessions.setCookies(res, login.rawToken, login.csrfToken, login.session.absolute_expires_at);
+    return publicUser(login.user, login.session);
   }
 
   @Public() @Post('logout') @HttpCode(200)
@@ -23,7 +26,7 @@ export class SessionAuthController {
   @Get('me')
   async me(@Req() req: Request) {
     const token = this.sessions.readSessionCookie(req); const authenticated = token ? await this.sessions.authenticate(token) : null;
-    if (!authenticated) throw new UnauthorizedException('로그인이 필요합니다.'); return publicUser(authenticated.user);
+    if (!authenticated) throw new UnauthorizedException('로그인이 필요합니다.'); return publicUser(authenticated.user, authenticated.session);
   }
 
   @Get('sessions')
@@ -51,12 +54,49 @@ export class SessionAuthController {
   @Post('profile') @HttpCode(200)
   async updateProfile(@Body() body: UpdateProfileDto, @Req() req: Request) {
     const current = currentSession(req);
-    return publicUser(await this.sessions.updateProfile(current.user_id, body.display_name || '', body.email));
+    return publicUser(await this.sessions.updateProfile(current.user_id, body.display_name || '', body.email), current);
+  }
+
+  @Post('activity') @HttpCode(200)
+  async activity(@Req() req: Request) {
+    return this.sessions.recordUserActivity(currentSession(req));
+  }
+
+  @Get('security-policy')
+  async getSecurityPolicy(@Req() req: Request) {
+    assertAdmin(actorFromRequest(req));
+    return this.sessions.getSecurityPolicy();
+  }
+
+  @Post('security-policy') @HttpCode(200)
+  async updateSecurityPolicy(
+    @Body() body: UpdateSessionSecurityPolicyDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const actor = actorFromRequest(req); assertAdmin(actor);
+    const current = currentSession(req);
+    const result = await this.sessions.updateSecurityPolicy(current.user_id, current.id, body);
+    await this.audit.append({
+      action: 'security_policy.session_timeout_changed',
+      resource_type: 'security_policy',
+      resource_id: 'session',
+      actor_id: actor.actor_id,
+      details: {
+        before: { idle_timeout_minutes: result.before.idle_timeout_minutes, absolute_timeout_hours: result.before.absolute_timeout_hours, version: result.before.version },
+        after: { idle_timeout_minutes: result.policy.idle_timeout_minutes, absolute_timeout_hours: result.policy.absolute_timeout_hours, version: result.policy.version },
+        existing_sessions: body.existing_sessions,
+        revoked_sessions: result.revoked_sessions,
+        reason: body.reason,
+      },
+    });
+    if (result.current_session_revoked) this.sessions.clearCookies(res);
+    return result;
   }
 }
 
 function currentSession(req: Request) { const session = (req as any).pxmSession; if (!session) throw new UnauthorizedException('로그인이 필요합니다.'); return session; }
-function publicUser(user: any) {
+function publicUser(user: any, session?: any) {
   return {
     id: user.id,
     display_name: user.display_name,
@@ -64,5 +104,6 @@ function publicUser(user: any) {
     role: user.role,
     group_ids: user.group_ids || [],
     memberships: user.memberships || [],
+    ...(session ? { session: { idle_expires_at: session.idle_expires_at, absolute_expires_at: session.absolute_expires_at, last_seen_at: session.last_seen_at } } : {}),
   };
 }

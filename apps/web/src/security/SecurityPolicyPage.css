@@ -1,0 +1,36 @@
+.security-policy-page { height: 100%; overflow: auto; padding: 24px; background: var(--bg-primary, #f6f8fb); color: var(--text-primary, #172033); }
+.security-policy-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.security-policy-summary > div { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 4px 10px; padding: 18px; border: 1px solid #dfe5ef; border-radius: 12px; background: #fff; }
+.security-policy-summary svg { grid-row: span 2; color: #3568dc; }
+.security-policy-summary span { color: #667085; font-size: 12px; }
+.security-policy-summary strong { font-size: 18px; }
+.security-policy-form { display: grid; gap: 16px; max-width: 1080px; }
+.security-policy-panel { padding: 22px; border: 1px solid #dfe5ef; border-radius: 12px; background: #fff; }
+.security-policy-panel > header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 20px; }
+.security-policy-panel h2 { margin: 0 0 5px; font-size: 17px; }
+.security-policy-panel p { margin: 0; color: #667085; font-size: 13px; }
+.security-policy-panel header svg { color: #3568dc; }
+.security-timeout-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.security-timeout-grid label, .security-confirm-panel label { display: grid; gap: 8px; color: #344054; font-size: 13px; font-weight: 700; }
+.security-timeout-grid label > div { display: flex; align-items: center; overflow: hidden; border: 1px solid #cfd6e4; border-radius: 9px; }
+.security-timeout-grid input { width: 100%; height: 44px; padding: 0 12px; border: 0; outline: 0; font: inherit; }
+.security-timeout-grid b { padding: 0 13px; color: #667085; font-size: 12px; }
+.security-timeout-grid small, .security-session-option small { color: #667085; font-size: 12px; font-weight: 400; line-height: 1.5; }
+.security-policy-warning, .security-policy-error, .security-policy-message { display: flex; align-items: center; gap: 7px; margin-top: 14px; padding: 10px 12px; border-radius: 8px; font-size: 13px; }
+.security-policy-warning, .security-policy-error { background: #fef3f2; color: #b42318; }
+.security-policy-message { background: #ecfdf3; color: #027a48; }
+.security-session-options { display: grid; gap: 9px; }
+.security-session-option { display: flex; align-items: flex-start; gap: 11px; padding: 13px; border: 1px solid #dfe5ef; border-radius: 9px; cursor: pointer; }
+.security-session-option.selected { border-color: #4b72df; background: #f2f5ff; box-shadow: 0 0 0 1px #4b72df; }
+.security-session-option.danger.selected { border-color: #d92d20; background: #fff5f4; box-shadow: 0 0 0 1px #d92d20; }
+.security-session-option input { margin-top: 3px; }
+.security-session-option span { display: grid; gap: 3px; }
+.security-confirm-panel textarea, .security-confirm-panel input { box-sizing: border-box; width: 100%; border: 1px solid #cfd6e4; border-radius: 9px; padding: 11px 12px; background: #fff; color: #172033; font: inherit; font-size: 13px; outline: none; }
+.security-confirm-panel textarea { min-height: 84px; resize: vertical; }
+.security-confirm-panel label + label { margin-top: 14px; }
+.security-policy-actions { display: flex; justify-content: flex-end; margin-top: 18px; }
+.security-policy-actions button { min-width: 120px; height: 40px; border: 0; border-radius: 9px; background: #2458d6; color: #fff; font-weight: 700; cursor: pointer; }
+.security-policy-actions button:disabled { opacity: .45; cursor: default; }
+.security-policy-state { padding: 32px; color: #667085; }
+.security-policy-state.error { color: #b42318; }
+@media (max-width: 900px) { .security-policy-summary, .security-timeout-grid { grid-template-columns: 1fr; } }

@@ -1,4 +1,4 @@
-import { IsEmail, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsEmail, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 
 export class LoginDto {
   @IsString()
@@ -31,4 +31,29 @@ export class UpdateProfileDto {
   @IsEmail()
   @MaxLength(254)
   email?: string | null;
+}
+
+export class UpdateSessionSecurityPolicyDto {
+  @IsInt()
+  @Min(5)
+  @Max(120)
+  idle_timeout_minutes: number;
+
+  @IsInt()
+  @Min(1)
+  @Max(24)
+  absolute_timeout_hours: number;
+
+  @IsIn(['keep', 'revoke_others', 'revoke_all'])
+  existing_sessions: 'keep' | 'revoke_others' | 'revoke_all';
+
+  @IsString()
+  @MinLength(3)
+  @MaxLength(500)
+  reason: string;
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(1024)
+  current_password: string;
 }
