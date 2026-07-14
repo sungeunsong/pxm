@@ -1,4 +1,4 @@
-import { Injectable, NestMiddleware, UnauthorizedException } from '@nestjs/common';
+import { HttpException, Injectable, NestMiddleware, UnauthorizedException } from '@nestjs/common';
 import type { NextFunction, Request, Response } from 'express';
 import { AuthzService } from './authz.service';
 
@@ -15,6 +15,7 @@ export class ApiKeyAuthMiddleware implements NestMiddleware {
 
     try {
       const key = await this.authzService.authenticateApiKey(rawKey);
+      await this.authzService.assertApiKeyRequestAllowed(key, req.ip || null);
       const businessActor = parseBusinessActor(req);
       (req as any).workflowActor = {
         actor_type: key.owner_type === 'SERVICE_ACCOUNT' ? 'service_account' : 'user',
@@ -44,6 +45,7 @@ export class ApiKeyAuthMiddleware implements NestMiddleware {
       });
       next();
     } catch (error) {
+      if (error instanceof HttpException) return next(error);
       next(new UnauthorizedException(error instanceof Error ? error.message : 'Invalid API key'));
     }
   }

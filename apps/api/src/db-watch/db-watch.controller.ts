@@ -1,4 +1,6 @@
-import { BadRequestException, Body, Controller, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Post, Req } from '@nestjs/common';
+import type { Request } from 'express';
+import { actorFromRequest } from '../instances/history-auth';
 import { DbWatchService } from './db-watch.service';
 
 type TestDbWatchConnectionRequest = {
@@ -15,9 +17,9 @@ export class DbWatchController {
   constructor(private readonly dbWatchService: DbWatchService) {}
 
   @Post('test')
-  async testConnection(@Body() body: TestDbWatchConnectionRequest) {
+  async testConnection(@Body() body: TestDbWatchConnectionRequest, @Req() req: Request) {
     try {
-      return await this.dbWatchService.testConnection(body || {});
+      return await this.dbWatchService.testConnection(body || {}, actorFromRequest(req));
     } catch (error) {
       throw new BadRequestException(error instanceof Error ? error.message : 'DB watch connection test failed');
     }

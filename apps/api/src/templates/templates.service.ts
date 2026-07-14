@@ -9,6 +9,7 @@ import { WorkflowDefinitionMetadata, WorkflowDefinitionVersion, WorkflowReposito
 import { randomUUID } from 'crypto';
 import { SchedulesService } from '../schedules/schedules.service';
 import { DbWatchService } from '../db-watch/db-watch.service';
+import { CredentialsService } from '../credentials/credentials.service';
 
 @Injectable()
 export class TemplatesService {
@@ -16,10 +17,12 @@ export class TemplatesService {
     private readonly workflowRepo: WorkflowRepositoryPort,
     private readonly schedulesService: SchedulesService,
     private readonly dbWatchService: DbWatchService,
+    private readonly credentialsService: CredentialsService,
   ) {}
 
   async create(dto: CreateTemplateDto): Promise<TemplateResponseDto> {
     const id = randomUUID();
+    await this.assertCredentialBindings(dto.nodes || [], dto.group_id);
     await this.assertNoWorkflowCallCycle(id, dto.nodes || []);
     await this.workflowRepo.createDefinition(
       id,
@@ -64,8 +67,11 @@ export class TemplatesService {
       group_id: dto.group_id !== undefined ? dto.group_id : current.group_id,
       tags: dto.tags !== undefined ? dto.tags : current.tags,
       version_note: dto.version_note !== undefined ? dto.version_note : current.version_note,
+      created_by: current.created_by || current.metadata?.created_by || null,
+      updated_by: dto.updated_by || current.updated_by || current.metadata?.updated_by || null,
     });
 
+    await this.assertCredentialBindings(updatedNodes || [], updatedMetadata.group_id);
     await this.assertNoWorkflowCallCycle(id, updatedNodes || []);
     await this.workflowRepo.createDefinition(id, updatedName, updatedNodes, updatedEdges, updatedMetadata);
     await this.schedulesService.syncDefinitionSchedules(id, updatedName, updatedNodes || []);
@@ -121,7 +127,7 @@ export class TemplatesService {
     };
   }
 
-  async import(document: any): Promise<TemplateResponseDto> {
+  async import(document: any, actorId = 'system'): Promise<TemplateResponseDto> {
     const parsed = parseWorkflowExportDocument(document);
     return this.create({
       name: parsed.workflow.name,
@@ -133,6 +139,8 @@ export class TemplatesService {
       imported_from: buildImportSourceMetadata(parsed),
       nodes: parsed.workflow.nodes,
       edges: parsed.workflow.edges,
+      created_by: actorId,
+      updated_by: actorId,
     });
   }
 
@@ -167,12 +175,16 @@ export class TemplatesService {
     };
   }
 
-  async rollback(id: string, version: number): Promise<TemplateResponseDto | null> {
+  async rollback(id: string, version: number, actorId = 'system'): Promise<TemplateResponseDto | null> {
     const snapshot = await this.workflowRepo.getDefinitionVersion(id, version);
     if (!snapshot) return null;
 
+    await this.assertCredentialBindings(
+      snapshot.nodes || [],
+      snapshot.group_id || snapshot.metadata?.group_id || null,
+    );
     await this.assertNoWorkflowCallCycle(id, snapshot.nodes || []);
-    const restored = await this.workflowRepo.restoreDefinitionVersion(id, version);
+    const restored = await this.workflowRepo.restoreDefinitionVersion(id, version, { updated_by: actorId });
     if (!restored) return null;
 
     await this.schedulesService.syncDefinitionSchedules(id, restored.name, restored.nodes || []);
@@ -203,8 +215,8 @@ export class TemplatesService {
       edges: row.edges || [],
       version: row.version || 1,
       is_active: row.is_active !== undefined ? row.is_active : row.status !== 'DELETED',
-      created_by: row.created_by || 'admin',
-      updated_by: row.updated_by || 'admin',
+      created_by: row.created_by || row.metadata?.created_by || 'admin',
+      updated_by: row.updated_by || row.metadata?.updated_by || 'admin',
       created_at: row.created_at || new Date(),
       updated_at: row.updated_at || new Date(),
     };
@@ -222,6 +234,8 @@ export class TemplatesService {
           : [],
       version_note: typeof input?.version_note === 'string' ? input.version_note : '',
       imported_from: normalizeImportSourceMetadata(input?.imported_from),
+      created_by: typeof input?.created_by === 'string' ? input.created_by : null,
+      updated_by: typeof input?.updated_by === 'string' ? input.updated_by : null,
     };
   }
 
@@ -267,6 +281,17 @@ export class TemplatesService {
     if (cycle?.includes(definitionId)) {
       throw new BadRequestException(`Workflow call cycle detected: ${cycle.join(' -> ')}`);
     }
+  }
+
+  private async assertCredentialBindings(nodes: any[], groupId?: string | null): Promise<void> {
+    const credentialIds = [...collectCredentialIds(nodes)];
+    if (credentialIds.length === 0) return;
+    if (!groupId) {
+      throw new BadRequestException('Workflow group_id is required when using credentials');
+    }
+    await Promise.all(
+      credentialIds.map((credentialId) => this.credentialsService.getForRuntime(credentialId, groupId)),
+    );
   }
 }
 
@@ -501,6 +526,9 @@ function parseWorkflowExportDocument(document: any): WorkflowExportDocument {
       metadata: {
         description: typeof metadata.description === 'string' ? metadata.description : '',
         group: typeof metadata.group === 'string' ? metadata.group : '',
+        group_id: typeof metadata.group_id === 'string' && metadata.group_id.trim()
+          ? metadata.group_id.trim()
+          : null,
         tags: Array.isArray(metadata.tags) ? metadata.tags.map((tag) => String(tag).trim()).filter(Boolean) : [],
         version_note: typeof metadata.version_note === 'string' ? metadata.version_note : '',
         imported_from: normalizeImportSourceMetadata(metadata.imported_from),
@@ -546,4 +574,22 @@ function normalizeImportSourceMetadata(value: any) {
   };
 
   return Object.values(metadata).some((item) => item !== undefined) ? metadata : undefined;
+}
+
+function collectCredentialIds(value: unknown, result = new Set<string>()): Set<string> {
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectCredentialIds(item, result));
+    return result;
+  }
+  if (!value || typeof value !== 'object') return result;
+
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (normalizedKey.endsWith('credentialid') && typeof child === 'string' && child.trim()) {
+      result.add(child.trim());
+      continue;
+    }
+    collectCredentialIds(child, result);
+  }
+  return result;
 }

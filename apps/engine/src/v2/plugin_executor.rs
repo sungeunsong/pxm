@@ -710,8 +710,16 @@ async fn resolve_credential_binding(
         return Ok(config);
     };
 
+    let workflow_group_id = invocation
+        .context
+        .pointer("/runtime/access/group_id")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| anyhow!("workflow group is required to use credential '{}'", credential_id))?;
+
     let secret = resolve_credential_secret(
         &credential_id,
+        workflow_group_id,
         CredentialUsage {
             actor: "engine",
             node_id: Some(invocation.node_id.as_str()),
@@ -791,7 +799,11 @@ struct CredentialUsage<'a> {
     workflow_id: Option<String>,
 }
 
-async fn resolve_credential_secret(credential_id: &str, usage: CredentialUsage<'_>) -> Result<String> {
+async fn resolve_credential_secret(
+    credential_id: &str,
+    workflow_group_id: &str,
+    usage: CredentialUsage<'_>,
+) -> Result<String> {
     let mongo_url = std::env::var("MONGODB_URL")
         .unwrap_or_else(|_| "mongodb://127.0.0.1:27017/?replicaSet=rs0".to_string());
     let db_name = std::env::var("MONGO_DB_NAME").unwrap_or_else(|_| "pxm_db".to_string());
@@ -806,6 +818,20 @@ async fn resolve_credential_secret(credential_id: &str, usage: CredentialUsage<'
 
     if doc.get_bool("active").unwrap_or(true) == false {
         return Err(anyhow!("credential '{}' is inactive", credential_id));
+    }
+
+
+    let owner_group_id = doc.get_str("group_id").unwrap_or_default();
+    let shared_with_group = doc
+        .get_array("shared_group_ids")
+        .map(|groups| groups.iter().any(|group| group.as_str() == Some(workflow_group_id)))
+        .unwrap_or(false);
+    if owner_group_id != workflow_group_id && !shared_with_group {
+        return Err(anyhow!(
+            "credential '{}' is not available to workflow group '{}'",
+            credential_id,
+            workflow_group_id
+        ));
     }
 
     let secret_doc = doc
@@ -826,6 +852,7 @@ async fn resolve_credential_secret(credential_id: &str, usage: CredentialUsage<'
             doc! {
                 "_id": uuid::Uuid::new_v4().to_string(),
                 "credential_id": credential_id,
+                "group_id": workflow_group_id,
                 "action": "used",
                 "actor": usage.actor,
                 "node_id": usage.node_id,

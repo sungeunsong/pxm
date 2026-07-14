@@ -1193,15 +1193,16 @@ export class PostgresAdapter
     const { rows } = await this.pool.query(
       `
       INSERT INTO pxm_users
-        (id, display_name, email, role, group_ids, status, created_by, updated_by, created_at, updated_at, password_hash)
+        (id, display_name, email, role, group_ids, memberships, status, created_by, updated_by, created_at, updated_at, password_hash)
       VALUES
-        ($1, $2, $3, $4, $5::jsonb, $6, $7, $7, NOW(), NOW(), $8)
+        ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $8, NOW(), NOW(), $9)
       ON CONFLICT (id)
       DO UPDATE SET
         display_name = EXCLUDED.display_name,
         email = EXCLUDED.email,
         role = EXCLUDED.role,
         group_ids = EXCLUDED.group_ids,
+        memberships = EXCLUDED.memberships,
         status = EXCLUDED.status,
         updated_by = EXCLUDED.updated_by,
         password_hash = COALESCE(EXCLUDED.password_hash, pxm_users.password_hash),
@@ -1214,6 +1215,7 @@ export class PostgresAdapter
         user.email || null,
         user.role || 'user',
         JSON.stringify(user.group_ids || []),
+        JSON.stringify(user.memberships || []),
         user.status || 'active',
         user.actor || null,
         user.password_hash || null,
@@ -1340,9 +1342,9 @@ export class PostgresAdapter
     const { rows } = await this.pool.query(
       `
       INSERT INTO pxm_api_keys
-        (id, name, owner_type, owner_id, group_id, key_prefix, key_hash, scopes, allowed_workflow_ids, status, expires_at, created_by, created_at, updated_at)
+        (id, name, owner_type, owner_id, group_id, key_prefix, key_hash, scopes, allowed_workflow_ids, ip_allowlist, rate_limit_per_minute, status, expires_at, created_by, created_at, updated_at)
       VALUES
-        ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, 'active', $10, $11, NOW(), NOW())
+        ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb, $11, 'active', $12, $13, NOW(), NOW())
       RETURNING *
       `,
       [
@@ -1355,6 +1357,8 @@ export class PostgresAdapter
         key.key_hash,
         JSON.stringify(key.scopes || []),
         JSON.stringify(key.allowed_workflow_ids || []),
+        JSON.stringify(key.ip_allowlist || []),
+        key.rate_limit_per_minute || null,
         key.expires_at || null,
         key.actor || null,
       ],
@@ -1437,6 +1441,15 @@ export class PostgresAdapter
     return mapApiKeyUsageLogRow(rows[0]);
   }
 
+  async countApiKeyUsageSince(apiKeyId: string, since: string): Promise<number> {
+    await this.ensureAuthzTables();
+    const { rows } = await this.pool.query(
+      `SELECT COUNT(*)::int AS count FROM pxm_api_key_usage_logs WHERE api_key_id = $1 AND created_at >= $2`,
+      [apiKeyId, since],
+    );
+    return Number(rows[0]?.count || 0);
+  }
+
   private async ensureInputPresetTable(): Promise<void> {
     if (this.inputPresetTableReady) return;
     await this.pool.query(`
@@ -1488,6 +1501,7 @@ export class PostgresAdapter
         email TEXT NULL,
         role TEXT NOT NULL DEFAULT 'user',
         group_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+        memberships JSONB NOT NULL DEFAULT '[]'::jsonb,
         status TEXT NOT NULL DEFAULT 'active',
         created_by TEXT NULL,
         updated_by TEXT NULL,
@@ -1496,6 +1510,7 @@ export class PostgresAdapter
       )
     `);
     await this.pool.query(`ALTER TABLE pxm_users ADD COLUMN IF NOT EXISTS password_hash TEXT NULL`);
+    await this.pool.query(`ALTER TABLE pxm_users ADD COLUMN IF NOT EXISTS memberships JSONB NOT NULL DEFAULT '[]'::jsonb`);
     await this.pool.query(`CREATE TABLE IF NOT EXISTS pxm_sessions (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, csrf_hash TEXT NOT NULL, user_id TEXT NOT NULL, ip TEXT NULL, user_agent TEXT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), idle_expires_at TIMESTAMPTZ NOT NULL, absolute_expires_at TIMESTAMPTZ NOT NULL, revoked_at TIMESTAMPTZ NULL, revoke_reason TEXT NULL)`);
     await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_pxm_sessions_user_created ON pxm_sessions (user_id, created_at DESC)`);
     await this.pool.query(`
@@ -1522,6 +1537,8 @@ export class PostgresAdapter
         key_hash TEXT NOT NULL UNIQUE,
         scopes JSONB NOT NULL DEFAULT '[]'::jsonb,
         allowed_workflow_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+        ip_allowlist JSONB NOT NULL DEFAULT '[]'::jsonb,
+        rate_limit_per_minute INTEGER NULL,
         status TEXT NOT NULL DEFAULT 'active',
         expires_at TIMESTAMPTZ NULL,
         last_used_at TIMESTAMPTZ NULL,
@@ -1549,6 +1566,8 @@ export class PostgresAdapter
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+    await this.pool.query(`ALTER TABLE pxm_api_keys ADD COLUMN IF NOT EXISTS ip_allowlist JSONB NOT NULL DEFAULT '[]'::jsonb`);
+    await this.pool.query(`ALTER TABLE pxm_api_keys ADD COLUMN IF NOT EXISTS rate_limit_per_minute INTEGER NULL`);
     await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_pxm_users_group_ids ON pxm_users USING GIN (group_ids)`);
     await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_pxm_service_accounts_group ON pxm_service_accounts (group_id)`);
     await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_pxm_api_keys_group_status ON pxm_api_keys (group_id, status)`);
@@ -1592,12 +1611,20 @@ function mapGroupRow(row: any): PxmGroup {
 }
 
 function mapUserRow(row: any): PxmUser {
+  const groupIds = Array.isArray(row.group_ids) ? row.group_ids : [];
+  const memberships = Array.isArray(row.memberships) && row.memberships.length > 0
+    ? row.memberships.filter((item: any) => item?.group_id && (item.role === 'group_manager' || item.role === 'user'))
+    : groupIds.map((group_id: string) => ({
+        group_id,
+        role: row.role === 'group_manager' ? 'group_manager' as const : 'user' as const,
+      }));
   return {
     id: row.id,
     display_name: row.display_name,
     email: row.email || null,
     role: row.role || 'user',
-    group_ids: Array.isArray(row.group_ids) ? row.group_ids : [],
+    group_ids: memberships.map((membership: any) => membership.group_id),
+    memberships,
     status: row.status || 'active',
     created_by: row.created_by || null,
     updated_by: row.updated_by || null,
@@ -1636,6 +1663,8 @@ function mapApiKeyRow(row: any): PxmApiKey {
     key_hash: row.key_hash,
     scopes: Array.isArray(row.scopes) ? row.scopes : [],
     allowed_workflow_ids: Array.isArray(row.allowed_workflow_ids) ? row.allowed_workflow_ids : [],
+    ip_allowlist: Array.isArray(row.ip_allowlist) ? row.ip_allowlist : [],
+    rate_limit_per_minute: Number(row.rate_limit_per_minute) > 0 ? Number(row.rate_limit_per_minute) : null,
     status: row.status || 'active',
     expires_at: row.expires_at?.toISOString?.() || row.expires_at || null,
     last_used_at: row.last_used_at?.toISOString?.() || row.last_used_at || null,
@@ -1771,8 +1800,9 @@ function buildPostgresHistoryScope(actor?: WorkflowHistoryActor): {
     clauses.push(`COALESCE(i.context->'runtime'->'access'->>'workspace_id', 'default') = ANY(${param}::text[])`);
   }
 
-  if (actor.roles.includes('group_manager') && (actor.group_ids || []).length > 0) {
-    const param = addParam(actor.group_ids || []);
+  const manageableGroups = actorManagerGroupIds(actor);
+  if (manageableGroups.length > 0) {
+    const param = addParam(manageableGroups);
     clauses.push(`COALESCE(i.context->'runtime'->'access'->>'group_id', '') = ANY(${param}::text[])`);
   }
 
@@ -1818,4 +1848,13 @@ function buildPostgresHistoryScope(actor?: WorkflowHistoryActor): {
   return clauses.length > 0
     ? { where: `WHERE ${clauses.map((clause) => `(${clause})`).join(' OR ')}`, params }
     : { where: 'WHERE false', params: [] };
+}
+
+function actorManagerGroupIds(actor: WorkflowHistoryActor): string[] {
+  if (actor.group_roles) {
+    return Object.entries(actor.group_roles)
+      .filter(([, role]) => role === 'group_manager')
+      .map(([groupId]) => groupId);
+  }
+  return actor.roles.includes('group_manager') ? actor.group_ids || [] : [];
 }

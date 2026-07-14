@@ -6,9 +6,11 @@ import { SessionAuthMiddleware } from './session-auth.middleware';
 import { SessionAuthService } from './session-auth.service';
 import { AuthzController } from './authz.controller';
 import { AuthzService } from './authz.service';
+import { ManagementAuditModule } from '../audit/management-audit.module';
+import { CredentialsModule } from '../credentials/credentials.module';
 
 @Module({
-  imports: [DbModule],
+  imports: [DbModule, ManagementAuditModule, CredentialsModule],
   controllers: [AuthzController, SessionAuthController],
   providers: [AuthzService, ApiKeyAuthMiddleware, SessionAuthMiddleware, SessionAuthService],
   exports: [AuthzService],

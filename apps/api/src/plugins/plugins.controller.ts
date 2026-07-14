@@ -67,8 +67,8 @@ export class PluginsController {
   }
 
   @Post('test')
-  async test(@Body() body: PluginTestRequest) {
-    return this.pluginsService.testPlugin(body);
+  async test(@Body() body: PluginTestRequest, @Req() req: Request) {
+    return this.pluginsService.testPlugin(body, actorFromRequest(req));
   }
 
   @Get(':plugin_id/versions')

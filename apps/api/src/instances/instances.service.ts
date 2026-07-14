@@ -575,7 +575,10 @@ function canReadInstance(instance: any, actor?: WorkflowHistoryActor): boolean {
   if (roles.has('operator') && actor.workspace_ids.includes(workspaceId)) {
     return true;
   }
-  if (roles.has('group_manager') && actor.group_ids?.includes(access.group_id || '')) {
+  if (access.group_id && (
+    actor.group_roles?.[access.group_id] === 'group_manager'
+    || (!actor.group_roles && roles.has('group_manager') && actor.group_ids?.includes(access.group_id))
+  )) {
     return true;
   }
   if (roles.has('workflow_owner') && actor.owned_workflow_ids.includes(definitionId)) {

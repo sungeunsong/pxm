@@ -103,7 +103,7 @@ export class MongodbAdapter
     const now = new Date().toISOString();
     const existing = await this.db
       .collection<any>('v2_process_definitions')
-      .findOne({ _id: id }, { projection: { version: 1 } });
+      .findOne({ _id: id }, { projection: { version: 1, created_by: 1 } });
     const nextVersion = Number(existing?.version || 0) + 1;
 
     await this.db.collection<any>('v2_process_definitions').updateOne(
@@ -119,12 +119,14 @@ export class MongodbAdapter
           tags: metadata.tags || [],
           version_note: metadata.version_note || '',
           metadata,
+          updated_by: metadata.updated_by || null,
           nodes: formattedNodes,
           edges: formattedEdges,
           updated_at: now,
         },
         $setOnInsert: {
           created_at: now,
+          created_by: metadata.created_by || metadata.updated_by || null,
         },
       },
       { upsert: true },
@@ -141,6 +143,8 @@ export class MongodbAdapter
       tags: metadata.tags || [],
       version_note: metadata.version_note || '',
       metadata,
+      created_by: metadata.updated_by || metadata.created_by || null,
+      updated_by: metadata.updated_by || null,
       nodes: formattedNodes,
       edges: formattedEdges,
       created_at: now,
@@ -167,6 +171,8 @@ export class MongodbAdapter
       version: doc.version || 1,
       created_at: doc.created_at,
       updated_at: doc.updated_at,
+      created_by: doc.created_by || doc.metadata?.created_by || null,
+      updated_by: doc.updated_by || doc.metadata?.updated_by || null,
     }));
   }
 
@@ -189,6 +195,8 @@ export class MongodbAdapter
       version: doc.version || 1,
       created_at: doc.created_at,
       updated_at: doc.updated_at,
+      created_by: doc.created_by || doc.metadata?.created_by || null,
+      updated_by: doc.updated_by || doc.metadata?.updated_by || null,
       nodes: (doc.nodes || []).map(
         (n: any) =>
           n.config?.ui_node || {
@@ -229,6 +237,8 @@ export class MongodbAdapter
       version_note: doc.version_note || doc.metadata?.version_note || '',
       created_at: doc.created_at,
       updated_at: doc.updated_at,
+      created_by: doc.created_by || doc.metadata?.created_by || null,
+      updated_by: doc.updated_by || doc.metadata?.updated_by || null,
       node_count: Array.isArray(doc.nodes) ? doc.nodes.length : 0,
       edge_count: Array.isArray(doc.edges) ? doc.edges.length : 0,
     }));
@@ -295,6 +305,8 @@ export class MongodbAdapter
       version: doc.version || 1,
       created_at: doc.created_at,
       updated_at: doc.updated_at,
+      created_by: doc.created_by || doc.metadata?.created_by || null,
+      updated_by: doc.updated_by || doc.metadata?.updated_by || null,
       nodes: (doc.nodes || []).map(
         (n: any) =>
           n.config?.ui_node || {
@@ -361,7 +373,7 @@ export class MongodbAdapter
 
     const result: any[] = [];
     for (const inst of instances) {
-      let templateName = 'Unknown';
+      let templateName = inst.context?.runtime?.snapshot?.workflow?.name || 'Unknown';
       if (inst.process_definition_id) {
         const def = await this.db
           .collection<any>('v2_process_definitions')
@@ -1226,6 +1238,7 @@ export class MongodbAdapter
           email: user.email || null,
           role: user.role || 'user',
           group_ids: user.group_ids || [],
+          memberships: user.memberships || [],
           status: user.status || 'active',
           updated_by: user.actor || null,
           updated_at: now,
@@ -1357,6 +1370,8 @@ export class MongodbAdapter
       key_hash: key.key_hash,
       scopes: key.scopes || [],
       allowed_workflow_ids: key.allowed_workflow_ids || [],
+      ip_allowlist: key.ip_allowlist || [],
+      rate_limit_per_minute: key.rate_limit_per_minute || null,
       status: 'active',
       expires_at: key.expires_at || null,
       last_used_at: null,
@@ -1425,6 +1440,14 @@ export class MongodbAdapter
     return mapApiKeyUsageLogDoc(doc);
   }
 
+  async countApiKeyUsageSince(apiKeyId: string, since: string): Promise<number> {
+    await this.ensureAuthzIndexes();
+    return this.db.collection<any>('pxm_api_key_usage_logs').countDocuments({
+      api_key_id: apiKeyId,
+      created_at: { $gte: since },
+    });
+  }
+
   private async ensureInputPresetIndexes(): Promise<void> {
     if (this.inputPresetIndexesReady) return;
     const collection = this.db.collection<any>('workflow_input_presets');
@@ -1483,12 +1506,20 @@ function mapGroupDoc(doc: any): PxmGroup {
 }
 
 function mapUserDoc(doc: any): PxmUser {
+  const groupIds = Array.isArray(doc.group_ids) ? doc.group_ids : [];
+  const memberships = Array.isArray(doc.memberships)
+    ? doc.memberships.filter((item: any) => item?.group_id && (item.role === 'group_manager' || item.role === 'user'))
+    : groupIds.map((group_id: string) => ({
+        group_id,
+        role: doc.role === 'group_manager' ? 'group_manager' as const : 'user' as const,
+      }));
   return {
     id: doc._id,
     display_name: doc.display_name,
     email: doc.email || null,
     role: doc.role || 'user',
-    group_ids: Array.isArray(doc.group_ids) ? doc.group_ids : [],
+    group_ids: memberships.map((membership: any) => membership.group_id),
+    memberships,
     status: doc.status || 'active',
     created_by: doc.created_by || null,
     updated_by: doc.updated_by || null,
@@ -1526,6 +1557,8 @@ function mapApiKeyDoc(doc: any): PxmApiKey {
     key_hash: doc.key_hash,
     scopes: Array.isArray(doc.scopes) ? doc.scopes : [],
     allowed_workflow_ids: Array.isArray(doc.allowed_workflow_ids) ? doc.allowed_workflow_ids : [],
+    ip_allowlist: Array.isArray(doc.ip_allowlist) ? doc.ip_allowlist : [],
+    rate_limit_per_minute: Number(doc.rate_limit_per_minute) > 0 ? Number(doc.rate_limit_per_minute) : null,
     status: doc.status || 'active',
     expires_at: doc.expires_at || null,
     last_used_at: doc.last_used_at || null,
@@ -1641,9 +1674,10 @@ function buildMongoHistoryFilter(actor?: WorkflowHistoryActor): Record<string, a
     }
   }
 
-  if (actor.roles.includes('group_manager') && (actor.group_ids || []).length > 0) {
-    or.push({ group_id: { $in: actor.group_ids } });
-    or.push({ 'context.runtime.access.group_id': { $in: actor.group_ids } });
+  const manageableGroups = actorManagerGroupIds(actor);
+  if (manageableGroups.length > 0) {
+    or.push({ group_id: { $in: manageableGroups } });
+    or.push({ 'context.runtime.access.group_id': { $in: manageableGroups } });
   }
 
   if (actor.roles.includes('workflow_owner') && actor.owned_workflow_ids.length > 0) {
@@ -1682,4 +1716,13 @@ function buildMongoHistoryFilter(actor?: WorkflowHistoryActor): Record<string, a
   }
 
   return or.length > 0 ? { $or: or } : { _id: '__no_authorized_instances__' };
+}
+
+function actorManagerGroupIds(actor: WorkflowHistoryActor): string[] {
+  if (actor.group_roles) {
+    return Object.entries(actor.group_roles)
+      .filter(([, role]) => role === 'group_manager')
+      .map(([groupId]) => groupId);
+  }
+  return actor.roles.includes('group_manager') ? actor.group_ids || [] : [];
 }

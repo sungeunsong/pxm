@@ -1,5 +1,6 @@
 import { ForbiddenException } from '@nestjs/common';
 import type { WorkflowHistoryActor } from '../db/ports/db.ports';
+import { developmentBypassEnabled } from './authenticated.guard';
 
 export function assertAdmin(actor: WorkflowHistoryActor): void {
   if (isDevelopmentBypass(actor) || isAdmin(actor)) {
@@ -21,7 +22,7 @@ export function assertCanManageGroup(
   if (actor.api_key_id) {
     throw new ForbiddenException('API key cannot manage resources');
   }
-  if (actor.roles.includes('group_manager') && (actor.group_ids || []).includes(groupId)) {
+  if (groupRole(actor, groupId) === 'group_manager') {
     return;
   }
   throw new ForbiddenException('group_manager can manage own group only');
@@ -53,12 +54,12 @@ export function manageableGroupId(actor: WorkflowHistoryActor, requestedGroupId?
   if (actor.api_key_id) {
     throw new ForbiddenException('API key cannot manage resources');
   }
-  if (actor.roles.includes('group_manager')) {
+  if (managerGroupIds(actor).length > 0) {
     if (requestedGroupId) {
       assertCanManageGroup(actor, requestedGroupId);
       return requestedGroupId;
     }
-    const [firstGroupId] = actor.group_ids || [];
+    const [firstGroupId] = managerGroupIds(actor);
     if (!firstGroupId) {
       throw new ForbiddenException('group_manager has no group');
     }
@@ -71,9 +72,31 @@ export function isAdmin(actor: WorkflowHistoryActor): boolean {
   return !actor.api_key_id && actor.roles.includes('admin');
 }
 
+export function groupRole(
+  actor: WorkflowHistoryActor,
+  groupId: string,
+): 'group_manager' | 'user' | undefined {
+  if (actor.group_roles) {
+    return actor.group_roles[groupId];
+  }
+  if ((actor.group_ids || []).includes(groupId)) {
+    return actor.roles.includes('group_manager') ? 'group_manager' : 'user';
+  }
+  return undefined;
+}
+
+export function managerGroupIds(actor: WorkflowHistoryActor): string[] {
+  if (actor.group_roles) {
+    return Object.entries(actor.group_roles)
+      .filter(([, role]) => role === 'group_manager')
+      .map(([groupId]) => groupId);
+  }
+  return actor.roles.includes('group_manager') ? actor.group_ids || [] : [];
+}
+
 function isDevelopmentBypass(actor: WorkflowHistoryActor): boolean {
   return (
-    process.env.AUTHZ_ALLOW_DEVELOPMENT_BYPASS === 'true' &&
+    developmentBypassEnabled() &&
     !actor.api_key_id &&
     !actor.actor_id &&
     actor.roles.includes('operator')

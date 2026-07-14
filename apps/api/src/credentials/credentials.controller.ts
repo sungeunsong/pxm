@@ -1,4 +1,6 @@
-import { Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, Query, Req } from '@nestjs/common';
+import type { Request } from 'express';
+import { actorFromRequest } from '../instances/history-auth';
 import { CredentialsService } from './credentials.service';
 import { CreateCredentialDto, UpdateCredentialDto } from './dto/credential.dto';
 
@@ -7,37 +9,41 @@ export class CredentialsController {
   constructor(private readonly credentialsService: CredentialsService) {}
 
   @Post()
-  async create(@Body() dto: CreateCredentialDto) {
-    return this.credentialsService.create(dto);
+  async create(@Body() dto: CreateCredentialDto, @Req() req: Request) {
+    return this.credentialsService.create(dto, actorFromRequest(req));
   }
 
   @Get()
-  async list(@Query('activeOnly') activeOnly?: string) {
-    return this.credentialsService.list(activeOnly === 'true');
+  async list(
+    @Query('activeOnly') activeOnly: string | undefined,
+    @Query('groupId') groupId: string | undefined,
+    @Req() req: Request,
+  ) {
+    return this.credentialsService.list(activeOnly === 'true', actorFromRequest(req), groupId);
   }
 
   @Get('audit')
-  async audit() {
-    return this.credentialsService.audit();
+  async audit(@Query('groupId') groupId: string | undefined, @Req() req: Request) {
+    return this.credentialsService.audit(actorFromRequest(req), undefined, groupId);
   }
 
   @Get(':id')
-  async get(@Param('id') id: string) {
-    return this.credentialsService.get(id);
+  async get(@Param('id') id: string, @Req() req: Request) {
+    return this.credentialsService.get(id, actorFromRequest(req));
   }
 
   @Put(':id')
-  async update(@Param('id') id: string, @Body() dto: UpdateCredentialDto) {
-    return this.credentialsService.update(id, dto);
+  async update(@Param('id') id: string, @Body() dto: UpdateCredentialDto, @Req() req: Request) {
+    return this.credentialsService.update(id, dto, actorFromRequest(req));
   }
 
   @Delete(':id')
-  async delete(@Param('id') id: string) {
-    return this.credentialsService.delete(id);
+  async delete(@Param('id') id: string, @Req() req: Request) {
+    return this.credentialsService.delete(id, actorFromRequest(req));
   }
 
   @Get(':id/audit')
-  async credentialAudit(@Param('id') id: string) {
-    return this.credentialsService.audit(id);
+  async credentialAudit(@Param('id') id: string, @Req() req: Request) {
+    return this.credentialsService.audit(actorFromRequest(req), id);
   }
 }

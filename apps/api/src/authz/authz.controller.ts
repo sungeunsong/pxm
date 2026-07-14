@@ -12,25 +12,40 @@ import {
   assertAdmin,
   assertCanIssueUser,
   assertCanManageGroup,
+  isAdmin,
+  managerGroupIds,
   manageableGroupId,
 } from './management-auth';
+import { ManagementAuditService } from '../audit/management-audit.service';
+import { CredentialsService } from '../credentials/credentials.service';
 
 @Controller('authz')
 export class AuthzController {
-  constructor(private readonly authzService: AuthzService) {}
+  constructor(
+    private readonly authzService: AuthzService,
+    private readonly audit: ManagementAuditService,
+    private readonly credentials: CredentialsService,
+  ) {}
 
   @Post('groups')
   async upsertGroup(@Body() dto: UpsertGroupDto, @Req() req: Request) {
     const actor = actorFromRequest(req); assertAdmin(actor);
-    return this.authzService.upsertGroup({ ...dto, actor: actor.actor_id || undefined });
+    const group = await this.authzService.upsertGroup({ ...dto, actor: actor.actor_id || undefined });
+    await this.audit.append({ action: dto.id ? 'group.updated' : 'group.created', resource_type: 'group', resource_id: group.id, group_id: group.id, actor_id: actor.actor_id });
+    return group;
   }
 
   @Get('groups')
-  async listGroups(@Query('includeDeleted') includeDeleted: string | undefined, @Req() req: Request) {
+  async listGroups(
+    @Query('includeDeleted') includeDeleted: string | undefined,
+    @Query('manageableOnly') manageableOnly: string | undefined,
+    @Req() req: Request,
+  ) {
     const actor = actorFromRequest(req);
     const groups = await this.authzService.listGroups(actor.roles.includes('admin') && includeDeleted === 'true');
     if (actor.roles.includes('admin')) return groups;
-    if (actor.roles.includes('group_manager')) return groups.filter(group => (actor.group_ids || []).includes(group.id));
+    const visibleGroupIds = manageableOnly === 'true' ? managerGroupIds(actor) : actor.group_ids || [];
+    if (visibleGroupIds.length > 0) return groups.filter(group => visibleGroupIds.includes(group.id));
     assertCanManageGroup(actor, null);
     return [];
   }
@@ -48,7 +63,10 @@ export class AuthzController {
     @Req() req?: Request,
   ) {
     const authenticated = actorFromRequest(req); assertAdmin(authenticated);
-    return this.authzService.deleteGroup(id, authenticated.actor_id || actor);
+    const result = await this.authzService.deleteGroup(id, authenticated.actor_id || actor);
+    await this.credentials.revokeGroupShares(id, authenticated.actor_id || actor || 'system');
+    await this.audit.append({ action: 'group.deleted', resource_type: 'group', resource_id: id, group_id: id, actor_id: authenticated.actor_id });
+    return result;
   }
 
   @Post('groups/:id/restore')
@@ -58,13 +76,37 @@ export class AuthzController {
     @Req() req?: Request,
   ) {
     const authenticated = actorFromRequest(req); assertAdmin(authenticated);
-    return this.authzService.restoreGroup(id, authenticated.actor_id || actor);
+    const result = await this.authzService.restoreGroup(id, authenticated.actor_id || actor);
+    await this.audit.append({ action: 'group.restored', resource_type: 'group', resource_id: id, group_id: id, actor_id: authenticated.actor_id });
+    return result;
   }
 
   @Post('users')
   async upsertUser(@Body() dto: UpsertUserDto, @Req() req: Request) {
-    const actor = actorFromRequest(req); assertCanIssueUser(actor, dto.role, dto.group_ids || []);
-    return this.authzService.upsertUser({ ...dto, actor: actor.actor_id || undefined });
+    const membershipGroupIds = dto.memberships?.map((membership) => membership.group_id) || [];
+    const assignedRole = dto.memberships?.some((membership) => membership.role === 'group_manager')
+      ? 'group_manager'
+      : dto.role;
+    const actor = actorFromRequest(req); assertCanIssueUser(actor, assignedRole, membershipGroupIds.length ? membershipGroupIds : dto.group_ids || []);
+    let safeDto = dto;
+    if (!isAdmin(actor) && dto.id) {
+      const existing = await this.authzService.getUser(dto.id).catch(() => null);
+      if (existing) {
+        safeDto = {
+          ...dto,
+          display_name: existing.display_name,
+          email: existing.email,
+          role: existing.role,
+          password: undefined,
+        };
+      }
+    }
+    const user = await this.authzService.upsertUser({ ...safeDto, actor: actor.actor_id || undefined });
+    await Promise.all((user.group_ids.length ? user.group_ids : [null]).map((groupId) => this.audit.append({
+      action: dto.id ? 'user.updated' : 'user.created', resource_type: 'user', resource_id: user.id,
+      group_id: groupId, actor_id: actor.actor_id, details: { role: user.role, group_ids: user.group_ids, memberships: user.memberships },
+    })));
+    return user;
   }
 
   @Get('users')
@@ -81,8 +123,10 @@ export class AuthzController {
 
   @Post('service-accounts')
   async upsertServiceAccount(@Body() dto: UpsertServiceAccountDto, @Req() req: Request) {
-    assertCanManageGroup(actorFromRequest(req), dto.group_id);
-    return this.authzService.upsertServiceAccount({ ...dto, actor: actorFromRequest(req).actor_id || undefined });
+    const actor = actorFromRequest(req); assertCanManageGroup(actor, dto.group_id);
+    const account = await this.authzService.upsertServiceAccount({ ...dto, actor: actor.actor_id || undefined });
+    await this.audit.append({ action: dto.id ? 'service_account.updated' : 'service_account.created', resource_type: 'service_account', resource_id: account.id, group_id: account.group_id, actor_id: actor.actor_id });
+    return account;
   }
 
   @Get('service-accounts')
@@ -99,8 +143,10 @@ export class AuthzController {
 
   @Post('api-keys')
   async createApiKey(@Body() dto: CreateApiKeyDto, @Req() req: Request) {
-    assertCanManageGroup(actorFromRequest(req), dto.group_id);
-    return this.authzService.createApiKey({ ...dto, actor: actorFromRequest(req).actor_id || undefined });
+    const actor = actorFromRequest(req); assertCanManageGroup(actor, dto.group_id);
+    const key = await this.authzService.createApiKey({ ...dto, actor: actor.actor_id || undefined });
+    await this.audit.append({ action: 'api_key.issued', resource_type: 'api_key', resource_id: key.id, group_id: key.group_id, actor_id: actor.actor_id, details: { owner_type: key.owner_type, owner_id: key.owner_id, scopes: key.scopes, allowed_workflow_ids: key.allowed_workflow_ids, expires_at: key.expires_at } });
+    return key;
   }
 
   @Get('api-keys')
@@ -116,6 +162,22 @@ export class AuthzController {
   ) {
     const key = await this.authzService.getApiKey(id);
     assertCanManageGroup(actorFromRequest(req), key.group_id);
-    return this.authzService.disableApiKey(id, actorFromRequest(req).actor_id || actor);
+    const authenticated = actorFromRequest(req);
+    const result = await this.authzService.disableApiKey(id, authenticated.actor_id || actor);
+    await this.audit.append({ action: 'api_key.disabled', resource_type: 'api_key', resource_id: id, group_id: key.group_id, actor_id: authenticated.actor_id });
+    return result;
+  }
+
+  @Post('api-keys/:id/rotate')
+  async rotateApiKey(@Param('id') id: string, @Req() req: Request) {
+    const actor = actorFromRequest(req);
+    const key = await this.authzService.getApiKey(id);
+    assertCanManageGroup(actor, key.group_id);
+    const replacement = await this.authzService.rotateApiKey(id, actor.actor_id);
+    await this.audit.append({
+      action: 'api_key.rotated', resource_type: 'api_key', resource_id: replacement.id,
+      group_id: key.group_id, actor_id: actor.actor_id, details: { previous_key_id: id },
+    });
+    return replacement;
   }
 }

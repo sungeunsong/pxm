@@ -12,6 +12,8 @@ import { InstancesService } from '../instances/instances.service';
 import { actorFromRequest, instanceAccessFromRequest } from '../instances/history-auth';
 import { randomUUID } from 'crypto';
 import { assertCanManageGroup, isAdmin } from '../authz/management-auth';
+import { ManagementAuditService } from '../audit/management-audit.service';
+import { AuthzService } from '../authz/authz.service';
 
 @Controller('templates')
 export class TemplatesController {
@@ -21,18 +23,23 @@ export class TemplatesController {
     private readonly instancesService: InstancesService,
     private readonly scheduleRepo: WorkflowScheduleRepositoryPort,
     private readonly inputPresetRepo: WorkflowInputPresetRepositoryPort,
+    private readonly audit: ManagementAuditService,
+    private readonly authzService: AuthzService,
   ) {}
 
   @Post()
   async create(@Body() dto: CreateTemplateDto, @Req() req: Request) {
-    assertCanManageGroup(actorFromRequest(req), dto.group_id);
-    return this.templatesService.create(dto);
+    const actor = actorFromRequest(req); assertCanManageGroup(actor, dto.group_id);
+    const template = await this.templatesService.create({ ...dto, created_by: actor.actor_id || 'system', updated_by: actor.actor_id || 'system' });
+    await this.audit.append({ action: 'workflow.created', resource_type: 'workflow', resource_id: template.id, group_id: template.group_id, actor_id: actor.actor_id });
+    return template;
   }
 
   @Get()
-  async findAll(@Query('activeOnly') activeOnly?: string) {
+  async findAll(@Query('activeOnly') activeOnly: string | undefined, @Req() req: Request) {
     const active = activeOnly !== 'false';
-    return this.templatesService.findAll(active);
+    const actor = actorFromRequest(req);
+    return (await this.templatesService.findAll(active)).filter((template) => canReadTemplate(actor, template));
   }
 
   @Get('input-presets')
@@ -60,16 +67,19 @@ export class TemplatesController {
 
   @Post('import')
   async import(@Body() body: any, @Req() req: Request) {
-    assertCanManageGroup(actorFromRequest(req), body?.workflow?.metadata?.group_id || null);
+    const actor = actorFromRequest(req); assertCanManageGroup(actor, body?.workflow?.metadata?.group_id || null);
     try {
-      return await this.templatesService.import(body);
+      const template = await this.templatesService.import(body, actor.actor_id || 'system');
+      await this.audit.append({ action: 'workflow.imported', resource_type: 'workflow', resource_id: template.id, group_id: template.group_id, actor_id: actor.actor_id });
+      return template;
     } catch (error) {
       throw new BadRequestException(error instanceof Error ? error.message : 'Invalid workflow import document');
     }
   }
 
   @Get(':id/export')
-  async export(@Param('id') id: string) {
+  async export(@Param('id') id: string, @Req() req: Request) {
+    await this.assertReadableTemplate(id, req);
     const document = await this.templatesService.export(id);
     if (!document) {
       throw new NotFoundException('Template not found');
@@ -78,7 +88,8 @@ export class TemplatesController {
   }
 
   @Get(':id/versions')
-  async versions(@Param('id') id: string) {
+  async versions(@Param('id') id: string, @Req() req: Request) {
+    await this.assertReadableTemplate(id, req);
     const versions = await this.templatesService.listVersions(id);
     if (!versions) {
       throw new NotFoundException('Template not found');
@@ -91,7 +102,9 @@ export class TemplatesController {
     @Param('id') id: string,
     @Query('from', ParseIntPipe) from: number,
     @Query('to') to?: string,
+    @Req() req?: Request,
   ) {
+    await this.assertReadableTemplate(id, req);
     const toVersion = to ? Number.parseInt(to, 10) : undefined;
     if (to && !Number.isFinite(toVersion)) {
       throw new BadRequestException('to must be a number');
@@ -108,7 +121,9 @@ export class TemplatesController {
   async version(
     @Param('id') id: string,
     @Param('version', ParseIntPipe) version: number,
+    @Req() req: Request,
   ) {
+    await this.assertReadableTemplate(id, req);
     const template = await this.templatesService.getVersion(id, version);
     if (!template) {
       throw new NotFoundException('Template version not found');
@@ -120,21 +135,22 @@ export class TemplatesController {
   async rollbackVersion(
     @Param('id') id: string,
     @Param('version', ParseIntPipe) version: number,
+    @Req() req: Request,
   ) {
-    const template = await this.templatesService.rollback(id, version);
+    const current = await this.assertReadableTemplate(id, req);
+    assertCanManageGroup(actorFromRequest(req), current.group_id);
+    const actor = actorFromRequest(req);
+    const template = await this.templatesService.rollback(id, version, actor.actor_id || 'system');
     if (!template) {
       throw new NotFoundException('Template version not found');
     }
+    await this.audit.append({ action: 'workflow.rolled_back', resource_type: 'workflow', resource_id: id, group_id: template.group_id, actor_id: actor.actor_id, details: { restored_version: version, new_version: template.version } });
     return template;
   }
 
   @Get(':id')
-  async findOne(@Param('id') id: string) {
-    const template = await this.templatesService.findOne(id);
-    if (!template) {
-      throw new Error('Template not found');
-    }
-    return template;
+  async findOne(@Param('id') id: string, @Req() req: Request) {
+    return this.assertReadableTemplate(id, req);
   }
 
   @Put(':id')
@@ -143,11 +159,18 @@ export class TemplatesController {
     if (!current) {
       throw new Error('Template not found');
     }
-    assertCanManageGroup(actorFromRequest(req), dto.group_id !== undefined ? dto.group_id : current.group_id);
-    const template = await this.templatesService.update(id, dto);
+    const actor = actorFromRequest(req);
+    assertCanManageGroup(actor, current.group_id);
+    assertCanManageGroup(actor, dto.group_id !== undefined ? dto.group_id : current.group_id);
+    const template = await this.templatesService.update(id, { ...dto, updated_by: actor.actor_id || 'system' });
     if (!template) {
       throw new Error('Template not found');
     }
+    await this.audit.append({
+      action: current.group_id !== template.group_id ? 'workflow.group_changed' : 'workflow.updated',
+      resource_type: 'workflow', resource_id: id, group_id: template.group_id, actor_id: actor.actor_id,
+      details: { previous_group_id: current.group_id || null, group_id: template.group_id || null },
+    });
     return template;
   }
 
@@ -170,7 +193,9 @@ export class TemplatesController {
     if (!current) {
       throw new Error('Template not found');
     }
-    assertCanManageGroup(actorFromRequest(req), body.group_id !== undefined ? body.group_id : current.group_id);
+    const actor = actorFromRequest(req);
+    assertCanManageGroup(actor, current.group_id);
+    assertCanManageGroup(actor, body.group_id !== undefined ? body.group_id : current.group_id);
     const template = await this.templatesService.update(id, {
       name: body.name,
       description: body.description,
@@ -180,11 +205,13 @@ export class TemplatesController {
       version_note: body.version_note,
       nodes: body.nodes,
       edges: body.edges,
+      updated_by: actor.actor_id || 'system',
     });
     if (!template) {
       throw new Error('Template not found');
     }
     console.log(`[BFF] Template ${id} deployed. Nodes: ${body.nodes.length}, Edges: ${body.edges.length}`);
+    await this.audit.append({ action: 'workflow.deployed', resource_type: 'workflow', resource_id: id, group_id: template.group_id, actor_id: actor.actor_id });
     return { success: true, template };
   }
 
@@ -222,6 +249,7 @@ export class TemplatesController {
       version_note: template.version_note,
       nodes,
       edges: template.edges,
+      updated_by: actorFromRequest(req).actor_id || 'system',
     });
 
     if (!updated) {
@@ -265,6 +293,7 @@ export class TemplatesController {
       version_note: template.version_note,
       nodes,
       edges: template.edges,
+      updated_by: actorFromRequest(req).actor_id || 'system',
     });
 
     if (!updated) {
@@ -275,11 +304,8 @@ export class TemplatesController {
   }
 
   @Get(':id/schedule/status')
-  async scheduleStatus(@Param('id') id: string) {
-    const template = await this.templatesService.findOne(id);
-    if (!template) {
-      throw new NotFoundException('Template not found');
-    }
+  async scheduleStatus(@Param('id') id: string, @Req() req: Request) {
+    await this.assertReadableTemplate(id, req);
 
     return this.scheduleRepo.getDefinitionScheduleStatus(id, 10);
   }
@@ -406,6 +432,8 @@ export class TemplatesController {
     if (!success) {
       throw new Error('Template not found');
     }
+    const actor = actorFromRequest(req);
+    await this.audit.append({ action: 'workflow.deleted', resource_type: 'workflow', resource_id: id, group_id: template.group_id, actor_id: actor.actor_id });
     return { message: 'Template deleted successfully' };
   }
 
@@ -431,7 +459,9 @@ export class TemplatesController {
     if (!template) {
       throw new Error('Template not found');
     }
-    assertCanExecuteWorkflow(actorFromRequest(req), id);
+    const actor = actorFromRequest(req);
+    if (!canReadTemplate(actor, template)) throw new NotFoundException('Template not found');
+    assertCanExecuteWorkflow(actor, id);
 
     // 실행 요청마다 새로운 인스턴스를 발급한다
     const instanceId = randomUUID();
@@ -451,6 +481,9 @@ export class TemplatesController {
     if (requestedPreset && !inputPreset) {
       throw new NotFoundException('Input preset not found');
     }
+    if (inputPreset && !canUseInputPreset(actor, inputPreset)) {
+      throw new NotFoundException('Input preset not found');
+    }
 
     // ctx 구조: Rust Engine이 기대하는 실행 컨텍스트
     const formData = {
@@ -463,6 +496,12 @@ export class TemplatesController {
       group_id: template.group_id || requestAccess.group_id,
       workflow_version_id: template.version ? `${template.id}:${template.version}` : null,
     };
+    const groupSnapshot = template.group_id
+      ? await this.authzService.getGroup(template.group_id).catch(() => null)
+      : null;
+    const apiKeySnapshot = actor.api_key_id
+      ? await this.authzService.getApiKey(actor.api_key_id).catch(() => null)
+      : null;
     const ctx = {
       runtime: {
         cursor: startNode.id,
@@ -470,6 +509,17 @@ export class TemplatesController {
         edges: template.edges,
         template_id: template.id,
         template_name: template.name,
+        snapshot: {
+          workflow: { id: template.id, name: template.name, version: template.version || 1 },
+          group: template.group_id
+            ? { id: template.group_id, name: groupSnapshot?.name || template.group || template.group_id }
+            : null,
+          caller: { type: actor.actor_type, id: actor.actor_id },
+          api_key: apiKeySnapshot
+            ? { id: apiKeySnapshot.id, name: apiKeySnapshot.name, prefix: apiKeySnapshot.key_prefix }
+            : null,
+          business_actor: actor.business_actor || null,
+        },
         access,
         input_preset: inputPreset
           ? {
@@ -552,14 +602,6 @@ export class TemplatesController {
     };
   }
 
-  private async assertReadableTemplate(id: string, req?: Request) {
-    const template = await this.templatesService.findOne(id);
-    if (!template || !canReadTemplate(actorFromRequest(req), template)) {
-      throw new NotFoundException('Template not found');
-    }
-    return template;
-  }
-
   private async waitForInstanceResult(
     instanceId: string,
     requestedTimeoutMs?: number,
@@ -591,6 +633,14 @@ export class TemplatesController {
       completed_at: latest?.completed_at,
     };
   }
+
+  private async assertReadableTemplate(id: string, req?: Request) {
+    const template = await this.templatesService.findOne(id);
+    if (!template || !canReadTemplate(actorFromRequest(req), template)) {
+      throw new NotFoundException('Template not found');
+    }
+    return template;
+  }
 }
 
 type StartWorkflowRequest = {
@@ -609,8 +659,9 @@ type InputPresetRequest = {
   name?: string;
   description?: string;
   values?: Record<string, any>;
-  scope?: 'private' | 'group' | 'public';
+  scope?: 'private' | 'group' | 'shared' | 'public';
   group_id?: string | null;
+  shared_group_ids?: string[];
 };
 
 function normalizeSyncTimeoutMs(value?: number): number {

@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync } from 'fs';
 import { Db, MongoClient } from 'mongodb';
 import { join, resolve } from 'path';
 import { CredentialsService } from '../credentials/credentials.service';
+import type { WorkflowHistoryActor } from '../db/ports/db.ports';
 import { MONGO_DB } from '../db/mongo.provider';
 import { PluginManifestDto } from './dto/plugin-manifest.dto';
 
@@ -251,7 +252,10 @@ export class PluginsService implements OnModuleInit {
       .toArray();
   }
 
-  async testPlugin(request: PluginTestRequest): Promise<PluginTestResponse> {
+  async testPlugin(
+    request: PluginTestRequest,
+    actor: WorkflowHistoryActor,
+  ): Promise<PluginTestResponse> {
     const pluginId = request?.plugin_id;
     if (!pluginId) {
       throw new BadRequestException('plugin_id is required');
@@ -267,6 +271,7 @@ export class PluginsService implements OnModuleInit {
       request.config ?? {},
       manifest.plugin_id,
       request.node_id,
+      actor,
     );
 
     try {
@@ -337,6 +342,7 @@ export class PluginsService implements OnModuleInit {
     config: Record<string, unknown>,
     pluginId: string,
     nodeId?: string,
+    actor?: WorkflowHistoryActor,
   ): Promise<Record<string, unknown>> {
     const credentialId = stringValue(config.credential_id);
     if (!credentialId) {
@@ -347,7 +353,8 @@ export class PluginsService implements OnModuleInit {
     }
 
     const secret = await this.credentialsService.resolveSecret(credentialId, {
-      actor: 'plugin-test',
+      actor: actor?.actor_id || 'plugin-test',
+      actor_context: actor,
       node_id: nodeId,
     });
     const binding = objectValue(config.credential_binding);

@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, HttpException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash, randomBytes } from 'crypto';
 import {
   AppendPxmApiKeyUsageLog,
@@ -6,8 +6,10 @@ import {
   PxmApiKey,
   PxmApiKeyScope,
   PxmGroup,
+  PxmGroupMembership,
   PxmServiceAccount,
   PxmUser,
+  WorkflowRepositoryPort,
 } from '../db/ports/db.ports';
 import {
   ApiKeyResponseDto,
@@ -18,6 +20,7 @@ import {
   UpsertUserDto,
 } from './dto/authz.dto';
 import { hashPassword } from './password';
+import { isIP } from 'net';
 
 const API_KEY_PREFIX = 'pxm_live_';
 const API_KEY_VISIBLE_PREFIX_LENGTH = 18;
@@ -29,7 +32,10 @@ const ALLOWED_API_KEY_SCOPES: PxmApiKeyScope[] = [
 
 @Injectable()
 export class AuthzService {
-  constructor(private readonly authzRepo: AuthzRepositoryPort) {}
+  constructor(
+    private readonly authzRepo: AuthzRepositoryPort,
+    private readonly workflowRepo: WorkflowRepositoryPort,
+  ) {}
 
   async upsertGroup(dto: UpsertGroupDto): Promise<PxmGroup> {
     if (!dto?.name?.trim()) {
@@ -75,11 +81,26 @@ export class AuthzService {
     if (!dto?.display_name?.trim()) {
       throw new BadRequestException('display_name is required');
     }
-    const role = dto.role || 'user';
+    const existing = dto.id ? await this.authzRepo.getUser(dto.id.trim()) : null;
+    const role = dto.role || existing?.role || 'user';
     if (!['admin', 'group_manager', 'user'].includes(role)) {
       throw new BadRequestException('role is invalid');
     }
-    const groupIds = normalizeStringArray(dto.group_ids);
+    const requestedMemberships = dto.memberships === undefined
+      ? normalizeStringArray(dto.group_ids).map((group_id) => ({
+          group_id,
+          role: role === 'group_manager' ? 'group_manager' as const : 'user' as const,
+        }))
+      : normalizeMemberships(dto.memberships);
+    const memberships = dto.memberships === undefined
+      ? requestedMemberships
+      : mergeMemberships(existing?.memberships || [], requestedMemberships);
+    const groupIds = memberships.map((membership) => membership.group_id);
+    const effectiveRole = role === 'admin' || (dto.memberships !== undefined && existing?.role === 'admin')
+      ? 'admin'
+      : memberships.some((membership) => membership.role === 'group_manager')
+        ? 'group_manager'
+        : 'user';
     if (dto.password !== undefined && dto.password.length < 8) {
       throw new BadRequestException('password must be at least 8 characters');
     }
@@ -88,8 +109,9 @@ export class AuthzService {
       id: optionalId(dto.id),
       display_name: dto.display_name.trim(),
       email: optionalString(dto.email),
-      role,
+      role: effectiveRole,
       group_ids: groupIds,
+      memberships,
       status: normalizePrincipalStatus(dto.status),
       actor: optionalString(dto.actor),
       password_hash: dto.password ? await hashPassword(dto.password) : undefined,
@@ -161,6 +183,18 @@ export class AuthzService {
     await this.assertOwnerCanReceiveKey(dto.owner_type, dto.owner_id.trim(), dto.group_id.trim(), scopes);
 
     const rawKey = `${API_KEY_PREFIX}${randomBytes(32).toString('base64url')}`;
+    const allowedWorkflowIds = dto.allowed_workflow_ids === undefined
+      ? (await this.workflowRepo.listDefinitions())
+          .filter((workflow) => (workflow.group_id || workflow.metadata?.group_id) === dto.group_id.trim())
+          .map((workflow) => workflow.id)
+      : normalizeStringArray(dto.allowed_workflow_ids);
+    for (const workflowId of allowedWorkflowIds) {
+      const workflow = await this.workflowRepo.getDefinition(workflowId);
+      if (!workflow || (workflow.group_id || workflow.metadata?.group_id) !== dto.group_id.trim()) {
+        throw new BadRequestException(`allowed workflow is not in the API key group: ${workflowId}`);
+      }
+    }
+
     const key = await this.authzRepo.createApiKey({
       id: optionalId(dto.id),
       name: dto.name.trim(),
@@ -170,7 +204,9 @@ export class AuthzService {
       key_prefix: rawKey.slice(0, API_KEY_VISIBLE_PREFIX_LENGTH),
       key_hash: hashApiKey(rawKey),
       scopes,
-      allowed_workflow_ids: normalizeStringArray(dto.allowed_workflow_ids),
+      allowed_workflow_ids: allowedWorkflowIds,
+      ip_allowlist: normalizeIpAllowlist(dto.ip_allowlist),
+      rate_limit_per_minute: normalizeRateLimit(dto.rate_limit_per_minute),
       expires_at: normalizeExpiresAt(dto.expires_at),
       actor: optionalString(dto.actor),
     });
@@ -202,6 +238,32 @@ export class AuthzService {
     return { success: true };
   }
 
+  async rotateApiKey(id: string, actor?: string | null): Promise<CreatedApiKeyResponseDto> {
+    const current = await this.getApiKey(id);
+    if (current.status !== 'active') {
+      throw new BadRequestException('Only an active API key can be rotated');
+    }
+    const replacement = await this.createApiKey({
+      name: current.name,
+      owner_type: current.owner_type,
+      owner_id: current.owner_id,
+      group_id: current.group_id,
+      scopes: current.scopes,
+      allowed_workflow_ids: current.allowed_workflow_ids,
+      ip_allowlist: current.ip_allowlist,
+      rate_limit_per_minute: current.rate_limit_per_minute,
+      expires_at: current.expires_at || null,
+      actor: actor || undefined,
+    });
+    try {
+      await this.disableApiKey(id, actor);
+    } catch (error) {
+      await this.disableApiKey(replacement.id, actor).catch(() => undefined);
+      throw error;
+    }
+    return replacement;
+  }
+
   async authenticateApiKey(rawKey: string): Promise<PxmApiKey> {
     if (!rawKey?.startsWith(API_KEY_PREFIX)) {
       throw new BadRequestException('API key is invalid');
@@ -223,6 +285,22 @@ export class AuthzService {
 
   async appendApiKeyUsageLog(log: AppendPxmApiKeyUsageLog) {
     return this.authzRepo.appendApiKeyUsageLog(log);
+  }
+
+  async assertApiKeyRequestAllowed(key: PxmApiKey, requestIp?: string | null): Promise<void> {
+    const ip = normalizeRequestIp(requestIp);
+    const ipAllowlist = key.ip_allowlist || [];
+    if (ipAllowlist.length > 0 && (!ip || !ipAllowlist.some((entry) => ipMatches(entry, ip)))) {
+      throw new ForbiddenException('API key IP is not allowed');
+    }
+    const limit = Number(key.rate_limit_per_minute || 0);
+    if (limit > 0) {
+      const used = await this.authzRepo.countApiKeyUsageSince(
+        key.id,
+        new Date(Date.now() - 60_000).toISOString(),
+      );
+      if (used >= limit) throw new HttpException('API key rate limit exceeded', HttpStatus.TOO_MANY_REQUESTS);
+    }
   }
 
   private async assertGroupsExist(groupIds: string[]): Promise<void> {
@@ -275,6 +353,8 @@ function mapApiKey(key: PxmApiKey): ApiKeyResponseDto {
     key_prefix: key.key_prefix,
     scopes: key.scopes,
     allowed_workflow_ids: key.allowed_workflow_ids,
+    ip_allowlist: key.ip_allowlist || [],
+    rate_limit_per_minute: key.rate_limit_per_minute || null,
     status: effectiveApiKeyStatus(key),
     expires_at: key.expires_at || null,
     last_used_at: key.last_used_at || null,
@@ -304,6 +384,36 @@ function normalizeStringArray(value: unknown): string[] {
   return Array.from(new Set(value.map((item) => String(item).trim()).filter(Boolean)));
 }
 
+function normalizeMemberships(value: unknown): PxmGroupMembership[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const byGroup = new Map<string, PxmGroupMembership>();
+  for (const item of value) {
+    const groupId = optionalString((item as any)?.group_id);
+    const role = (item as any)?.role;
+    if (!groupId) {
+      throw new BadRequestException('membership group_id is required');
+    }
+    if (role !== 'group_manager' && role !== 'user') {
+      throw new BadRequestException(`membership role is invalid: ${groupId}`);
+    }
+    byGroup.set(groupId, { group_id: groupId, role });
+  }
+  return Array.from(byGroup.values());
+}
+
+function mergeMemberships(
+  current: PxmGroupMembership[],
+  requested: PxmGroupMembership[],
+): PxmGroupMembership[] {
+  const merged = new Map(current.map((membership) => [membership.group_id, membership]));
+  for (const membership of requested) {
+    merged.set(membership.group_id, membership);
+  }
+  return Array.from(merged.values());
+}
+
 function normalizePrincipalStatus(value: unknown) {
   if (value === undefined || value === null) {
     return 'active';
@@ -323,6 +433,45 @@ function normalizeExpiresAt(value: unknown): string | null {
     throw new BadRequestException('expires_at is invalid');
   }
   return date.toISOString();
+}
+
+function normalizeRateLimit(value: unknown): number | null {
+  if (value === undefined || value === null || value === '') return null;
+  const limit = Number(value);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100_000) {
+    throw new BadRequestException('rate_limit_per_minute must be between 1 and 100000');
+  }
+  return limit;
+}
+
+function normalizeIpAllowlist(value: unknown): string[] {
+  const entries = normalizeStringArray(value);
+  for (const entry of entries) {
+    const [address, prefix] = entry.split('/');
+    const version = isIP(address);
+    if (!version || (prefix !== undefined && (version !== 4 || !/^\d+$/.test(prefix) || Number(prefix) > 32))) {
+      throw new BadRequestException(`IP allowlist entry is invalid: ${entry}`);
+    }
+  }
+  return entries;
+}
+
+function normalizeRequestIp(value?: string | null): string | null {
+  if (!value) return null;
+  return value.startsWith('::ffff:') ? value.slice(7) : value;
+}
+
+function ipMatches(rule: string, ip: string): boolean {
+  if (!rule.includes('/')) return rule === ip;
+  const [network, prefixText] = rule.split('/');
+  if (isIP(network) !== 4 || isIP(ip) !== 4) return false;
+  const prefix = Number(prefixText);
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+  return (ipv4Number(network) & mask) === (ipv4Number(ip) & mask);
+}
+
+function ipv4Number(value: string): number {
+  return value.split('.').reduce((result, octet) => ((result << 8) | Number(octet)) >>> 0, 0);
 }
 
 function optionalString(value: unknown): string | null {

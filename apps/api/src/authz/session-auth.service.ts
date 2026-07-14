@@ -80,7 +80,25 @@ export class SessionAuthService {
   private rejectLogin(key: string): never { const state = failures.get(key) || { count: 0, blockedUntil: 0 }; state.count++; if (state.count >= 5) state.blockedUntil = Date.now() + 15 * 60_000; failures.set(key, state); throw new UnauthorizedException('아이디 또는 비밀번호가 올바르지 않습니다.'); }
 }
 
-export function userActor(user: PxmUser): WorkflowHistoryActor { return { actor_type: 'user', actor_id: user.id, roles: [user.role], scopes: [], workspace_ids: [], group_ids: user.group_ids, owned_workflow_ids: [], allowed_workflow_ids: [], allowed_instance_ids: [], api_key_id: null }; }
+export function userActor(user: PxmUser): WorkflowHistoryActor {
+  const memberships = user.memberships || (user.group_ids || []).map((group_id) => ({
+    group_id,
+    role: user.role === 'group_manager' ? 'group_manager' as const : 'user' as const,
+  }));
+  return {
+    actor_type: 'user',
+    actor_id: user.id,
+    roles: [user.role],
+    scopes: [],
+    workspace_ids: [],
+    group_ids: user.group_ids,
+    group_roles: Object.fromEntries(memberships.map((membership) => [membership.group_id, membership.role])),
+    owned_workflow_ids: [],
+    allowed_workflow_ids: [],
+    allowed_instance_ids: [],
+    api_key_id: null,
+  };
+}
 function digest(value: string) { return createHash('sha256').update(value).digest('base64url'); }
 function readCookie(header: string | undefined, name: string) { for (const part of (header || '').split(';')) { const [key, ...value] = part.trim().split('='); if (key === name) return decodeURIComponent(value.join('=')); } return null; }
 function cookieOptions(httpOnly: boolean, maxAge?: number) { return { httpOnly, secure: process.env.NODE_ENV === 'production', sameSite: 'strict' as const, path: '/', ...(maxAge ? { maxAge } : {}) }; }

@@ -96,6 +96,12 @@ export class SchedulesService implements OnModuleInit, OnModuleDestroy {
           edges: definition.edges || [],
           template_id: definition.id,
           template_name: definition.name,
+          snapshot: {
+            workflow: { id: definition.id, name: definition.name, version: definition.version || 1 },
+            group: definition.group_id ? { id: definition.group_id, name: definition.group || definition.group_id } : null,
+            caller: { type: 'service_account', id: 'scheduler' },
+            api_key: null,
+          },
           trigger: {
             type: 'schedule',
             schedule_job_id: job.id,
@@ -112,6 +118,9 @@ export class SchedulesService implements OnModuleInit, OnModuleDestroy {
 
       await this.instanceRepo.createInstance(instanceId, definition.id, 'CREATED', ctx, {
         workspace_id: 'default',
+        group_id: definition.group_id || null,
+        workflow_version_id: definition.version ? `${definition.id}:${definition.version}` : null,
+        caller: { type: 'service_account', id: 'scheduler', api_key_id: null },
       });
       await this.instanceRepo.createJob({
         instanceId,

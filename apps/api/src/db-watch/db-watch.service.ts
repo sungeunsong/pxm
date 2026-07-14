@@ -4,6 +4,7 @@ import { ChangeStream, ChangeStreamDocument, Db, Document, MongoClient, ObjectId
 import {
   WorkflowInstanceRepositoryPort,
   WorkflowRepositoryPort,
+  WorkflowHistoryActor,
 } from '../db/ports/db.ports';
 import { MONGO_DB } from '../db/mongo.provider';
 import { CredentialsService } from '../credentials/credentials.service';
@@ -164,7 +165,7 @@ export class DbWatchService implements OnModuleInit, OnModuleDestroy {
     mode?: DbWatchMode | string | null;
     cursor_field?: string | null;
     filter?: Record<string, any> | null;
-  }): Promise<{ ok: boolean; duration_ms: number; details: Record<string, any> }> {
+  }, actor: WorkflowHistoryActor): Promise<{ ok: boolean; duration_ms: number; details: Record<string, any> }> {
     const startedAt = Date.now();
     const collection = stringOrEmpty(config.collection).trim();
     if (!collection) {
@@ -191,7 +192,7 @@ export class DbWatchService implements OnModuleInit, OnModuleDestroy {
       updated_at: new Date(),
     };
 
-    const targetDb = await this.getTargetDb(job);
+    const targetDb = await this.getTargetDb(job, actor);
     await targetDb.command({ ping: 1 });
     const target = targetDb.collection(job.collection);
     const hasMatchingDocument = await target.find(job.filter).limit(1).maxTimeMS(3000).hasNext();
@@ -525,6 +526,12 @@ export class DbWatchService implements OnModuleInit, OnModuleDestroy {
         edges: definition.edges || [],
         template_id: definition.id,
         template_name: definition.name,
+        snapshot: {
+          workflow: { id: definition.id, name: definition.name, version: definition.version || 1 },
+          group: definition.group_id ? { id: definition.group_id, name: definition.group || definition.group_id } : null,
+          caller: { type: 'service_account', id: 'db_watch' },
+          api_key: null,
+        },
         trigger: {
           type: 'db_watch',
           db_watch_job_id: job._id,
@@ -558,6 +565,9 @@ export class DbWatchService implements OnModuleInit, OnModuleDestroy {
 
     await this.instanceRepo.createInstance(instanceId, definition.id, 'CREATED', ctx, {
       workspace_id: 'default',
+      group_id: definition.group_id || null,
+      workflow_version_id: definition.version ? `${definition.id}:${definition.version}` : null,
+      caller: { type: 'service_account', id: 'db_watch', api_key_id: null },
     });
     await this.instanceRepo.createJob({
       instanceId,
@@ -591,18 +601,24 @@ export class DbWatchService implements OnModuleInit, OnModuleDestroy {
     return instanceId;
   }
 
-  private async getTargetDb(job: DbWatchJob): Promise<Db> {
+  private async getTargetDb(job: DbWatchJob, actor?: WorkflowHistoryActor): Promise<Db> {
     if (!job.credential_id) {
       return job.database ? this.db.client.db(job.database) : this.db;
     }
 
-    const credential = await this.credentialsService.get(job.credential_id);
+    const definition = actor ? null : await this.workflowRepo.getDefinition(job.definition_id);
+    const expectedGroupId = definition?.group_id || definition?.metadata?.group_id || null;
+    const credential = actor
+      ? await this.credentialsService.get(job.credential_id, actor)
+      : await this.credentialsService.getForRuntime(job.credential_id, expectedGroupId);
     if (credential.type !== 'connection_string') {
       throw new Error(`DB watch credential must be connection_string: ${job.credential_id}`);
     }
 
     const connectionString = await this.credentialsService.resolveSecret(job.credential_id, {
       actor: 'db_watch',
+      actor_context: actor,
+      expected_group_id: actor ? undefined : expectedGroupId,
       node_id: job.start_node_id,
       workflow_id: job.definition_id,
     });

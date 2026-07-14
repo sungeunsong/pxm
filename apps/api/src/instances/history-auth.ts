@@ -12,7 +12,7 @@ export function actorFromRequest(req?: Request): WorkflowHistoryActor {
     return authenticatedActor;
   }
 
-  const allowActorHeaders = process.env.AUTHZ_ALLOW_ACTOR_HEADERS === 'true';
+  const allowActorHeaders = process.env.NODE_ENV !== 'production' && process.env.AUTHZ_ALLOW_ACTOR_HEADERS === 'true';
   const actorId = allowActorHeaders ? headerValue(req, 'x-actor-id') : null;
   const actorType = normalizeActorType(headerValue(req, 'x-actor-type'));
   const roles = allowActorHeaders ? splitHeader(req, 'x-actor-roles') : [];

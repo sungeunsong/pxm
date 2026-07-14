@@ -25,6 +25,8 @@ export type WorkflowDefinitionMetadata = {
   tags?: string[];
   version_note?: string;
   imported_from?: WorkflowImportSourceMetadata;
+  created_by?: string | null;
+  updated_by?: string | null;
 };
 
 export type WorkflowImportSourceMetadata = {
@@ -48,6 +50,8 @@ export type WorkflowDefinitionVersion = {
   updated_at?: string;
   node_count: number;
   edge_count: number;
+  created_by?: string | null;
+  updated_by?: string | null;
 };
 
 export type WorkflowHistoryActor = {
@@ -57,6 +61,7 @@ export type WorkflowHistoryActor = {
   scopes?: string[];
   workspace_ids: string[];
   group_ids?: string[];
+  group_roles?: Record<string, 'group_manager' | 'user'>;
   owned_workflow_ids: string[];
   allowed_workflow_ids: string[];
   allowed_instance_ids: string[];
@@ -268,6 +273,7 @@ export abstract class WorkflowInputPresetRepositoryPort {
 }
 
 export type PxmRole = 'admin' | 'group_manager' | 'user';
+export type PxmGroupRole = Exclude<PxmRole, 'admin'>;
 export type PxmGroupStatus = 'active' | 'deleted';
 export type PxmPrincipalStatus = 'active' | 'disabled' | 'deleted';
 export type PxmApiKeyOwnerType = 'USER' | 'SERVICE_ACCOUNT';
@@ -292,11 +298,17 @@ export type PxmUser = {
   email?: string | null;
   role: PxmRole;
   group_ids: string[];
+  memberships: PxmGroupMembership[];
   status: PxmPrincipalStatus;
   created_by?: string | null;
   updated_by?: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type PxmGroupMembership = {
+  group_id: string;
+  role: PxmGroupRole;
 };
 
 export type PxmServiceAccount = {
@@ -321,6 +333,8 @@ export type PxmApiKey = {
   key_hash: string;
   scopes: PxmApiKeyScope[];
   allowed_workflow_ids: string[];
+  ip_allowlist?: string[];
+  rate_limit_per_minute?: number | null;
   status: PxmApiKeyStatus;
   expires_at?: string | null;
   last_used_at?: string | null;
@@ -359,6 +373,7 @@ export type UpsertPxmUser = {
   email?: string | null;
   role?: PxmRole;
   group_ids?: string[];
+  memberships?: PxmGroupMembership[];
   status?: PxmPrincipalStatus;
   actor?: string | null;
   password_hash?: string;
@@ -383,6 +398,8 @@ export type CreatePxmApiKey = {
   key_hash: string;
   scopes: PxmApiKeyScope[];
   allowed_workflow_ids: string[];
+  ip_allowlist?: string[];
+  rate_limit_per_minute?: number | null;
   expires_at?: string | null;
   actor?: string | null;
 };
@@ -433,6 +450,7 @@ export abstract class AuthzRepositoryPort {
   abstract disableApiKey(id: string, actor?: string | null): Promise<boolean>;
   abstract touchApiKey(id: string, usedAt: string): Promise<void>;
   abstract appendApiKeyUsageLog(log: AppendPxmApiKeyUsageLog): Promise<PxmApiKeyUsageLog>;
+  abstract countApiKeyUsageSince(apiKeyId: string, since: string): Promise<number>;
   abstract createSession(session: CreatePxmSession): Promise<PxmSession>;
   abstract findSessionByTokenHash(tokenHash: string): Promise<PxmSession | null>;
   abstract touchSession(id: string, lastSeenAt: string, idleExpiresAt: string): Promise<void>;

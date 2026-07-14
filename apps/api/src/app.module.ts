@@ -12,6 +12,7 @@ import { SchedulesModule } from './schedules/schedules.module';
 import { CommandsModule } from './commands/commands.module';
 import { DbWatchModule } from './db-watch/db-watch.module';
 import { AuthzModule } from './authz/authz.module';
+import { ManagementAuditModule } from './audit/management-audit.module';
 import { AuthenticatedGuard } from './authz/authenticated.guard';
 import { HealthModule } from './health/health.module';
 
@@ -32,6 +33,7 @@ import { HealthModule } from './health/health.module';
     SchedulesModule,
     DbWatchModule,
     AuthzModule,
+    ManagementAuditModule,
     HealthModule,
   ],
   providers: [
