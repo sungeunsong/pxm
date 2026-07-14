@@ -1270,7 +1270,7 @@ export class PostgresAdapter
   }
 
   async createSession(session: CreatePxmSession): Promise<PxmSession> {
-    await this.ensureAuthzTables(); const { rows } = await this.pool.query(`INSERT INTO pxm_sessions (id, token_hash, csrf_hash, user_id, ip, user_agent, idle_expires_at, absolute_expires_at, idle_timeout_minutes, security_policy_version) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`, [session.id, session.token_hash, session.csrf_hash, session.user_id, session.ip || null, session.user_agent || null, session.idle_expires_at, session.absolute_expires_at, session.idle_timeout_minutes || null, session.security_policy_version || null]); return mapSessionRow(rows[0]);
+    await this.ensureAuthzTables(); const { rows } = await this.pool.query(`INSERT INTO pxm_sessions (id, token_hash, csrf_hash, user_id, ip, user_agent, idle_expires_at, absolute_expires_at, idle_timeout_minutes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`, [session.id, session.token_hash, session.csrf_hash, session.user_id, session.ip || null, session.user_agent || null, session.idle_expires_at, session.absolute_expires_at, session.idle_timeout_minutes || null]); return mapSessionRow(rows[0]);
   }
   async findSessionByTokenHash(tokenHash: string): Promise<PxmSession | null> {
     await this.ensureAuthzTables(); const { rows } = await this.pool.query(`SELECT * FROM pxm_sessions WHERE token_hash = $1`, [tokenHash]); return rows[0] ? mapSessionRow(rows[0]) : null;
@@ -1298,9 +1298,9 @@ export class PostgresAdapter
   async upsertSessionSecurityPolicy(policy: UpsertPxmSessionSecurityPolicy): Promise<PxmSessionSecurityPolicy> {
     await this.ensureAuthzTables();
     const { rows } = await this.pool.query(
-      `INSERT INTO pxm_security_policies (id, idle_timeout_minutes, absolute_timeout_hours, version, updated_by, created_at, updated_at)
-       VALUES ('session', $1, $2, 1, $3, NOW(), NOW())
-       ON CONFLICT (id) DO UPDATE SET idle_timeout_minutes=EXCLUDED.idle_timeout_minutes, absolute_timeout_hours=EXCLUDED.absolute_timeout_hours, version=pxm_security_policies.version+1, updated_by=EXCLUDED.updated_by, updated_at=NOW()
+      `INSERT INTO pxm_security_policies (id, idle_timeout_minutes, absolute_timeout_hours, updated_by, created_at, updated_at)
+       VALUES ('session', $1, $2, $3, NOW(), NOW())
+       ON CONFLICT (id) DO UPDATE SET idle_timeout_minutes=EXCLUDED.idle_timeout_minutes, absolute_timeout_hours=EXCLUDED.absolute_timeout_hours, updated_by=EXCLUDED.updated_by, updated_at=NOW()
        RETURNING *`,
       [policy.idle_timeout_minutes, policy.absolute_timeout_hours, policy.updated_by],
     );
@@ -1532,11 +1532,10 @@ export class PostgresAdapter
     `);
     await this.pool.query(`ALTER TABLE pxm_users ADD COLUMN IF NOT EXISTS password_hash TEXT NULL`);
     await this.pool.query(`ALTER TABLE pxm_users ADD COLUMN IF NOT EXISTS memberships JSONB NOT NULL DEFAULT '[]'::jsonb`);
-    await this.pool.query(`CREATE TABLE IF NOT EXISTS pxm_sessions (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, csrf_hash TEXT NOT NULL, user_id TEXT NOT NULL, ip TEXT NULL, user_agent TEXT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), idle_expires_at TIMESTAMPTZ NOT NULL, absolute_expires_at TIMESTAMPTZ NOT NULL, idle_timeout_minutes INTEGER NULL, security_policy_version INTEGER NULL, revoked_at TIMESTAMPTZ NULL, revoke_reason TEXT NULL)`);
+    await this.pool.query(`CREATE TABLE IF NOT EXISTS pxm_sessions (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, csrf_hash TEXT NOT NULL, user_id TEXT NOT NULL, ip TEXT NULL, user_agent TEXT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), idle_expires_at TIMESTAMPTZ NOT NULL, absolute_expires_at TIMESTAMPTZ NOT NULL, idle_timeout_minutes INTEGER NULL, revoked_at TIMESTAMPTZ NULL, revoke_reason TEXT NULL)`);
     await this.pool.query(`ALTER TABLE pxm_sessions ADD COLUMN IF NOT EXISTS idle_timeout_minutes INTEGER NULL`);
-    await this.pool.query(`ALTER TABLE pxm_sessions ADD COLUMN IF NOT EXISTS security_policy_version INTEGER NULL`);
     await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_pxm_sessions_user_created ON pxm_sessions (user_id, created_at DESC)`);
-    await this.pool.query(`CREATE TABLE IF NOT EXISTS pxm_security_policies (id TEXT PRIMARY KEY, idle_timeout_minutes INTEGER NOT NULL, absolute_timeout_hours INTEGER NOT NULL, version INTEGER NOT NULL DEFAULT 1, updated_by TEXT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+    await this.pool.query(`CREATE TABLE IF NOT EXISTS pxm_security_policies (id TEXT PRIMARY KEY, idle_timeout_minutes INTEGER NOT NULL, absolute_timeout_hours INTEGER NOT NULL, updated_by TEXT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS pxm_service_accounts (
         id TEXT PRIMARY KEY,
@@ -1659,11 +1658,11 @@ function mapUserRow(row: any): PxmUser {
 
 function mapSessionRow(row: any): PxmSession {
   const iso = (v: any) => v?.toISOString?.() || v;
-  return { id: row.id, token_hash: row.token_hash, csrf_hash: row.csrf_hash, user_id: row.user_id, ip: row.ip || null, user_agent: row.user_agent || null, created_at: iso(row.created_at), last_seen_at: iso(row.last_seen_at), idle_expires_at: iso(row.idle_expires_at), absolute_expires_at: iso(row.absolute_expires_at), idle_timeout_minutes: Number(row.idle_timeout_minutes) || undefined, security_policy_version: Number(row.security_policy_version) || undefined, revoked_at: iso(row.revoked_at) || null, revoke_reason: row.revoke_reason || null };
+  return { id: row.id, token_hash: row.token_hash, csrf_hash: row.csrf_hash, user_id: row.user_id, ip: row.ip || null, user_agent: row.user_agent || null, created_at: iso(row.created_at), last_seen_at: iso(row.last_seen_at), idle_expires_at: iso(row.idle_expires_at), absolute_expires_at: iso(row.absolute_expires_at), idle_timeout_minutes: Number(row.idle_timeout_minutes) || undefined, revoked_at: iso(row.revoked_at) || null, revoke_reason: row.revoke_reason || null };
 }
 
 function mapSessionSecurityPolicyRow(row: any): PxmSessionSecurityPolicy {
-  return { idle_timeout_minutes: Number(row.idle_timeout_minutes), absolute_timeout_hours: Number(row.absolute_timeout_hours), version: Number(row.version) || 1, updated_by: row.updated_by || null, updated_at: row.updated_at?.toISOString?.() || row.updated_at };
+  return { idle_timeout_minutes: Number(row.idle_timeout_minutes), absolute_timeout_hours: Number(row.absolute_timeout_hours), updated_by: row.updated_by || null, updated_at: row.updated_at?.toISOString?.() || row.updated_at };
 }
 
 function mapServiceAccountRow(row: any): PxmServiceAccount {

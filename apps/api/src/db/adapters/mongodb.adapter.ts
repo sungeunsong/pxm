@@ -1335,7 +1335,6 @@ export class MongodbAdapter
       {
         $set: { ...policy, updated_at: now },
         $setOnInsert: { created_at: now },
-        $inc: { version: 1 },
       },
       { upsert: true, returnDocument: 'after' },
     );
@@ -1554,11 +1553,11 @@ function mapUserDoc(doc: any): PxmUser {
 }
 
 function mapSessionDoc(doc: any): PxmSession {
-  return { id: doc._id, token_hash: doc.token_hash, csrf_hash: doc.csrf_hash, user_id: doc.user_id, ip: doc.ip || null, user_agent: doc.user_agent || null, created_at: doc.created_at, last_seen_at: doc.last_seen_at, idle_expires_at: doc.idle_expires_at, absolute_expires_at: doc.absolute_expires_at, idle_timeout_minutes: Number(doc.idle_timeout_minutes) || undefined, security_policy_version: Number(doc.security_policy_version) || undefined, revoked_at: doc.revoked_at || null, revoke_reason: doc.revoke_reason || null };
+  return { id: doc._id, token_hash: doc.token_hash, csrf_hash: doc.csrf_hash, user_id: doc.user_id, ip: doc.ip || null, user_agent: doc.user_agent || null, created_at: doc.created_at, last_seen_at: doc.last_seen_at, idle_expires_at: doc.idle_expires_at, absolute_expires_at: doc.absolute_expires_at, idle_timeout_minutes: Number(doc.idle_timeout_minutes) || undefined, revoked_at: doc.revoked_at || null, revoke_reason: doc.revoke_reason || null };
 }
 
 function mapSessionSecurityPolicyDoc(doc: any): PxmSessionSecurityPolicy {
-  return { idle_timeout_minutes: Number(doc.idle_timeout_minutes), absolute_timeout_hours: Number(doc.absolute_timeout_hours), version: Number(doc.version) || 1, updated_by: doc.updated_by || null, updated_at: doc.updated_at };
+  return { idle_timeout_minutes: Number(doc.idle_timeout_minutes), absolute_timeout_hours: Number(doc.absolute_timeout_hours), updated_by: doc.updated_by || null, updated_at: doc.updated_at };
 }
 
 function mapServiceAccountDoc(doc: any): PxmServiceAccount {

@@ -14,10 +14,21 @@ export type SessionTiming = {
   last_seen_at: string;
 };
 
+export type ActiveSession = SessionTiming & {
+  id: string;
+  user_id: string;
+  ip?: string | null;
+  user_agent?: string | null;
+  created_at: string;
+  idle_timeout_minutes?: number;
+  revoked_at?: string | null;
+  revoke_reason?: string | null;
+  current: boolean;
+};
+
 export type SessionSecurityPolicy = {
   idle_timeout_minutes: number;
   absolute_timeout_hours: number;
-  version: number;
   updated_by?: string | null;
   updated_at: string;
   source: 'default' | 'database';
@@ -75,6 +86,15 @@ export const sessionApi = {
   },
   async recordActivity(): Promise<SessionTiming> {
     return read(await fetch('/api/auth/activity', { method: 'POST', credentials: 'include' }));
+  },
+  async listSessions(): Promise<ActiveSession[]> {
+    return read(await fetch('/api/auth/sessions', { credentials: 'include' }));
+  },
+  async revokeSession(id: string): Promise<{ success: boolean }> {
+    return read(await fetch(`/api/auth/sessions/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'include' }));
+  },
+  async revokeOtherSessions(): Promise<{ revoked: number }> {
+    return read(await fetch('/api/auth/sessions/revoke-others', { method: 'POST', credentials: 'include' }));
   },
 };
 

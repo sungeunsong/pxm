@@ -16,6 +16,7 @@ export function SessionActivityGuard({ user, onUserChange, onExpired }: { user: 
   const heartbeatRunningRef = useRef(false);
   const lastHeartbeatRef = useRef(Date.now());
   const expiredRef = useRef(false);
+  const warningVisibleRef = useRef(false);
   const onUserChangeRef = useRef(onUserChange);
   const onExpiredRef = useRef(onExpired);
   const continueSessionRef = useRef<() => void>(() => undefined);
@@ -28,6 +29,7 @@ export function SessionActivityGuard({ user, onUserChange, onExpired }: { user: 
   useEffect(() => {
     let lastActivityBroadcastAt = 0;
     const recordLocalActivity = () => {
+      if (warningVisibleRef.current) return;
       pendingActivityRef.current = true;
       const now = Date.now();
       if (now - lastActivityBroadcastAt < 1_000) return;
@@ -70,6 +72,7 @@ export function SessionActivityGuard({ user, onUserChange, onExpired }: { user: 
       if (!timing) return;
       const remaining = Math.min(Date.parse(timing.idle_expires_at), Date.parse(timing.absolute_expires_at)) - Date.now();
       const seconds = Math.max(0, Math.ceil(remaining / 1000));
+      warningVisibleRef.current = seconds > 0 && seconds <= WARNING_SECONDS;
       setRemainingSeconds(seconds);
       if (remaining <= 0) { expire(); return; }
       void sendHeartbeat();

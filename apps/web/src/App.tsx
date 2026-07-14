@@ -176,12 +176,12 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
           </button>}
 
           {user.role === 'admin' && <button
-            title="보안 정책"
+            title="제품 설정"
             className={`sidebar-menu-item ${activeTab === 'security' ? 'active' : ''}`}
             onClick={() => setActiveTab('security')}
           >
             <LockKeyhole size={16} />
-            <span>보안 정책</span>
+            <span>제품 설정</span>
           </button>}
           
           {user.role !== 'user' && <button
@@ -313,7 +313,7 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
               {activeTab === 'inbox' && "내 결재함"}
               {activeTab === 'credentials' && "Credential Store 관리"}
               {activeTab === 'access' && "Access Management"}
-              {activeTab === 'security' && "보안 정책"}
+              {activeTab === 'security' && "제품 설정"}
               {activeTab === 'commands' && "Command Registry 관리"}
               {activeTab === 'plugins' && "Plugin Control 관리"}
               {activeTab === 'pluginRegistry' && "Plugin Registry 관리"}
@@ -327,7 +327,7 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
               {activeTab === 'inbox' && "승인 대기 Task 확인 및 처리"}
               {activeTab === 'credentials' && "외부 연동 secret을 안전하게 관리하고 노드에서는 credential ID만 참조합니다"}
               {activeTab === 'access' && "그룹, 유저, 서비스계정, API key 발급과 폐기를 관리합니다"}
-              {activeTab === 'security' && "로그인 세션의 비활동·절대 만료 정책과 기존 세션 처리를 관리합니다"}
+              {activeTab === 'security' && "제품 전역 보안과 운영 정책을 관리합니다"}
               {activeTab === 'commands' && "workflow에서 사용할 allowlist command를 최고관리자가 등록하고 통제합니다"}
               {activeTab === 'plugins' && "Flow Designer에서 사용할 플러그인의 활성 상태와 workspace 정책을 관리합니다"}
               {activeTab === 'pluginRegistry' && "플러그인 manifest를 등록, 검증, hot reload합니다"}

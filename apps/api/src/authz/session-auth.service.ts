@@ -39,7 +39,7 @@ export class SessionAuthService {
     const idleMs = policy.idle_timeout_minutes * 60_000;
     const absoluteMs = policy.absolute_timeout_hours * 60 * 60_000;
     const rawToken = randomBytes(32).toString('base64url'); const csrfToken = randomBytes(32).toString('base64url'); const now = Date.now();
-    const session = await this.repo.createSession({ id: randomUUID(), token_hash: digest(rawToken), csrf_hash: digest(csrfToken), user_id: user.id, ip: req.ip || null, user_agent: req.header('user-agent') || null, idle_expires_at: new Date(now + idleMs).toISOString(), absolute_expires_at: new Date(now + absoluteMs).toISOString(), idle_timeout_minutes: policy.idle_timeout_minutes, security_policy_version: policy.version });
+    const session = await this.repo.createSession({ id: randomUUID(), token_hash: digest(rawToken), csrf_hash: digest(csrfToken), user_id: user.id, ip: req.ip || null, user_agent: req.header('user-agent') || null, idle_expires_at: new Date(now + idleMs).toISOString(), absolute_expires_at: new Date(now + absoluteMs).toISOString(), idle_timeout_minutes: policy.idle_timeout_minutes });
     return { user, session, rawToken, csrfToken };
   }
 
@@ -89,7 +89,7 @@ export class SessionAuthService {
     const stored = await this.repo.getSessionSecurityPolicy();
     return stored
       ? { ...stored, source: 'database', limits: SESSION_POLICY_LIMITS }
-      : { ...this.defaultPolicy, version: 0, updated_by: null, updated_at: '', source: 'default', limits: SESSION_POLICY_LIMITS };
+      : { ...this.defaultPolicy, updated_by: null, updated_at: '', source: 'default', limits: SESSION_POLICY_LIMITS };
   }
 
   async updateSecurityPolicy(userId: string, currentSessionId: string, input: {

@@ -19,7 +19,6 @@ describe('SessionAuthService security policy', () => {
     await expect(service.getSecurityPolicy()).resolves.toMatchObject({
       idle_timeout_minutes: 30,
       absolute_timeout_hours: 8,
-      version: 0,
       source: 'default',
     });
   });
@@ -42,7 +41,6 @@ describe('SessionAuthService security policy', () => {
       upsertSessionSecurityPolicy: jest.fn().mockResolvedValue({
         idle_timeout_minutes: 15,
         absolute_timeout_hours: 4,
-        version: 1,
         updated_by: 'admin',
         updated_at: '2026-07-14T00:00:00.000Z',
       }),

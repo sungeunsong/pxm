@@ -83,8 +83,8 @@ export class SessionAuthController {
       resource_id: 'session',
       actor_id: actor.actor_id,
       details: {
-        before: { idle_timeout_minutes: result.before.idle_timeout_minutes, absolute_timeout_hours: result.before.absolute_timeout_hours, version: result.before.version },
-        after: { idle_timeout_minutes: result.policy.idle_timeout_minutes, absolute_timeout_hours: result.policy.absolute_timeout_hours, version: result.policy.version },
+        before: { idle_timeout_minutes: result.before.idle_timeout_minutes, absolute_timeout_hours: result.before.absolute_timeout_hours },
+        after: { idle_timeout_minutes: result.policy.idle_timeout_minutes, absolute_timeout_hours: result.policy.absolute_timeout_hours },
         existing_sessions: body.existing_sessions,
         revoked_sessions: result.revoked_sessions,
         reason: body.reason,
