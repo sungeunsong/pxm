@@ -15,6 +15,7 @@ import {
   Shield,
   PanelLeftClose,
   PanelLeftOpen,
+  Braces,
 } from 'lucide-react';
 import { DashboardPage } from './dashboard/DashboardPage';
 import { FlowDesigner } from './flow-designer/FlowDesigner';
@@ -28,6 +29,7 @@ import { PluginRegistryPage } from './plugins/PluginRegistryPage';
 import { AccessManagementPage } from './authz/AccessManagementPage';
 import { LoginPage } from './auth/LoginPage';
 import { AccountDialog } from './auth/AccountDialog';
+import { ExecutionPresetsPage } from './input-presets/ExecutionPresetsPage';
 import { sessionApi, type SessionUser } from './api/session';
 import './App.css';
 
@@ -35,6 +37,7 @@ type ActiveTab =
   | 'dashboard'
   | 'designer'
   | 'request'
+  | 'presets'
   | 'tracker'
   | 'inbox'
   | 'credentials'
@@ -49,6 +52,7 @@ const ROUTE_TO_TAB: Record<string, ActiveTab> = {
   dashboard: 'dashboard',
   designer: 'designer',
   request: 'request',
+  presets: 'presets',
   tracker: 'tracker',
   inbox: 'inbox',
   credentials: 'credentials',
@@ -62,6 +66,7 @@ const TAB_TO_ROUTE: Record<ActiveTab, string> = {
   dashboard: 'dashboard',
   designer: 'designer',
   request: 'request',
+  presets: 'presets',
   tracker: 'tracker',
   inbox: 'inbox',
   credentials: 'credentials',
@@ -73,7 +78,7 @@ const TAB_TO_ROUTE: Record<ActiveTab, string> = {
 
 const readTabFromHash = (): ActiveTab | null => {
   if (typeof window === 'undefined') return null;
-  const route = window.location.hash.replace(/^#\/?/, '');
+  const route = window.location.hash.replace(/^#\/?/, '').split('?')[0];
   return ROUTE_TO_TAB[route] || null;
 };
 
@@ -176,6 +181,15 @@ function WorkspaceApp({ user, onUserChange, onLogout }: { user: SessionUser; onU
             <span>워크플로우 관리</span>
           </button>
 
+          {user.role !== 'user' && <button
+            title="API 실행 프리셋"
+            className={`sidebar-menu-item ${activeTab === 'presets' ? 'active' : ''}`}
+            onClick={() => setActiveTab('presets')}
+          >
+            <Braces size={16} />
+            <span>API 실행 프리셋</span>
+          </button>}
+
           <button
             title="실행 모니터링"
             className={`sidebar-menu-item ${activeTab === 'tracker' ? 'active' : ''}`}
@@ -270,6 +284,7 @@ function WorkspaceApp({ user, onUserChange, onLogout }: { user: SessionUser; onU
               {activeTab === 'dashboard' && "종합 상황실 / 대시보드"}
               {activeTab === 'designer' && "Flow Designer"}
               {activeTab === 'request' && "워크플로우 관리"}
+              {activeTab === 'presets' && "API 실행 프리셋"}
               {activeTab === 'tracker' && "운영자 / 모니터링 담당 상세 화면 구성"}
               {activeTab === 'inbox' && "내 결재함"}
               {activeTab === 'credentials' && "Credential Store 관리"}
@@ -282,6 +297,7 @@ function WorkspaceApp({ user, onUserChange, onLogout }: { user: SessionUser; onU
               {activeTab === 'dashboard' && "전체 워크플로우 실시간 상태 모니터링 및 주요 KPI 요약"}
               {activeTab === 'designer' && "프로세스 템플릿 설계, 배포, 관리 및 노드 속성 설정"}
               {activeTab === 'request' && "배포된 워크플로우를 조회하고 트리거 상태와 수동 실행을 관리합니다"}
+              {activeTab === 'presets' && "워크플로우별 Start 입력값과 API 호출 alias를 한곳에서 관리합니다"}
               {activeTab === 'tracker' && "실행 모니터링, 실패 대응, 재시도/운영 조치 및 로그 분석"}
               {activeTab === 'inbox' && "승인 대기 Task 확인 및 처리"}
               {activeTab === 'credentials' && "외부 연동 secret을 안전하게 관리하고 노드에서는 credential ID만 참조합니다"}
@@ -371,6 +387,8 @@ function WorkspaceApp({ user, onUserChange, onLogout }: { user: SessionUser; onU
           )}
 
           {activeTab === 'request' && <RequestPortal />}
+
+          {activeTab === 'presets' && <ExecutionPresetsPage currentUser={user} />}
 
           {activeTab === 'tracker' && (
             <InstanceTracker onSelectInstance={handleSelectInstanceForTracking} />

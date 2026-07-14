@@ -43,6 +43,8 @@
   gap: 12px;
 }
 
+.input-preset-header > .input-preset-actions { display: flex; flex-direction: row; align-items: center; gap: 6px; }
+
 .input-preset-header > div {
   display: flex;
   flex-direction: column;
@@ -110,6 +112,19 @@
   border-left: 1px solid var(--border-subtle) !important;
   font-size: 16px;
   line-height: 1;
+}
+
+.input-preset-save-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border-subtle);
+  border-radius: 8px;
+  color: var(--text-tertiary);
+  font-size: 11px;
 }
 
 /* 폼 필드 컨테이너 */

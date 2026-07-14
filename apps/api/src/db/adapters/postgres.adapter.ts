@@ -1018,6 +1018,19 @@ export class PostgresAdapter
     return rows.map(mapInputPresetRow);
   }
 
+  async listAllInputPresets(): Promise<WorkflowInputPreset[]> {
+    await this.ensureInputPresetTable();
+    const { rows } = await this.pool.query(
+      `
+      SELECT *
+      FROM workflow_input_presets
+      WHERE enabled = true
+      ORDER BY updated_at DESC
+      `,
+    );
+    return rows.map(mapInputPresetRow);
+  }
+
   async getInputPreset(workflowId: string, idOrAlias: string): Promise<WorkflowInputPreset | null> {
     await this.ensureInputPresetTable();
     const { rows } = await this.pool.query(
@@ -1042,9 +1055,9 @@ export class PostgresAdapter
     const { rows } = await this.pool.query(
       `
       INSERT INTO workflow_input_presets
-        (id, workflow_id, alias, name, description, values, scope, group_id, enabled, created_by, updated_by, created_at, updated_at)
+        (id, workflow_id, alias, name, description, values, scope, group_id, shared_group_ids, enabled, created_by, updated_by, created_at, updated_at)
       VALUES
-        ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, true, $9, $9, NOW(), NOW())
+        ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9::jsonb, true, $10, $10, NOW(), NOW())
       ON CONFLICT (workflow_id, alias)
       DO UPDATE SET
         name = EXCLUDED.name,
@@ -1052,6 +1065,7 @@ export class PostgresAdapter
         values = EXCLUDED.values,
         scope = EXCLUDED.scope,
         group_id = EXCLUDED.group_id,
+        shared_group_ids = EXCLUDED.shared_group_ids,
         enabled = true,
         updated_by = EXCLUDED.updated_by,
         updated_at = NOW()
@@ -1066,6 +1080,7 @@ export class PostgresAdapter
         JSON.stringify(preset.values || {}),
         preset.scope || 'private',
         preset.group_id || null,
+        JSON.stringify(preset.shared_group_ids || []),
         preset.actor || null,
       ],
     );
@@ -1434,6 +1449,7 @@ export class PostgresAdapter
         values JSONB NOT NULL DEFAULT '{}'::jsonb,
         scope TEXT NOT NULL DEFAULT 'private',
         group_id TEXT NULL,
+        shared_group_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
         enabled BOOLEAN NOT NULL DEFAULT true,
         created_by TEXT NULL,
         updated_by TEXT NULL,
@@ -1442,6 +1458,7 @@ export class PostgresAdapter
         UNIQUE (workflow_id, alias)
       )
     `);
+    await this.pool.query(`ALTER TABLE workflow_input_presets ADD COLUMN IF NOT EXISTS shared_group_ids JSONB NOT NULL DEFAULT '[]'::jsonb`);
     await this.pool.query(`
       CREATE INDEX IF NOT EXISTS idx_workflow_input_presets_workflow_updated
       ON workflow_input_presets (workflow_id, updated_at DESC)
@@ -1551,6 +1568,7 @@ function mapInputPresetRow(row: any): WorkflowInputPreset {
     values: row.values || {},
     scope: row.scope || 'private',
     group_id: row.group_id || null,
+    shared_group_ids: Array.isArray(row.shared_group_ids) ? row.shared_group_ids : [],
     enabled: row.enabled !== false,
     created_by: row.created_by || null,
     updated_by: row.updated_by || null,

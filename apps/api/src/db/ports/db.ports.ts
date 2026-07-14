@@ -225,7 +225,7 @@ export abstract class WorkflowScheduleRepositoryPort {
   ): Promise<WorkflowScheduleStatus>;
 }
 
-export type WorkflowInputPresetScope = 'private' | 'group' | 'public';
+export type WorkflowInputPresetScope = 'private' | 'group' | 'shared';
 
 export type WorkflowInputPreset = {
   id: string;
@@ -236,6 +236,7 @@ export type WorkflowInputPreset = {
   values: Record<string, any>;
   scope: WorkflowInputPresetScope;
   group_id?: string | null;
+  shared_group_ids: string[];
   enabled: boolean;
   created_by?: string | null;
   updated_by?: string | null;
@@ -251,10 +252,12 @@ export type UpsertWorkflowInputPreset = {
   values: Record<string, any>;
   scope?: WorkflowInputPresetScope;
   group_id?: string | null;
+  shared_group_ids?: string[];
   actor?: string | null;
 };
 
 export abstract class WorkflowInputPresetRepositoryPort {
+  abstract listAllInputPresets(): Promise<WorkflowInputPreset[]>;
   abstract listInputPresets(workflowId: string): Promise<WorkflowInputPreset[]>;
   abstract getInputPreset(workflowId: string, idOrAlias: string): Promise<WorkflowInputPreset | null>;
   abstract upsertInputPreset(

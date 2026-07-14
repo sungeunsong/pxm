@@ -7,7 +7,8 @@ import { Input } from '../components/Input';
 import { Select } from '../components/Select';
 import { Checkbox } from '../components/Checkbox';
 import { Button } from '../components/Button';
-import { deleteInputPreset, type InputPreset, listInputPresets, saveInputPreset } from '../input-presets';
+import { type InputPreset, listInputPresets, saveInputPreset } from '../input-presets';
+import { InputPresetManager } from '../input-presets/InputPresetManager';
 import './FormRenderer.css';
 
 interface FormRendererProps {
@@ -32,6 +33,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   const [presetVersion, setPresetVersion] = useState(0);
   const [presets, setPresets] = useState<InputPreset[]>([]);
   const [presetsLoading, setPresetsLoading] = useState(false);
+  const [presetManagerOpen, setPresetManagerOpen] = useState(false);
 
   useEffect(() => {
     setFormData(initialData);
@@ -101,28 +103,13 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
     const name = prompt('파라미터 세트 이름을 입력하세요.');
     if (!name?.trim()) return;
     try {
-      await saveInputPreset(presetScopeId, name, formData);
+      await saveInputPreset(presetScopeId, name, formData, undefined, 'group');
       refreshPresets();
     } catch (error) {
       console.error('Failed to save input preset:', error);
       alert('파라미터 세트 저장에 실패했습니다.');
     }
   };
-
-  const handleDeletePreset = async (presetId: string) => {
-    const preset = presets.find((item) => item.id === presetId);
-    if (!preset) return;
-    if (!confirm(`파라미터 세트 "${preset.name}"을 삭제할까요?`)) return;
-    try {
-      if (!presetScopeId) return;
-      await deleteInputPreset(presetScopeId, presetId);
-      refreshPresets();
-    } catch (error) {
-      console.error('Failed to delete input preset:', error);
-      alert('파라미터 세트 삭제에 실패했습니다.');
-    }
-  };
-
 
   const checkCondition = (field: FormField): boolean => {
     if (!field.condition) return true;
@@ -289,7 +276,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             type="number"
             label={field.label}
             value={value}
-            onChange={(e) => handleFieldChange(field.id, e.target.value)}
+            onChange={(e) => handleFieldChange(field.id, e.target.value === '' ? '' : Number(e.target.value))}
             placeholder={field.placeholder}
             error={error}
             helperText={error || field.helperText}
@@ -382,11 +369,11 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           <div className="input-preset-header">
             <div>
               <strong>파라미터 세트</strong>
-              <span>현재 workflow에서 자주 쓰는 Start 입력값을 저장합니다.</span>
+              <span>저장된 Start 입력값을 아래 폼에 적용합니다.</span>
             </div>
-            <Button type="button" variant="secondary" size="sm" onClick={handleSavePreset}>
-              현재 값 저장
-            </Button>
+            <div className="input-preset-actions">
+              <Button type="button" variant="ghost" size="sm" onClick={() => setPresetManagerOpen(true)}>관리</Button>
+            </div>
           </div>
           {presetsLoading ? (
             <p className="input-preset-empty">파라미터 세트를 불러오는 중입니다.</p>
@@ -397,15 +384,6 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
                   <button type="button" onClick={() => handleApplyPreset(preset.id)}>
                     {preset.name}
                   </button>
-                  <button
-                    type="button"
-                    className="input-preset-delete"
-                    onClick={() => handleDeletePreset(preset.id)}
-                    aria-label={`${preset.name} 삭제`}
-                    title="삭제"
-                  >
-                    ×
-                  </button>
                 </div>
               ))}
             </div>
@@ -414,9 +392,24 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           )}
         </div>
       )}
+      {presetScopeId && (
+        <InputPresetManager
+          open={presetManagerOpen}
+          workflowId={presetScopeId}
+          presets={presets}
+          onClose={() => setPresetManagerOpen(false)}
+          onChanged={refreshPresets}
+        />
+      )}
       <div className="form-fields">
         {schema.fields.map(field => renderField(field))}
       </div>
+      {presetScopeId && (
+        <div className="input-preset-save-row">
+          <span>위 Start 입력값을 API 실행 프리셋으로 재사용할 수 있습니다.</span>
+          <Button type="button" variant="secondary" size="sm" onClick={handleSavePreset}>입력값을 새 프리셋으로 저장</Button>
+        </div>
+      )}
       
       <div className="form-actions">
         {onCancel && (

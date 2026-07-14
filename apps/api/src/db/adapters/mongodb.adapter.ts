@@ -1050,6 +1050,17 @@ export class MongodbAdapter
     return docs.map(mapInputPresetDoc);
   }
 
+  async listAllInputPresets(): Promise<WorkflowInputPreset[]> {
+    await this.ensureInputPresetIndexes();
+    const docs = await this.db
+      .collection<any>('workflow_input_presets')
+      .find({ enabled: { $ne: false } })
+      .sort({ updated_at: -1 })
+      .toArray();
+
+    return docs.map(mapInputPresetDoc);
+  }
+
   async getInputPreset(workflowId: string, idOrAlias: string): Promise<WorkflowInputPreset | null> {
     await this.ensureInputPresetIndexes();
     const doc = await this.db.collection<any>('workflow_input_presets').findOne({
@@ -1084,6 +1095,7 @@ export class MongodbAdapter
           values: preset.values || {},
           scope: preset.scope || 'private',
           group_id: preset.group_id || null,
+          shared_group_ids: preset.shared_group_ids || [],
           enabled: true,
           updated_by: preset.actor || null,
           updated_at: now,
@@ -1447,6 +1459,7 @@ function mapInputPresetDoc(doc: any): WorkflowInputPreset {
     values: doc.values || {},
     scope: doc.scope || 'private',
     group_id: doc.group_id || null,
+    shared_group_ids: Array.isArray(doc.shared_group_ids) ? doc.shared_group_ids : [],
     enabled: doc.enabled !== false,
     created_by: doc.created_by || null,
     updated_by: doc.updated_by || null,

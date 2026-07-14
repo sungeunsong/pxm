@@ -12,7 +12,8 @@ import {
   Trash2,
   Workflow,
 } from 'lucide-react';
-import { deleteInputPreset, type InputPreset, listInputPresets, saveInputPreset } from '../input-presets';
+import { type InputPreset, listInputPresets, saveInputPreset } from '../input-presets';
+import { InputPresetManager } from '../input-presets/InputPresetManager';
 import './RequestPortal.css';
 
 interface Template {
@@ -72,6 +73,7 @@ export const RequestPortal: React.FC = () => {
   const [presetVersion, setPresetVersion] = useState(0);
   const [selectedPresets, setSelectedPresets] = useState<InputPreset[]>([]);
   const [presetsLoading, setPresetsLoading] = useState(false);
+  const [presetManagerOpen, setPresetManagerOpen] = useState(false);
   const [successInstanceId, setSuccessInstanceId] = useState<string | null>(null);
   const [scheduleStatus, setScheduleStatus] = useState<ScheduleStatus | null>(null);
   const [scheduleStatusLoading, setScheduleStatusLoading] = useState(false);
@@ -204,20 +206,6 @@ export const RequestPortal: React.FC = () => {
     } catch (error) {
       console.error('Failed to save input preset:', error);
       alert('파라미터 세트 저장에 실패했습니다.');
-    }
-  };
-
-  const handleDeletePreset = async (presetId: string) => {
-    const preset = selectedPresets.find((item) => item.id === presetId);
-    if (!preset) return;
-    if (!confirm(`파라미터 세트 "${preset.name}"을 삭제할까요?`)) return;
-    if (!selectedTemplate) return;
-    try {
-      await deleteInputPreset(selectedTemplate.id, presetId);
-      refreshPresets();
-    } catch (error) {
-      console.error('Failed to delete input preset:', error);
-      alert('파라미터 세트 삭제에 실패했습니다.');
     }
   };
 
@@ -524,7 +512,7 @@ export const RequestPortal: React.FC = () => {
                       presetsLoading={presetsLoading}
                       onApplyPreset={handleApplyPreset}
                       onSavePreset={handleSavePreset}
-                      onDeletePreset={handleDeletePreset}
+                      onManagePresets={() => setPresetManagerOpen(true)}
                     />
                     <button className="btn-launch-execute" onClick={handleLaunch}>
                       <Play size={14} fill="currentColor" />
@@ -554,6 +542,15 @@ export const RequestPortal: React.FC = () => {
           )}
         </aside>
       </div>
+      {selectedTemplate && (
+        <InputPresetManager
+          open={presetManagerOpen}
+          workflowId={selectedTemplate.id}
+          presets={selectedPresets}
+          onClose={() => setPresetManagerOpen(false)}
+          onChanged={refreshPresets}
+        />
+      )}
     </div>
   );
 };
@@ -675,7 +672,7 @@ function InputFields({
   presetsLoading,
   onApplyPreset,
   onSavePreset,
-  onDeletePreset,
+  onManagePresets,
 }: {
   template: Template;
   formData: Record<string, any>;
@@ -684,7 +681,7 @@ function InputFields({
   presetsLoading: boolean;
   onApplyPreset: (presetId: string) => void;
   onSavePreset: () => void | Promise<void>;
-  onDeletePreset: (presetId: string) => void | Promise<void>;
+  onManagePresets: () => void;
 }) {
   const fields = getStartFields(template);
   if (fields.length === 0) {
@@ -701,11 +698,11 @@ function InputFields({
         <div className="request-input-preset-header">
           <div>
             <strong>파라미터 세트</strong>
-            <span>현재 입력값을 저장하거나 불러옵니다.</span>
+            <span>저장된 Start 입력값을 아래 폼에 적용합니다.</span>
           </div>
-          <button type="button" onClick={onSavePreset}>
-            현재 값 저장
-          </button>
+          <div className="request-input-preset-actions">
+            <button type="button" className="secondary" onClick={onManagePresets}>프리셋 관리</button>
+          </div>
         </div>
         {presetsLoading ? (
           <p className="request-input-preset-empty">파라미터 세트를 불러오는 중입니다.</p>
@@ -715,15 +712,6 @@ function InputFields({
               <div key={preset.id} className="request-input-preset-item">
                 <button type="button" onClick={() => onApplyPreset(preset.id)}>
                   {preset.name}
-                </button>
-                <button
-                  type="button"
-                  className="request-input-preset-delete"
-                  onClick={() => onDeletePreset(preset.id)}
-                  aria-label={`${preset.name} 삭제`}
-                  title="삭제"
-                >
-                  ×
                 </button>
               </div>
             ))}
@@ -741,11 +729,15 @@ function InputFields({
               type={field.type === 'number' ? 'number' : 'text'}
               placeholder={field.placeholder || `${field.label || id} 입력`}
               value={formData[id] || ''}
-              onChange={(event) => onInputChange(id, event.target.value)}
+              onChange={(event) => onInputChange(id, field.type === 'number' && event.target.value !== '' ? Number(event.target.value) : event.target.value)}
             />
           </div>
         );
       })}
+      <div className="request-input-preset-save">
+        <span>위 입력값을 다음 API 실행에서도 재사용할 수 있습니다.</span>
+        <button type="button" onClick={onSavePreset}>입력값을 새 프리셋으로 저장</button>
+      </div>
     </>
   );
 }

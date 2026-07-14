@@ -1,16 +1,17 @@
-import { BadRequestException, Body, Controller, Delete, Get, HttpStatus, NotFoundException, Param, ParseIntPipe, Post, Put, Query, Req, Res } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, HttpStatus, NotFoundException, Param, ParseIntPipe, Post, Put, Query, Req, Res } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { TemplatesService } from './templates.service';
 import { CreateTemplateDto, UpdateTemplateDto } from './dto/template.dto';
 import {
   WorkflowInputPresetRepositoryPort,
+  type WorkflowInputPreset,
   WorkflowInstanceRepositoryPort,
   WorkflowScheduleRepositoryPort,
 } from '../db/ports/db.ports';
 import { InstancesService } from '../instances/instances.service';
 import { actorFromRequest, instanceAccessFromRequest } from '../instances/history-auth';
 import { randomUUID } from 'crypto';
-import { assertCanManageGroup } from '../authz/management-auth';
+import { assertCanManageGroup, isAdmin } from '../authz/management-auth';
 
 @Controller('templates')
 export class TemplatesController {
@@ -32,6 +33,29 @@ export class TemplatesController {
   async findAll(@Query('activeOnly') activeOnly?: string) {
     const active = activeOnly !== 'false';
     return this.templatesService.findAll(active);
+  }
+
+  @Get('input-presets')
+  async listAllInputPresets(@Req() req: Request) {
+    const actor = actorFromRequest(req);
+    const templates = (await this.templatesService.findAll(true))
+      .filter((template) => canReadTemplate(actor, template));
+    const templateById = new Map(templates.map((template) => [template.id, template]));
+    const presets = await this.inputPresetRepo.listAllInputPresets();
+
+    return presets.flatMap((preset) => {
+      const template = templateById.get(preset.workflow_id);
+      if (!template || !canUseInputPreset(actor, preset)) return [];
+      return [{
+        ...preset,
+        scope: normalizeInputPresetScope(preset.scope),
+        owner_group_id: template.group_id || null,
+        workflow_name: template.name,
+        workflow_version: template.version || 1,
+        workflow_group_name: template.group || null,
+        can_manage: canManageInputPreset(actor, preset),
+      }];
+    });
   }
 
   @Post('import')
@@ -261,24 +285,39 @@ export class TemplatesController {
   }
 
   @Get(':id/input-presets')
-  async listInputPresets(@Param('id') id: string) {
+  async listInputPresets(@Param('id') id: string, @Req() req: Request) {
+    await this.assertReadableTemplate(id, req);
     const template = await this.templatesService.findOne(id);
-    if (!template) {
-      throw new NotFoundException('Template not found');
-    }
-    return this.inputPresetRepo.listInputPresets(id);
+    const actor = actorFromRequest(req);
+    const presets = await this.inputPresetRepo.listInputPresets(id);
+    return presets
+      .filter((preset) => canUseInputPreset(actor, preset))
+      .map((preset) => ({
+        ...preset,
+        scope: normalizeInputPresetScope(preset.scope),
+        owner_group_id: template?.group_id || null,
+        can_manage: canManageInputPreset(actor, preset),
+      }));
   }
 
   @Get(':id/input-presets/:presetId')
   async getInputPreset(
     @Param('id') id: string,
     @Param('presetId') presetId: string,
+    @Req() req: Request,
   ) {
+    await this.assertReadableTemplate(id, req);
+    const template = await this.templatesService.findOne(id);
     const preset = await this.inputPresetRepo.getInputPreset(id, presetId);
-    if (!preset) {
+    if (!preset || !canUseInputPreset(actorFromRequest(req), preset)) {
       throw new NotFoundException('Input preset not found');
     }
-    return preset;
+    return {
+      ...preset,
+      scope: normalizeInputPresetScope(preset.scope),
+      owner_group_id: template?.group_id || null,
+      can_manage: canManageInputPreset(actorFromRequest(req), preset),
+    };
   }
 
   @Post(':id/input-presets')
@@ -294,24 +333,61 @@ export class TemplatesController {
     if (!body?.name?.trim()) {
       throw new BadRequestException('name is required');
     }
+    const presetValidationErrors = validateInputPresetValues(template.nodes || [], body.values);
+    if (presetValidationErrors.length > 0) {
+      throw new BadRequestException(presetValidationErrors);
+    }
+    const actor = actorFromRequest(req);
+    if (!actor.actor_id || actor.api_key_id) {
+      throw new ForbiddenException('Login user is required to save an input preset');
+    }
+    const requestedAlias = normalizePresetAlias(body.alias || body.name);
+    const existing = body.id ? await this.inputPresetRepo.getInputPreset(id, body.id) : null;
+    if (body.id && !existing) throw new NotFoundException('Input preset not found');
+    if (!body.id && await this.inputPresetRepo.getInputPreset(id, requestedAlias)) {
+      throw new BadRequestException('같은 alias의 파라미터 세트가 이미 있습니다. 관리 화면에서 수정하세요.');
+    }
+    if (existing && !canManageInputPreset(actor, existing)) {
+      throw new ForbiddenException('Input preset management permission is required');
+    }
+    const scope = normalizeInputPresetScope(body.scope || existing?.scope || 'private');
+    if (scope === 'shared') {
+      throw new BadRequestException('지정 그룹 공유는 workflow 실행 권한 공유 모델이 도입되기 전까지 지원하지 않습니다.');
+    }
+    if (scope !== 'private') {
+      assertCanManageGroup(actor, template.group_id);
+    }
 
-    return this.inputPresetRepo.upsertInputPreset(id, {
+    const saved = await this.inputPresetRepo.upsertInputPreset(id, {
       id: body.id,
-      alias: normalizePresetAlias(body.alias || body.name),
+      alias: existing?.alias || requestedAlias,
       name: body.name,
       description: body.description,
       values: sanitizePresetValues(body.values || {}),
-      scope: body.scope || 'private',
-      group_id: body.group_id || null,
-      actor: getRequestActor(req),
+      scope,
+      group_id: scope === 'private' ? null : template.group_id || null,
+      shared_group_ids: [],
+      actor: actor.actor_id,
     });
+    return {
+      ...saved,
+      owner_group_id: template.group_id || null,
+      can_manage: canManageInputPreset(actor, saved),
+    };
   }
 
   @Delete(':id/input-presets/:presetId')
   async deleteInputPreset(
     @Param('id') id: string,
     @Param('presetId') presetId: string,
+    @Req() req: Request,
   ) {
+    await this.assertReadableTemplate(id, req);
+    const preset = await this.inputPresetRepo.getInputPreset(id, presetId);
+    if (!preset) throw new NotFoundException('Input preset not found');
+    if (!canManageInputPreset(actorFromRequest(req), preset)) {
+      throw new ForbiddenException('Input preset management permission is required');
+    }
     const success = await this.inputPresetRepo.deleteInputPreset(id, presetId);
     if (!success) {
       throw new NotFoundException('Input preset not found');
@@ -476,6 +552,14 @@ export class TemplatesController {
     };
   }
 
+  private async assertReadableTemplate(id: string, req?: Request) {
+    const template = await this.templatesService.findOne(id);
+    if (!template || !canReadTemplate(actorFromRequest(req), template)) {
+      throw new NotFoundException('Template not found');
+    }
+    return template;
+  }
+
   private async waitForInstanceResult(
     instanceId: string,
     requestedTimeoutMs?: number,
@@ -547,6 +631,82 @@ function sanitizePresetValues(value: any): Record<string, any> {
   return sanitizeJsonObject(value);
 }
 
+export function validateInputPresetValues(nodes: any[], value: unknown): string[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return ['입력값은 JSON object여야 합니다.'];
+  }
+
+  const errors: string[] = [];
+  const sensitivePaths = findSensitivePresetPaths(value as Record<string, any>);
+  if (sensitivePaths.length > 0) {
+    errors.push(`민감정보 키는 프리셋에 저장할 수 없습니다: ${sensitivePaths.join(', ')}`);
+  }
+
+  const startNode = nodes.find((node) => node?.data?.nodeType === 'start');
+  const fields: any[] = Array.isArray(startNode?.data?.formSchema?.fields)
+    ? startNode.data.formSchema.fields.filter((field: any) => field?.id || field?.name)
+    : [];
+  if (fields.length === 0) return errors;
+
+  const values = value as Record<string, any>;
+  const fieldById = new Map<string, any>(fields.map((field: any) => [String(field.id || field.name), field]));
+  for (const key of Object.keys(values)) {
+    if (!fieldById.has(key)) errors.push(`Start 입력 스키마에 없는 키입니다: ${key}`);
+  }
+
+  for (const [id, field] of fieldById) {
+    const item = values[id];
+    if (field.required === true && (item === undefined || item === null || item === '')) {
+      errors.push(`필수 입력값이 비어 있습니다: ${id}`);
+      continue;
+    }
+    if (item === undefined || item === null || item === '') continue;
+
+    const type = String(field.type || 'text');
+    if (type === 'number' && (typeof item !== 'number' || !Number.isFinite(item))) {
+      errors.push(`${id} 값은 number여야 합니다.`);
+    } else if (type === 'checkbox' && typeof item !== 'boolean') {
+      errors.push(`${id} 값은 boolean이어야 합니다.`);
+    } else if (['text', 'textarea', 'select', 'radio', 'date'].includes(type) && typeof item !== 'string') {
+      errors.push(`${id} 값은 string이어야 합니다.`);
+    } else if (type === 'file') {
+      errors.push(`${id} 파일 입력은 프리셋에 저장할 수 없습니다.`);
+    }
+
+    if (typeof item === 'number') {
+      if (Number.isFinite(field.min) && item < Number(field.min)) errors.push(`${id} 값은 ${field.min} 이상이어야 합니다.`);
+      if (Number.isFinite(field.max) && item > Number(field.max)) errors.push(`${id} 값은 ${field.max} 이하여야 합니다.`);
+    }
+    if (typeof item === 'string') {
+      if (Number.isFinite(field.minLength) && item.length < Number(field.minLength)) errors.push(`${id} 값은 ${field.minLength}자 이상이어야 합니다.`);
+      if (Number.isFinite(field.maxLength) && item.length > Number(field.maxLength)) errors.push(`${id} 값은 ${field.maxLength}자 이하여야 합니다.`);
+      if (Array.isArray(field.options) && ['select', 'radio'].includes(type) && !field.options.includes(item)) errors.push(`${id} 값이 허용된 옵션이 아닙니다.`);
+      if (field.pattern) {
+        try {
+          if (!new RegExp(field.pattern).test(item)) errors.push(`${id} 값의 형식이 올바르지 않습니다.`);
+        } catch {
+          errors.push(`${id} 필드의 pattern 설정이 올바르지 않습니다.`);
+        }
+      }
+    }
+  }
+  return errors;
+}
+
+function findSensitivePresetPaths(value: Record<string, any>, prefix = ''): string[] {
+  return Object.entries(value).flatMap(([key, item]) => {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (isSensitivePresetKey(key)) return [path];
+    if (item && typeof item === 'object' && !Array.isArray(item)) return findSensitivePresetPaths(item, path);
+    if (Array.isArray(item)) {
+      return item.flatMap((entry, index) => entry && typeof entry === 'object' && !Array.isArray(entry)
+        ? findSensitivePresetPaths(entry, `${path}[${index}]`)
+        : []);
+    }
+    return [];
+  });
+}
+
 function sanitizeJsonObject(value: Record<string, any>): Record<string, any> {
   return Object.entries(value).reduce<Record<string, any>>((acc, [key, item]) => {
     if (isSensitivePresetKey(key)) {
@@ -593,9 +753,37 @@ function normalizePresetAlias(value: string): string {
   return alias || `preset-${Date.now()}`;
 }
 
-function getRequestActor(req?: Request): string | null {
-  const headerActor = req?.header('x-user-id') || req?.header('x-api-client-id');
-  return headerActor || null;
+function normalizeInputPresetScope(scope: WorkflowInputPreset['scope'] | 'public'): WorkflowInputPreset['scope'] {
+  return scope === 'public' ? 'group' : scope;
+}
+
+export function canUseInputPreset(
+  actor: ReturnType<typeof actorFromRequest>,
+  preset: WorkflowInputPreset,
+): boolean {
+  if (isAdmin(actor)) return true;
+  const scope = normalizeInputPresetScope(preset.scope as WorkflowInputPreset['scope'] | 'public');
+  if (scope === 'private') return Boolean(actor.actor_id && preset.created_by === actor.actor_id);
+  if (preset.group_id && (actor.group_ids || []).includes(preset.group_id)) return true;
+  return scope === 'shared' && (preset.shared_group_ids || []).some((groupId) => (actor.group_ids || []).includes(groupId));
+}
+
+export function canManageInputPreset(
+  actor: ReturnType<typeof actorFromRequest>,
+  preset: WorkflowInputPreset,
+): boolean {
+  if (isAdmin(actor)) return true;
+  if (actor.api_key_id) return false;
+  if (actor.actor_id && preset.created_by === actor.actor_id && normalizeInputPresetScope(preset.scope as any) === 'private') {
+    return true;
+  }
+  if (!preset.group_id) return false;
+  try {
+    assertCanManageGroup(actor, preset.group_id);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function assertCanExecuteWorkflow(actor: ReturnType<typeof actorFromRequest>, workflowId: string) {
@@ -608,4 +796,22 @@ function assertCanExecuteWorkflow(actor: ReturnType<typeof actorFromRequest>, wo
   if (!actor.allowed_workflow_ids.includes(workflowId)) {
     throw new NotFoundException('Template not found');
   }
+}
+
+function canReadTemplate(
+  actor: ReturnType<typeof actorFromRequest>,
+  template: { id: string; group_id?: string | null },
+) {
+  if (!actor.actor_id && actor.roles.includes('operator')) {
+    return process.env.NODE_ENV !== 'production' && process.env.AUTHZ_ALLOW_DEVELOPMENT_BYPASS === 'true';
+  }
+  if (!actor.api_key_id && actor.roles.includes('admin')) return true;
+  if (actor.api_key_id) {
+    return Boolean(
+      (actor.scopes?.includes('workflow:read') || actor.scopes?.includes('workflow:execute')) &&
+      template.group_id && actor.group_ids?.includes(template.group_id) &&
+      actor.allowed_workflow_ids.includes(template.id),
+    );
+  }
+  return Boolean(template.group_id && actor.group_ids?.includes(template.group_id));
 }
