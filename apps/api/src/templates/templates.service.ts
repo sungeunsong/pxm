@@ -10,6 +10,7 @@ import { randomUUID } from 'crypto';
 import { SchedulesService } from '../schedules/schedules.service';
 import { DbWatchService } from '../db-watch/db-watch.service';
 import { CredentialsService } from '../credentials/credentials.service';
+import { AuthzService } from '../authz/authz.service';
 
 @Injectable()
 export class TemplatesService {
@@ -18,11 +19,13 @@ export class TemplatesService {
     private readonly schedulesService: SchedulesService,
     private readonly dbWatchService: DbWatchService,
     private readonly credentialsService: CredentialsService,
+    private readonly authzService: AuthzService,
   ) {}
 
   async create(dto: CreateTemplateDto): Promise<TemplateResponseDto> {
     const id = randomUUID();
     await this.assertCredentialBindings(dto.nodes || [], dto.group_id);
+    await this.assertApprovalAssignments(dto.nodes || [], dto.group_id);
     await this.assertNoWorkflowCallCycle(id, dto.nodes || []);
     await this.workflowRepo.createDefinition(
       id,
@@ -72,6 +75,7 @@ export class TemplatesService {
     });
 
     await this.assertCredentialBindings(updatedNodes || [], updatedMetadata.group_id);
+    await this.assertApprovalAssignments(updatedNodes || [], updatedMetadata.group_id);
     await this.assertNoWorkflowCallCycle(id, updatedNodes || []);
     await this.workflowRepo.createDefinition(id, updatedName, updatedNodes, updatedEdges, updatedMetadata);
     await this.schedulesService.syncDefinitionSchedules(id, updatedName, updatedNodes || []);
@@ -292,6 +296,51 @@ export class TemplatesService {
     await Promise.all(
       credentialIds.map((credentialId) => this.credentialsService.getForRuntime(credentialId, groupId)),
     );
+  }
+
+  private async assertApprovalAssignments(nodes: any[], groupId?: string | null): Promise<void> {
+    const approvalNodes = (nodes || []).filter(
+      (node) => (node?.data?.nodeType || node?.node_type || node?.type) === 'approval',
+    );
+
+    for (const node of approvalNodes) {
+      const data = node?.data || node?.config || node || {};
+      // Legacy workflows used an untyped assignee string. They remain loadable until
+      // an administrator explicitly chooses one of the new identity channels.
+      const channel = data.approverChannel;
+      if (!channel) continue;
+
+      const assignee = typeof data.assignee === 'string' ? data.assignee.trim() : '';
+      if (!assignee) {
+        throw new BadRequestException(`Approval node ${node.id || ''} requires an assignee`);
+      }
+
+      if (channel === 'external_email') {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(assignee)) {
+          throw new BadRequestException(`Approval node ${node.id || ''} has an invalid external email`);
+        }
+        const expiresInHours = Number(data.externalApprovalExpiresInHours ?? 24);
+        if (!Number.isInteger(expiresInHours) || expiresInHours < 1 || expiresInHours > 168) {
+          throw new BadRequestException(
+            `Approval node ${node.id || ''} external link expiry must be between 1 and 168 hours`,
+          );
+        }
+        continue;
+      }
+
+      if (channel !== 'pxm_user') {
+        throw new BadRequestException(`Approval node ${node.id || ''} has an unsupported approver channel`);
+      }
+      if (!groupId) {
+        throw new BadRequestException('Workflow group_id is required when assigning a PXM approver');
+      }
+      const user = await this.authzService.getUser(assignee);
+      if (user.status !== 'active' || !user.group_ids.includes(groupId)) {
+        throw new BadRequestException(
+          `Approval node ${node.id || ''} assignee must be an active member of the workflow group`,
+        );
+      }
+    }
   }
 }
 

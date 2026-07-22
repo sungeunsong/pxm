@@ -1,59 +1,66 @@
-import { Controller, Get, Post, Body, Param, Query, NotFoundException } from '@nestjs/common';
 import {
-  WorkflowTaskRepositoryPort,
-  WorkflowInstanceRepositoryPort,
-} from '../db/ports/db.ports';
+  Body,
+  Controller,
+  Get,
+  Headers,
+  Param,
+  Post,
+  Query,
+  Req,
+} from '@nestjs/common';
+import type { Request } from 'express';
+import { actorFromRequest } from '../instances/history-auth';
+import { CompleteTaskDto } from './dto/task.dto';
+import { TasksService } from './tasks.service';
+import { TaskHistoryQueryDto } from './dto/task-history.dto';
 
 @Controller('tasks')
 export class TasksController {
-  constructor(
-    private readonly taskRepo: WorkflowTaskRepositoryPort,
-    private readonly instanceRepo: WorkflowInstanceRepositoryPort,
-  ) {}
+  constructor(private readonly tasks: TasksService) {}
 
   // 내 할 일 목록 조회
   @Get()
-  async getTasks(@Query('assignee') assignee = 'admin') {
-    return this.taskRepo.listTasks(assignee);
+  async getTasks(@Req() req: Request) {
+    return this.tasks.listOpenTasks(actorFromRequest(req));
+  }
+
+  @Get('history')
+  history(@Query() query: TaskHistoryQueryDto, @Req() req: Request) {
+    return this.tasks.listHistory(query, actorFromRequest(req));
+  }
+
+  @Get(':id')
+  historyItem(@Param('id') id: string, @Req() req: Request) {
+    return this.tasks.getHistoryItem(id, actorFromRequest(req));
   }
 
   // 승인/반려 처리
   @Post(':id/complete')
   async completeTask(
     @Param('id') id: string,
-    @Body() body: { action: 'approve' | 'reject' },
+    @Body() body: CompleteTaskDto,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Req() req: Request,
   ) {
-    const action = body.action || 'approve';
-    const status = action === 'approve' ? 'APPROVED' : 'REJECTED';
-
-    // 1. Task 조회 및 검증
-    const task = await this.taskRepo.getTask(id);
-    if (!task || task.status !== 'OPEN') {
-      throw new NotFoundException('Task not found or already completed');
-    }
-
-    // 2. Task 상태 업데이트
-    await this.taskRepo.updateTaskStatus(id, status);
-
-    const instanceId = task.instance_id;
-    const nodeId = task.node_id;
-
-    console.log(
-      `[API] Task completed: ${id} (${action}) -> Resuming instance ${instanceId}`,
+    return this.tasks.completeTask(
+      id,
+      body,
+      actorFromRequest(req),
+      idempotencyKey,
     );
+  }
+}
 
-    // 3. 엔진 재개 (RESUME Job 생성)
-    await this.instanceRepo.createJob({
-      instanceId,
-      tokenId: task.token_id || null,
-      type: 'RESUME',
-      runAt: new Date(),
-      payload: { action, completed_node_id: nodeId },
-    });
+@Controller('instances')
+export class InstanceTasksController {
+  constructor(private readonly tasks: TasksService) {}
 
-    // 4. 인스턴스 상태 RUNNING으로 변경
-    await this.instanceRepo.updateInstanceStatus(instanceId, 'RUNNING');
-
-    return { success: true };
+  @Get(':instanceId/tasks')
+  history(
+    @Param('instanceId') instanceId: string,
+    @Query() query: TaskHistoryQueryDto,
+    @Req() req: Request,
+  ) {
+    return this.tasks.listHistory(query, actorFromRequest(req), instanceId);
   }
 }

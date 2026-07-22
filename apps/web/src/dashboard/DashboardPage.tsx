@@ -33,7 +33,7 @@ export const DashboardPage: React.FC = () => {
       const templates = await resTemplates.json();
 
       // 2. tasks(결재) 조회
-      const resTasks = await fetch('/api/tasks?assignee=admin');
+      const resTasks = await fetch('/api/tasks');
       const tasks = await resTasks.json();
 
       // 3. 임의 인스턴스 목록 통계 (tracker 호출 또는 instances API 활용)

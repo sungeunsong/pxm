@@ -22,7 +22,16 @@ async function main() {
   await db.collection('v2_schedule_runs').createIndex({ definition_id: 1, created_at: -1 });
   await db.collection('v2_schedule_runs').createIndex({ schedule_job_id: 1, created_at: -1 });
   await db.collection('v2_tasks').createIndex({ assignee: 1, status: 1, created_at: -1 });
+  await db.collection('v2_tasks').createIndex({ status: 1, created_at: -1, _id: -1 }, { name: 'idx_v2_tasks_history' });
   await db.collection('v2_tasks').createIndex({ token_id: 1 }, { unique: true, sparse: true });
+  await db.collection('v2_tasks').createIndex(
+    { 'payload.external_approval.token_hash': 1 },
+    { unique: true, sparse: true, name: 'ux_v2_tasks_external_approval_token_hash' },
+  );
+  await db.collection('v2_tasks').createIndex(
+    { status: 1, 'payload.approver_channel': 1, 'payload.external_approval.delivery_status': 1, created_at: 1 },
+    { name: 'idx_v2_tasks_external_approval_dispatch' },
+  );
   await db.collection('v2_event_outbox').createIndex({ instance_id: 1, created_at: 1 });
   await db.collection('v2_execution_logs').createIndex({ instance_id: 1, created_at: 1 });
   await ensureAdvisoryLockIndexes(db);

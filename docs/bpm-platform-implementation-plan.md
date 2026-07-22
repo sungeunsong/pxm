@@ -318,8 +318,177 @@
 - API key optional 만료일/rotation/exact IP·IPv4 CIDR allowlist/분당 rate limit을 관리 화면과 인증 middleware에 연결했다.
 - 서버 저장형 세션과 CSRF 1차 연동 완료. 운영 배포 전 OIDC/SSO 전환 여부, Redis 기반 분산 로그인 제한, reverse proxy/trusted IP 정책을 확정한다.
 - 로컬 최초 로그인은 기본 `admin` / `admin1234`이며, 운영에서는 `PXM_BOOTSTRAP_ADMIN_ID`, `PXM_BOOTSTRAP_ADMIN_PASSWORD`를 반드시 지정한다. 세션 원문은 256-bit 난수이고 서버에는 SHA-256 hash만 저장한다.
-- `task:approve` scope를 실제 승인 API end-to-end 흐름에 연결하고 권한 테스트를 자동화한다.
+- `task:approve` scope를 실제 승인 API에 연결했고 caller/group/workflow 권한, 중복 처리, transaction 테스트를 자동화했다.
 - 최고관리자용 전체 사용자 디렉터리와 reverse proxy trusted IP/Redis 기반 고정밀 분산 rate limit은 후속 운영 UX·인프라 항목으로 검토한다.
+
+## Beta Release Readiness Roadmap
+
+### Beta 목표와 범위
+
+목표는 단순 기능 시연이 아니라 제한된 고객 환경에서 실제 업무를 태워볼 수 있는 비공개 베타다.
+
+- 단일 고객 환경에 설치하는 MongoDB 기반 배포를 우선한다.
+- PXM Web 관리 콘솔과 외부 시스템의 API 중심 workflow 실행을 지원한다.
+- Start/Service/JS/Command/Timer/Gateway/Approval/Workflow Call/End 핵심 노드를 지원한다.
+- Agent/SSH, 전체 BPMN 2.0, HA, Kubernetes, OIDC/SSO는 베타 필수 범위에서 제외한다.
+- 외부 plugin package 유통을 열지 않는 동안에는 builtin 및 운영자가 직접 등록한 신뢰 manifest만 허용한다.
+
+베타 완료 기준:
+
+- 권한이 없는 사용자/API key가 다른 group의 workflow, task, instance, credential에 접근할 수 없다.
+- 배포된 immutable workflow version만 외부 API에서 실행되며 기존 instance는 실행 당시 version을 유지한다.
+- API 중복 요청과 서버/Engine 재시작으로 instance 또는 task가 중복 처리되지 않는다.
+- 장애 시 운영자가 상태를 파악하고 재시도, 중지, 복구할 수 있다.
+- 백업본에서 workflow/runtime 핵심 데이터를 복원하는 절차가 검증되어 있다.
+- 설치, 설정, 업그레이드, 롤백 및 주요 E2E 검증 절차가 문서화되어 있다.
+
+### 1. Approval Task API 운영화
+
+- [x] Approval/Human Task end-to-end 운영 수준 보강
+  - [x] Approval 노드 task 생성과 approve/reject 후 Engine `RESUME` 기본 흐름
+  - [x] fixed/condition/requester-selected assignee 기본 모델
+  - [x] task 목록의 caller identity 기반 조회: 임의 `assignee` query 신뢰 제거
+  - [x] 로그인 user와 task assignee의 처리 권한 검증
+  - [x] API key `task:approve` scope와 USER owner 제한 실제 API 적용
+  - [x] task가 속한 workflow/group 및 `allowed_workflow_ids` 검증
+  - [x] OPEN task의 승인/반려 compare-and-set으로 동시 중복 처리 차단
+  - [x] task 상태 변경과 Engine `RESUME` job 생성을 transaction으로 보장
+  - [x] 승인/반려 `Idempotency-Key`와 동일 요청 결과 재사용
+  - [x] actor/API key/business actor/의견/결과 audit 저장
+  - [x] task 조회/승인/반려 API DTO와 응답 계약 정리
+  - [x] session user/API key/group 경계/동시 요청 E2E 자동화
+    - [x] service 권한 matrix unit test
+    - [x] MongoDB/PostgreSQL 동시 승인 transaction integration test
+    - [x] session login/CSRF/task 조회/동일 승인 재호출 HTTP smoke test
+    - [x] USER owner API key의 scope/allowed workflow 허용·거부 HTTP E2E fixture 자동화
+
+- [~] 승인자 신원 및 처리 채널 분리
+  - [x] Approval 노드에서 `PXM 사용자`와 `외부 이메일` 승인자 유형 구분
+  - [x] PXM 사용자는 workflow 소유 group의 활성 사용자 목록에서 선택
+  - [x] 외부 이메일의 일회용 링크 유효시간과 OTP 요구 여부 설정
+  - [x] PXM 사용자 설정값과 workflow group membership 저장 시 검증
+  - [x] 외부 이메일 형식과 승인 링크 유효시간 저장 시 검증
+  - [x] Task 상태 기반 durable dispatch와 SMTP 외부 승인 메일 발송 어댑터
+  - [~] 외부 승인 토큰은 원문 미저장, hash/단회 사용/만료 적용 완료; 운영자 재발급은 후속
+  - [x] 이메일 OTP 생성·시도 제한·만료·재전송 제한 적용
+  - [x] 로그인 없이 사용하는 외부 승인 상세/승인/반려 페이지
+  - [x] 외부 이메일 승인자의 인증 방식·이메일·처리 시각 audit 저장
+  - [ ] PXM 사용자 및 외부 이메일 승인 E2E 자동화
+  - [x] 결재 이력 목록·상세·instance별 API와 cursor/filter 제공
+  - [x] user/group manager/admin/API key별 결재 이력 조회 범위 적용
+  - [x] 승인·반려 transaction에 `TASK_APPROVED`/`TASK_REJECTED` outbox event 기록
+  - [ ] 후속: 신뢰 외부 포털 등록(`issuer`, `audience`, JWKS URL, claim mapping)
+  - [ ] 후속: 외부 포털 API key + 서명된 사용자 assertion 기반 승인 및 replay 차단
+
+### 2. Workflow 배포 수명주기
+
+- [~] Draft/Published/Disabled lifecycle 정리
+  - [x] workflow version history, immutable 실행 version, diff/rollback
+  - [x] deploy API와 배포 audit 기본 흐름
+  - [ ] 편집 중 Draft와 외부 실행 가능한 Published 상태 명시적 분리
+  - [ ] workflow별 active published version pointer 관리
+  - [ ] Start API는 active published version만 실행하도록 고정
+  - [ ] 배포 중지/재활성화와 중지 상태의 신규 실행 차단
+  - [ ] 기존 실행 instance는 시작 당시 `workflow_version_id` 유지
+  - [ ] 배포/중지/롤백 권한과 group 범위 재검증
+  - [ ] Designer/워크플로우 관리의 상태, 활성 버전, 미배포 변경 표시
+  - [ ] Draft 저장/배포/중지/롤백/실행 version E2E 자동화
+
+### 3. Runtime 안정성, 멱등성, 운영 제어
+
+- [~] 중복 요청과 재시작에도 일관된 실행 보장
+  - [x] 실패 instance/실패 node 재시도와 side effect 경고
+  - [x] instance 종료와 Workflow Call child 종료 전파
+  - [x] stale Engine job reclaim 기본 처리
+  - [ ] Start API idempotency key 저장과 동일 요청 중복 instance 방지
+  - [ ] task/retry/terminate API idempotency 적용
+  - [ ] API 저장과 Engine job/outbox 생성의 transaction 경계 재검증
+  - [ ] instance 일시중지/재개와 신규 job claim 차단
+  - [ ] API/Engine 비정상 종료 및 재시작 후 미완료 job 자동 복구 검증
+  - [ ] orphan instance/token/task/job 탐지 API와 안전한 복구 절차
+  - [ ] Schedule/DB Watch/Timer/Approval 대기 중 재시작 시나리오 자동화
+  - [ ] graceful shutdown 시 신규 claim 중단과 실행 중 job 처리 정책
+
+### 4. 운영 관측과 장애 대응
+
+- [~] 실제 runtime 상태 기반 health/metrics/alerting
+  - [x] queue/backlog 통계와 instance trace/SSE 조회
+  - [ ] API liveness와 MongoDB 의존성을 확인하는 readiness 분리
+  - [ ] Engine heartbeat, worker ID, 마지막 처리 시각 저장
+  - [ ] Scheduler와 DB Watch worker 상태 및 마지막 성공/실패 표시
+  - [ ] queue backlog, 처리 지연, 실패율, retry 수 metric 제공
+  - [ ] 임계치 설정과 최소 경고 상태 표시
+  - [ ] Dashboard의 고정 시스템 상태 문구를 실제 health 데이터로 교체
+  - [ ] request ID/API key ID/instance ID/job ID 기반 로그 상관관계
+  - [ ] 운영 장애 확인과 기본 조치 runbook 작성
+
+### 5. 데이터 보존, 백업, 복원, 업그레이드
+
+- [~] 고객 데이터 lifecycle과 장애 복구 기준 수립
+  - [x] Command terminal output 별도 retention scrub API
+  - [ ] workflow/version/instance/task/trace/audit 보존 기간 정책
+  - [ ] 만료 session, 오래된 execution data, 완료 job 정리 scheduler
+  - [ ] MongoDB collection별 필수 index/TTL/용량 증가 점검
+  - [ ] MongoDB 백업 명령, 암호화, 보관 위치와 주기 문서화
+  - [ ] 백업본 기반 신규 환경 복원 리허설
+  - [ ] 복원 후 workflow version/credential/runtime 정합성 검증 도구
+  - [ ] 애플리케이션 버전별 DB schema/index migration 전략
+  - [ ] 업그레이드 전 백업과 실패 시 rollback 절차
+
+### 6. 설치 및 배포 패키지
+
+- [ ] 재현 가능한 production-like 단일 노드 배포
+  - [ ] Web/API/Engine/Plugin Host production image
+  - [ ] MongoDB를 포함한 전체 서비스 Docker Compose
+  - [ ] healthcheck, restart policy, volume, network 기본값
+  - [ ] production 환경변수 예제와 필수/선택 값 설명
+  - [ ] bootstrap admin, credential/session/audit secret 초기 설정 절차
+  - [ ] reverse proxy, TLS, trusted proxy 구성 예제
+  - [ ] secret 누락/약한 기본 비밀번호/잘못된 정책의 startup fail-fast
+  - [ ] 설치, 시작, 중지, 업그레이드, rollback runbook
+  - [ ] clean host 설치 smoke test
+
+### 7. Beta 보안 마감
+
+- [~] 현재 Security Hardening Roadmap의 베타 필수 항목 완료
+  - [ ] Approval/Workflow/Instance/Task resource permission guard 표준화
+  - [ ] 남은 legacy inline body/interface DTO의 class validation 전환
+  - [ ] 감사 로그 hash chain/HMAC 또는 외부 append-only 저장 검토 및 최소 무결성 검증
+  - [ ] JS Node timeout/memory/output/module import 제한 재검증
+  - [ ] Command 실행 인자, output masking, network egress 정책 재검증
+  - [ ] 로그/trace/audit에서 password/token/API key/credential 원문 통합 검사
+  - [ ] 외부 plugin manifest 유통을 베타에 포함할 경우 signature 검증 필수화
+  - [ ] dependency/secret/configuration 보안 점검을 release checklist에 연결
+
+### 8. Beta 인수 테스트와 CI
+
+- [~] 핵심 업무 경로 자동 검증과 release gate
+  - [x] runtime benchmark, API key scope smoke test, 일부 unit test
+  - [ ] Web/API/Engine build와 unit test를 실행하는 CI
+  - [ ] 로그인/session 만료/CSRF/password 변경 E2E
+  - [ ] admin/group_manager/user/API key 권한 matrix E2E
+  - [ ] group별 workflow/credential/API key/instance 격리 E2E
+  - [ ] Manual/API/Schedule/DB Watch Start E2E
+  - [ ] Exclusive/Parallel/Inclusive Gateway와 merge E2E
+  - [ ] Approval 승인/반려/중복 요청/권한 거부 E2E
+  - [ ] Workflow Call async/wait/timeout/cancel E2E
+  - [ ] 실패/retry/terminate/suspend/resume/restart recovery E2E
+  - [ ] Draft/deploy/disable/rollback/version-fixed execution E2E
+  - [ ] Export/Import와 credential secret 비노출 E2E
+  - [ ] 베타 목표 부하 기준 성능 및 장시간 soak test
+  - [ ] High/Critical 취약점, 필수 E2E 실패 시 release 차단
+
+### Beta 이후 확장 항목
+
+- [ ] 전체 BPMN 2.0 요소와 표준 import/export
+- [ ] Human Task 후보 group, claim/unclaim, 위임, 의견/첨부, SLA escalation
+- [ ] webhook/message 수신과 correlation key 기반 중간 이벤트
+- [ ] OIDC/SSO/LDAP/AD 연동
+- [ ] PXM Agent/SSH 및 고객망 내부 실행
+- [ ] 다중 노드 HA와 분산 scheduler/rate limit
+- [ ] Kubernetes/Helm과 무중단 rolling upgrade
+- [ ] 외부 Plugin SDK/package/private registry 정식 제공
+- [ ] 감사 로그 WORM/SIEM 외부 연동
 
 ## Security Hardening Roadmap
 
@@ -434,9 +603,10 @@
 
 ## Next Recommended Work
 
-1. Web/API 보안의 남은 항목인 resource permission guard 표준화와 audit log tamper resistance를 진행한다.
-2. `task:approve` scope를 실제 승인 API end-to-end 흐름에 연결하고 자동 권한 테스트를 보강한다.
-3. Plugin Manifest Registry의 trusted source/signature 검증을 완료한다.
-4. Plugin Runtime / SDK 상세 설계를 진행하되 SSH와 임의 JS module import는 agent·sandbox 정책 확정 전까지 제한한다.
-5. PXM Agent는 후순위로 유지하고, 우선 registration/heartbeat/outbound polling 계약부터 문서화한다.
-6. 운영 전 실제 목표 부하 기준으로 engine worker 수, Mongo write capacity, API key rate-limit 저장소를 재검증한다.
+1. Approval Task API의 caller 기반 조회, `task:approve`/group/workflow 권한, 중복 처리 방지와 transaction을 먼저 완료한다.
+2. Workflow Draft/Published/Disabled 상태와 active published version을 도입해 편집 정의와 운영 실행을 분리한다.
+3. Start/Task/Retry/Terminate 멱등성과 API/Engine 재시작 복구를 검증하고 suspend/resume 운영 제어를 추가한다.
+4. 실제 API/Mongo/Engine/Scheduler/DB Watch 상태를 health/metrics에 연결하고 Dashboard의 고정 상태 표시를 제거한다.
+5. 전체 서비스 Docker Compose, production 환경 설정, 백업/복원/업그레이드 runbook을 완성한다.
+6. 권한·세션·group 격리·주요 node·배포 lifecycle·재시작 복구 E2E를 CI release gate로 묶는다.
+7. Agent/SSH, 전체 BPMN, SSO, HA, Kubernetes, 외부 Plugin SDK는 베타 이후로 유지한다.

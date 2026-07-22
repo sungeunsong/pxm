@@ -1066,6 +1066,22 @@ fn expected_join_count(scope_key: Option<&str>, fallback: usize) -> usize {
 
 fn resolve_approval_assignment(node: &NodeDef, context: &Value) -> (String, Value) {
     let approval_line = node.config.get("approvalLine").unwrap_or(&Value::Null);
+    let approver_channel = node
+        .config
+        .get("approverChannel")
+        .and_then(|value| value.as_str())
+        .unwrap_or("pxm_user");
+    let external_require_otp = node
+        .config
+        .get("externalApprovalRequireOtp")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true);
+    let external_expires_in_hours = node
+        .config
+        .get("externalApprovalExpiresInHours")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(24)
+        .clamp(1, 168);
     let model = approval_line
         .get("mode")
         .or_else(|| approval_line.get("type"))
@@ -1092,7 +1108,10 @@ fn resolve_approval_assignment(node: &NodeDef, context: &Value) -> (String, Valu
                                 json!({
                                     "approval_model": "condition",
                                     "matched_condition": condition,
-                                    "assignee": assignee
+                                    "assignee": assignee,
+                                    "approver_channel": approver_channel,
+                                    "external_require_otp": external_require_otp,
+                                    "external_expires_in_hours": external_expires_in_hours
                                 }),
                             );
                         }
@@ -1108,7 +1127,14 @@ fn resolve_approval_assignment(node: &NodeDef, context: &Value) -> (String, Valu
                 .unwrap_or("admin");
             (
                 assignee.to_string(),
-                json!({"approval_model": "condition", "matched_condition": null, "assignee": assignee}),
+                json!({
+                    "approval_model": "condition",
+                    "matched_condition": null,
+                    "assignee": assignee,
+                    "approver_channel": approver_channel,
+                    "external_require_otp": external_require_otp,
+                    "external_expires_in_hours": external_expires_in_hours
+                }),
             )
         }
         "requester_selected" | "requester-selected" | "requester" => {
@@ -1150,7 +1176,10 @@ fn resolve_approval_assignment(node: &NodeDef, context: &Value) -> (String, Valu
                     "approval_model": "requester_selected",
                     "candidate_field": candidate_field,
                     "candidates": candidates,
-                    "assignee": assignee
+                    "assignee": assignee,
+                    "approver_channel": approver_channel,
+                    "external_require_otp": external_require_otp,
+                    "external_expires_in_hours": external_expires_in_hours
                 }),
             )
         }
@@ -1162,7 +1191,13 @@ fn resolve_approval_assignment(node: &NodeDef, context: &Value) -> (String, Valu
                 .unwrap_or("admin");
             (
                 assignee.to_string(),
-                json!({"approval_model": "fixed", "assignee": assignee}),
+                json!({
+                    "approval_model": "fixed",
+                    "assignee": assignee,
+                    "approver_channel": approver_channel,
+                    "external_require_otp": external_require_otp,
+                    "external_expires_in_hours": external_expires_in_hours
+                }),
             )
         }
     }

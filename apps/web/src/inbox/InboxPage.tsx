@@ -82,7 +82,7 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
   const fetchTasks = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/tasks?assignee=admin');
+      const res = await fetch('/api/tasks');
       if (!res.ok) throw new Error('Failed to fetch tasks');
       setTasks(await res.json());
     } catch (error) {
@@ -140,7 +140,7 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
     try {
       const res = await fetch(`/api/tasks/${selectedTask.id}/complete`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `inbox:${selectedTask.id}:${action}` },
         body: JSON.stringify({ action, comment }),
       });
 

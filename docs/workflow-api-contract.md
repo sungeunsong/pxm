@@ -365,6 +365,138 @@ group과 workflow 삭제는 기본적으로 soft delete다. Hard delete는 MVP �
 - 모든 external start 요청은 `api_key_id`, owner snapshot, group, workflow, endpoint, request id, IP/user-agent를 usage log에 남긴다.
 - secret 원문은 request/response/result/trace에 노출하지 않는다.
 
+## Approval Task API
+
+### List My Open Tasks
+
+```http
+GET /api/tasks
+Cookie: pxm_session=...
+```
+
+또는 개인 `USER` owner API key를 사용한다.
+
+```http
+GET /api/tasks
+Authorization: Bearer pxm_live_xxx
+```
+
+- 요청자가 `assignee` query로 다른 사용자를 지정할 수 없다.
+- 서버가 인증 actor의 `actor_id`와 일치하는 OPEN task만 조회한다.
+- session user는 task가 속한 group의 member여야 한다. `admin`도 본인에게 배정된 task만 처리한다.
+- API key는 `task:approve` scope, owner group, `allowed_workflow_ids`를 모두 만족해야 한다.
+- `SERVICE_ACCOUNT`는 Approval task를 처리할 수 없다.
+
+### Approve Or Reject Task
+
+```http
+POST /api/tasks/{task_id}/complete
+Idempotency-Key: approval-request-uuid
+Content-Type: application/json
+
+{
+  "action": "approve",
+  "comment": "요청 내용을 확인했습니다.",
+  "result": {
+    "approved_limit": 1000000
+  }
+}
+```
+
+`action`은 `approve` 또는 `reject`만 허용한다. `comment`와 object 형식의 `result`는 선택값이다.
+
+```json
+{
+  "success": true,
+  "task_id": "task-uuid",
+  "instance_id": "instance-uuid",
+  "action": "approve",
+  "status": "APPROVED",
+  "already_processed": false
+}
+```
+
+- OPEN task 상태 변경과 Engine `RESUME` job 생성, instance `RUNNING` 전이는 같은 DB transaction에서 처리한다.
+- OPEN 상태 compare-and-set/row lock으로 동시에 여러 요청이 들어와도 `RESUME` job은 하나만 생성한다.
+- 동일 actor가 동일 `Idempotency-Key`와 동일 action으로 재호출하면 기존 결과를 반환하고 `already_processed=true`로 표시한다.
+- 이미 처리된 task를 다른 key/action으로 호출하면 `409 Conflict`를 반환한다.
+- 담당자, group, workflow 또는 API key scope가 맞지 않으면 `403 Forbidden`을 반환한다.
+- 처리 audit에는 actor, API key ID, optional `business_actor`, comment/result, instance/workflow/group을 기록한다.
+- 브라우저 session의 POST 요청은 기존 CSRF 정책을 그대로 적용한다.
+
+### External Email Approval
+
+Approval 노드의 `approverChannel`이 `external_email`이면 task의 assignee는 이메일 주소다. API 메일 디스패처가 task 생성 후 일회용 링크를 발송하며 토큰 원문은 저장하지 않는다.
+
+```http
+GET /api/external-approvals/{token}
+POST /api/external-approvals/{token}/otp
+POST /api/external-approvals/{token}/complete
+Content-Type: application/json
+
+{
+  "action": "approve",
+  "comment": "확인했습니다.",
+  "otp": "123456"
+}
+```
+
+- 세 endpoint는 PXM 로그인 없이 사용한다.
+- 승인 링크는 단회 사용하며 노드에 설정한 시간 이후 만료된다.
+- OTP가 필요한 task는 10분 유효한 6자리 OTP를 사용한다. 재발송 간격은 60초이고 실패는 최대 5회다.
+- task 완료와 Engine `RESUME`, 링크 소비는 같은 transaction에서 처리한다.
+- audit에는 `external_email` 채널, 이메일, `email_link` 또는 `email_otp` 인증 방식과 처리 시각을 기록한다.
+- 상세 응답의 이메일은 마스킹하고 form data의 password/secret/token/credential/API key 계열 필드는 제거한다.
+- SMTP 및 공개 URL 설정은 `docs/external-approval-email.md`를 따른다.
+
+### Approval Task History
+
+`GET /api/tasks`는 기존 호환성을 위해 현재 actor의 OPEN 결재함만 반환한다. 완료 이력과 검색은 별도 endpoint를 사용한다.
+
+```http
+GET /api/tasks/history?status=APPROVED,REJECTED&workflow_id={id}&from=2026-07-01T00:00:00Z&limit=50
+GET /api/tasks/{task_id}
+GET /api/instances/{instance_id}/tasks?limit=50
+Authorization: Bearer pxm_live_xxx
+```
+
+목록 응답은 cursor pagination을 사용한다.
+
+```json
+{
+  "items": [
+    {
+      "task_id": "task-uuid",
+      "instance_id": "instance-uuid",
+      "workflow_id": "workflow-uuid",
+      "workflow_name": "구매 승인",
+      "workflow_version": 3,
+      "group_id": "finance",
+      "node_id": "manager-approval",
+      "node_label": "팀장 승인",
+      "status": "APPROVED",
+      "approver_channel": "external_email",
+      "assignee": "approver@example.com",
+      "action": "approve",
+      "comment": "확인했습니다.",
+      "result": null,
+      "authentication_method": "email_otp",
+      "created_at": "2026-07-21T00:00:00.000Z",
+      "updated_at": "2026-07-21T00:05:00.000Z",
+      "completed_at": "2026-07-21T00:05:00.000Z"
+    }
+  ],
+  "next_cursor": null
+}
+```
+
+- 지원 filter: `status`, `workflow_id`, `instance_id`, `assignee`, `approver_channel`, `from`, `to`, `cursor`, `limit`.
+- `status`는 `OPEN`, `APPROVED`, `REJECTED`, `CANCELED`를 쉼표로 조합한다.
+- 일반 user는 본인에게 배정된 task만, group manager는 관리 group, admin은 전체 이력을 조회한다.
+- API key와 service account는 `workflow:read` scope, owner group, `allowed_workflow_ids`를 모두 만족해야 한다.
+- 외부 이메일 링크는 해당 OPEN task 상세만 제공하며 이력 API 접근 권한을 부여하지 않는다.
+- 승인/반려 transaction은 `TASK_APPROVED` 또는 `TASK_REJECTED` outbox event를 함께 생성한다.
+
 ## History API Permission Model
 
 이력 API 권한 모델은 `/api/instances`, `/api/instances/:id`, `/api/instances/:id/trace`, `/api/instances/:id/result`, `/api/instances/:id/stream`에 동일하게 적용한다. 목록 API는 조회 가능한 instance만 반환하고, 단건/trace/result/stream API는 조회 권한이 없으면 `404 Not Found`를 반환한다. 권한 없는 instance의 존재 여부를 노출하지 않기 위해 `403 Forbidden`은 사용하지 않는다.

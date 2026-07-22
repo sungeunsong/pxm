@@ -20,7 +20,8 @@ export function installSecureApiFetch() {
 function isSameOriginApi(url: string) { try { const parsed = new URL(url, window.location.origin); return parsed.origin === window.location.origin && parsed.pathname.startsWith('/api/'); } catch { return false; } }
 function isHandledAuthRequest(url: string) {
   try {
-    return ['/api/auth/login', '/api/auth/me'].includes(new URL(url, window.location.origin).pathname);
+    const pathname = new URL(url, window.location.origin).pathname;
+    return ['/api/auth/login', '/api/auth/me'].includes(pathname) || pathname.startsWith('/api/external-approvals/');
   } catch {
     return false;
   }

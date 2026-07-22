@@ -32,6 +32,15 @@ import {
   UpsertPxmServiceAccount,
   UpsertPxmUser,
   UpsertPxmSessionSecurityPolicy,
+  CompleteWorkflowTaskCommand,
+  CompleteWorkflowTaskResult,
+  ExternalApprovalClaim,
+  ExternalApprovalDeliveryToken,
+  ExternalApprovalOtp,
+  ExternalApprovalTask,
+  WorkflowTaskHistoryItem,
+  WorkflowTaskHistoryPage,
+  WorkflowTaskHistoryQuery,
 } from '../ports/db.ports';
 
 @Injectable()
@@ -51,6 +60,7 @@ export class PostgresAdapter
   private definitionVersionTableReady = false;
   private inputPresetTableReady = false;
   private authzTablesReady = false;
+  private taskRuntimeColumnsReady = false;
 
   private async loadNodeLabels(instanceId: string): Promise<Map<string, string>> {
     const { rows } = await this.pool.query(
@@ -835,6 +845,7 @@ export class PostgresAdapter
     status: string,
     payload: any,
   ): Promise<void> {
+    await this.ensureTaskRuntimeColumns();
     await this.pool.query(
       `INSERT INTO v2_tasks (id, instance_id, token_id, node_id, assignee, status, payload, created_at, updated_at)
        VALUES ($1::uuid, $2::uuid, null, $3, $4, $5, $6::jsonb, NOW(), NOW())`,
@@ -842,12 +853,13 @@ export class PostgresAdapter
     );
   }
 
-  async listTasks(assignee = 'admin'): Promise<any[]> {
+  async listTasks(assignee: string): Promise<any[]> {
+    await this.ensureTaskRuntimeColumns();
     const { rows } = await this.pool.query(
       `SELECT t.*, 
               i.id as instance_id, 
               i.process_definition_id,
-              i.status as instance_status,
+              i.state as instance_status,
               i.context->>'template_name' as template_name,
               COALESCE((i.context->'data'->'formData')::jsonb, (i.context->'formData')::jsonb, '{}'::jsonb) as form_data
        FROM v2_tasks t
@@ -860,6 +872,7 @@ export class PostgresAdapter
   }
 
   async getTask(id: string): Promise<any> {
+    await this.ensureTaskRuntimeColumns();
     const { rows } = await this.pool.query(
       `SELECT * FROM v2_tasks WHERE id = $1`,
       [id],
@@ -867,11 +880,330 @@ export class PostgresAdapter
     return rows[0] || null;
   }
 
-  async updateTaskStatus(id: string, status: string): Promise<void> {
-    await this.pool.query(
-      `UPDATE v2_tasks SET status = $1, updated_at = NOW() WHERE id = $2`,
-      [status, id],
+  async listTaskHistory(query: WorkflowTaskHistoryQuery): Promise<WorkflowTaskHistoryPage> {
+    await this.ensureTaskRuntimeColumns();
+    const params: unknown[] = [];
+    const where: string[] = [];
+    const bind = (value: unknown) => { params.push(value); return `$${params.length}`; };
+    if (query.statuses?.length) where.push(`t.status = ANY(${bind(query.statuses)}::text[])`);
+    if (query.workflow_id) where.push(`i.process_definition_id = ${bind(query.workflow_id)}::uuid`);
+    if (query.instance_id) where.push(`t.instance_id = ${bind(query.instance_id)}::uuid`);
+    if (query.assignee) where.push(`t.assignee = ${bind(query.assignee)}`);
+    if (query.approver_channel) where.push(`COALESCE(t.payload->>'approver_channel', 'pxm_user') = ${bind(query.approver_channel)}`);
+    if (query.from) where.push(`t.created_at >= ${bind(query.from)}::timestamptz`);
+    if (query.to) where.push(`t.created_at <= ${bind(query.to)}::timestamptz`);
+    if (query.group_ids) where.push(`COALESCE(i.context->'runtime'->'access'->>'group_id', i.context->'runtime'->'snapshot'->'group'->>'id') = ANY(${bind(query.group_ids)}::text[])`);
+    if (query.allowed_workflow_ids) where.push(`i.process_definition_id = ANY(${bind(query.allowed_workflow_ids)}::uuid[])`);
+    if (query.cursor) {
+      const createdParam = bind(query.cursor.created_at);
+      const idParam = bind(query.cursor.id);
+      where.push(`(t.created_at < ${createdParam}::timestamptz OR (t.created_at = ${createdParam}::timestamptz AND t.id < ${idParam}::uuid))`);
+    }
+    const limitParam = bind(query.limit + 1);
+    const { rows } = await this.pool.query(
+      `SELECT t.*, i.process_definition_id,
+              COALESCE(i.context->'runtime'->'access'->>'group_id', i.context->'runtime'->'snapshot'->'group'->>'id') AS group_id,
+              i.context->'runtime'->'snapshot'->'workflow'->>'version' AS workflow_version_id,
+              i.context,
+              d.name AS workflow_name, d.version AS workflow_version, d.nodes AS definition_nodes
+       FROM v2_tasks t
+       JOIN v2_process_instances i ON i.id = t.instance_id
+       LEFT JOIN v2_process_definitions d ON d.id = i.process_definition_id
+       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+       ORDER BY t.created_at DESC, t.id DESC
+       LIMIT ${limitParam}`,
+      params,
     );
+    return { items: rows.slice(0, query.limit).map(mapTaskHistoryPostgres), has_more: rows.length > query.limit };
+  }
+
+  async getTaskHistoryItem(id: string): Promise<WorkflowTaskHistoryItem | null> {
+    await this.ensureTaskRuntimeColumns();
+    const { rows } = await this.pool.query(
+      `SELECT t.*, i.process_definition_id,
+              COALESCE(i.context->'runtime'->'access'->>'group_id', i.context->'runtime'->'snapshot'->'group'->>'id') AS group_id,
+              i.context->'runtime'->'snapshot'->'workflow'->>'version' AS workflow_version_id,
+              i.context,
+              d.name AS workflow_name, d.version AS workflow_version, d.nodes AS definition_nodes
+       FROM v2_tasks t
+       JOIN v2_process_instances i ON i.id = t.instance_id
+       LEFT JOIN v2_process_definitions d ON d.id = i.process_definition_id
+       WHERE t.id = $1::uuid`,
+      [id],
+    );
+    return rows[0] ? mapTaskHistoryPostgres(rows[0]) : null;
+  }
+
+  async claimExternalApprovalTasks(
+    owner: string,
+    now: Date,
+    claimUntil: Date,
+    limit: number,
+  ): Promise<ExternalApprovalClaim[]> {
+    await this.ensureTaskRuntimeColumns();
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query(
+        `SELECT * FROM v2_tasks
+         WHERE status = 'OPEN'
+           AND payload->>'approver_channel' = 'external_email'
+           AND COALESCE((payload->'external_approval'->>'attempt_count')::int, 0) < 10
+           AND (
+             payload->'external_approval'->>'delivery_status' IS NULL
+             OR payload->'external_approval'->>'delivery_status' = 'PENDING'
+             OR (payload->'external_approval'->>'delivery_status' = 'FAILED'
+                 AND COALESCE(payload->'external_approval'->>'retry_at', '') <= $1)
+             OR (payload->'external_approval'->>'delivery_status' = 'CLAIMED'
+                 AND COALESCE(payload->'external_approval'->>'claim_until', '') <= $1)
+           )
+         ORDER BY created_at ASC
+         FOR UPDATE SKIP LOCKED
+         LIMIT $2`,
+        [now.toISOString(), limit],
+      );
+      const claims: ExternalApprovalClaim[] = [];
+      for (const task of rows) {
+        const current = task.payload?.external_approval || {};
+        const attemptCount = Number(current.attempt_count || 0) + 1;
+        const externalApproval = {
+          ...current,
+          delivery_status: 'CLAIMED',
+          claim_owner: owner,
+          claim_until: claimUntil.toISOString(),
+          attempt_count: attemptCount,
+          updated_at: now.toISOString(),
+        };
+        await client.query(
+          `UPDATE v2_tasks SET payload = $1::jsonb, updated_at = NOW() WHERE id = $2::uuid`,
+          [JSON.stringify({ ...(task.payload || {}), external_approval: externalApproval }), task.id],
+        );
+        claims.push({
+          task_id: String(task.id),
+          instance_id: String(task.instance_id),
+          email: String(task.assignee),
+          require_otp: task.payload?.external_require_otp !== false,
+          expires_in_hours: Math.min(168, Math.max(1, Number(task.payload?.external_expires_in_hours) || 24)),
+          attempt_count: attemptCount,
+        });
+      }
+      await client.query('COMMIT');
+      return claims;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async setExternalApprovalDeliveryToken(
+    taskId: string,
+    owner: string,
+    input: ExternalApprovalDeliveryToken,
+  ): Promise<boolean> {
+    const task = await this.getTask(taskId);
+    if (!task || task.status !== 'OPEN' || task.payload?.external_approval?.claim_owner !== owner) return false;
+    const externalApproval = {
+      ...(task.payload?.external_approval || {}),
+      email: input.email,
+      token_hash: input.token_hash,
+      token_expires_at: input.token_expires_at,
+      require_otp: input.require_otp,
+      attempt_count: input.attempt_count,
+      otp_hash: null,
+      otp_attempts: 0,
+      consumed_at: null,
+      updated_at: new Date().toISOString(),
+    };
+    const result = await this.pool.query(
+      `UPDATE v2_tasks SET payload = $1::jsonb, updated_at = NOW()
+       WHERE id = $2::uuid AND status = 'OPEN' AND payload->'external_approval'->>'claim_owner' = $3`,
+      [JSON.stringify({ ...(task.payload || {}), external_approval: externalApproval }), taskId, owner],
+    );
+    return result.rowCount === 1;
+  }
+
+  async markExternalApprovalDelivery(
+    taskId: string,
+    owner: string,
+    status: 'SENT' | 'FAILED',
+    input: { sent_at?: string | null; retry_at?: string | null; error?: string | null },
+  ): Promise<void> {
+    const task = await this.getTask(taskId);
+    if (!task || task.payload?.external_approval?.claim_owner !== owner) return;
+    const externalApproval = {
+      ...task.payload.external_approval,
+      delivery_status: status,
+      sent_at: input.sent_at || null,
+      retry_at: input.retry_at || null,
+      last_error: input.error || null,
+      claim_owner: null,
+      claim_until: null,
+      updated_at: new Date().toISOString(),
+    };
+    await this.pool.query(
+      `UPDATE v2_tasks SET payload = $1::jsonb, updated_at = NOW()
+       WHERE id = $2::uuid AND payload->'external_approval'->>'claim_owner' = $3`,
+      [JSON.stringify({ ...(task.payload || {}), external_approval: externalApproval }), taskId, owner],
+    );
+  }
+
+  async findExternalApprovalByTokenHash(tokenHash: string): Promise<ExternalApprovalTask | null> {
+    await this.ensureTaskRuntimeColumns();
+    const { rows } = await this.pool.query(
+      `SELECT * FROM v2_tasks WHERE payload->'external_approval'->>'token_hash' = $1 LIMIT 1`,
+      [tokenHash],
+    );
+    return (rows[0] as ExternalApprovalTask | undefined) || null;
+  }
+
+  async setExternalApprovalOtp(
+    taskId: string,
+    tokenHash: string,
+    input: ExternalApprovalOtp,
+  ): Promise<boolean> {
+    const task = await this.getTask(taskId);
+    const externalApproval = task?.payload?.external_approval;
+    if (!task || task.status !== 'OPEN' || externalApproval?.token_hash !== tokenHash) return false;
+    if (externalApproval.otp_next_send_at && externalApproval.otp_next_send_at > new Date().toISOString()) return false;
+    const next = {
+      ...externalApproval,
+      otp_hash: input.otp_hash,
+      otp_expires_at: input.otp_expires_at,
+      otp_sent_at: input.otp_sent_at,
+      otp_next_send_at: input.otp_next_send_at,
+      otp_attempts: 0,
+    };
+    const result = await this.pool.query(
+      `UPDATE v2_tasks SET payload = $1::jsonb, updated_at = NOW()
+       WHERE id = $2::uuid AND status = 'OPEN'
+         AND payload->'external_approval'->>'token_hash' = $3
+         AND (payload->'external_approval'->>'otp_next_send_at' IS NULL
+              OR payload->'external_approval'->>'otp_next_send_at' <= $4)`,
+      [JSON.stringify({ ...(task.payload || {}), external_approval: next }), taskId, tokenHash, new Date().toISOString()],
+    );
+    return result.rowCount === 1;
+  }
+
+  async incrementExternalApprovalOtpFailures(taskId: string, tokenHash: string): Promise<number> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query(`SELECT * FROM v2_tasks WHERE id = $1::uuid FOR UPDATE`, [taskId]);
+      const task = rows[0];
+      if (!task || task.status !== 'OPEN' || task.payload?.external_approval?.token_hash !== tokenHash) {
+        await client.query('COMMIT');
+        return 0;
+      }
+      const attempts = Number(task.payload.external_approval.otp_attempts || 0) + 1;
+      const payload = {
+        ...(task.payload || {}),
+        external_approval: { ...task.payload.external_approval, otp_attempts: attempts },
+      };
+      await client.query(`UPDATE v2_tasks SET payload = $1::jsonb, updated_at = NOW() WHERE id = $2::uuid`, [JSON.stringify(payload), taskId]);
+      await client.query('COMMIT');
+      return attempts;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async completeTask(command: CompleteWorkflowTaskCommand): Promise<CompleteWorkflowTaskResult> {
+    await this.ensureTaskRuntimeColumns();
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query(
+        `SELECT * FROM v2_tasks WHERE id = $1::uuid FOR UPDATE`,
+        [command.task_id],
+      );
+      const task = rows[0];
+      if (!task) {
+        await client.query('ROLLBACK');
+        return { outcome: 'not_found', task: null };
+      }
+      if (task.status !== 'OPEN') {
+        await client.query('COMMIT');
+        const sameKey = sameTaskCompletion(task.payload?.completion, command);
+        return { outcome: sameKey ? 'idempotent' : 'already_completed', task };
+      }
+
+      const completedAt = new Date().toISOString();
+      const completion = taskCompletion(command, completedAt);
+      if (command.external_approval) {
+        const external = task.payload?.external_approval;
+        if (external?.token_hash !== command.external_approval.token_hash || external?.consumed_at) {
+          await client.query('COMMIT');
+          return { outcome: 'already_completed', task };
+        }
+      }
+      const externalApproval = command.external_approval
+        ? {
+            ...(task.payload?.external_approval || {}),
+            consumed_at: completedAt,
+            auth_method: command.external_approval.auth_method,
+            completed_email: command.external_approval.email,
+          }
+        : task.payload?.external_approval;
+      const payload = { ...(task.payload || {}), completion, ...(externalApproval ? { external_approval: externalApproval } : {}) };
+      await client.query(
+        `UPDATE v2_tasks SET status = $1, payload = $2::jsonb, updated_at = NOW() WHERE id = $3::uuid`,
+        [command.status, JSON.stringify(payload), command.task_id],
+      );
+      await client.query(
+        `INSERT INTO v2_engine_jobs (instance_id, token_id, type, run_at, attempt, status, payload, created_at, updated_at)
+         VALUES ($1::uuid, $2::uuid, 'RESUME', NOW(), 0, 'QUEUED', $3::jsonb, NOW(), NOW())`,
+        [task.instance_id, task.token_id || null, JSON.stringify({
+          action: command.action,
+          completed_node_id: task.node_id,
+          task_id: command.task_id,
+          result: command.result || null,
+          comment: command.comment || null,
+        })],
+      );
+      await client.query(
+        `UPDATE v2_process_instances SET state = 'RUNNING', updated_at = NOW() WHERE id = $1::uuid`,
+        [task.instance_id],
+      );
+      await client.query(
+        `INSERT INTO v2_event_outbox (instance_id, token_id, node_id, event_type, payload, created_at)
+         VALUES ($1::uuid, $2::uuid, $3, $4, $5::jsonb, NOW())`,
+        [
+          task.instance_id,
+          task.token_id || null,
+          task.node_id,
+          command.action === 'approve' ? 'TASK_APPROVED' : 'TASK_REJECTED',
+          JSON.stringify({
+            task_id: command.task_id,
+            action: command.action,
+            status: command.status,
+            actor_id: command.actor_id,
+            approval_channel: command.external_approval ? 'external_email' : 'pxm_user',
+          }),
+        ],
+      );
+      await client.query('COMMIT');
+      return { outcome: 'completed', task: { ...task, status: command.status, payload } };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  private async ensureTaskRuntimeColumns() {
+    if (this.taskRuntimeColumnsReady) return;
+    await this.pool.query(`ALTER TABLE v2_tasks ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb`);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_v2_tasks_assignee_status ON v2_tasks (assignee, status, created_at DESC)`);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_v2_tasks_history ON v2_tasks (status, created_at DESC, id DESC)`);
+    await this.pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS ux_v2_tasks_external_approval_token_hash ON v2_tasks ((payload->'external_approval'->>'token_hash')) WHERE payload->'external_approval'->>'token_hash' IS NOT NULL`);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_v2_tasks_external_approval_dispatch ON v2_tasks (status, (payload->>'approver_channel'), (payload->'external_approval'->>'delivery_status'), created_at)`);
+    this.taskRuntimeColumnsReady = true;
   }
 
   async fetchAfter(
@@ -1838,7 +2170,8 @@ function buildPostgresHistoryScope(actor?: WorkflowHistoryActor): {
     clauses.push(`i.process_definition_id::text = ANY(${param}::text[])`);
   }
 
-  if (actorId && actor.roles.includes('requester')) {
+  const isSessionUser = !actor.api_key_id && actor.roles.includes('user');
+  if (actorId && (actor.roles.includes('requester') || isSessionUser)) {
     const param = addParam(actorId);
     clauses.push(`i.context->'runtime'->'access'->>'requester_id' = ${param}`);
   }
@@ -1884,4 +2217,53 @@ function actorManagerGroupIds(actor: WorkflowHistoryActor): string[] {
       .map(([groupId]) => groupId);
   }
   return actor.roles.includes('group_manager') ? actor.group_ids || [] : [];
+}
+
+function taskCompletion(command: CompleteWorkflowTaskCommand, completedAt: string) {
+  return {
+    action: command.action,
+    actor_id: command.actor_id,
+    api_key_id: command.api_key_id || null,
+    business_actor: command.business_actor || null,
+    comment: command.comment || null,
+    result: command.result || null,
+    idempotency_key: command.idempotency_key || null,
+    completed_at: completedAt,
+  };
+}
+
+function sameTaskCompletion(completion: any, command: CompleteWorkflowTaskCommand): boolean {
+  return Boolean(
+    command.idempotency_key &&
+    completion?.idempotency_key === command.idempotency_key &&
+    completion?.actor_id === command.actor_id &&
+    completion?.action === command.action,
+  );
+}
+
+function mapTaskHistoryPostgres(task: any): WorkflowTaskHistoryItem {
+  const completion = task.payload?.completion || task.completion || null;
+  const external = task.payload?.external_approval || null;
+  const node = (task.definition_nodes || []).find((item: any) => item.node_id === task.node_id);
+  return {
+    task_id: String(task.id),
+    instance_id: String(task.instance_id),
+    workflow_id: task.process_definition_id ? String(task.process_definition_id) : null,
+    workflow_name: task.context?.template_name || task.workflow_name || null,
+    workflow_version: task.workflow_version_id || task.workflow_version || null,
+    group_id: task.group_id ? String(task.group_id) : null,
+    node_id: String(task.node_id),
+    node_label: node?.config?.label || node?.config?.ui_node?.data?.label || task.node_id || null,
+    status: task.status,
+    approver_channel: task.payload?.approver_channel === 'external_email' ? 'external_email' : 'pxm_user',
+    assignee: String(task.assignee),
+    action: completion?.action === 'approve' || completion?.action === 'reject' ? completion.action : null,
+    comment: typeof completion?.comment === 'string' ? completion.comment : null,
+    result: completion?.result && typeof completion.result === 'object' ? completion.result : null,
+    authentication_method:
+      external?.auth_method || (completion?.api_key_id ? 'api_key' : completion ? 'pxm_session' : null),
+    created_at: new Date(task.created_at).toISOString(),
+    updated_at: new Date(task.updated_at || task.created_at).toISOString(),
+    completed_at: completion?.completed_at ? new Date(completion.completed_at).toISOString() : null,
+  };
 }

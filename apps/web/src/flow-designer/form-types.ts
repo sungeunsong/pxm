@@ -114,6 +114,9 @@ export interface CustomNodeData {
   
   // Approval 노드 전용
   assignee?: string;
+  approverChannel?: 'pxm_user' | 'external_email';
+  externalApprovalRequireOtp?: boolean;
+  externalApprovalExpiresInHours?: number | string;
   approvalType?: string;
   requireComment?: boolean;
 

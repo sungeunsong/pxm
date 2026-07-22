@@ -120,10 +120,154 @@ export abstract class WorkflowTaskRepositoryPort {
     status: string,
     payload: any,
   ): Promise<void>;
-  abstract listTasks(assignee?: string): Promise<any[]>;
+  abstract listTasks(assignee: string): Promise<any[]>;
   abstract getTask(id: string): Promise<any>;
-  abstract updateTaskStatus(id: string, status: string): Promise<void>;
+  abstract completeTask(
+    command: CompleteWorkflowTaskCommand,
+  ): Promise<CompleteWorkflowTaskResult>;
+  abstract claimExternalApprovalTasks(
+    owner: string,
+    now: Date,
+    claimUntil: Date,
+    limit: number,
+  ): Promise<ExternalApprovalClaim[]>;
+  abstract setExternalApprovalDeliveryToken(
+    taskId: string,
+    owner: string,
+    input: ExternalApprovalDeliveryToken,
+  ): Promise<boolean>;
+  abstract markExternalApprovalDelivery(
+    taskId: string,
+    owner: string,
+    status: 'SENT' | 'FAILED',
+    input: {
+      sent_at?: string | null;
+      retry_at?: string | null;
+      error?: string | null;
+    },
+  ): Promise<void>;
+  abstract findExternalApprovalByTokenHash(
+    tokenHash: string,
+  ): Promise<ExternalApprovalTask | null>;
+  abstract setExternalApprovalOtp(
+    taskId: string,
+    tokenHash: string,
+    input: ExternalApprovalOtp,
+  ): Promise<boolean>;
+  abstract incrementExternalApprovalOtpFailures(
+    taskId: string,
+    tokenHash: string,
+  ): Promise<number>;
+  abstract listTaskHistory(query: WorkflowTaskHistoryQuery): Promise<WorkflowTaskHistoryPage>;
+  abstract getTaskHistoryItem(id: string): Promise<WorkflowTaskHistoryItem | null>;
 }
+
+export type WorkflowTaskHistoryQuery = {
+  statuses?: Array<'OPEN' | 'APPROVED' | 'REJECTED' | 'CANCELED'>;
+  workflow_id?: string;
+  instance_id?: string;
+  assignee?: string;
+  approver_channel?: 'pxm_user' | 'external_email';
+  from?: string;
+  to?: string;
+  group_ids?: string[];
+  allowed_workflow_ids?: string[];
+  cursor?: { created_at: string; id: string };
+  limit: number;
+};
+
+export type WorkflowTaskHistoryItem = {
+  task_id: string;
+  instance_id: string;
+  workflow_id: string | null;
+  workflow_name: string | null;
+  workflow_version: number | string | null;
+  group_id: string | null;
+  node_id: string;
+  node_label: string | null;
+  status: 'OPEN' | 'APPROVED' | 'REJECTED' | 'CANCELED';
+  approver_channel: 'pxm_user' | 'external_email';
+  assignee: string;
+  action: 'approve' | 'reject' | null;
+  comment: string | null;
+  result: Record<string, unknown> | null;
+  authentication_method: 'pxm_session' | 'api_key' | 'email_link' | 'email_otp' | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+};
+
+export type WorkflowTaskHistoryPage = {
+  items: WorkflowTaskHistoryItem[];
+  has_more: boolean;
+};
+
+export type ExternalApprovalClaim = {
+  task_id: string;
+  instance_id: string;
+  email: string;
+  require_otp: boolean;
+  expires_in_hours: number;
+  attempt_count: number;
+};
+
+export type ExternalApprovalDeliveryToken = {
+  email: string;
+  token_hash: string;
+  token_expires_at: string;
+  require_otp: boolean;
+  attempt_count: number;
+};
+
+export type ExternalApprovalOtp = {
+  otp_hash: string;
+  otp_expires_at: string;
+  otp_sent_at: string;
+  otp_next_send_at: string;
+};
+
+export type ExternalApprovalTask = {
+  id: string;
+  instance_id: string;
+  node_id: string;
+  assignee: string;
+  status: string;
+  payload: {
+    external_approval: {
+      email?: string | null;
+      token_hash?: string | null;
+      token_expires_at?: string | null;
+      require_otp?: boolean;
+      consumed_at?: string | null;
+      otp_hash?: string | null;
+      otp_expires_at?: string | null;
+      otp_attempts?: number;
+    };
+    [key: string]: unknown;
+  };
+};
+
+export type CompleteWorkflowTaskCommand = {
+  task_id: string;
+  action: 'approve' | 'reject';
+  status: 'APPROVED' | 'REJECTED';
+  actor_id: string;
+  api_key_id?: string | null;
+  business_actor?: Record<string, any> | null;
+  comment?: string | null;
+  result?: Record<string, any> | null;
+  idempotency_key?: string | null;
+  external_approval?: {
+    token_hash: string;
+    email: string;
+    auth_method: 'email_link' | 'email_otp';
+  } | null;
+};
+
+export type CompleteWorkflowTaskResult = {
+  outcome: 'completed' | 'idempotent' | 'already_completed' | 'not_found';
+  task: any | null;
+};
 
 export abstract class OutboxRepositoryPort {
   abstract fetchAfter(

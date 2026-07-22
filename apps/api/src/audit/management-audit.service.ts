@@ -6,11 +6,13 @@ import { MONGO_DB } from '../db/mongo.provider';
 import type { WorkflowHistoryActor } from '../db/ports/db.ports';
 
 export type ManagementAuditEvent = {
+  event_id?: string;
   action: string;
-  resource_type: 'workflow' | 'group' | 'user' | 'service_account' | 'api_key' | 'credential' | 'security_policy';
+  resource_type: 'workflow' | 'task' | 'group' | 'user' | 'service_account' | 'api_key' | 'credential' | 'security_policy';
   resource_id: string;
   group_id?: string | null;
   actor_id?: string | null;
+  api_key_id?: string | null;
   details?: Record<string, unknown>;
 };
 
@@ -19,14 +21,20 @@ export class ManagementAuditService {
   constructor(@Inject(MONGO_DB) private readonly db: Db) {}
 
   async append(event: ManagementAuditEvent): Promise<void> {
-    await this.collection.insertOne({
-      _id: randomUUID(),
-      ...event,
+    const { event_id: eventId, ...payload } = event;
+    const document = {
+      _id: eventId || randomUUID(),
+      ...payload,
       group_id: event.group_id || null,
       actor_id: event.actor_id || 'system',
       details: sanitizeAuditDetails(event.details || {}),
       created_at: new Date().toISOString(),
-    });
+    };
+    if (eventId) {
+      await this.collection.updateOne({ _id: eventId }, { $setOnInsert: document }, { upsert: true });
+      return;
+    }
+    await this.collection.insertOne(document);
   }
 
   async list(actor: WorkflowHistoryActor, groupId?: string, limit = 200) {

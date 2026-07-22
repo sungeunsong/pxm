@@ -144,9 +144,19 @@ create index if not exists idx_v2_tasks_assignee_open
 create index if not exists idx_v2_tasks_instance
   on v2_tasks (instance_id, created_at);
 
+create index if not exists idx_v2_tasks_history
+  on v2_tasks (status, created_at desc, id desc);
+
 create unique index if not exists ux_v2_tasks_token
   on v2_tasks (token_id)
   where token_id is not null;
+
+create unique index if not exists ux_v2_tasks_external_approval_token_hash
+  on v2_tasks ((payload->'external_approval'->>'token_hash'))
+  where payload->'external_approval'->>'token_hash' is not null;
+
+create index if not exists idx_v2_tasks_external_approval_dispatch
+  on v2_tasks (status, (payload->>'approver_channel'), (payload->'external_approval'->>'delivery_status'), created_at);
 
 -- ============================================================
 -- Internal execution log (detailed)

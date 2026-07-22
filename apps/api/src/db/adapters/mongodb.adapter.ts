@@ -32,6 +32,15 @@ import {
   UpsertPxmServiceAccount,
   UpsertPxmUser,
   UpsertPxmSessionSecurityPolicy,
+  CompleteWorkflowTaskCommand,
+  CompleteWorkflowTaskResult,
+  ExternalApprovalClaim,
+  ExternalApprovalDeliveryToken,
+  ExternalApprovalOtp,
+  ExternalApprovalTask,
+  WorkflowTaskHistoryItem,
+  WorkflowTaskHistoryPage,
+  WorkflowTaskHistoryQuery,
 } from '../ports/db.ports';
 
 @Injectable()
@@ -891,7 +900,7 @@ export class MongodbAdapter
     });
   }
 
-  async listTasks(assignee = 'admin'): Promise<any[]> {
+  async listTasks(assignee: string): Promise<any[]> {
     const tasks = await this.db
       .collection<any>('v2_tasks')
       .find({ assignee, status: 'OPEN' })
@@ -913,6 +922,7 @@ export class MongodbAdapter
         status: t.status,
         payload: t.payload,
         process_definition_id: inst?.process_definition_id || null,
+        group_id: inst?.group_id || inst?.context?.runtime?.access?.group_id || null,
         template_name: inst?.context?.template_name || null,
         instance_status: inst?.status || null,
         created_at: t.created_at,
@@ -940,17 +950,313 @@ export class MongodbAdapter
     };
   }
 
-  async updateTaskStatus(id: string, status: string): Promise<void> {
-    const now = new Date().toISOString();
-    await this.db.collection<any>('v2_tasks').updateOne(
-      { _id: id },
+  async listTaskHistory(query: WorkflowTaskHistoryQuery): Promise<WorkflowTaskHistoryPage> {
+    const taskMatch: Record<string, any> = {};
+    if (query.statuses?.length) taskMatch.status = { $in: query.statuses };
+    if (query.instance_id) taskMatch.instance_id = query.instance_id;
+    if (query.assignee) taskMatch.assignee = query.assignee;
+    if (query.approver_channel) taskMatch['payload.approver_channel'] = query.approver_channel;
+    if (query.from || query.to) {
+      taskMatch.created_at = {
+        ...(query.from ? { $gte: query.from } : {}),
+        ...(query.to ? { $lte: query.to } : {}),
+      };
+    }
+    if (query.cursor) {
+      taskMatch.$or = [
+        { created_at: { $lt: query.cursor.created_at } },
+        { created_at: query.cursor.created_at, _id: { $lt: query.cursor.id } },
+      ];
+    }
+
+    const joinedMatch: Record<string, any> = {};
+    if (query.workflow_id) joinedMatch.effective_workflow_id = query.workflow_id;
+    if (query.group_ids) joinedMatch.effective_group_id = { $in: query.group_ids };
+    if (query.allowed_workflow_ids) joinedMatch.effective_workflow_id = { $in: query.allowed_workflow_ids };
+
+    const rows = await this.db.collection<any>('v2_tasks').aggregate([
+      { $match: taskMatch },
+      { $sort: { created_at: -1, _id: -1 } },
+      { $lookup: { from: 'v2_process_instances', localField: 'instance_id', foreignField: '_id', as: 'instance' } },
+      { $unwind: '$instance' },
+      { $addFields: {
+        effective_group_id: { $ifNull: ['$instance.group_id', '$instance.context.runtime.access.group_id'] },
+        effective_workflow_id: { $ifNull: ['$instance.definition_id', '$instance.process_definition_id'] },
+      } },
+      ...(Object.keys(joinedMatch).length ? [{ $match: joinedMatch }] : []),
+      { $lookup: { from: 'v2_process_definitions', localField: 'effective_workflow_id', foreignField: '_id', as: 'definition' } },
+      { $unwind: { path: '$definition', preserveNullAndEmptyArrays: true } },
+      { $limit: query.limit + 1 },
+    ]).toArray();
+    return {
+      items: rows.slice(0, query.limit).map(mapTaskHistoryMongo),
+      has_more: rows.length > query.limit,
+    };
+  }
+
+  async getTaskHistoryItem(id: string): Promise<WorkflowTaskHistoryItem | null> {
+    const rows = await this.db.collection<any>('v2_tasks').aggregate([
+      { $match: { _id: id } },
+      { $lookup: { from: 'v2_process_instances', localField: 'instance_id', foreignField: '_id', as: 'instance' } },
+      { $unwind: '$instance' },
+      { $addFields: {
+        effective_group_id: { $ifNull: ['$instance.group_id', '$instance.context.runtime.access.group_id'] },
+        effective_workflow_id: { $ifNull: ['$instance.definition_id', '$instance.process_definition_id'] },
+      } },
+      { $lookup: { from: 'v2_process_definitions', localField: 'effective_workflow_id', foreignField: '_id', as: 'definition' } },
+      { $unwind: { path: '$definition', preserveNullAndEmptyArrays: true } },
+      { $limit: 1 },
+    ]).toArray();
+    return rows[0] ? mapTaskHistoryMongo(rows[0]) : null;
+  }
+
+  async claimExternalApprovalTasks(
+    owner: string,
+    now: Date,
+    claimUntil: Date,
+    limit: number,
+  ): Promise<ExternalApprovalClaim[]> {
+    const collection = this.db.collection<any>('v2_tasks');
+    const claims: ExternalApprovalClaim[] = [];
+    const nowIso = now.toISOString();
+    for (let index = 0; index < limit; index += 1) {
+      const task = await collection.findOneAndUpdate(
+        {
+          status: 'OPEN',
+          'payload.approver_channel': 'external_email',
+          $and: [
+            {
+              $or: [
+                { 'payload.external_approval.attempt_count': { $exists: false } },
+                { 'payload.external_approval.attempt_count': { $lt: 10 } },
+              ],
+            },
+          ],
+          $or: [
+            { 'payload.external_approval.delivery_status': { $exists: false } },
+            { 'payload.external_approval.delivery_status': 'PENDING' },
+            {
+              'payload.external_approval.delivery_status': 'FAILED',
+              'payload.external_approval.retry_at': { $lte: nowIso },
+            },
+            {
+              'payload.external_approval.delivery_status': 'CLAIMED',
+              'payload.external_approval.claim_until': { $lte: nowIso },
+            },
+          ],
+        },
+        {
+          $set: {
+            'payload.external_approval.delivery_status': 'CLAIMED',
+            'payload.external_approval.claim_owner': owner,
+            'payload.external_approval.claim_until': claimUntil.toISOString(),
+            'payload.external_approval.updated_at': nowIso,
+          },
+          $inc: { 'payload.external_approval.attempt_count': 1 },
+        },
+        { sort: { created_at: 1 }, returnDocument: 'after' },
+      );
+      if (!task) break;
+      claims.push({
+        task_id: String(task._id),
+        instance_id: String(task.instance_id),
+        email: String(task.assignee),
+        require_otp: task.payload?.external_require_otp !== false,
+        expires_in_hours: Math.min(168, Math.max(1, Number(task.payload?.external_expires_in_hours) || 24)),
+        attempt_count: Number(task.payload?.external_approval?.attempt_count) || 1,
+      });
+    }
+    return claims;
+  }
+
+  async setExternalApprovalDeliveryToken(
+    taskId: string,
+    owner: string,
+    input: ExternalApprovalDeliveryToken,
+  ): Promise<boolean> {
+    const result = await this.db.collection<any>('v2_tasks').updateOne(
+      {
+        _id: taskId,
+        status: 'OPEN',
+        'payload.external_approval.delivery_status': 'CLAIMED',
+        'payload.external_approval.claim_owner': owner,
+      },
       {
         $set: {
-          status: status,
-          updated_at: now,
+          'payload.external_approval.email': input.email,
+          'payload.external_approval.token_hash': input.token_hash,
+          'payload.external_approval.token_expires_at': input.token_expires_at,
+          'payload.external_approval.require_otp': input.require_otp,
+          'payload.external_approval.attempt_count': input.attempt_count,
+          'payload.external_approval.otp_hash': null,
+          'payload.external_approval.otp_attempts': 0,
+          'payload.external_approval.consumed_at': null,
+          'payload.external_approval.updated_at': new Date().toISOString(),
         },
       },
     );
+    return result.modifiedCount === 1;
+  }
+
+  async markExternalApprovalDelivery(
+    taskId: string,
+    owner: string,
+    status: 'SENT' | 'FAILED',
+    input: { sent_at?: string | null; retry_at?: string | null; error?: string | null },
+  ): Promise<void> {
+    await this.db.collection<any>('v2_tasks').updateOne(
+      { _id: taskId, 'payload.external_approval.claim_owner': owner },
+      {
+        $set: {
+          'payload.external_approval.delivery_status': status,
+          'payload.external_approval.sent_at': input.sent_at || null,
+          'payload.external_approval.retry_at': input.retry_at || null,
+          'payload.external_approval.last_error': input.error || null,
+          'payload.external_approval.claim_owner': null,
+          'payload.external_approval.claim_until': null,
+          'payload.external_approval.updated_at': new Date().toISOString(),
+        },
+      },
+    );
+  }
+
+  async findExternalApprovalByTokenHash(tokenHash: string): Promise<ExternalApprovalTask | null> {
+    const task = await this.db.collection<any>('v2_tasks').findOne({
+      'payload.external_approval.token_hash': tokenHash,
+    });
+    return task ? (mapTaskDoc(task) as ExternalApprovalTask) : null;
+  }
+
+  async setExternalApprovalOtp(
+    taskId: string,
+    tokenHash: string,
+    input: ExternalApprovalOtp,
+  ): Promise<boolean> {
+    const now = new Date().toISOString();
+    const result = await this.db.collection<any>('v2_tasks').updateOne(
+      {
+        _id: taskId,
+        status: 'OPEN',
+        'payload.external_approval.token_hash': tokenHash,
+        $or: [
+          { 'payload.external_approval.otp_next_send_at': { $exists: false } },
+          { 'payload.external_approval.otp_next_send_at': null },
+          { 'payload.external_approval.otp_next_send_at': { $lte: now } },
+        ],
+      },
+      {
+        $set: {
+          'payload.external_approval.otp_hash': input.otp_hash,
+          'payload.external_approval.otp_expires_at': input.otp_expires_at,
+          'payload.external_approval.otp_sent_at': input.otp_sent_at,
+          'payload.external_approval.otp_next_send_at': input.otp_next_send_at,
+          'payload.external_approval.otp_attempts': 0,
+        },
+      },
+    );
+    return result.modifiedCount === 1;
+  }
+
+  async incrementExternalApprovalOtpFailures(taskId: string, tokenHash: string): Promise<number> {
+    const task = await this.db.collection<any>('v2_tasks').findOneAndUpdate(
+      { _id: taskId, status: 'OPEN', 'payload.external_approval.token_hash': tokenHash },
+      { $inc: { 'payload.external_approval.otp_attempts': 1 } },
+      { returnDocument: 'after' },
+    );
+    return Number(task?.payload?.external_approval?.otp_attempts) || 0;
+  }
+
+  async completeTask(command: CompleteWorkflowTaskCommand): Promise<CompleteWorkflowTaskResult> {
+    const session = this.db.client.startSession();
+    let result: CompleteWorkflowTaskResult = { outcome: 'not_found', task: null };
+    try {
+      await session.withTransaction(async () => {
+        const collection = this.db.collection<any>('v2_tasks');
+        const task = await collection.findOne({ _id: command.task_id }, { session });
+        if (!task) {
+          result = { outcome: 'not_found', task: null };
+          return;
+        }
+        if (task.status !== 'OPEN') {
+          const sameKey = sameTaskCompletion(task.completion, command);
+          result = { outcome: sameKey ? 'idempotent' : 'already_completed', task: mapTaskDoc(task) };
+          return;
+        }
+
+        const now = new Date().toISOString();
+        const completion = taskCompletion(command, now);
+        const completionFilter: any = { _id: command.task_id, status: 'OPEN' };
+        if (command.external_approval) {
+          completionFilter['payload.external_approval.token_hash'] = command.external_approval.token_hash;
+          completionFilter['payload.external_approval.consumed_at'] = null;
+        }
+        const completionSet: Record<string, unknown> = { status: command.status, completion, updated_at: now };
+        if (command.external_approval) {
+          completionSet['payload.external_approval.consumed_at'] = now;
+          completionSet['payload.external_approval.auth_method'] = command.external_approval.auth_method;
+          completionSet['payload.external_approval.completed_email'] = command.external_approval.email;
+        }
+        const update = await collection.updateOne(
+          completionFilter,
+          { $set: completionSet },
+          { session },
+        );
+        if (update.modifiedCount !== 1) {
+          const current = await collection.findOne({ _id: command.task_id }, { session });
+          const sameKey = sameTaskCompletion(current?.completion, command);
+          result = { outcome: sameKey ? 'idempotent' : 'already_completed', task: current ? mapTaskDoc(current) : null };
+          return;
+        }
+
+        const counterDoc = await this.db.collection<any>('v2_counters').findOneAndUpdate(
+          { _id: 'v2_engine_jobs' },
+          { $inc: { seq: 1 } },
+          { upsert: true, returnDocument: 'after', session },
+        );
+        const sequence = Number((counterDoc as any)?.seq || Date.now());
+        await this.db.collection<any>('v2_engine_jobs').insertOne({
+          _id: sequence,
+          instance_id: task.instance_id,
+          token_id: task.token_id || null,
+          job_type: 'RESUME',
+          run_at: now,
+          attempt: 0,
+          status: 'QUEUED',
+          payload: {
+            action: command.action,
+            completed_node_id: task.node_id,
+            task_id: command.task_id,
+            result: command.result || null,
+            comment: command.comment || null,
+          },
+          created_at: now,
+          updated_at: now,
+        }, { session });
+        await this.db.collection<any>('v2_process_instances').updateOne(
+          { _id: task.instance_id },
+          { $set: { state: 'RUNNING', status: 'RUNNING', updated_at: now } },
+          { session },
+        );
+        await this.db.collection<any>('v2_event_outbox').insertOne({
+          instance_id: task.instance_id,
+          token_id: task.token_id || null,
+          node_id: task.node_id,
+          event_type: command.action === 'approve' ? 'TASK_APPROVED' : 'TASK_REJECTED',
+          payload: {
+            task_id: command.task_id,
+            action: command.action,
+            status: command.status,
+            actor_id: command.actor_id,
+            approval_channel: command.external_approval ? 'external_email' : 'pxm_user',
+          },
+          created_at: now,
+        }, { session });
+        result = { outcome: 'completed', task: mapTaskDoc({ ...task, status: command.status, completion, updated_at: now }) };
+      });
+      return result;
+    } finally {
+      await session.endSession();
+    }
   }
 
   async fetchAfter(
@@ -1712,7 +2018,8 @@ function buildMongoHistoryFilter(actor?: WorkflowHistoryActor): Record<string, a
     or.push({ process_definition_id: { $in: actor.owned_workflow_ids } });
   }
 
-  if (actorId && actor.roles.includes('requester')) {
+  const isSessionUser = !actor.api_key_id && actor.roles.includes('user');
+  if (actorId && (actor.roles.includes('requester') || isSessionUser)) {
     or.push({ requester_id: actorId });
     or.push({ 'context.runtime.access.requester_id': actorId });
   }
@@ -1753,4 +2060,72 @@ function actorManagerGroupIds(actor: WorkflowHistoryActor): string[] {
       .map(([groupId]) => groupId);
   }
   return actor.roles.includes('group_manager') ? actor.group_ids || [] : [];
+}
+
+function taskCompletion(command: CompleteWorkflowTaskCommand, completedAt: string) {
+  return {
+    action: command.action,
+    actor_id: command.actor_id,
+    api_key_id: command.api_key_id || null,
+    business_actor: command.business_actor || null,
+    comment: command.comment || null,
+    result: command.result || null,
+    idempotency_key: command.idempotency_key || null,
+    completed_at: completedAt,
+  };
+}
+
+function sameTaskCompletion(completion: any, command: CompleteWorkflowTaskCommand): boolean {
+  return Boolean(
+    command.idempotency_key &&
+    completion?.idempotency_key === command.idempotency_key &&
+    completion?.actor_id === command.actor_id &&
+    completion?.action === command.action,
+  );
+}
+
+function mapTaskDoc(task: any) {
+  return {
+    id: task._id,
+    instance_id: task.instance_id,
+    token_id: task.token_id,
+    node_id: task.node_id,
+    assignee: task.assignee,
+    status: task.status,
+    payload: task.payload,
+    completion: task.completion || null,
+    created_at: task.created_at,
+    updated_at: task.updated_at,
+  };
+}
+
+function mapTaskHistoryMongo(task: any): WorkflowTaskHistoryItem {
+  const completion = task.completion || task.payload?.completion || null;
+  const external = task.payload?.external_approval || null;
+  const node = (task.definition?.nodes || []).find((item: any) => item.node_id === task.node_id);
+  return {
+    task_id: String(task._id),
+    instance_id: String(task.instance_id),
+    workflow_id: task.effective_workflow_id ? String(task.effective_workflow_id) : null,
+    workflow_name: task.instance?.context?.template_name || task.definition?.name || null,
+    workflow_version:
+      task.instance?.context?.runtime?.snapshot?.workflow?.version ||
+      task.instance?.workflow_version_id ||
+      task.definition?.version ||
+      null,
+    group_id: task.effective_group_id ? String(task.effective_group_id) : null,
+    node_id: String(task.node_id),
+    node_label: node?.config?.label || node?.config?.ui_node?.data?.label || task.node_id || null,
+    status: task.status,
+    approver_channel: task.payload?.approver_channel === 'external_email' ? 'external_email' : 'pxm_user',
+    assignee: String(task.assignee),
+    action: completion?.action === 'approve' || completion?.action === 'reject' ? completion.action : null,
+    comment: typeof completion?.comment === 'string' ? completion.comment : null,
+    result: completion?.result && typeof completion.result === 'object' ? completion.result : null,
+    authentication_method:
+      external?.auth_method || (completion?.api_key_id ? 'api_key' : completion ? 'pxm_session' : null),
+    created_at: String(task.created_at),
+    updated_at: String(task.updated_at || task.created_at),
+    completed_at: completion?.completed_at ? String(completion.completed_at) : null,
+  };
 }

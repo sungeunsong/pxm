@@ -12,6 +12,7 @@ import type { PluginManifest, PluginJsonSchemaProperty, PluginTestResponse } fro
 import { credentialsApi, type CredentialProfile } from '../api/credentials';
 import { commandsApi, type CommandRegistryItem } from '../api/commands';
 import { templatesApi, type TestDbWatchConnectionResponse } from '../api/templates';
+import { authzApi, type PxmGroup, type PxmUser } from '../api/authz';
 import { FormSchemaEditor } from './FormSchemaEditor';
 import { PluginIcon } from './plugin-icons';
 import './NodePropertiesForm.css';
@@ -28,6 +29,10 @@ export interface NodePropertiesFormProps {
   testResult?: PluginTestResponse | null;
   testError?: string | null;
   credentialGroupId?: string;
+  workflowGroups?: PxmGroup[];
+  workflowGroupsLoading?: boolean;
+  workflowGroupsError?: string | null;
+  onWorkflowGroupChange?: (groupId: string) => void;
 }
 
 export interface NodePathSuggestion {
@@ -109,6 +114,10 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
   testResult,
   testError,
   credentialGroupId,
+  workflowGroups = [],
+  workflowGroupsLoading = false,
+  workflowGroupsError = null,
+  onWorkflowGroupChange,
 }) => {
   const scriptEditorRef = React.useRef<ReactCodeMirrorRef | null>(null);
   const [credentials, setCredentials] = React.useState<CredentialProfile[]>([]);
@@ -117,6 +126,9 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
   const [workflowOptions, setWorkflowOptions] = React.useState<WorkflowOption[]>([]);
   const [workflowOptionsLoading, setWorkflowOptionsLoading] = React.useState(false);
   const [workflowOptionsError, setWorkflowOptionsError] = React.useState<string | null>(null);
+  const [approvalUsers, setApprovalUsers] = React.useState<PxmUser[]>([]);
+  const [approvalUsersLoading, setApprovalUsersLoading] = React.useState(false);
+  const [approvalUsersError, setApprovalUsersError] = React.useState<string | null>(null);
   const [commandOptions, setCommandOptions] = React.useState<CommandRegistryItem[]>([]);
   const [commandOptionsLoading, setCommandOptionsLoading] = React.useState(false);
   const [commandOptionsError, setCommandOptionsError] = React.useState<string | null>(null);
@@ -125,6 +137,40 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
   const [dbWatchTestRunning, setDbWatchTestRunning] = React.useState(false);
   const [dbWatchTestResult, setDbWatchTestResult] = React.useState<TestDbWatchConnectionResponse | null>(null);
   const [dbWatchTestError, setDbWatchTestError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (node.data.nodeType !== 'approval' || !credentialGroupId) {
+      setApprovalUsers([]);
+      setApprovalUsersError(
+        node.data.nodeType === 'approval' && !credentialGroupId
+          ? 'Workflow 관리 그룹을 먼저 선택하세요.'
+          : null,
+      );
+      return;
+    }
+
+    let cancelled = false;
+    setApprovalUsersLoading(true);
+    authzApi.listUsers(credentialGroupId)
+      .then((items) => {
+        if (!cancelled) {
+          setApprovalUsers(items.filter((item) => item.status === 'active'));
+          setApprovalUsersError(null);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setApprovalUsersError(error instanceof Error ? error.message : '사용자 목록을 불러오지 못했습니다.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setApprovalUsersLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [credentialGroupId, node.data.nodeType]);
 
   React.useEffect(() => {
     const data = node.data as any;
@@ -1024,16 +1070,109 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
   // Approval 노드 속성
   const renderApprovalProperties = () => {
     const data = node.data as any;
+    const approverChannel = data.approverChannel || 'pxm_user';
+    const externalEmail = String(data.assignee || '').trim();
+    const externalEmailInvalid =
+      approverChannel === 'external_email' &&
+      externalEmail.length > 0 &&
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(externalEmail);
+    const workflowGroup = workflowGroups.find((group) => group.id === credentialGroupId);
     return (
       <div className="property-section">
         <h4 className="property-section-title">승인 설정</h4>
-        <Input
-          label="Approver (Email)"
-          placeholder="user@example.com"
-          value={data.assignee || ''}
-          onChange={(e) => onUpdate(node.id, { ...data, assignee: e.target.value })}
+        {credentialGroupId ? (
+          <div className="property-group">
+            <span className="property-label">워크플로우 소유 그룹</span>
+            <div className="property-value-readonly">
+              {workflowGroup?.name || credentialGroupId}
+            </div>
+            <span className="property-helper-text">
+              워크플로우 전체에 적용되는 값입니다. 변경은 빈 캔버스의 워크플로우 속성에서 할 수 있습니다.
+            </span>
+          </div>
+        ) : (
+          <Select
+            label="워크플로우 소유 그룹 지정"
+            value=""
+            onChange={(e) => onWorkflowGroupChange?.(e.target.value)}
+            options={[
+              {
+                value: '',
+                label: workflowGroupsLoading ? '그룹 불러오는 중...' : '소유 그룹 선택',
+              },
+              ...workflowGroups.map((group) => ({ value: group.id, label: group.name })),
+            ]}
+            helperText={workflowGroupsError || '승인자를 선택하려면 먼저 워크플로우 전체의 소유 그룹을 지정해야 합니다.'}
+            disabled={workflowGroupsLoading || Boolean(workflowGroupsError) || !onWorkflowGroupChange}
+            fullWidth
+          />
+        )}
+        <Select
+          label="승인자 유형"
+          value={approverChannel}
+          onChange={(e) => onUpdate(node.id, {
+            ...data,
+            approverChannel: e.target.value as 'pxm_user' | 'external_email',
+            assignee: '',
+          })}
+          options={[
+            { value: 'pxm_user', label: 'PXM 사용자' },
+            { value: 'external_email', label: '외부 이메일' },
+          ]}
+          helperText="승인자의 신원을 확인할 방식을 선택합니다."
           fullWidth
         />
+        {approverChannel === 'pxm_user' ? (
+          <Select
+            label="PXM 승인자"
+            value={data.assignee || ''}
+            onChange={(e) => onUpdate(node.id, { ...data, assignee: e.target.value })}
+            options={[
+              { value: '', label: approvalUsersLoading ? '사용자 불러오는 중...' : '승인자 선택' },
+              ...approvalUsers.map((user) => ({
+                value: user.id,
+                label: `${user.display_name} (${user.id})${user.email ? ` · ${user.email}` : ''}`,
+              })),
+            ]}
+            helperText={approvalUsersError || 'Workflow 소유 그룹의 활성 사용자만 선택할 수 있습니다.'}
+            disabled={!credentialGroupId || approvalUsersLoading}
+            fullWidth
+          />
+        ) : (
+          <>
+            <Input
+              type="email"
+              label="승인자 이메일"
+              placeholder="approver@example.com"
+              value={data.assignee || ''}
+              onChange={(e) => onUpdate(node.id, { ...data, assignee: e.target.value.trim() })}
+              error={externalEmailInvalid ? '올바른 이메일 주소를 입력하세요.' : undefined}
+              helperText="일회용 승인 링크가 이 주소로 발송됩니다. PXM 가입은 필요하지 않습니다."
+              fullWidth
+            />
+            <Input
+              type="number"
+              min={1}
+              max={168}
+              label="승인 링크 유효시간 (시간)"
+              value={data.externalApprovalExpiresInHours ?? 24}
+              onChange={(e) => onUpdate(node.id, {
+                ...data,
+                externalApprovalExpiresInHours: Math.min(168, Math.max(1, Number(e.target.value) || 24)),
+              })}
+              helperText="1~168시간. 링크는 한 번 처리되면 다시 사용할 수 없습니다."
+              fullWidth
+            />
+            <Checkbox
+              label="이메일 OTP 추가 확인"
+              checked={data.externalApprovalRequireOtp ?? true}
+              onChange={(e) => onUpdate(node.id, { ...data, externalApprovalRequireOtp: e.target.checked })}
+            />
+            <div className="property-helper-text">
+              OTP를 끄면 이메일 링크 소유만으로 승인할 수 있으므로 낮은 위험도의 업무에만 권장합니다.
+            </div>
+          </>
+        )}
         <Select
           label="Approval Type"
           value={data.approvalType || 'single'}

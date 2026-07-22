@@ -1177,6 +1177,10 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
                     testResult={nodeTestResult}
                     testError={nodeTestError}
                     credentialGroupId={workflowGroupId}
+                    workflowGroups={availableGroups}
+                    workflowGroupsLoading={groupsLoading}
+                    workflowGroupsError={groupsError}
+                    onWorkflowGroupChange={handleGroupSelection}
                   />
                   ) : (
                     <WorkflowMetadataForm

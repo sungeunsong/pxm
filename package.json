@@ -11,6 +11,7 @@
     "plugin:conformance": "cd apps/api && node scripts/plugin-conformance.mjs",
     "plugin:control": "cd apps/api && node scripts/plugin-control.mjs",
     "demo:sse:approval": "cd apps/api && node scripts/demo-sse-approval-stream.mjs",
+    "demo:external-email-approval": "cd apps/api && node scripts/create-external-approval-demo.mjs",
     "smoke:mongo:approval": "cd apps/api && API_BASE_URL=${API_BASE_URL:-http://localhost:3011/api} MONGODB_URL=${MONGODB_URL:-mongodb://127.0.0.1:27017/?replicaSet=rs0} MONGO_DB_NAME=${MONGO_DB_NAME:-pxm_db} node scripts/smoke-mongo-approval.mjs",
     "smoke:mongo:gateway": "cd apps/api && API_BASE_URL=${API_BASE_URL:-http://localhost:3011/api} MONGODB_URL=${MONGODB_URL:-mongodb://127.0.0.1:27017/?replicaSet=rs0} MONGO_DB_NAME=${MONGO_DB_NAME:-pxm_db} node scripts/smoke-mongo-gateway.mjs",
     "benchmark:immediate": "cd apps/api && node scripts/benchmark-immediate-nodes.mjs",
@@ -22,6 +23,7 @@
     "dev:engine:mongo": "cd apps/engine && DB_TYPE=mongodb MONGODB_URL=${MONGODB_URL:-mongodb://127.0.0.1:27017/?replicaSet=rs0} MONGO_DB_NAME=${MONGO_DB_NAME:-pxm_db} cargo run",
     "dev:plugin-host": "cd apps/plugin-host && PORT=${PORT:-3010} pnpm dev",
     "dev:web": "cd apps/web && pnpm dev",
+    "dev:api-playground": "pnpm --dir apps/api-playground dev",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint"
   }

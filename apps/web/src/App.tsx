@@ -29,6 +29,7 @@ import { PluginControlPage } from './plugins/PluginControlPage';
 import { PluginRegistryPage } from './plugins/PluginRegistryPage';
 import { AccessManagementPage } from './authz/AccessManagementPage';
 import { LoginPage } from './auth/LoginPage';
+import { ExternalApprovalPage } from './external-approval/ExternalApprovalPage';
 import { AccountDialog } from './auth/AccountDialog';
 import { SessionActivityGuard } from './auth/SessionActivityGuard';
 import { ExecutionPresetsPage } from './input-presets/ExecutionPresetsPage';
@@ -449,7 +450,7 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
   );
 }
 
-function App() {
+function AuthenticatedApp() {
   const [user, setUser] = useState<SessionUser | null | undefined>(undefined);
   const [loginNotice, setLoginNotice] = useState('');
   useEffect(() => {
@@ -470,6 +471,12 @@ function App() {
     onSessionRevoked={() => { setLoginNotice('보안 정책 변경으로 세션이 종료되었습니다. 다시 로그인해 주세요.'); setUser(null); }}
     onSessionExpired={() => { setLoginNotice('비활동 또는 절대 만료시간이 지나 세션이 종료되었습니다. 다시 로그인해 주세요.'); setUser(null); }}
   />;
+}
+
+function App() {
+  const externalApprovalMatch = window.location.pathname.match(/^\/external-approval\/([A-Za-z0-9_-]+)\/?$/);
+  if (externalApprovalMatch) return <ExternalApprovalPage token={externalApprovalMatch[1]} />;
+  return <AuthenticatedApp />;
 }
 
 export default App;
