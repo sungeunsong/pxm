@@ -2,10 +2,18 @@ import { PluginsService } from './plugins.service';
 
 describe('PluginsService', () => {
   let service: PluginsService;
+  const credentialsService = {};
+  const emptyCursor = { toArray: jest.fn().mockResolvedValue([]) };
+  const db = {
+    collection: jest.fn(() => ({
+      find: jest.fn(() => emptyCursor),
+    })),
+  };
 
-  beforeEach(() => {
-    service = new PluginsService();
-    service.onModuleInit();
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    service = new PluginsService(credentialsService as any, db as any);
+    await service.onModuleInit();
   });
 
   it('loads the seeded MVP plugin manifests', () => {
