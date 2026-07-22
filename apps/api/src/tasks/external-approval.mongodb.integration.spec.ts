@@ -37,7 +37,7 @@ describeMongo('Mongo external email approval transaction', () => {
     await db.collection('v2_tasks').insertOne({
       _id: taskId,
       instance_id: instanceId,
-      token_id: null,
+      token_id: randomUUID(),
       node_id: 'approval',
       assignee: 'outside@example.com',
       status: 'OPEN',
@@ -101,8 +101,28 @@ describeMongo('Mongo external email approval transaction', () => {
         task_id: taskId,
         status: 'OPEN',
         approver_channel: 'external_email',
+        delivery_status: 'SENT',
+        delivery_attempt_count: 1,
       }),
     ]);
+
+    expect(
+      await adapter.setExternalApprovalOtp(taskId, 'a'.repeat(64), {
+        otp_hash: 'b'.repeat(64),
+        otp_expires_at: new Date(Date.now() + 60_000).toISOString(),
+        otp_sent_at: new Date().toISOString(),
+        otp_next_send_at: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    ).toBe(true);
+    await adapter.clearExternalApprovalOtp(
+      taskId,
+      'a'.repeat(64),
+      'b'.repeat(64),
+    );
+    expect(
+      (await db.collection('v2_tasks').findOne({ _id: taskId }))?.payload
+        ?.external_approval?.otp_hash,
+    ).toBeNull();
 
     const result = await adapter.completeTask({
       task_id: taskId,
@@ -143,12 +163,54 @@ describeMongo('Mongo external email approval transaction', () => {
         .countDocuments({ instance_id: instanceId, job_type: 'RESUME' }),
     ).toBe(1);
     expect(
-      await db
-        .collection('v2_event_outbox')
-        .countDocuments({
-          instance_id: instanceId,
-          event_type: 'TASK_APPROVED',
-        }),
+      await db.collection('v2_event_outbox').countDocuments({
+        instance_id: instanceId,
+        event_type: 'TASK_APPROVED',
+      }),
     ).toBe(1);
+  });
+
+  it('requeues a failed delivery and invalidates the previous link and OTP', async () => {
+    await db.collection('v2_tasks').updateOne(
+      { _id: taskId },
+      {
+        $set: {
+          'payload.external_approval': {
+            delivery_status: 'FAILED',
+            attempt_count: 10,
+            token_hash: 'a'.repeat(64),
+            token_expires_at: new Date(Date.now() + 60_000).toISOString(),
+            otp_hash: 'b'.repeat(64),
+            otp_attempts: 5,
+            last_error: 'smtp unavailable',
+          },
+        },
+      },
+    );
+
+    expect(await adapter.requeueExternalApproval(taskId)).toBe(true);
+    const task = await db.collection('v2_tasks').findOne({ _id: taskId });
+    expect(task?.payload.external_approval).toEqual(
+      expect.objectContaining({
+        delivery_status: 'PENDING',
+        attempt_count: 0,
+        token_hash: null,
+        token_expires_at: null,
+        otp_hash: null,
+        otp_attempts: 0,
+        last_error: null,
+      }),
+    );
+    expect(
+      await adapter.findExternalApprovalByTokenHash('a'.repeat(64)),
+    ).toBeNull();
+    expect(
+      await adapter.claimExternalApprovalTasks(
+        'test-reissue',
+        new Date(),
+        new Date(Date.now() + 60_000),
+        1,
+      ),
+    ).toEqual([expect.objectContaining({ task_id: taskId, attempt_count: 1 })]);
   });
 });

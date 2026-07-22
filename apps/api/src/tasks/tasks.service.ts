@@ -14,7 +14,11 @@ import {
 import { ManagementAuditService } from '../audit/management-audit.service';
 import { CompleteTaskDto } from './dto/task.dto';
 import { TaskHistoryQueryDto } from './dto/task-history.dto';
-import { isAdmin, managerGroupIds } from '../authz/management-auth';
+import {
+  assertCanManageGroup,
+  isAdmin,
+  managerGroupIds,
+} from '../authz/management-auth';
 
 @Injectable()
 export class TasksService {
@@ -162,6 +166,43 @@ export class TasksService {
       action: dto.action,
       status: dto.action === 'approve' ? 'APPROVED' : 'REJECTED',
       already_processed: result.outcome === 'idempotent',
+    };
+  }
+
+  async retryExternalApproval(id: string, actor: WorkflowHistoryActor) {
+    this.assertHistoryAuthenticated(actor);
+    if (actor.api_key_id)
+      throw new ForbiddenException(
+        'API key cannot reissue external approval links',
+      );
+    const item = await this.tasks.getTaskHistoryItem(id);
+    if (!item) throw new NotFoundException('Task not found');
+    assertCanManageGroup(actor, item.group_id);
+    if (item.approver_channel !== 'external_email')
+      throw new BadRequestException('Task is not an external email approval');
+    if (item.status !== 'OPEN')
+      throw new ConflictException('Only open approval tasks can be reissued');
+
+    const requeued = await this.tasks.requeueExternalApproval(id);
+    if (!requeued)
+      throw new ConflictException('Approval task could not be reissued');
+
+    await this.audit.append({
+      action: 'task.external_approval.requeued',
+      resource_type: 'task',
+      resource_id: id,
+      group_id: item.group_id,
+      actor_id: actor.actor_id,
+      details: {
+        instance_id: item.instance_id,
+        workflow_id: item.workflow_id,
+        recipient: item.assignee,
+      },
+    });
+    return {
+      success: true,
+      task_id: id,
+      delivery_status: 'PENDING',
     };
   }
 

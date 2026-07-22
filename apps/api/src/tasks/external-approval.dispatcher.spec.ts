@@ -40,4 +40,43 @@ describe('ExternalApprovalDispatcher', () => {
       expect.any(Object),
     );
   });
+
+  it('marks a failed delivery for retry without leaking the raw token', async () => {
+    const tasks = {
+      claimExternalApprovalTasks: jest.fn().mockResolvedValue([
+        {
+          task_id: 'task-2',
+          instance_id: 'instance-2',
+          email: 'outside@example.com',
+          require_otp: false,
+          expires_in_hours: 24,
+          attempt_count: 2,
+        },
+      ]),
+      setExternalApprovalDeliveryToken: jest.fn().mockResolvedValue(true),
+      markExternalApprovalDelivery: jest.fn(),
+    };
+    const mailer = {
+      isConfigured: jest.fn(() => true),
+      sendApprovalLink: jest
+        .fn()
+        .mockRejectedValue(new Error('smtp unavailable')),
+    };
+    const dispatcher = new ExternalApprovalDispatcher(
+      tasks as any,
+      mailer as any,
+    );
+
+    await dispatcher.tick();
+
+    expect(tasks.markExternalApprovalDelivery).toHaveBeenCalledWith(
+      'task-2',
+      expect.any(String),
+      'FAILED',
+      expect.objectContaining({
+        retry_at: expect.any(String),
+        error: 'smtp unavailable',
+      }),
+    );
+  });
 });

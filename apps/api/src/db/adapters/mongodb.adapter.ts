@@ -1120,6 +1120,39 @@ export class MongodbAdapter
     );
   }
 
+  async requeueExternalApproval(taskId: string): Promise<boolean> {
+    const now = new Date().toISOString();
+    const result = await this.db.collection<any>('v2_tasks').updateOne(
+      {
+        _id: taskId,
+        status: 'OPEN',
+        'payload.approver_channel': 'external_email',
+      },
+      {
+        $set: {
+          'payload.external_approval.delivery_status': 'PENDING',
+          'payload.external_approval.attempt_count': 0,
+          'payload.external_approval.sent_at': null,
+          'payload.external_approval.retry_at': null,
+          'payload.external_approval.last_error': null,
+          'payload.external_approval.claim_owner': null,
+          'payload.external_approval.claim_until': null,
+          'payload.external_approval.token_hash': null,
+          'payload.external_approval.token_expires_at': null,
+          'payload.external_approval.otp_hash': null,
+          'payload.external_approval.otp_expires_at': null,
+          'payload.external_approval.otp_sent_at': null,
+          'payload.external_approval.otp_next_send_at': null,
+          'payload.external_approval.otp_attempts': 0,
+          'payload.external_approval.consumed_at': null,
+          'payload.external_approval.requeued_at': now,
+          'payload.external_approval.updated_at': now,
+        },
+      },
+    );
+    return result.modifiedCount === 1;
+  }
+
   async findExternalApprovalByTokenHash(tokenHash: string): Promise<ExternalApprovalTask | null> {
     const task = await this.db.collection<any>('v2_tasks').findOne({
       'payload.external_approval.token_hash': tokenHash,
@@ -1164,6 +1197,30 @@ export class MongodbAdapter
       { returnDocument: 'after' },
     );
     return Number(task?.payload?.external_approval?.otp_attempts) || 0;
+  }
+
+  async clearExternalApprovalOtp(
+    taskId: string,
+    tokenHash: string,
+    otpHash: string,
+  ): Promise<void> {
+    await this.db.collection<any>('v2_tasks').updateOne(
+      {
+        _id: taskId,
+        status: 'OPEN',
+        'payload.external_approval.token_hash': tokenHash,
+        'payload.external_approval.otp_hash': otpHash,
+      },
+      {
+        $set: {
+          'payload.external_approval.otp_hash': null,
+          'payload.external_approval.otp_expires_at': null,
+          'payload.external_approval.otp_sent_at': null,
+          'payload.external_approval.otp_next_send_at': null,
+          'payload.external_approval.otp_attempts': 0,
+        },
+      },
+    );
   }
 
   async completeTask(command: CompleteWorkflowTaskCommand): Promise<CompleteWorkflowTaskResult> {
@@ -2124,6 +2181,10 @@ function mapTaskHistoryMongo(task: any): WorkflowTaskHistoryItem {
     result: completion?.result && typeof completion.result === 'object' ? completion.result : null,
     authentication_method:
       external?.auth_method || (completion?.api_key_id ? 'api_key' : completion ? 'pxm_session' : null),
+    delivery_status: external?.delivery_status || null,
+    delivery_attempt_count: Number(external?.attempt_count || 0),
+    delivery_last_error: typeof external?.last_error === 'string' ? external.last_error : null,
+    link_expires_at: external?.token_expires_at ? String(external.token_expires_at) : null,
     created_at: String(task.created_at),
     updated_at: String(task.updated_at || task.created_at),
     completed_at: completion?.completed_at ? String(completion.completed_at) : null,

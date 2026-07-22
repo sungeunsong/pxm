@@ -49,6 +49,11 @@ export class TasksController {
       idempotencyKey,
     );
   }
+
+  @Post(':id/external-approval/retry')
+  retryExternalApproval(@Param('id') id: string, @Req() req: Request) {
+    return this.tasks.retryExternalApproval(id, actorFromRequest(req));
+  }
 }
 
 @Controller('instances')

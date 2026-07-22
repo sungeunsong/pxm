@@ -1049,6 +1049,50 @@ export class PostgresAdapter
     );
   }
 
+  async requeueExternalApproval(taskId: string): Promise<boolean> {
+    const task = await this.getTask(taskId);
+    if (
+      !task ||
+      task.status !== 'OPEN' ||
+      task.payload?.approver_channel !== 'external_email'
+    )
+      return false;
+    const now = new Date().toISOString();
+    const externalApproval = {
+      ...(task.payload?.external_approval || {}),
+      delivery_status: 'PENDING',
+      attempt_count: 0,
+      sent_at: null,
+      retry_at: null,
+      last_error: null,
+      claim_owner: null,
+      claim_until: null,
+      token_hash: null,
+      token_expires_at: null,
+      otp_hash: null,
+      otp_expires_at: null,
+      otp_sent_at: null,
+      otp_next_send_at: null,
+      otp_attempts: 0,
+      consumed_at: null,
+      requeued_at: now,
+      updated_at: now,
+    };
+    const result = await this.pool.query(
+      `UPDATE v2_tasks SET payload = $1::jsonb, updated_at = NOW()
+       WHERE id = $2::uuid AND status = 'OPEN'
+         AND payload->>'approver_channel' = 'external_email'`,
+      [
+        JSON.stringify({
+          ...(task.payload || {}),
+          external_approval: externalApproval,
+        }),
+        taskId,
+      ],
+    );
+    return result.rowCount === 1;
+  }
+
   async findExternalApprovalByTokenHash(tokenHash: string): Promise<ExternalApprovalTask | null> {
     await this.ensureTaskRuntimeColumns();
     const { rows } = await this.pool.query(
@@ -1110,6 +1154,40 @@ export class PostgresAdapter
     } finally {
       client.release();
     }
+  }
+
+  async clearExternalApprovalOtp(
+    taskId: string,
+    tokenHash: string,
+    otpHash: string,
+  ): Promise<void> {
+    const task = await this.getTask(taskId);
+    const external = task?.payload?.external_approval;
+    if (
+      !task ||
+      task.status !== 'OPEN' ||
+      external?.token_hash !== tokenHash ||
+      external?.otp_hash !== otpHash
+    )
+      return;
+    const payload = {
+      ...(task.payload || {}),
+      external_approval: {
+        ...external,
+        otp_hash: null,
+        otp_expires_at: null,
+        otp_sent_at: null,
+        otp_next_send_at: null,
+        otp_attempts: 0,
+      },
+    };
+    await this.pool.query(
+      `UPDATE v2_tasks SET payload = $1::jsonb, updated_at = NOW()
+       WHERE id = $2::uuid AND status = 'OPEN'
+         AND payload->'external_approval'->>'token_hash' = $3
+         AND payload->'external_approval'->>'otp_hash' = $4`,
+      [JSON.stringify(payload), taskId, tokenHash, otpHash],
+    );
   }
 
   async completeTask(command: CompleteWorkflowTaskCommand): Promise<CompleteWorkflowTaskResult> {
@@ -2262,6 +2340,10 @@ function mapTaskHistoryPostgres(task: any): WorkflowTaskHistoryItem {
     result: completion?.result && typeof completion.result === 'object' ? completion.result : null,
     authentication_method:
       external?.auth_method || (completion?.api_key_id ? 'api_key' : completion ? 'pxm_session' : null),
+    delivery_status: external?.delivery_status || null,
+    delivery_attempt_count: Number(external?.attempt_count || 0),
+    delivery_last_error: typeof external?.last_error === 'string' ? external.last_error : null,
+    link_expires_at: external?.token_expires_at ? String(external.token_expires_at) : null,
     created_at: new Date(task.created_at).toISOString(),
     updated_at: new Date(task.updated_at || task.created_at).toISOString(),
     completed_at: completion?.completed_at ? new Date(completion.completed_at).toISOString() : null,

@@ -146,6 +146,7 @@ export abstract class WorkflowTaskRepositoryPort {
       error?: string | null;
     },
   ): Promise<void>;
+  abstract requeueExternalApproval(taskId: string): Promise<boolean>;
   abstract findExternalApprovalByTokenHash(
     tokenHash: string,
   ): Promise<ExternalApprovalTask | null>;
@@ -158,6 +159,11 @@ export abstract class WorkflowTaskRepositoryPort {
     taskId: string,
     tokenHash: string,
   ): Promise<number>;
+  abstract clearExternalApprovalOtp(
+    taskId: string,
+    tokenHash: string,
+    otpHash: string,
+  ): Promise<void>;
   abstract listTaskHistory(query: WorkflowTaskHistoryQuery): Promise<WorkflowTaskHistoryPage>;
   abstract getTaskHistoryItem(id: string): Promise<WorkflowTaskHistoryItem | null>;
 }
@@ -192,6 +198,10 @@ export type WorkflowTaskHistoryItem = {
   comment: string | null;
   result: Record<string, unknown> | null;
   authentication_method: 'pxm_session' | 'api_key' | 'email_link' | 'email_otp' | null;
+  delivery_status: 'PENDING' | 'CLAIMED' | 'SENT' | 'FAILED' | null;
+  delivery_attempt_count: number;
+  delivery_last_error: string | null;
+  link_expires_at: string | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;

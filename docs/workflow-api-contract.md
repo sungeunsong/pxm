@@ -448,6 +448,8 @@ Content-Type: application/json
 - audit에는 `external_email` 채널, 이메일, `email_link` 또는 `email_otp` 인증 방식과 처리 시각을 기록한다.
 - 상세 응답의 이메일은 마스킹하고 form data의 password/secret/token/credential/API key 계열 필드는 제거한다.
 - SMTP 및 공개 URL 설정은 `docs/external-approval-email.md`를 따른다.
+- OTP SMTP 발송 실패 시 발급 상태와 재발송 제한을 되돌려 즉시 다시 요청할 수 있다.
+- 최고관리자 또는 task 소유 group의 그룹 관리자는 `POST /api/tasks/{task_id}/external-approval/retry`로 기존 링크·OTP를 폐기하고 메일 발송을 다시 큐잉할 수 있다.
 
 ### Approval Task History
 
@@ -481,6 +483,10 @@ Authorization: Bearer pxm_live_xxx
       "comment": "확인했습니다.",
       "result": null,
       "authentication_method": "email_otp",
+      "delivery_status": "SENT",
+      "delivery_attempt_count": 1,
+      "delivery_last_error": null,
+      "link_expires_at": "2026-07-22T00:00:00.000Z",
       "created_at": "2026-07-21T00:00:00.000Z",
       "updated_at": "2026-07-21T00:05:00.000Z",
       "completed_at": "2026-07-21T00:05:00.000Z"

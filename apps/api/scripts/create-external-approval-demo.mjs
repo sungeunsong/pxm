@@ -3,8 +3,9 @@ const mailpitApiUrl =
   process.env.MAILPIT_API_URL || 'http://127.0.0.1:8025/api/v1';
 const userId = process.env.PXM_DEMO_USER || 'admin';
 const password = process.env.PXM_DEMO_PASSWORD || 'admin1234';
+const runId = Date.now();
 const recipient =
-  process.env.PXM_DEMO_APPROVER_EMAIL || 'approval-test@pxm.local';
+  process.env.PXM_DEMO_APPROVER_EMAIL || `approval-test+${runId}@pxm.local`;
 const workflowName = 'TEST · 외부 이메일 OTP 승인';
 
 const login = await fetch(`${apiBaseUrl}/auth/login`, {
@@ -148,23 +149,103 @@ if (!executeResponse.ok)
   );
 const execution = await executeResponse.json();
 
-const message = await waitForMail(recipient, 20_000);
-console.log(
-  JSON.stringify(
-    {
-      workflow_id: workflow.id,
-      workflow_name: workflow.name,
-      instance_id: execution.instance_id,
-      recipient,
-      mail_received: Boolean(message),
-      mail_subject: message?.Subject || null,
-    },
-    null,
-    2,
-  ),
-);
+const message = await waitForMail(recipient, '승인이 필요한 요청', 20_000);
+if (!message) throw new Error('approval link email was not received');
+const approvalMail = await readMail(message.ID);
+const approvalToken = approvalMail.Text?.match(
+  /\/external-approval\/([A-Za-z0-9_-]{40,200})/,
+)?.[1];
+if (!approvalToken) throw new Error('approval token was not found in email');
 
-async function waitForMail(email, timeoutMs) {
+if (process.env.PXM_DEMO_AUTO_COMPLETE !== 'true') {
+  console.log(
+    JSON.stringify(
+      {
+        workflow_id: workflow.id,
+        workflow_name: workflow.name,
+        instance_id: execution.instance_id,
+        recipient,
+        approval_mail_received: true,
+        approval_url: `http://localhost:5174/external-approval/${approvalToken}`,
+      },
+      null,
+      2,
+    ),
+  );
+} else {
+  await completeApprovalE2e();
+}
+
+async function completeApprovalE2e() {
+  const approvalDetails = await readApi(
+    `${apiBaseUrl}/external-approvals/${approvalToken}`,
+  );
+  if (!approvalDetails.requires_otp)
+    throw new Error('approval request did not require OTP');
+  const otpResponse = await readApi(
+    `${apiBaseUrl}/external-approvals/${approvalToken}/otp`,
+    { method: 'POST' },
+  );
+  const otpMessage = await waitForMail(recipient, '외부 승인 인증번호', 20_000);
+  if (!otpMessage) throw new Error('OTP email was not received');
+  const otpMail = await readMail(otpMessage.ID);
+  const otp = otpMail.Text?.match(/\b(\d{6})\b/)?.[1];
+  if (!otp) throw new Error('OTP was not found in email');
+
+  const completion = await readApi(
+    `${apiBaseUrl}/external-approvals/${approvalToken}/complete`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        action: 'approve',
+        comment: 'Mailpit external approval E2E',
+        otp,
+      }),
+    },
+  );
+  const replayStatus = await fetch(
+    `${apiBaseUrl}/external-approvals/${approvalToken}`,
+  ).then((response) => response.status);
+  if (replayStatus !== 410)
+    throw new Error(`consumed link returned ${replayStatus}, expected 410`);
+
+  const history = await readApi(
+    `${apiBaseUrl}/tasks/history?instance_id=${encodeURIComponent(execution.instance_id)}`,
+    { headers: { cookie } },
+  );
+  const completedTask = history.items?.find(
+    (item) => item.approver_channel === 'external_email',
+  );
+  if (
+    !completedTask ||
+    completedTask.status !== 'APPROVED' ||
+    completedTask.authentication_method !== 'email_otp'
+  )
+    throw new Error(
+      'completed external approval was not found in task history',
+    );
+
+  console.log(
+    JSON.stringify(
+      {
+        workflow_id: workflow.id,
+        workflow_name: workflow.name,
+        instance_id: execution.instance_id,
+        recipient,
+        approval_mail_received: true,
+        otp_mail_received: otpResponse.sent === true,
+        approval_status: completion.status,
+        authentication_method: completedTask.authentication_method,
+        consumed_link_status: replayStatus,
+      },
+      null,
+      2,
+    ),
+  );
+}
+
+async function waitForMail(email, subject, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const response = await fetch(`${mailpitApiUrl}/messages`);
@@ -173,11 +254,29 @@ async function waitForMail(email, timeoutMs) {
       const message = (body.messages || []).find(
         (item) =>
           (item.To || []).some((target) => target.Address === email) &&
-          item.Subject.includes('승인이 필요한 요청'),
+          item.Subject.includes(subject),
       );
       if (message) return message;
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   return null;
+}
+
+async function readMail(id) {
+  const response = await fetch(
+    `${mailpitApiUrl}/message/${encodeURIComponent(id)}`,
+  );
+  if (!response.ok) throw new Error(`mail read failed: ${response.status}`);
+  return response.json();
+}
+
+async function readApi(url, init) {
+  const response = await fetch(url, init);
+  const body = await response.json().catch(() => null);
+  if (!response.ok)
+    throw new Error(
+      `API request failed: ${response.status} ${body?.message || JSON.stringify(body)}`,
+    );
+  return body;
 }

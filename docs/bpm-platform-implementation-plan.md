@@ -369,11 +369,11 @@
   - [x] PXM 사용자 설정값과 workflow group membership 저장 시 검증
   - [x] 외부 이메일 형식과 승인 링크 유효시간 저장 시 검증
   - [x] Task 상태 기반 durable dispatch와 SMTP 외부 승인 메일 발송 어댑터
-  - [~] 외부 승인 토큰은 원문 미저장, hash/단회 사용/만료 적용 완료; 운영자 재발급은 후속
+  - [x] 외부 승인 토큰 원문 미저장, hash/단회 사용/만료 및 운영자 재발급
   - [x] 이메일 OTP 생성·시도 제한·만료·재전송 제한 적용
   - [x] 로그인 없이 사용하는 외부 승인 상세/승인/반려 페이지
   - [x] 외부 이메일 승인자의 인증 방식·이메일·처리 시각 audit 저장
-  - [ ] PXM 사용자 및 외부 이메일 승인 E2E 자동화
+  - [x] PXM 사용자 승인 API E2E 및 Mailpit 기반 외부 이메일 승인 E2E 자동화
   - [x] 결재 이력 목록·상세·instance별 API와 cursor/filter 제공
   - [x] user/group manager/admin/API key별 결재 이력 조회 범위 적용
   - [x] 승인·반려 transaction에 `TASK_APPROVED`/`TASK_REJECTED` outbox event 기록

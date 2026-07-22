@@ -9,6 +9,7 @@ describe('TasksService', () => {
     completeTask: jest.fn(),
     listTaskHistory: jest.fn(),
     getTaskHistoryItem: jest.fn(),
+    requeueExternalApproval: jest.fn(),
   };
   const instanceRepo = { getInstance: jest.fn() };
   const audit = { append: jest.fn() };
@@ -252,6 +253,57 @@ describe('TasksService', () => {
         }),
       ),
     ).rejects.toThrow('Task not found');
+  });
+
+  it('lets a group manager reissue an open external approval link', async () => {
+    taskRepo.getTaskHistoryItem.mockResolvedValue({
+      task_id: 'task-1',
+      instance_id: 'instance-1',
+      workflow_id: 'workflow-1',
+      group_id: 'group-1',
+      approver_channel: 'external_email',
+      assignee: 'outside@example.com',
+      status: 'OPEN',
+    });
+    taskRepo.requeueExternalApproval.mockResolvedValue(true);
+
+    const result = await service.retryExternalApproval(
+      'task-1',
+      actor({
+        actor_id: 'manager',
+        roles: ['group_manager'],
+        group_ids: ['group-1'],
+      }),
+    );
+
+    expect(taskRepo.requeueExternalApproval).toHaveBeenCalledWith('task-1');
+    expect(audit.append).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'task.external_approval.requeued',
+        group_id: 'group-1',
+      }),
+    );
+    expect(result.delivery_status).toBe('PENDING');
+  });
+
+  it('prevents a normal user from reissuing an external approval link', async () => {
+    taskRepo.getTaskHistoryItem.mockResolvedValue({
+      task_id: 'task-1',
+      instance_id: 'instance-1',
+      workflow_id: 'workflow-1',
+      group_id: 'group-1',
+      approver_channel: 'external_email',
+      assignee: 'outside@example.com',
+      status: 'OPEN',
+    });
+
+    await expect(
+      service.retryExternalApproval(
+        'task-1',
+        actor({ actor_id: 'alice', group_ids: ['group-1'] }),
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(taskRepo.requeueExternalApproval).not.toHaveBeenCalled();
   });
 });
 

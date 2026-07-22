@@ -14,6 +14,14 @@ Approval 노드의 승인자 유형을 `외부 이메일`로 선택하면 PXM �
 
 OTP는 10분 동안 유효하고 60초마다 재발송할 수 있다. 잘못된 OTP를 5회 입력하면 새 OTP를 요청해야 한다. 승인 링크 유효시간은 노드 설정에서 1~168시간으로 지정한다.
 
+SMTP 발송이 실패하면 지수 백오프로 최대 10회 자동 재시도한다. OTP 메일 발송이 실패한 경우 저장된 OTP와 60초 재발송 제한을 즉시 해제한다. 최대 재시도 이후 또는 운영자가 새 링크를 발급해야 하는 경우 최고관리자나 해당 그룹 관리자가 아래 API로 기존 토큰과 OTP를 폐기하고 발송 큐에 다시 넣을 수 있다.
+
+```http
+POST /api/tasks/{taskId}/external-approval/retry
+```
+
+Task 이력 응답에는 `delivery_status`, `delivery_attempt_count`, `delivery_last_error`, `link_expires_at`이 포함되므로 발송 대기·성공·실패와 링크 만료를 운영 화면에서 판별할 수 있다.
+
 ## API 환경변수
 
 SMTP를 설정하지 않으면 외부 승인 메일 디스패처는 비활성화되며 PXM 사용자 승인은 계속 동작한다.
@@ -45,6 +53,8 @@ PXM_SMTP_FROM=PXM <no-reply@example.com>
 설정 변경 후 API 프로세스를 재시작한다. SMTP 비밀번호와 외부 승인 secret은 저장소에 커밋하지 않는다.
 
 로컬 개발 환경에서는 `docker compose -f infra/docker-compose.yml up -d mailpit`으로 메일 수신기를 실행한다. API의 `SMTP_HOST=127.0.0.1`, `SMTP_PORT=1025` 설정을 사용하며 수신 메일은 `http://localhost:8025`에서 확인할 수 있다.
+
+API, Engine, MongoDB, Mailpit을 실행한 뒤 `pnpm e2e:external-email-approval`을 실행하면 워크플로우 생성부터 승인 링크 수신, OTP 수신, 승인 완료, 링크 재사용 차단, 이력 기록까지 자동 검증한다.
 
 ## 공개 API
 

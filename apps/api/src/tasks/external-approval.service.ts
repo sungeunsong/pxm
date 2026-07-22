@@ -77,11 +77,20 @@ export class ExternalApprovalService {
         HttpStatus.TOO_MANY_REQUESTS,
       );
 
-    await this.mailer.sendOtp({
-      to: external.email || task.assignee,
-      otp,
-      expiresInMinutes: 10,
-    });
+    try {
+      await this.mailer.sendOtp({
+        to: external.email || task.assignee,
+        otp,
+        expiresInMinutes: 10,
+      });
+    } catch (error) {
+      await this.tasks.clearExternalApprovalOtp(
+        task.id,
+        tokenHash,
+        this.hashOtp(rawToken, otp),
+      );
+      throw error;
+    }
     return {
       required: true,
       sent: true,

@@ -10,6 +10,7 @@ describe('ExternalApprovalService', () => {
   const tasks = {
     findExternalApprovalByTokenHash: jest.fn(),
     setExternalApprovalOtp: jest.fn(),
+    clearExternalApprovalOtp: jest.fn(),
     incrementExternalApprovalOtpFailures: jest.fn(),
     completeTask: jest.fn(),
   };
@@ -103,6 +104,22 @@ describe('ExternalApprovalService', () => {
     expect(JSON.stringify(stored)).not.toContain(sentOtp);
   });
 
+  it('clears the OTP cooldown when SMTP delivery fails', async () => {
+    task.payload.external_approval.require_otp = true;
+    tasks.setExternalApprovalOtp.mockResolvedValue(true);
+    mailer.sendOtp.mockRejectedValueOnce(new Error('smtp unavailable'));
+
+    await expect(service.requestOtp(rawToken)).rejects.toThrow(
+      'smtp unavailable',
+    );
+    const stored = tasks.setExternalApprovalOtp.mock.calls[0][2];
+    expect(tasks.clearExternalApprovalOtp).toHaveBeenCalledWith(
+      'task-1',
+      hashToken(rawToken),
+      stored.otp_hash,
+    );
+  });
+
   it('counts invalid OTP attempts and rejects the completion', async () => {
     task.payload.external_approval.require_otp = true;
     task.payload.external_approval.otp_hash = '0'.repeat(64);
@@ -124,5 +141,13 @@ describe('ExternalApprovalService', () => {
     await expect(service.getDetails(rawToken)).rejects.toBeInstanceOf(
       GoneException,
     );
+  });
+
+  it('rejects a consumed link before attempting completion again', async () => {
+    task.payload.external_approval.consumed_at = new Date().toISOString();
+    await expect(
+      service.complete(rawToken, { action: 'approve' }),
+    ).rejects.toBeInstanceOf(GoneException);
+    expect(tasks.completeTask).not.toHaveBeenCalled();
   });
 });
