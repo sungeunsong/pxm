@@ -400,7 +400,7 @@
   - [x] 실패 instance/실패 node 재시도와 side effect 경고
   - [x] instance 종료와 Workflow Call child 종료 전파
   - [x] stale Engine job reclaim 기본 처리
-  - [ ] Start API idempotency key 저장과 동일 요청 중복 instance 방지
+  - [x] Start API idempotency key 저장과 동일 요청 중복 instance 방지
   - [ ] task/retry/terminate API idempotency 적용
   - [ ] API 저장과 Engine job/outbox 생성의 transaction 경계 재검증
   - [ ] instance 일시중지/재개와 신규 job claim 차단

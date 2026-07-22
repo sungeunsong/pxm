@@ -17,6 +17,7 @@ async function main() {
   await db.collection('v2_tokens').createIndex({ instance_id: 1, node_id: 1 });
   await db.collection('v2_engine_jobs').createIndex({ status: 1, run_at: 1, _id: 1 });
   await db.collection('v2_engine_jobs').createIndex({ instance_id: 1, _id: 1 });
+  await db.collection('v2_start_idempotency').createIndex({ expires_at: 1 }, { expireAfterSeconds: 0 });
   await db.collection('v2_schedule_jobs').createIndex({ active: 1, status: 1, next_run_at: 1, _id: 1 });
   await db.collection('v2_schedule_jobs').createIndex({ definition_id: 1 });
   await db.collection('v2_schedule_runs').createIndex({ definition_id: 1, created_at: -1 });
@@ -99,6 +100,19 @@ async function ensureValidators(db) {
       payload: { bsonType: 'object' },
       created_at: { bsonType: 'string' },
       updated_at: { bsonType: 'string' },
+    },
+  });
+
+  await upsertValidator(db, 'v2_start_idempotency', {
+    bsonType: 'object',
+    required: ['_id', 'request_hash', 'instance_id', 'definition_id', 'expires_at', 'created_at'],
+    properties: {
+      _id: { bsonType: 'string' },
+      request_hash: { bsonType: 'string' },
+      instance_id: { bsonType: 'string' },
+      definition_id: { bsonType: 'string' },
+      expires_at: { bsonType: 'date' },
+      created_at: { bsonType: 'date' },
     },
   });
 

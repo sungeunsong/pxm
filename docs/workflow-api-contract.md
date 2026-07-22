@@ -43,6 +43,21 @@ Phase 1 기준의 외부 연동용 workflow 실행 계약이다.
 - `formData`: legacy alias. `input`이 있으면 `input`이 우선한다.
 - `sync_timeout_ms`: sync mode에서만 사용한다. 기본 10000ms, 최소 100ms, 최대 30000ms.
 
+### Duplicate Request Protection
+
+외부 시스템은 실행 요청마다 고유한 `Idempotency-Key` 헤더를 보내는 것을 권장한다.
+
+```http
+Idempotency-Key: order-20260722-1001
+```
+
+- 같은 호출자와 workflow에서 같은 key와 같은 입력을 다시 보내면 새 실행을 만들지 않고 기존 `instance_id`를 반환한다.
+- 재사용 응답에는 `idempotent_replay: true`와 `Idempotency-Replayed: true` 헤더가 포함된다.
+- 같은 key를 다른 입력에 재사용하면 HTTP `409 Conflict`를 반환한다.
+- key는 1~200자의 출력 가능한 문자여야 하며 원문 대신 hash로 저장한다.
+- 기본 보관 시간은 24시간이며 `START_IDEMPOTENCY_TTL_HOURS`로 조정할 수 있다.
+- 헤더가 없는 요청은 이전과 같이 요청마다 새 실행을 만든다.
+
 ### Async Response
 
 HTTP `202 Accepted`
@@ -54,6 +69,7 @@ HTTP `202 Accepted`
   "template_name": "Workflow Name",
   "status": "CREATED",
   "mode": "async",
+  "idempotent_replay": false,
   "result_url": "/api/instances/{instance_id}/result",
   "trace_url": "/api/instances/{instance_id}/trace",
   "stream_url": "/api/instances/{instance_id}/stream"
@@ -71,6 +87,7 @@ HTTP `200 OK`
   "template_name": "Workflow Name",
   "status": "COMPLETED",
   "mode": "sync",
+  "idempotent_replay": false,
   "result": {
     "requester": "kim",
     "amount": 1000
@@ -94,6 +111,7 @@ HTTP `202 Accepted`
   "template_name": "Workflow Name",
   "status": "RUNNING",
   "mode": "sync",
+  "idempotent_replay": false,
   "result_url": "/api/instances/{instance_id}/result",
   "trace_url": "/api/instances/{instance_id}/trace",
   "stream_url": "/api/instances/{instance_id}/stream",

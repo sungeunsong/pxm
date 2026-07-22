@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Pool } from 'pg';
 import { PG_POOL } from '../pg.provider';
-import { WorkflowDefinitionMetadata, WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleJob, WorkflowScheduleRepositoryPort, WorkflowScheduleStatus, WorkflowHistoryActor, WorkflowInstanceAccess, WorkflowDefinitionVersion, WorkflowInputPreset, WorkflowInputPresetRepositoryPort, UpsertWorkflowInputPreset, AppendPxmApiKeyUsageLog, AuthzRepositoryPort, CreatePxmApiKey, CreatePxmSession, PxmApiKey, PxmApiKeyUsageLog, PxmGroup, PxmServiceAccount, PxmUser, PxmSession, PxmSessionSecurityPolicy, UpsertPxmGroup, UpsertPxmServiceAccount, UpsertPxmUser, UpsertPxmSessionSecurityPolicy, CompleteWorkflowTaskCommand, CompleteWorkflowTaskResult, ExternalApprovalClaim, ExternalApprovalDeliveryToken, ExternalApprovalOtp, ExternalApprovalTask, WorkflowTaskHistoryItem, WorkflowTaskHistoryPage, WorkflowTaskHistoryQuery } from '../ports/db.ports';
+import { WorkflowDefinitionMetadata, WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleJob, WorkflowScheduleRepositoryPort, WorkflowScheduleStatus, WorkflowHistoryActor, WorkflowInstanceAccess, WorkflowDefinitionVersion, WorkflowInputPreset, WorkflowInputPresetRepositoryPort, UpsertWorkflowInputPreset, AppendPxmApiKeyUsageLog, AuthzRepositoryPort, CreatePxmApiKey, CreatePxmSession, PxmApiKey, PxmApiKeyUsageLog, PxmGroup, PxmServiceAccount, PxmUser, PxmSession, PxmSessionSecurityPolicy, UpsertPxmGroup, UpsertPxmServiceAccount, UpsertPxmUser, UpsertPxmSessionSecurityPolicy, CompleteWorkflowTaskCommand, CompleteWorkflowTaskResult, ExternalApprovalClaim, ExternalApprovalDeliveryToken, ExternalApprovalOtp, ExternalApprovalTask, WorkflowTaskHistoryItem, WorkflowTaskHistoryPage, WorkflowTaskHistoryQuery, IdempotentWorkflowStart, IdempotentWorkflowStartResult } from '../ports/db.ports';
 
 @Injectable()
 export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleRepositoryPort, WorkflowInputPresetRepositoryPort, AuthzRepositoryPort {
@@ -11,6 +11,7 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
   private inputPresetTableReady = false;
   private authzTablesReady = false;
   private taskRuntimeColumnsReady = false;
+  private startIdempotencyTableReady = false;
 
   private async loadNodeLabels(instanceId: string): Promise<Map<string, string>> {
     const { rows } = await this.pool.query(
@@ -271,6 +272,72 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
   // ==========================================
   // WorkflowInstanceRepositoryPort 구현 (V2 인스턴스 대응)
   // ==========================================
+  async createIdempotentStart(input: IdempotentWorkflowStart): Promise<IdempotentWorkflowStartResult> {
+    await this.ensureStartIdempotencyTable();
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`DELETE FROM v2_start_idempotency WHERE key_hash = $1 AND expires_at <= NOW()`, [input.key_hash]);
+      const inserted = await client.query(
+        `INSERT INTO v2_start_idempotency (key_hash, request_hash, instance_id, definition_id, expires_at)
+         VALUES ($1, $2, $3::uuid, $4::uuid, $5)
+         ON CONFLICT (key_hash) DO NOTHING
+         RETURNING instance_id`,
+        [input.key_hash, input.request_hash, input.instance.id, input.instance.definition_id, input.expires_at],
+      );
+
+      if (inserted.rowCount === 0) {
+        const existing = await client.query(`SELECT request_hash, instance_id FROM v2_start_idempotency WHERE key_hash = $1`, [input.key_hash]);
+        await client.query('COMMIT');
+        return {
+          outcome: existing.rows[0]?.request_hash === input.request_hash ? 'replayed' : 'conflict',
+          instance_id: existing.rows[0]?.instance_id,
+        };
+      }
+
+      const normalizedAccess = normalizeAccess(input.instance.context, input.instance.access);
+      const nextCtx = normalizedAccess ? applyAccessToContext(input.instance.context, normalizedAccess) : input.instance.context;
+      await client.query(
+        `INSERT INTO v2_process_instances (id, process_definition_id, state, context, started_at, created_at, updated_at)
+         VALUES ($1::uuid, $2::uuid, $3, $4::jsonb, NOW(), NOW(), NOW())`,
+        [input.instance.id, input.instance.definition_id, input.instance.status, JSON.stringify(nextCtx)],
+      );
+      await client.query(
+        `INSERT INTO v2_engine_jobs (instance_id, token_id, type, run_at, attempt, status, payload, created_at, updated_at)
+         VALUES ($1::uuid, $2::uuid, $3, $4, 0, 'QUEUED', $5::jsonb, NOW(), NOW())`,
+        [input.instance.id, null, input.job.type, input.job.run_at, JSON.stringify(input.job.payload)],
+      );
+      await client.query(
+        `INSERT INTO v2_tokens (id, instance_id, node_id, status, parent_token_id, scope_key, created_at, updated_at)
+         VALUES ($1::uuid, $2::uuid, $3, $4, NULL, NULL, NOW(), NOW())`,
+        [input.token.id, input.instance.id, input.token.node_id, input.token.status],
+      );
+      await client.query('COMMIT');
+      return { outcome: 'created', instance_id: input.instance.id };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  private async ensureStartIdempotencyTable(): Promise<void> {
+    if (this.startIdempotencyTableReady) return;
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS v2_start_idempotency (
+        key_hash TEXT PRIMARY KEY,
+        request_hash TEXT NOT NULL,
+        instance_id UUID NOT NULL,
+        definition_id UUID NOT NULL,
+        expires_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_v2_start_idempotency_expires_at ON v2_start_idempotency (expires_at)`);
+    this.startIdempotencyTableReady = true;
+  }
+
   async createInstance(id: string, definitionId: string, status: string, ctx: any, access?: WorkflowInstanceAccess): Promise<void> {
     const normalizedAccess = normalizeAccess(ctx, access);
     const nextCtx = normalizedAccess ? applyAccessToContext(ctx, normalizedAccess) : ctx;

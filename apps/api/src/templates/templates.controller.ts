@@ -1,11 +1,11 @@
-import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, HttpStatus, NotFoundException, Param, ParseIntPipe, Post, Put, Query, Req, Res } from '@nestjs/common';
+import { BadRequestException, Body, ConflictException, Controller, Delete, ForbiddenException, Get, Headers, HttpStatus, NotFoundException, Param, ParseIntPipe, Post, Put, Query, Req, Res } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { TemplatesService } from './templates.service';
 import { CreateTemplateDto, UpdateTemplateDto } from './dto/template.dto';
 import { WorkflowInputPresetRepositoryPort, type WorkflowInputPreset, WorkflowInstanceRepositoryPort, WorkflowScheduleRepositoryPort } from '../db/ports/db.ports';
 import { InstancesService } from '../instances/instances.service';
 import { actorFromRequest, instanceAccessFromRequest } from '../instances/history-auth';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { assertCanManageGroup, isAdmin } from '../authz/management-auth';
 import { ManagementAuditService } from '../audit/management-audit.service';
 import { AuthzService } from '../authz/authz.service';
@@ -500,18 +500,18 @@ export class TemplatesController {
   }
 
   @Post(':id/execute')
-  async execute(@Param('id') id: string, @Body() body?: StartWorkflowRequest, @Req() req?: Request, @Res({ passthrough: true }) res?: Response) {
+  async execute(@Param('id') id: string, @Body() body?: StartWorkflowRequest, @Headers('idempotency-key') idempotencyKey?: string, @Req() req?: Request, @Res({ passthrough: true }) res?: Response) {
     const actor = actorFromRequest(req);
     const allowDraft = !actor.api_key_id && actor.actor_type === 'user';
-    return this.startWorkflow(id, body, req, res, allowDraft);
+    return this.startWorkflow(id, body, idempotencyKey, req, res, allowDraft);
   }
 
   @Post(':id/start')
-  async start(@Param('id') id: string, @Body() body?: StartWorkflowRequest, @Req() req?: Request, @Res({ passthrough: true }) res?: Response) {
-    return this.startWorkflow(id, body, req, res, false);
+  async start(@Param('id') id: string, @Body() body?: StartWorkflowRequest, @Headers('idempotency-key') idempotencyKey?: string, @Req() req?: Request, @Res({ passthrough: true }) res?: Response) {
+    return this.startWorkflow(id, body, idempotencyKey, req, res, false);
   }
 
-  private async startWorkflow(id: string, body?: StartWorkflowRequest, req?: Request, res?: Response, allowDraft = false) {
+  private async startWorkflow(id: string, body?: StartWorkflowRequest, idempotencyKey?: string, req?: Request, res?: Response, allowDraft = false) {
     // 템플릿 조회
     const template = allowDraft ? await this.templatesService.findOne(id) : await this.templatesService.findPublished(id);
     if (!template) {
@@ -521,6 +521,7 @@ export class TemplatesController {
     if (!canReadTemplate(actor, template)) throw new NotFoundException('Template not found');
     if (allowDraft) assertCanManageGroup(actor, template.group_id);
     assertCanExecuteWorkflow(actor, id);
+    const normalizedIdempotencyKey = normalizeIdempotencyKey(idempotencyKey);
 
     // 실행 요청마다 새로운 인스턴스를 발급한다
     const instanceId = randomUUID();
@@ -600,40 +601,81 @@ export class TemplatesController {
       },
     };
 
-    // 1) process_instance 생성
-    await this.instanceRepo.createInstance(instanceId, template.id, 'CREATED', ctx, access);
-
-    // 2) engine_jobs 생성 (START)
-    await this.instanceRepo.createJob({
-      instanceId,
-      type: 'START',
-      runAt: new Date(),
-      payload: {
-        node_id: startNode.id,
-        reason: 'template_execute',
-      },
-    });
-
-    // 3) 시작 토큰 발행
     const startTokenId = randomUUID();
-    await this.instanceRepo.createToken({
-      id: startTokenId,
-      instanceId,
-      nodeId: startNode.id,
-      status: 'ACTIVE',
-    });
+    let resolvedInstanceId: string = instanceId;
+    let idempotentReplay = false;
+    if (normalizedIdempotencyKey) {
+      const principal = actor.api_key_id ? `api_key:${actor.api_key_id}` : `${actor.actor_type}:${actor.actor_id || 'anonymous'}`;
+      const keyHash = sha256(`workflow-start:v1:${principal}:${template.id}:${normalizedIdempotencyKey}`);
+      const requestHash = sha256(
+        stableStringify({
+          workflow_id: template.id,
+          preset_id: inputPreset?.id || null,
+          input: formData,
+        }),
+      );
+      const result = await this.instanceRepo.createIdempotentStart({
+        key_hash: keyHash,
+        request_hash: requestHash,
+        expires_at: new Date(Date.now() + startIdempotencyTtlMs()),
+        instance: {
+          id: instanceId,
+          definition_id: template.id,
+          status: 'CREATED',
+          context: ctx,
+          access,
+        },
+        token: {
+          id: startTokenId,
+          node_id: startNode.id,
+          status: 'ACTIVE',
+        },
+        job: {
+          type: 'START',
+          run_at: new Date(),
+          payload: {
+            node_id: startNode.id,
+            reason: 'template_execute',
+          },
+        },
+      });
+      if (result.outcome === 'conflict') {
+        throw new ConflictException('Idempotency-Key was already used with different workflow input');
+      }
+      resolvedInstanceId = result.instance_id;
+      idempotentReplay = result.outcome === 'replayed';
+      if (idempotentReplay) res?.setHeader('Idempotency-Replayed', 'true');
+    } else {
+      await this.instanceRepo.createInstance(instanceId, template.id, 'CREATED', ctx, access);
+      await this.instanceRepo.createJob({
+        instanceId,
+        type: 'START',
+        runAt: new Date(),
+        payload: {
+          node_id: startNode.id,
+          reason: 'template_execute',
+        },
+      });
+      await this.instanceRepo.createToken({
+        id: startTokenId,
+        instanceId,
+        nodeId: startNode.id,
+        status: 'ACTIVE',
+      });
+    }
 
-    console.log(`[BFF] Executed template ${template.name}. instance_id=${instanceId}`);
+    if (!idempotentReplay) console.log(`[BFF] Executed template ${template.name}. instance_id=${resolvedInstanceId}`);
 
     const acceptedResponse = {
-      instance_id: instanceId,
+      instance_id: resolvedInstanceId,
       template_id: template.id,
       template_name: template.name,
       status: 'CREATED',
       mode,
-      result_url: `/api/instances/${instanceId}/result`,
-      trace_url: `/api/instances/${instanceId}/trace`,
-      stream_url: `/api/instances/${instanceId}/stream`,
+      idempotent_replay: idempotentReplay,
+      result_url: `/api/instances/${resolvedInstanceId}/result`,
+      trace_url: `/api/instances/${resolvedInstanceId}/trace`,
+      stream_url: `/api/instances/${resolvedInstanceId}/stream`,
     };
 
     if (mode === 'async') {
@@ -641,7 +683,7 @@ export class TemplatesController {
       return acceptedResponse;
     }
 
-    const waitResult = await this.waitForInstanceResult(instanceId, body?.sync_timeout_ms);
+    const waitResult = await this.waitForInstanceResult(resolvedInstanceId, body?.sync_timeout_ms);
 
     if (waitResult.timedOut) {
       res?.status(HttpStatus.ACCEPTED);
@@ -743,6 +785,36 @@ function normalizeSyncTimeoutMs(value?: number): number {
   const maxTimeout = Number(process.env.START_SYNC_MAX_TIMEOUT_MS ?? 30000);
   const timeout = Number.isFinite(value) && value ? Number(value) : defaultTimeout;
   return Math.min(Math.max(timeout, 100), maxTimeout);
+}
+
+function normalizeIdempotencyKey(value?: string): string | null {
+  if (value === undefined) return null;
+  const key = value.trim();
+  if (!key || key.length > 200 || /[\u0000-\u001f\u007f]/.test(key)) {
+    throw new BadRequestException('Idempotency-Key must contain 1 to 200 printable characters');
+  }
+  return key;
+}
+
+function startIdempotencyTtlMs(): number {
+  const hours = Number(process.env.START_IDEMPOTENCY_TTL_HOURS ?? 24);
+  const normalizedHours = Number.isFinite(hours) && hours > 0 ? hours : 24;
+  return normalizedHours * 60 * 60 * 1000;
+}
+
+function sha256(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right));
+    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
 }
 
 function sleep(ms: number): Promise<void> {

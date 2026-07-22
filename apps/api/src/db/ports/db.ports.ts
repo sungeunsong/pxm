@@ -82,7 +82,36 @@ export type WorkflowInstanceAccess = {
   workflow_version_id?: string | null;
 };
 
+export type IdempotentWorkflowStart = {
+  key_hash: string;
+  request_hash: string;
+  expires_at: Date;
+  instance: {
+    id: string;
+    definition_id: string;
+    status: string;
+    context: any;
+    access?: WorkflowInstanceAccess;
+  };
+  token: {
+    id: string;
+    node_id: string;
+    status: string;
+  };
+  job: {
+    type: string;
+    run_at: Date;
+    payload: any;
+  };
+};
+
+export type IdempotentWorkflowStartResult = {
+  outcome: 'created' | 'replayed' | 'conflict';
+  instance_id: string;
+};
+
 export abstract class WorkflowInstanceRepositoryPort {
+  abstract createIdempotentStart(input: IdempotentWorkflowStart): Promise<IdempotentWorkflowStartResult>;
   abstract createInstance(id: string, definitionId: string, status: string, ctx: any, access?: WorkflowInstanceAccess): Promise<void>;
   abstract listInstances(actor?: WorkflowHistoryActor): Promise<any[]>;
   abstract listChildInstances(parentInstanceId: string): Promise<any[]>;
