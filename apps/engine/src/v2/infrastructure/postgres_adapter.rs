@@ -547,7 +547,77 @@ impl ProcessDefinitionRepositoryPort for PostgresAdapter {
     async fn load_definition_graph(
         &self,
         definition_id: Uuid,
+        version: Option<i32>,
     ) -> Result<(Vec<NodeDef>, Vec<EdgeRule>)> {
+        if let Some(version) = version {
+            let row = sqlx::query(
+                r#"
+                select nodes, edges
+                from v2_process_definition_versions
+                where definition_id = $1 and version = $2
+                "#,
+            )
+            .bind(definition_id)
+            .bind(version)
+            .fetch_optional(&self.pool)
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Process definition version not found: {}:{}",
+                    definition_id,
+                    version
+                )
+            })?;
+            let nodes_value: Value = row.get("nodes");
+            let edges_value: Value = row.get("edges");
+            let nodes = nodes_value
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|node| NodeDef {
+                    node_id: node
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    node_type: node
+                        .pointer("/data/nodeType")
+                        .and_then(Value::as_str)
+                        .unwrap_or("task")
+                        .to_string(),
+                    config: node.get("data").cloned().unwrap_or(Value::Null),
+                })
+                .collect();
+            let edges = edges_value
+                .as_array()
+                .into_iter()
+                .flatten()
+                .enumerate()
+                .map(|(index, edge)| EdgeRule {
+                    id: index as i64 + 1,
+                    source_node_id: edge
+                        .get("source")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    target_node_id: edge
+                        .get("target")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    condition_expr: edge
+                        .pointer("/data/condition")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    is_default: edge
+                        .pointer("/data/isDefault")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                    eval_order: index as i32,
+                })
+                .collect();
+            return Ok((nodes, edges));
+        }
         let nodes_raw = sqlx::query(
             r#"
             select node_id, node_type, config
@@ -593,6 +663,40 @@ impl ProcessDefinitionRepositoryPort for PostgresAdapter {
             .collect();
 
         Ok((nodes, edges))
+    }
+
+    async fn load_active_definition_graph(
+        &self,
+        definition_id: Uuid,
+    ) -> Result<(Vec<NodeDef>, Vec<EdgeRule>, i32)> {
+        let row = sqlx::query(
+            "select version, metadata from v2_process_definitions where id = $1 and status <> 'DELETED'",
+        )
+        .bind(definition_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Process definition not found: {}", definition_id))?;
+        let current_version: i32 = row.get("version");
+        let metadata: Value = row.get("metadata");
+        let lifecycle = metadata
+            .get("lifecycle_status")
+            .and_then(Value::as_str)
+            .unwrap_or("PUBLISHED");
+        if lifecycle != "PUBLISHED" {
+            anyhow::bail!(
+                "Workflow is not published or is disabled: {}",
+                definition_id
+            );
+        }
+        let version = metadata
+            .get("active_published_version")
+            .and_then(Value::as_i64)
+            .and_then(|value| i32::try_from(value).ok())
+            .unwrap_or(current_version);
+        let (nodes, edges) = self
+            .load_definition_graph(definition_id, Some(version))
+            .await?;
+        Ok((nodes, edges, version))
     }
 }
 

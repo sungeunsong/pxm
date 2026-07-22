@@ -163,7 +163,12 @@ pub trait ProcessDefinitionRepositoryPort: Send + Sync {
     async fn load_definition_graph(
         &self,
         definition_id: Uuid,
+        version: Option<i32>,
     ) -> Result<(Vec<NodeDef>, Vec<EdgeRule>)>;
+    async fn load_active_definition_graph(
+        &self,
+        definition_id: Uuid,
+    ) -> Result<(Vec<NodeDef>, Vec<EdgeRule>, i32)>;
 }
 
 /// 프로세스 인스턴스 영속성을 처리하는 포트

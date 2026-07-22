@@ -1,60 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Pool } from 'pg';
 import { PG_POOL } from '../pg.provider';
-import {
-  WorkflowDefinitionMetadata,
-  WorkflowRepositoryPort,
-  WorkflowInstanceRepositoryPort,
-  WorkflowTaskRepositoryPort,
-  OutboxRepositoryPort,
-  EngineQueueRepositoryPort,
-  WorkflowScheduleJob,
-  WorkflowScheduleRepositoryPort,
-  WorkflowScheduleStatus,
-  WorkflowHistoryActor,
-  WorkflowInstanceAccess,
-  WorkflowDefinitionVersion,
-  WorkflowInputPreset,
-  WorkflowInputPresetRepositoryPort,
-  UpsertWorkflowInputPreset,
-  AppendPxmApiKeyUsageLog,
-  AuthzRepositoryPort,
-  CreatePxmApiKey,
-  CreatePxmSession,
-  PxmApiKey,
-  PxmApiKeyUsageLog,
-  PxmGroup,
-  PxmServiceAccount,
-  PxmUser,
-  PxmSession,
-  PxmSessionSecurityPolicy,
-  UpsertPxmGroup,
-  UpsertPxmServiceAccount,
-  UpsertPxmUser,
-  UpsertPxmSessionSecurityPolicy,
-  CompleteWorkflowTaskCommand,
-  CompleteWorkflowTaskResult,
-  ExternalApprovalClaim,
-  ExternalApprovalDeliveryToken,
-  ExternalApprovalOtp,
-  ExternalApprovalTask,
-  WorkflowTaskHistoryItem,
-  WorkflowTaskHistoryPage,
-  WorkflowTaskHistoryQuery,
-} from '../ports/db.ports';
+import { WorkflowDefinitionMetadata, WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleJob, WorkflowScheduleRepositoryPort, WorkflowScheduleStatus, WorkflowHistoryActor, WorkflowInstanceAccess, WorkflowDefinitionVersion, WorkflowInputPreset, WorkflowInputPresetRepositoryPort, UpsertWorkflowInputPreset, AppendPxmApiKeyUsageLog, AuthzRepositoryPort, CreatePxmApiKey, CreatePxmSession, PxmApiKey, PxmApiKeyUsageLog, PxmGroup, PxmServiceAccount, PxmUser, PxmSession, PxmSessionSecurityPolicy, UpsertPxmGroup, UpsertPxmServiceAccount, UpsertPxmUser, UpsertPxmSessionSecurityPolicy, CompleteWorkflowTaskCommand, CompleteWorkflowTaskResult, ExternalApprovalClaim, ExternalApprovalDeliveryToken, ExternalApprovalOtp, ExternalApprovalTask, WorkflowTaskHistoryItem, WorkflowTaskHistoryPage, WorkflowTaskHistoryQuery } from '../ports/db.ports';
 
 @Injectable()
-export class PostgresAdapter
-  implements
-    WorkflowRepositoryPort,
-    WorkflowInstanceRepositoryPort,
-    WorkflowTaskRepositoryPort,
-    OutboxRepositoryPort,
-    EngineQueueRepositoryPort,
-    WorkflowScheduleRepositoryPort,
-    WorkflowInputPresetRepositoryPort,
-    AuthzRepositoryPort
-{
+export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleRepositoryPort, WorkflowInputPresetRepositoryPort, AuthzRepositoryPort {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
   private scheduleTableReady = false;
   private definitionVersionTableReady = false;
@@ -73,36 +23,19 @@ export class PostgresAdapter
       [instanceId],
     );
 
-    return new Map(
-      rows.map((row) => [
-        row.node_id,
-        row.label ||
-          row.config?.label ||
-          row.config?.ui_node?.data?.label ||
-          row.node_id,
-      ]),
-    );
+    return new Map(rows.map((row) => [row.node_id, row.label || row.config?.label || row.config?.ui_node?.data?.label || row.node_id]));
   }
 
   // ==========================================
   // WorkflowRepositoryPort 구현 (V2 정의 대응)
   // ==========================================
-  async createDefinition(
-    id: string,
-    name: string,
-    nodes: any[],
-    edges: any[],
-    metadata: WorkflowDefinitionMetadata = {},
-  ): Promise<void> {
+  async createDefinition(id: string, name: string, nodes: any[], edges: any[], metadata: WorkflowDefinitionMetadata = {}): Promise<void> {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
       await this.ensureDefinitionVersionTable(client);
 
-      const currentRes = await client.query(
-        `SELECT version FROM v2_process_definitions WHERE id = $1::uuid`,
-        [id],
-      );
+      const currentRes = await client.query(`SELECT version FROM v2_process_definitions WHERE id = $1::uuid`, [id]);
       const nextVersion = Number(currentRes.rows[0]?.version || 0) + 1;
 
       // 1. v2_process_definitions 삽입
@@ -114,10 +47,7 @@ export class PostgresAdapter
       );
 
       // 2. 기존 노드 삭제 후 재생성 (V2 배포 정규화 구조)
-      await client.query(
-        `DELETE FROM v2_definition_nodes WHERE definition_id = $1::uuid`,
-        [id],
-      );
+      await client.query(`DELETE FROM v2_definition_nodes WHERE definition_id = $1::uuid`, [id]);
       for (const node of nodes) {
         await client.query(
           `INSERT INTO v2_definition_nodes (definition_id, node_id, node_type, label, config)
@@ -136,24 +66,13 @@ export class PostgresAdapter
       }
 
       // 3. 기존 엣지 삭제 후 재생성
-      await client.query(
-        `DELETE FROM v2_definition_edges WHERE definition_id = $1::uuid`,
-        [id],
-      );
+      await client.query(`DELETE FROM v2_definition_edges WHERE definition_id = $1::uuid`, [id]);
       for (let i = 0; i < edges.length; i++) {
         const edge = edges[i];
         await client.query(
           `INSERT INTO v2_definition_edges (definition_id, source_node_id, target_node_id, condition_expr, is_default, eval_order, metadata)
            VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::jsonb)`,
-          [
-            id,
-            edge.source,
-            edge.target,
-            edge.data?.condition || null,
-            edge.data?.isDefault || false,
-            i,
-            JSON.stringify({ ui_edge: edge }),
-          ],
+          [id, edge.source, edge.target, edge.data?.condition || null, edge.data?.isDefault || false, i, JSON.stringify({ ui_edge: edge })],
         );
       }
 
@@ -161,14 +80,7 @@ export class PostgresAdapter
         `INSERT INTO v2_process_definition_versions
           (definition_id, version, name, metadata, nodes, edges, created_at, updated_at)
          VALUES ($1::uuid, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, NOW(), NOW())`,
-        [
-          id,
-          nextVersion,
-          name,
-          JSON.stringify(metadata),
-          JSON.stringify(nodes || []),
-          JSON.stringify(edges || []),
-        ],
+        [id, nextVersion, name, JSON.stringify(metadata), JSON.stringify(nodes || []), JSON.stringify(edges || [])],
       );
 
       await client.query('COMMIT');
@@ -181,29 +93,18 @@ export class PostgresAdapter
   }
 
   async listDefinitions(): Promise<any[]> {
-    const { rows } = await this.pool.query(
-      `SELECT * FROM v2_process_definitions WHERE status <> 'DELETED' ORDER BY created_at DESC`,
-    );
+    const { rows } = await this.pool.query(`SELECT * FROM v2_process_definitions WHERE status <> 'DELETED' ORDER BY created_at DESC`);
     return rows;
   }
 
   async getDefinition(id: string): Promise<any> {
-    const defRes = await this.pool.query(
-      `SELECT * FROM v2_process_definitions WHERE id = $1 AND status <> 'DELETED'`,
-      [id],
-    );
+    const defRes = await this.pool.query(`SELECT * FROM v2_process_definitions WHERE id = $1 AND status <> 'DELETED'`, [id]);
     if (defRes.rows.length === 0) return null;
 
     const definition = defRes.rows[0];
 
-    const nodesRes = await this.pool.query(
-      `SELECT * FROM v2_definition_nodes WHERE definition_id = $1`,
-      [id],
-    );
-    const edgesRes = await this.pool.query(
-      `SELECT * FROM v2_definition_edges WHERE definition_id = $1 ORDER BY eval_order ASC`,
-      [id],
-    );
+    const nodesRes = await this.pool.query(`SELECT * FROM v2_definition_nodes WHERE definition_id = $1`, [id]);
+    const edgesRes = await this.pool.query(`SELECT * FROM v2_definition_edges WHERE definition_id = $1 ORDER BY eval_order ASC`, [id]);
 
     return {
       ...definition,
@@ -223,6 +124,50 @@ export class PostgresAdapter
         },
       })),
     };
+  }
+
+  async getPublishedDefinition(id: string): Promise<any> {
+    const current = await this.getDefinition(id);
+    if (!current) return null;
+    const status = current.metadata?.lifecycle_status || 'PUBLISHED';
+    if (status !== 'PUBLISHED') return null;
+    const version = Number(current.metadata?.active_published_version || current.version || 1);
+    const snapshot = await this.getDefinitionVersion(id, version);
+    const published = snapshot || (version === Number(current.version) ? current : null);
+    return published
+      ? {
+          ...published,
+          lifecycle_status: status,
+          active_published_version: version,
+          published_at: current.metadata?.published_at || null,
+          published_by: current.metadata?.published_by || null,
+        }
+      : null;
+  }
+
+  async setDefinitionLifecycle(id: string, lifecycle: import('../ports/db.ports').WorkflowLifecycleUpdate): Promise<any> {
+    const current = await this.getDefinition(id);
+    if (!current) return null;
+    const now = new Date().toISOString();
+    const previousActiveVersion = current.metadata?.active_published_version ?? null;
+    const activeVersion =
+      lifecycle.active_published_version ??
+      previousActiveVersion ??
+      (lifecycle.status === 'PUBLISHED' ? current.version : null);
+    const metadata = {
+      ...(current.metadata || {}),
+      lifecycle_status: lifecycle.status,
+      active_published_version: activeVersion,
+      published_at: lifecycle.status === 'PUBLISHED' ? now : current.metadata?.published_at || null,
+      published_by: lifecycle.status === 'PUBLISHED' ? lifecycle.actor_id || null : current.metadata?.published_by || null,
+    };
+    await this.pool.query(
+      `UPDATE v2_process_definitions
+       SET metadata = $2::jsonb, updated_at = NOW()
+       WHERE id = $1::uuid AND status <> 'DELETED'`,
+      [id, JSON.stringify(metadata)],
+    );
+    return this.getDefinition(id);
   }
 
   async listDefinitionVersions(id: string): Promise<WorkflowDefinitionVersion[]> {
@@ -280,27 +225,15 @@ export class PostgresAdapter
     };
   }
 
-  async restoreDefinitionVersion(
-    id: string,
-    version: number,
-    metadata: WorkflowDefinitionMetadata = {},
-  ): Promise<any> {
+  async restoreDefinitionVersion(id: string, version: number, metadata: WorkflowDefinitionMetadata = {}): Promise<any> {
     const snapshot = await this.getDefinitionVersion(id, version);
     if (!snapshot) return null;
 
-    await this.createDefinition(
-      id,
-      snapshot.name,
-      snapshot.nodes || [],
-      snapshot.edges || [],
-      {
-        ...(snapshot.metadata || {}),
-        ...metadata,
-        version_note:
-          metadata.version_note ||
-          `Rollback to v${version}${snapshot.version_note ? `: ${snapshot.version_note}` : ''}`,
-      },
-    );
+    await this.createDefinition(id, snapshot.name, snapshot.nodes || [], snapshot.edges || [], {
+      ...(snapshot.metadata || {}),
+      ...metadata,
+      version_note: metadata.version_note || `Rollback to v${version}${snapshot.version_note ? `: ${snapshot.version_note}` : ''}`,
+    });
 
     return this.getDefinition(id);
   }
@@ -338,13 +271,7 @@ export class PostgresAdapter
   // ==========================================
   // WorkflowInstanceRepositoryPort 구현 (V2 인스턴스 대응)
   // ==========================================
-  async createInstance(
-    id: string,
-    definitionId: string,
-    status: string,
-    ctx: any,
-    access?: WorkflowInstanceAccess,
-  ): Promise<void> {
+  async createInstance(id: string, definitionId: string, status: string, ctx: any, access?: WorkflowInstanceAccess): Promise<void> {
     const normalizedAccess = normalizeAccess(ctx, access);
     const nextCtx = normalizedAccess ? applyAccessToContext(ctx, normalizedAccess) : ctx;
     await this.pool.query(
@@ -394,10 +321,7 @@ export class PostgresAdapter
   }
 
   async getInstance(id: string): Promise<any> {
-    const { rows } = await this.pool.query(
-      `SELECT * FROM v2_process_instances WHERE id = $1`,
-      [id],
-    );
+    const { rows } = await this.pool.query(`SELECT * FROM v2_process_instances WHERE id = $1`, [id]);
     if (rows.length === 0) return null;
     return {
       ...rows[0],
@@ -411,17 +335,11 @@ export class PostgresAdapter
   }
 
   async updateInstanceStatus(id: string, status: string): Promise<void> {
-    await this.pool.query(
-      `UPDATE v2_process_instances SET state = $1, updated_at = NOW() WHERE id = $2`,
-      [status, id],
-    );
+    await this.pool.query(`UPDATE v2_process_instances SET state = $1, updated_at = NOW() WHERE id = $2`, [status, id]);
   }
 
   async updateInstanceCtx(id: string, ctx: any): Promise<void> {
-    await this.pool.query(
-      `UPDATE v2_process_instances SET context = $1::jsonb, updated_at = NOW() WHERE id = $2`,
-      [JSON.stringify(ctx), id],
-    );
+    await this.pool.query(`UPDATE v2_process_instances SET context = $1::jsonb, updated_at = NOW() WHERE id = $2`, [JSON.stringify(ctx), id]);
   }
 
   async completeJobsForInstance(id: string): Promise<void> {
@@ -433,45 +351,19 @@ export class PostgresAdapter
     );
   }
 
-  async createToken(token: {
-    id: string;
-    instanceId: string;
-    nodeId: string;
-    status: string;
-    parentTokenId?: string;
-    scopeKey?: string;
-  }): Promise<void> {
+  async createToken(token: { id: string; instanceId: string; nodeId: string; status: string; parentTokenId?: string; scopeKey?: string }): Promise<void> {
     await this.pool.query(
       `INSERT INTO v2_tokens (id, instance_id, node_id, status, parent_token_id, scope_key, created_at, updated_at)
        VALUES ($1::uuid, $2::uuid, $3, $4, $5::uuid, $6, NOW(), NOW())`,
-      [
-        token.id,
-        token.instanceId,
-        token.nodeId,
-        token.status,
-        token.parentTokenId || null,
-        token.scopeKey || null,
-      ],
+      [token.id, token.instanceId, token.nodeId, token.status, token.parentTokenId || null, token.scopeKey || null],
     );
   }
 
-  async createJob(job: {
-    instanceId: string;
-    tokenId?: string | null;
-    type: string;
-    runAt: Date;
-    payload: any;
-  }): Promise<void> {
+  async createJob(job: { instanceId: string; tokenId?: string | null; type: string; runAt: Date; payload: any }): Promise<void> {
     await this.pool.query(
       `INSERT INTO v2_engine_jobs (instance_id, token_id, type, run_at, attempt, status, payload, created_at, updated_at)
        VALUES ($1::uuid, $2::uuid, $3, $4, 0, 'QUEUED', $5::jsonb, NOW(), NOW())`,
-      [
-        job.instanceId,
-        job.tokenId || null,
-        job.type,
-        job.runAt,
-        JSON.stringify(job.payload),
-      ],
+      [job.instanceId, job.tokenId || null, job.type, job.runAt, JSON.stringify(job.payload)],
     );
   }
 
@@ -495,12 +387,8 @@ export class PostgresAdapter
     }>;
     max_attempt: number;
   }> {
-    const statusResult = await this.pool.query(
-      `SELECT status, count(*)::int AS count FROM v2_engine_jobs GROUP BY status`,
-    );
-    const byStatus = Object.fromEntries(
-      statusResult.rows.map((row) => [row.status || 'UNKNOWN', Number(row.count)]),
-    );
+    const statusResult = await this.pool.query(`SELECT status, count(*)::int AS count FROM v2_engine_jobs GROUP BY status`);
+    const byStatus = Object.fromEntries(statusResult.rows.map((row) => [row.status || 'UNKNOWN', Number(row.count)]));
 
     const oldestResult = await this.pool.query(
       `
@@ -525,9 +413,7 @@ export class PostgresAdapter
       `,
     );
 
-    const maxAttemptResult = await this.pool.query(
-      `SELECT COALESCE(max(attempt), 0)::int AS max_attempt FROM v2_engine_jobs`,
-    );
+    const maxAttemptResult = await this.pool.query(`SELECT COALESCE(max(attempt), 0)::int AS max_attempt FROM v2_engine_jobs`);
     const heartbeatsResult = await this.pool.query(
       `
       SELECT COALESCE(lock_owner, 'unknown') AS worker_id,
@@ -547,28 +433,22 @@ export class PostgresAdapter
       failed: byStatus.FAILED || 0,
       completed: byStatus.COMPLETED || 0,
       oldest_queued_at: oldest?.run_at?.toISOString?.() || oldest?.run_at || null,
-      oldest_queued_age_ms:
-        oldest?.age_ms == null ? null : Math.max(0, Number(oldest.age_ms)),
+      oldest_queued_age_ms: oldest?.age_ms == null ? null : Math.max(0, Number(oldest.age_ms)),
       running_workers: workersResult.rows.map((row) => ({
         worker_id: row.worker_id,
         running_jobs: Number(row.running_jobs),
-        last_updated_at:
-          row.last_updated_at?.toISOString?.() || row.last_updated_at || null,
+        last_updated_at: row.last_updated_at?.toISOString?.() || row.last_updated_at || null,
       })),
       worker_heartbeats: heartbeatsResult.rows.map((row) => ({
         worker_id: row.worker_id,
-        last_heartbeat_at:
-          row.last_heartbeat_at?.toISOString?.() || row.last_heartbeat_at || null,
+        last_heartbeat_at: row.last_heartbeat_at?.toISOString?.() || row.last_heartbeat_at || null,
         locked_instances: Number(row.locked_instances),
       })),
       max_attempt: Number(maxAttemptResult.rows[0]?.max_attempt || 0),
     };
   }
 
-  async replaceDefinitionSchedules(
-    definitionId: string,
-    jobs: WorkflowScheduleJob[],
-  ): Promise<void> {
+  async replaceDefinitionSchedules(definitionId: string, jobs: WorkflowScheduleJob[]): Promise<void> {
     await this.ensureScheduleTable();
     const client = await this.pool.connect();
     try {
@@ -608,19 +488,7 @@ export class PostgresAdapter
             locked_until = NULL,
             updated_at = NOW()
           `,
-          [
-            job.id,
-            job.definitionId,
-            job.definitionName,
-            job.startNodeId,
-            job.scheduleType,
-            job.intervalSeconds ?? null,
-            job.cronExpression ?? null,
-            JSON.stringify(job.input || {}),
-            job.nextRunAt,
-            job.active,
-            job.active ? 'WAITING' : 'DISABLED',
-          ],
+          [job.id, job.definitionId, job.definitionName, job.startNodeId, job.scheduleType, job.intervalSeconds ?? null, job.cronExpression ?? null, JSON.stringify(job.input || {}), job.nextRunAt, job.active, job.active ? 'WAITING' : 'DISABLED'],
         );
       }
 
@@ -633,11 +501,7 @@ export class PostgresAdapter
     }
   }
 
-  async claimDueSchedules(
-    now: Date,
-    owner: string,
-    limit: number,
-  ): Promise<WorkflowScheduleJob[]> {
+  async claimDueSchedules(now: Date, owner: string, limit: number): Promise<WorkflowScheduleJob[]> {
     await this.ensureScheduleTable();
     const { rows } = await this.pool.query(
       `
@@ -665,16 +529,9 @@ export class PostgresAdapter
     return rows.map(mapScheduleRow);
   }
 
-  async markScheduleSuccess(
-    id: string,
-    nextRunAt: Date,
-    instanceId: string,
-  ): Promise<void> {
+  async markScheduleSuccess(id: string, nextRunAt: Date, instanceId: string): Promise<void> {
     await this.ensureScheduleTable();
-    const current = await this.pool.query(
-      `SELECT definition_id, next_run_at FROM v2_schedule_jobs WHERE id = $1`,
-      [id],
-    );
+    const current = await this.pool.query(`SELECT definition_id, next_run_at FROM v2_schedule_jobs WHERE id = $1`, [id]);
     await this.pool.query(
       `
       UPDATE v2_schedule_jobs
@@ -697,25 +554,13 @@ export class PostgresAdapter
       )
       VALUES ($1, $2::uuid, $3::uuid, $4, NOW(), 'STARTED', NULL, NOW())
       `,
-      [
-        id,
-        current.rows[0]?.definition_id,
-        instanceId,
-        current.rows[0]?.next_run_at || new Date(),
-      ],
+      [id, current.rows[0]?.definition_id, instanceId, current.rows[0]?.next_run_at || new Date()],
     );
   }
 
-  async markScheduleFailure(
-    id: string,
-    error: string,
-    nextRunAt: Date,
-  ): Promise<void> {
+  async markScheduleFailure(id: string, error: string, nextRunAt: Date): Promise<void> {
     await this.ensureScheduleTable();
-    const current = await this.pool.query(
-      `SELECT definition_id, next_run_at FROM v2_schedule_jobs WHERE id = $1`,
-      [id],
-    );
+    const current = await this.pool.query(`SELECT definition_id, next_run_at FROM v2_schedule_jobs WHERE id = $1`, [id]);
     await this.pool.query(
       `
       UPDATE v2_schedule_jobs
@@ -740,10 +585,7 @@ export class PostgresAdapter
     );
   }
 
-  async getDefinitionScheduleStatus(
-    definitionId: string,
-    limit = 10,
-  ): Promise<WorkflowScheduleStatus> {
+  async getDefinitionScheduleStatus(definitionId: string, limit = 10): Promise<WorkflowScheduleStatus> {
     await this.ensureScheduleTable();
     const jobResult = await this.pool.query(
       `
@@ -819,32 +661,17 @@ export class PostgresAdapter
         created_at timestamptz NOT NULL DEFAULT NOW()
       )
     `);
-    await this.pool.query(
-      `CREATE INDEX IF NOT EXISTS idx_v2_schedule_jobs_due ON v2_schedule_jobs (active, status, next_run_at)`,
-    );
-    await this.pool.query(
-      `CREATE INDEX IF NOT EXISTS idx_v2_schedule_jobs_definition ON v2_schedule_jobs (definition_id)`,
-    );
-    await this.pool.query(
-      `CREATE INDEX IF NOT EXISTS idx_v2_schedule_runs_definition ON v2_schedule_runs (definition_id, created_at DESC)`,
-    );
-    await this.pool.query(
-      `CREATE INDEX IF NOT EXISTS idx_v2_schedule_runs_job ON v2_schedule_runs (schedule_job_id, created_at DESC)`,
-    );
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_v2_schedule_jobs_due ON v2_schedule_jobs (active, status, next_run_at)`);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_v2_schedule_jobs_definition ON v2_schedule_jobs (definition_id)`);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_v2_schedule_runs_definition ON v2_schedule_runs (definition_id, created_at DESC)`);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_v2_schedule_runs_job ON v2_schedule_runs (schedule_job_id, created_at DESC)`);
     this.scheduleTableReady = true;
   }
 
   // ==========================================
   // WorkflowTaskRepositoryPort 구현 (V2 태스크 대응)
   // ==========================================
-  async createTask(
-    id: string,
-    instanceId: string,
-    nodeId: string,
-    assignee: string,
-    status: string,
-    payload: any,
-  ): Promise<void> {
+  async createTask(id: string, instanceId: string, nodeId: string, assignee: string, status: string, payload: any): Promise<void> {
     await this.ensureTaskRuntimeColumns();
     await this.pool.query(
       `INSERT INTO v2_tasks (id, instance_id, token_id, node_id, assignee, status, payload, created_at, updated_at)
@@ -873,10 +700,7 @@ export class PostgresAdapter
 
   async getTask(id: string): Promise<any> {
     await this.ensureTaskRuntimeColumns();
-    const { rows } = await this.pool.query(
-      `SELECT * FROM v2_tasks WHERE id = $1`,
-      [id],
-    );
+    const { rows } = await this.pool.query(`SELECT * FROM v2_tasks WHERE id = $1`, [id]);
     return rows[0] || null;
   }
 
@@ -884,7 +708,10 @@ export class PostgresAdapter
     await this.ensureTaskRuntimeColumns();
     const params: unknown[] = [];
     const where: string[] = [];
-    const bind = (value: unknown) => { params.push(value); return `$${params.length}`; };
+    const bind = (value: unknown) => {
+      params.push(value);
+      return `$${params.length}`;
+    };
     if (query.statuses?.length) where.push(`t.status = ANY(${bind(query.statuses)}::text[])`);
     if (query.workflow_id) where.push(`i.process_definition_id = ${bind(query.workflow_id)}::uuid`);
     if (query.instance_id) where.push(`t.instance_id = ${bind(query.instance_id)}::uuid`);
@@ -914,7 +741,10 @@ export class PostgresAdapter
        LIMIT ${limitParam}`,
       params,
     );
-    return { items: rows.slice(0, query.limit).map(mapTaskHistoryPostgres), has_more: rows.length > query.limit };
+    return {
+      items: rows.slice(0, query.limit).map(mapTaskHistoryPostgres),
+      has_more: rows.length > query.limit,
+    };
   }
 
   async getTaskHistoryItem(id: string): Promise<WorkflowTaskHistoryItem | null> {
@@ -934,12 +764,7 @@ export class PostgresAdapter
     return rows[0] ? mapTaskHistoryPostgres(rows[0]) : null;
   }
 
-  async claimExternalApprovalTasks(
-    owner: string,
-    now: Date,
-    claimUntil: Date,
-    limit: number,
-  ): Promise<ExternalApprovalClaim[]> {
+  async claimExternalApprovalTasks(owner: string, now: Date, claimUntil: Date, limit: number): Promise<ExternalApprovalClaim[]> {
     await this.ensureTaskRuntimeColumns();
     const client = await this.pool.connect();
     try {
@@ -974,10 +799,13 @@ export class PostgresAdapter
           attempt_count: attemptCount,
           updated_at: now.toISOString(),
         };
-        await client.query(
-          `UPDATE v2_tasks SET payload = $1::jsonb, updated_at = NOW() WHERE id = $2::uuid`,
-          [JSON.stringify({ ...(task.payload || {}), external_approval: externalApproval }), task.id],
-        );
+        await client.query(`UPDATE v2_tasks SET payload = $1::jsonb, updated_at = NOW() WHERE id = $2::uuid`, [
+          JSON.stringify({
+            ...(task.payload || {}),
+            external_approval: externalApproval,
+          }),
+          task.id,
+        ]);
         claims.push({
           task_id: String(task.id),
           instance_id: String(task.instance_id),
@@ -997,11 +825,7 @@ export class PostgresAdapter
     }
   }
 
-  async setExternalApprovalDeliveryToken(
-    taskId: string,
-    owner: string,
-    input: ExternalApprovalDeliveryToken,
-  ): Promise<boolean> {
+  async setExternalApprovalDeliveryToken(taskId: string, owner: string, input: ExternalApprovalDeliveryToken): Promise<boolean> {
     const task = await this.getTask(taskId);
     if (!task || task.status !== 'OPEN' || task.payload?.external_approval?.claim_owner !== owner) return false;
     const externalApproval = {
@@ -1019,7 +843,14 @@ export class PostgresAdapter
     const result = await this.pool.query(
       `UPDATE v2_tasks SET payload = $1::jsonb, updated_at = NOW()
        WHERE id = $2::uuid AND status = 'OPEN' AND payload->'external_approval'->>'claim_owner' = $3`,
-      [JSON.stringify({ ...(task.payload || {}), external_approval: externalApproval }), taskId, owner],
+      [
+        JSON.stringify({
+          ...(task.payload || {}),
+          external_approval: externalApproval,
+        }),
+        taskId,
+        owner,
+      ],
     );
     return result.rowCount === 1;
   }
@@ -1028,7 +859,11 @@ export class PostgresAdapter
     taskId: string,
     owner: string,
     status: 'SENT' | 'FAILED',
-    input: { sent_at?: string | null; retry_at?: string | null; error?: string | null },
+    input: {
+      sent_at?: string | null;
+      retry_at?: string | null;
+      error?: string | null;
+    },
   ): Promise<void> {
     const task = await this.getTask(taskId);
     if (!task || task.payload?.external_approval?.claim_owner !== owner) return;
@@ -1045,18 +880,20 @@ export class PostgresAdapter
     await this.pool.query(
       `UPDATE v2_tasks SET payload = $1::jsonb, updated_at = NOW()
        WHERE id = $2::uuid AND payload->'external_approval'->>'claim_owner' = $3`,
-      [JSON.stringify({ ...(task.payload || {}), external_approval: externalApproval }), taskId, owner],
+      [
+        JSON.stringify({
+          ...(task.payload || {}),
+          external_approval: externalApproval,
+        }),
+        taskId,
+        owner,
+      ],
     );
   }
 
   async requeueExternalApproval(taskId: string): Promise<boolean> {
     const task = await this.getTask(taskId);
-    if (
-      !task ||
-      task.status !== 'OPEN' ||
-      task.payload?.approver_channel !== 'external_email'
-    )
-      return false;
+    if (!task || task.status !== 'OPEN' || task.payload?.approver_channel !== 'external_email') return false;
     const now = new Date().toISOString();
     const externalApproval = {
       ...(task.payload?.external_approval || {}),
@@ -1095,18 +932,11 @@ export class PostgresAdapter
 
   async findExternalApprovalByTokenHash(tokenHash: string): Promise<ExternalApprovalTask | null> {
     await this.ensureTaskRuntimeColumns();
-    const { rows } = await this.pool.query(
-      `SELECT * FROM v2_tasks WHERE payload->'external_approval'->>'token_hash' = $1 LIMIT 1`,
-      [tokenHash],
-    );
+    const { rows } = await this.pool.query(`SELECT * FROM v2_tasks WHERE payload->'external_approval'->>'token_hash' = $1 LIMIT 1`, [tokenHash]);
     return (rows[0] as ExternalApprovalTask | undefined) || null;
   }
 
-  async setExternalApprovalOtp(
-    taskId: string,
-    tokenHash: string,
-    input: ExternalApprovalOtp,
-  ): Promise<boolean> {
+  async setExternalApprovalOtp(taskId: string, tokenHash: string, input: ExternalApprovalOtp): Promise<boolean> {
     const task = await this.getTask(taskId);
     const externalApproval = task?.payload?.external_approval;
     if (!task || task.status !== 'OPEN' || externalApproval?.token_hash !== tokenHash) return false;
@@ -1143,7 +973,10 @@ export class PostgresAdapter
       const attempts = Number(task.payload.external_approval.otp_attempts || 0) + 1;
       const payload = {
         ...(task.payload || {}),
-        external_approval: { ...task.payload.external_approval, otp_attempts: attempts },
+        external_approval: {
+          ...task.payload.external_approval,
+          otp_attempts: attempts,
+        },
       };
       await client.query(`UPDATE v2_tasks SET payload = $1::jsonb, updated_at = NOW() WHERE id = $2::uuid`, [JSON.stringify(payload), taskId]);
       await client.query('COMMIT');
@@ -1156,20 +989,10 @@ export class PostgresAdapter
     }
   }
 
-  async clearExternalApprovalOtp(
-    taskId: string,
-    tokenHash: string,
-    otpHash: string,
-  ): Promise<void> {
+  async clearExternalApprovalOtp(taskId: string, tokenHash: string, otpHash: string): Promise<void> {
     const task = await this.getTask(taskId);
     const external = task?.payload?.external_approval;
-    if (
-      !task ||
-      task.status !== 'OPEN' ||
-      external?.token_hash !== tokenHash ||
-      external?.otp_hash !== otpHash
-    )
-      return;
+    if (!task || task.status !== 'OPEN' || external?.token_hash !== tokenHash || external?.otp_hash !== otpHash) return;
     const payload = {
       ...(task.payload || {}),
       external_approval: {
@@ -1195,10 +1018,7 @@ export class PostgresAdapter
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      const { rows } = await client.query(
-        `SELECT * FROM v2_tasks WHERE id = $1::uuid FOR UPDATE`,
-        [command.task_id],
-      );
+      const { rows } = await client.query(`SELECT * FROM v2_tasks WHERE id = $1::uuid FOR UPDATE`, [command.task_id]);
       const task = rows[0];
       if (!task) {
         await client.query('ROLLBACK');
@@ -1227,26 +1047,28 @@ export class PostgresAdapter
             completed_email: command.external_approval.email,
           }
         : task.payload?.external_approval;
-      const payload = { ...(task.payload || {}), completion, ...(externalApproval ? { external_approval: externalApproval } : {}) };
-      await client.query(
-        `UPDATE v2_tasks SET status = $1, payload = $2::jsonb, updated_at = NOW() WHERE id = $3::uuid`,
-        [command.status, JSON.stringify(payload), command.task_id],
-      );
+      const payload = {
+        ...(task.payload || {}),
+        completion,
+        ...(externalApproval ? { external_approval: externalApproval } : {}),
+      };
+      await client.query(`UPDATE v2_tasks SET status = $1, payload = $2::jsonb, updated_at = NOW() WHERE id = $3::uuid`, [command.status, JSON.stringify(payload), command.task_id]);
       await client.query(
         `INSERT INTO v2_engine_jobs (instance_id, token_id, type, run_at, attempt, status, payload, created_at, updated_at)
          VALUES ($1::uuid, $2::uuid, 'RESUME', NOW(), 0, 'QUEUED', $3::jsonb, NOW(), NOW())`,
-        [task.instance_id, task.token_id || null, JSON.stringify({
-          action: command.action,
-          completed_node_id: task.node_id,
-          task_id: command.task_id,
-          result: command.result || null,
-          comment: command.comment || null,
-        })],
+        [
+          task.instance_id,
+          task.token_id || null,
+          JSON.stringify({
+            action: command.action,
+            completed_node_id: task.node_id,
+            task_id: command.task_id,
+            result: command.result || null,
+            comment: command.comment || null,
+          }),
+        ],
       );
-      await client.query(
-        `UPDATE v2_process_instances SET state = 'RUNNING', updated_at = NOW() WHERE id = $1::uuid`,
-        [task.instance_id],
-      );
+      await client.query(`UPDATE v2_process_instances SET state = 'RUNNING', updated_at = NOW() WHERE id = $1::uuid`, [task.instance_id]);
       await client.query(
         `INSERT INTO v2_event_outbox (instance_id, token_id, node_id, event_type, payload, created_at)
          VALUES ($1::uuid, $2::uuid, $3, $4, $5::jsonb, NOW())`,
@@ -1265,7 +1087,10 @@ export class PostgresAdapter
         ],
       );
       await client.query('COMMIT');
-      return { outcome: 'completed', task: { ...task, status: command.status, payload } };
+      return {
+        outcome: 'completed',
+        task: { ...task, status: command.status, payload },
+      };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
@@ -1284,11 +1109,7 @@ export class PostgresAdapter
     this.taskRuntimeColumnsReady = true;
   }
 
-  async fetchAfter(
-    instanceId: string,
-    afterId: number,
-    limit = 100,
-  ): Promise<any[]> {
+  async fetchAfter(instanceId: string, afterId: number, limit = 100): Promise<any[]> {
     const nodeLabels = await this.loadNodeLabels(instanceId);
     const { rows } = await this.pool.query(
       `
@@ -1400,11 +1221,7 @@ export class PostgresAdapter
     }));
   }
 
-  async appendEvent(
-    instanceId: string,
-    eventType: string,
-    payload: any,
-  ): Promise<any> {
+  async appendEvent(instanceId: string, eventType: string, payload: any): Promise<any> {
     const { rows } = await this.pool.query(
       `
       INSERT INTO v2_event_outbox (instance_id, event_type, payload)
@@ -1457,10 +1274,7 @@ export class PostgresAdapter
     return rows[0] ? mapInputPresetRow(rows[0]) : null;
   }
 
-  async upsertInputPreset(
-    workflowId: string,
-    preset: UpsertWorkflowInputPreset,
-  ): Promise<WorkflowInputPreset> {
+  async upsertInputPreset(workflowId: string, preset: UpsertWorkflowInputPreset): Promise<WorkflowInputPreset> {
     await this.ensureInputPresetTable();
     const alias = preset.alias || slugifyPresetAlias(preset.name);
     const id = preset.id || crypto.randomUUID();
@@ -1483,18 +1297,7 @@ export class PostgresAdapter
         updated_at = NOW()
       RETURNING *
       `,
-      [
-        id,
-        workflowId,
-        alias,
-        preset.name.trim(),
-        preset.description || '',
-        JSON.stringify(preset.values || {}),
-        preset.scope || 'private',
-        preset.group_id || null,
-        JSON.stringify(preset.shared_group_ids || []),
-        preset.actor || null,
-      ],
+      [id, workflowId, alias, preset.name.trim(), preset.description || '', JSON.stringify(preset.values || {}), preset.scope || 'private', preset.group_id || null, JSON.stringify(preset.shared_group_ids || []), preset.actor || null],
     );
     return mapInputPresetRow(rows[0]);
   }
@@ -1621,17 +1424,7 @@ export class PostgresAdapter
         updated_at = NOW()
       RETURNING *
       `,
-      [
-        id,
-        user.display_name.trim(),
-        user.email || null,
-        user.role || 'user',
-        JSON.stringify(user.group_ids || []),
-        JSON.stringify(user.memberships || []),
-        user.status || 'active',
-        user.actor || null,
-        user.password_hash || null,
-      ],
+      [id, user.display_name.trim(), user.email || null, user.role || 'user', JSON.stringify(user.group_ids || []), JSON.stringify(user.memberships || []), user.status || 'active', user.actor || null, user.password_hash || null],
     );
     return mapUserRow(rows[0]);
   }
@@ -1663,42 +1456,45 @@ export class PostgresAdapter
 
   async updateUserPasswordHash(id: string, passwordHash: string, actor?: string | null): Promise<boolean> {
     await this.ensureAuthzTables();
-    const { rowCount } = await this.pool.query(
-      `UPDATE pxm_users SET password_hash=$2, updated_by=$3, updated_at=NOW() WHERE id=$1 AND status='active'`,
-      [id, passwordHash, actor || id],
-    );
+    const { rowCount } = await this.pool.query(`UPDATE pxm_users SET password_hash=$2, updated_by=$3, updated_at=NOW() WHERE id=$1 AND status='active'`, [id, passwordHash, actor || id]);
     return (rowCount || 0) > 0;
   }
 
   async updateUserProfile(id: string, displayName: string, email?: string | null): Promise<PxmUser | null> {
     await this.ensureAuthzTables();
-    const { rows } = await this.pool.query(
-      `UPDATE pxm_users SET display_name=$2, email=$3, updated_by=$1, updated_at=NOW() WHERE id=$1 AND status='active' RETURNING *`,
-      [id, displayName, email || null],
-    );
+    const { rows } = await this.pool.query(`UPDATE pxm_users SET display_name=$2, email=$3, updated_by=$1, updated_at=NOW() WHERE id=$1 AND status='active' RETURNING *`, [id, displayName, email || null]);
     return rows[0] ? mapUserRow(rows[0]) : null;
   }
 
   async createSession(session: CreatePxmSession): Promise<PxmSession> {
-    await this.ensureAuthzTables(); const { rows } = await this.pool.query(`INSERT INTO pxm_sessions (id, token_hash, csrf_hash, user_id, ip, user_agent, idle_expires_at, absolute_expires_at, idle_timeout_minutes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`, [session.id, session.token_hash, session.csrf_hash, session.user_id, session.ip || null, session.user_agent || null, session.idle_expires_at, session.absolute_expires_at, session.idle_timeout_minutes || null]); return mapSessionRow(rows[0]);
+    await this.ensureAuthzTables();
+    const { rows } = await this.pool.query(`INSERT INTO pxm_sessions (id, token_hash, csrf_hash, user_id, ip, user_agent, idle_expires_at, absolute_expires_at, idle_timeout_minutes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`, [session.id, session.token_hash, session.csrf_hash, session.user_id, session.ip || null, session.user_agent || null, session.idle_expires_at, session.absolute_expires_at, session.idle_timeout_minutes || null]);
+    return mapSessionRow(rows[0]);
   }
   async findSessionByTokenHash(tokenHash: string): Promise<PxmSession | null> {
-    await this.ensureAuthzTables(); const { rows } = await this.pool.query(`SELECT * FROM pxm_sessions WHERE token_hash = $1`, [tokenHash]); return rows[0] ? mapSessionRow(rows[0]) : null;
+    await this.ensureAuthzTables();
+    const { rows } = await this.pool.query(`SELECT * FROM pxm_sessions WHERE token_hash = $1`, [tokenHash]);
+    return rows[0] ? mapSessionRow(rows[0]) : null;
   }
   async touchSession(id: string, lastSeenAt: string, idleExpiresAt: string): Promise<void> {
     await this.pool.query(`UPDATE pxm_sessions SET last_seen_at=$2, idle_expires_at=$3 WHERE id=$1 AND revoked_at IS NULL`, [id, lastSeenAt, idleExpiresAt]);
   }
   async revokeSession(id: string, reason: string): Promise<boolean> {
-    const { rowCount } = await this.pool.query(`UPDATE pxm_sessions SET revoked_at=NOW(), revoke_reason=$2 WHERE id=$1 AND revoked_at IS NULL`, [id, reason]); return (rowCount || 0) > 0;
+    const { rowCount } = await this.pool.query(`UPDATE pxm_sessions SET revoked_at=NOW(), revoke_reason=$2 WHERE id=$1 AND revoked_at IS NULL`, [id, reason]);
+    return (rowCount || 0) > 0;
   }
   async revokeUserSessions(userId: string, reason: string, exceptId?: string): Promise<number> {
-    const { rowCount } = await this.pool.query(`UPDATE pxm_sessions SET revoked_at=NOW(), revoke_reason=$2 WHERE user_id=$1 AND revoked_at IS NULL AND ($3::text IS NULL OR id <> $3)`, [userId, reason, exceptId || null]); return rowCount || 0;
+    const { rowCount } = await this.pool.query(`UPDATE pxm_sessions SET revoked_at=NOW(), revoke_reason=$2 WHERE user_id=$1 AND revoked_at IS NULL AND ($3::text IS NULL OR id <> $3)`, [userId, reason, exceptId || null]);
+    return rowCount || 0;
   }
   async revokeAllSessions(reason: string, exceptId?: string): Promise<number> {
-    const { rowCount } = await this.pool.query(`UPDATE pxm_sessions SET revoked_at=NOW(), revoke_reason=$1 WHERE revoked_at IS NULL AND ($2::text IS NULL OR id <> $2)`, [reason, exceptId || null]); return rowCount || 0;
+    const { rowCount } = await this.pool.query(`UPDATE pxm_sessions SET revoked_at=NOW(), revoke_reason=$1 WHERE revoked_at IS NULL AND ($2::text IS NULL OR id <> $2)`, [reason, exceptId || null]);
+    return rowCount || 0;
   }
   async listUserSessions(userId: string): Promise<PxmSession[]> {
-    await this.ensureAuthzTables(); const { rows } = await this.pool.query(`SELECT * FROM pxm_sessions WHERE user_id=$1 ORDER BY created_at DESC`, [userId]); return rows.map(mapSessionRow);
+    await this.ensureAuthzTables();
+    const { rows } = await this.pool.query(`SELECT * FROM pxm_sessions WHERE user_id=$1 ORDER BY created_at DESC`, [userId]);
+    return rows.map(mapSessionRow);
   }
   async getSessionSecurityPolicy(): Promise<PxmSessionSecurityPolicy | null> {
     await this.ensureAuthzTables();
@@ -1736,14 +1532,7 @@ export class PostgresAdapter
         updated_at = NOW()
       RETURNING *
       `,
-      [
-        id,
-        account.name.trim(),
-        account.group_id,
-        account.description || '',
-        account.status || 'active',
-        account.actor || null,
-      ],
+      [id, account.name.trim(), account.group_id, account.description || '', account.status || 'active', account.actor || null],
     );
     return mapServiceAccountRow(rows[0]);
   }
@@ -1778,21 +1567,7 @@ export class PostgresAdapter
         ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb, $11, 'active', $12, $13, NOW(), NOW())
       RETURNING *
       `,
-      [
-        id,
-        key.name.trim(),
-        key.owner_type,
-        key.owner_id,
-        key.group_id,
-        key.key_prefix,
-        key.key_hash,
-        JSON.stringify(key.scopes || []),
-        JSON.stringify(key.allowed_workflow_ids || []),
-        JSON.stringify(key.ip_allowlist || []),
-        key.rate_limit_per_minute || null,
-        key.expires_at || null,
-        key.actor || null,
-      ],
+      [id, key.name.trim(), key.owner_type, key.owner_id, key.group_id, key.key_prefix, key.key_hash, JSON.stringify(key.scopes || []), JSON.stringify(key.allowed_workflow_ids || []), JSON.stringify(key.ip_allowlist || []), key.rate_limit_per_minute || null, key.expires_at || null, key.actor || null],
     );
     return mapApiKeyRow(rows[0]);
   }
@@ -1837,10 +1612,7 @@ export class PostgresAdapter
 
   async touchApiKey(id: string, usedAt: string): Promise<void> {
     await this.ensureAuthzTables();
-    await this.pool.query(
-      `UPDATE pxm_api_keys SET last_used_at = $2, updated_at = $2 WHERE id = $1`,
-      [id, usedAt],
-    );
+    await this.pool.query(`UPDATE pxm_api_keys SET last_used_at = $2, updated_at = $2 WHERE id = $1`, [id, usedAt]);
   }
 
   async appendApiKeyUsageLog(log: AppendPxmApiKeyUsageLog): Promise<PxmApiKeyUsageLog> {
@@ -1854,30 +1626,14 @@ export class PostgresAdapter
         ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, NOW())
       RETURNING *
       `,
-      [
-        id,
-        log.api_key_id,
-        log.owner_type,
-        log.owner_id,
-        log.group_id,
-        log.endpoint,
-        log.workflow_id || null,
-        log.instance_id || null,
-        log.request_id || null,
-        log.ip || null,
-        log.user_agent || null,
-        JSON.stringify(log.business_actor || null),
-      ],
+      [id, log.api_key_id, log.owner_type, log.owner_id, log.group_id, log.endpoint, log.workflow_id || null, log.instance_id || null, log.request_id || null, log.ip || null, log.user_agent || null, JSON.stringify(log.business_actor || null)],
     );
     return mapApiKeyUsageLogRow(rows[0]);
   }
 
   async countApiKeyUsageSince(apiKeyId: string, since: string): Promise<number> {
     await this.ensureAuthzTables();
-    const { rows } = await this.pool.query(
-      `SELECT COUNT(*)::int AS count FROM pxm_api_key_usage_logs WHERE api_key_id = $1 AND created_at >= $2`,
-      [apiKeyId, since],
-    );
+    const { rows } = await this.pool.query(`SELECT COUNT(*)::int AS count FROM pxm_api_key_usage_logs WHERE api_key_id = $1 AND created_at >= $2`, [apiKeyId, since]);
     return Number(rows[0]?.count || 0);
   }
 
@@ -2045,12 +1801,13 @@ function mapGroupRow(row: any): PxmGroup {
 
 function mapUserRow(row: any): PxmUser {
   const groupIds = Array.isArray(row.group_ids) ? row.group_ids : [];
-  const memberships = Array.isArray(row.memberships) && row.memberships.length > 0
-    ? row.memberships.filter((item: any) => item?.group_id && (item.role === 'group_manager' || item.role === 'user'))
-    : groupIds.map((group_id: string) => ({
-        group_id,
-        role: row.role === 'group_manager' ? 'group_manager' as const : 'user' as const,
-      }));
+  const memberships =
+    Array.isArray(row.memberships) && row.memberships.length > 0
+      ? row.memberships.filter((item: any) => item?.group_id && (item.role === 'group_manager' || item.role === 'user'))
+      : groupIds.map((group_id: string) => ({
+          group_id,
+          role: row.role === 'group_manager' ? ('group_manager' as const) : ('user' as const),
+        }));
   return {
     id: row.id,
     display_name: row.display_name,
@@ -2068,11 +1825,30 @@ function mapUserRow(row: any): PxmUser {
 
 function mapSessionRow(row: any): PxmSession {
   const iso = (v: any) => v?.toISOString?.() || v;
-  return { id: row.id, token_hash: row.token_hash, csrf_hash: row.csrf_hash, user_id: row.user_id, ip: row.ip || null, user_agent: row.user_agent || null, created_at: iso(row.created_at), last_seen_at: iso(row.last_seen_at), idle_expires_at: iso(row.idle_expires_at), absolute_expires_at: iso(row.absolute_expires_at), idle_timeout_minutes: Number(row.idle_timeout_minutes) || undefined, revoked_at: iso(row.revoked_at) || null, revoke_reason: row.revoke_reason || null };
+  return {
+    id: row.id,
+    token_hash: row.token_hash,
+    csrf_hash: row.csrf_hash,
+    user_id: row.user_id,
+    ip: row.ip || null,
+    user_agent: row.user_agent || null,
+    created_at: iso(row.created_at),
+    last_seen_at: iso(row.last_seen_at),
+    idle_expires_at: iso(row.idle_expires_at),
+    absolute_expires_at: iso(row.absolute_expires_at),
+    idle_timeout_minutes: Number(row.idle_timeout_minutes) || undefined,
+    revoked_at: iso(row.revoked_at) || null,
+    revoke_reason: row.revoke_reason || null,
+  };
 }
 
 function mapSessionSecurityPolicyRow(row: any): PxmSessionSecurityPolicy {
-  return { idle_timeout_minutes: Number(row.idle_timeout_minutes), absolute_timeout_hours: Number(row.absolute_timeout_hours), updated_by: row.updated_by || null, updated_at: row.updated_at?.toISOString?.() || row.updated_at };
+  return {
+    idle_timeout_minutes: Number(row.idle_timeout_minutes),
+    absolute_timeout_hours: Number(row.absolute_timeout_hours),
+    updated_by: row.updated_by || null,
+    updated_at: row.updated_at?.toISOString?.() || row.updated_at,
+  };
 }
 
 function mapServiceAccountRow(row: any): PxmServiceAccount {
@@ -2166,16 +1942,7 @@ function normalizeAccess(ctx: any, access?: WorkflowInstanceAccess): WorkflowIns
     ...existing,
     ...(access || {}),
   };
-  if (
-    !merged.workspace_id &&
-    !merged.group_id &&
-    !merged.requester_id &&
-    !merged.client_id &&
-    !merged.approver_ids &&
-    !merged.caller &&
-    !merged.business_actor &&
-    !merged.workflow_version_id
-  ) {
+  if (!merged.workspace_id && !merged.group_id && !merged.requester_id && !merged.client_id && !merged.approver_ids && !merged.caller && !merged.business_actor && !merged.workflow_version_id) {
     return null;
   }
   return {
@@ -2274,17 +2041,16 @@ function buildPostgresHistoryScope(actor?: WorkflowHistoryActor): {
     }
   }
 
-  if (
-    (actor.roles.includes('user') || actor.actor_type === 'service_account') &&
-    (actor.scopes || []).includes('workflow:read') &&
-    actor.allowed_workflow_ids.length > 0
-  ) {
+  if ((actor.roles.includes('user') || actor.actor_type === 'service_account') && (actor.scopes || []).includes('workflow:read') && actor.allowed_workflow_ids.length > 0) {
     const param = addParam(actor.allowed_workflow_ids);
     clauses.push(`i.process_definition_id::text = ANY(${param}::text[])`);
   }
 
   return clauses.length > 0
-    ? { where: `WHERE ${clauses.map((clause) => `(${clause})`).join(' OR ')}`, params }
+    ? {
+        where: `WHERE ${clauses.map((clause) => `(${clause})`).join(' OR ')}`,
+        params,
+      }
     : { where: 'WHERE false', params: [] };
 }
 
@@ -2311,12 +2077,7 @@ function taskCompletion(command: CompleteWorkflowTaskCommand, completedAt: strin
 }
 
 function sameTaskCompletion(completion: any, command: CompleteWorkflowTaskCommand): boolean {
-  return Boolean(
-    command.idempotency_key &&
-    completion?.idempotency_key === command.idempotency_key &&
-    completion?.actor_id === command.actor_id &&
-    completion?.action === command.action,
-  );
+  return Boolean(command.idempotency_key && completion?.idempotency_key === command.idempotency_key && completion?.actor_id === command.actor_id && completion?.action === command.action);
 }
 
 function mapTaskHistoryPostgres(task: any): WorkflowTaskHistoryItem {
@@ -2338,8 +2099,7 @@ function mapTaskHistoryPostgres(task: any): WorkflowTaskHistoryItem {
     action: completion?.action === 'approve' || completion?.action === 'reject' ? completion.action : null,
     comment: typeof completion?.comment === 'string' ? completion.comment : null,
     result: completion?.result && typeof completion.result === 'object' ? completion.result : null,
-    authentication_method:
-      external?.auth_method || (completion?.api_key_id ? 'api_key' : completion ? 'pxm_session' : null),
+    authentication_method: external?.auth_method || (completion?.api_key_id ? 'api_key' : completion ? 'pxm_session' : null),
     delivery_status: external?.delivery_status || null,
     delivery_attempt_count: Number(external?.attempt_count || 0),
     delivery_last_error: typeof external?.last_error === 'string' ? external.last_error : null,

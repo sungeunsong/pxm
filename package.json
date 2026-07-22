@@ -13,6 +13,7 @@
     "demo:sse:approval": "cd apps/api && node scripts/demo-sse-approval-stream.mjs",
     "demo:external-email-approval": "cd apps/api && node scripts/create-external-approval-demo.mjs",
     "e2e:external-email-approval": "cd apps/api && PXM_DEMO_AUTO_COMPLETE=true node scripts/create-external-approval-demo.mjs",
+    "e2e:workflow-lifecycle": "cd apps/api && node scripts/smoke-workflow-lifecycle.mjs",
     "smoke:mongo:approval": "cd apps/api && API_BASE_URL=${API_BASE_URL:-http://localhost:3011/api} MONGODB_URL=${MONGODB_URL:-mongodb://127.0.0.1:27017/?replicaSet=rs0} MONGO_DB_NAME=${MONGO_DB_NAME:-pxm_db} node scripts/smoke-mongo-approval.mjs",
     "smoke:mongo:gateway": "cd apps/api && API_BASE_URL=${API_BASE_URL:-http://localhost:3011/api} MONGODB_URL=${MONGODB_URL:-mongodb://127.0.0.1:27017/?replicaSet=rs0} MONGO_DB_NAME=${MONGO_DB_NAME:-pxm_db} node scripts/smoke-mongo-gateway.mjs",
     "benchmark:immediate": "cd apps/api && node scripts/benchmark-immediate-nodes.mjs",

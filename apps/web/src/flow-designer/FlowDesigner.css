@@ -98,6 +98,20 @@
   flex: 0 0 auto;
 }
 
+.workflow-tab-lifecycle,
+.workflow-tab-unpublished {
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.workflow-tab-lifecycle.published { color: #1b7a52; background: #dff5e9; }
+.workflow-tab-lifecycle.draft { color: #8a5a0a; background: #fff0c9; }
+.workflow-tab-lifecycle.disabled { color: #667085; background: #e9edf2; }
+.workflow-tab-unpublished { color: #a14214; background: #ffe7da; }
+
 .workflow-tab-close {
   display: inline-flex;
   align-items: center;

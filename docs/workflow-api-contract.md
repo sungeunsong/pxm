@@ -2,11 +2,28 @@
 
 Phase 1 기준의 외부 연동용 workflow 실행 계약이다.
 
+## Workflow Deployment Lifecycle
+
+워크플로우 저장과 외부 공개는 분리한다.
+
+- `DRAFT`: 새 워크플로우 또는 아직 배포하지 않은 변경본이다. 관리자 화면의 미리보기용 `POST /execute`만 허용한다.
+- `PUBLISHED`: `active_published_version`이 가리키는 불변 버전만 외부 `POST /start`, API key, Schedule, DB Watch, Workflow Call에서 실행한다.
+- `DISABLED`: 마지막 배포 버전 포인터는 보존하지만 신규 외부 실행과 자동 트리거를 차단한다. 이미 시작한 instance는 시작 당시 저장한 버전과 그래프를 계속 사용한다.
+
+관리자용 상태 변경 API는 다음과 같다.
+
+- `POST /api/templates/:template_id/deploy`: 현재 저장 버전을 배포한다.
+- `POST /api/templates/:template_id/disable`: 신규 실행을 중지한다.
+- `POST /api/templates/:template_id/reactivate`: 마지막 배포 버전을 다시 활성화한다.
+- `POST /api/templates/:template_id/versions/:version/rollback`: 선택한 버전을 새 Draft로 복원한다. 운영 반영에는 별도 deploy가 필요하다.
+
+기존 데이터 중 lifecycle metadata가 없는 워크플로우는 호환성을 위해 현재 버전을 배포본으로 간주한다.
+
 ## Start Workflow
 
 `POST /api/templates/:template_id/start`
 
-기존 UI 호환 엔드포인트인 `POST /api/templates/:template_id/execute`도 같은 실행 로직을 사용한다. 외부 연동은 `/start`를 표준으로 사용한다.
+기존 UI 호환 엔드포인트인 `POST /api/templates/:template_id/execute`는 로그인한 관리자에게 Draft 미리보기를 허용한다. API key 요청과 외부 연동은 active published version만 실행하는 `/start`를 표준으로 사용한다.
 
 ### Request
 

@@ -382,17 +382,17 @@
 
 ### 2. Workflow 배포 수명주기
 
-- [~] Draft/Published/Disabled lifecycle 정리
+- [x] Draft/Published/Disabled lifecycle 정리
   - [x] workflow version history, immutable 실행 version, diff/rollback
   - [x] deploy API와 배포 audit 기본 흐름
-  - [ ] 편집 중 Draft와 외부 실행 가능한 Published 상태 명시적 분리
-  - [ ] workflow별 active published version pointer 관리
-  - [ ] Start API는 active published version만 실행하도록 고정
-  - [ ] 배포 중지/재활성화와 중지 상태의 신규 실행 차단
-  - [ ] 기존 실행 instance는 시작 당시 `workflow_version_id` 유지
-  - [ ] 배포/중지/롤백 권한과 group 범위 재검증
-  - [ ] Designer/워크플로우 관리의 상태, 활성 버전, 미배포 변경 표시
-  - [ ] Draft 저장/배포/중지/롤백/실행 version E2E 자동화
+  - [x] 편집 중 Draft와 외부 실행 가능한 Published 상태 명시적 분리
+  - [x] workflow별 active published version pointer 관리
+  - [x] Start API는 active published version만 실행하도록 고정
+  - [x] 배포 중지/재활성화와 중지 상태의 신규 실행 차단
+  - [x] 기존 실행 instance는 시작 당시 `workflow_version_id` 유지
+  - [x] 배포/중지/롤백 권한과 group 범위 재검증
+  - [x] Designer/워크플로우 관리의 상태, 활성 버전, 미배포 변경 표시
+  - [x] Draft 저장/배포/중지/롤백/실행 version E2E 자동화
 
 ### 3. Runtime 안정성, 멱등성, 운영 제어
 
@@ -473,7 +473,7 @@
   - [ ] Approval 승인/반려/중복 요청/권한 거부 E2E
   - [ ] Workflow Call async/wait/timeout/cancel E2E
   - [ ] 실패/retry/terminate/suspend/resume/restart recovery E2E
-  - [ ] Draft/deploy/disable/rollback/version-fixed execution E2E
+  - [x] Draft/deploy/disable/rollback/version-fixed execution E2E
   - [ ] Export/Import와 credential secret 비노출 E2E
   - [ ] 베타 목표 부하 기준 성능 및 장시간 soak test
   - [ ] High/Critical 취약점, 필수 E2E 실패 시 release 차단

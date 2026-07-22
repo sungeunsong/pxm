@@ -160,6 +160,19 @@
   font-family: 'Courier New', monospace;
 }
 
+.template-lifecycle,
+.template-unpublished {
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.template-lifecycle.published { color: #16734a; background: #e1f5ea; }
+.template-lifecycle.draft { color: #8a5a0a; background: #fff1cf; }
+.template-lifecycle.disabled { color: #6b7280; background: #eceff3; }
+.template-unpublished { color: #a14214; background: #ffeadf; }
+
 .template-description {
   font-size: 14px;
   color: var(--text-secondary);

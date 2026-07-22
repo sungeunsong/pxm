@@ -1,10 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import {
-  CreateTemplateDto,
-  UpdateTemplateDto,
-  TemplateResponseDto,
-  WorkflowExportDocument,
-} from './dto/template.dto';
+import { CreateTemplateDto, UpdateTemplateDto, TemplateResponseDto, WorkflowExportDocument } from './dto/template.dto';
 import { WorkflowDefinitionMetadata, WorkflowDefinitionVersion, WorkflowRepositoryPort } from '../db/ports/db.ports';
 import { randomUUID } from 'crypto';
 import { SchedulesService } from '../schedules/schedules.service';
@@ -32,10 +27,12 @@ export class TemplatesService {
       dto.name,
       dto.nodes || [],
       dto.edges || [],
-      this.normalizeMetadata(dto),
+      this.normalizeMetadata({
+        ...dto,
+        lifecycle_status: 'DRAFT',
+        active_published_version: null,
+      }),
     );
-    await this.schedulesService.syncDefinitionSchedules(id, dto.name, dto.nodes || []);
-    await this.dbWatchService.syncDefinitionWatchJobs(id, dto.name, dto.nodes || []);
     const result = await this.workflowRepo.getDefinition(id);
     return this.mapToDto(result);
   }
@@ -45,14 +42,25 @@ export class TemplatesService {
     const items = await Promise.all(
       list.map(async (def) => {
         return this.workflowRepo.getDefinition(def.id);
-      })
+      }),
     );
     const mapped = items.filter(Boolean).map((item) => this.mapToDto(item));
     return activeOnly ? mapped.filter((item) => item.is_active !== false) : mapped;
   }
 
+  async findPublishedAll(): Promise<TemplateResponseDto[]> {
+    const definitions = await this.workflowRepo.listDefinitions();
+    const items = await Promise.all(definitions.map((definition) => this.workflowRepo.getPublishedDefinition(definition.id)));
+    return items.filter(Boolean).map((item) => this.mapToDto(item));
+  }
+
   async findOne(id: string): Promise<TemplateResponseDto | null> {
     const result = await this.workflowRepo.getDefinition(id);
+    return result ? this.mapToDto(result) : null;
+  }
+
+  async findPublished(id: string): Promise<TemplateResponseDto | null> {
+    const result = await this.workflowRepo.getPublishedDefinition(id);
     return result ? this.mapToDto(result) : null;
   }
 
@@ -72,16 +80,60 @@ export class TemplatesService {
       version_note: dto.version_note !== undefined ? dto.version_note : current.version_note,
       created_by: current.created_by || current.metadata?.created_by || null,
       updated_by: dto.updated_by || current.updated_by || current.metadata?.updated_by || null,
+      ...effectiveLifecycle(current),
     });
 
     await this.assertCredentialBindings(updatedNodes || [], updatedMetadata.group_id);
     await this.assertApprovalAssignments(updatedNodes || [], updatedMetadata.group_id);
     await this.assertNoWorkflowCallCycle(id, updatedNodes || []);
     await this.workflowRepo.createDefinition(id, updatedName, updatedNodes, updatedEdges, updatedMetadata);
-    await this.schedulesService.syncDefinitionSchedules(id, updatedName, updatedNodes || []);
-    await this.dbWatchService.syncDefinitionWatchJobs(id, updatedName, updatedNodes || []);
     const result = await this.workflowRepo.getDefinition(id);
     return result ? this.mapToDto(result) : null;
+  }
+
+  async publish(id: string, actorId = 'system'): Promise<TemplateResponseDto | null> {
+    const current = await this.workflowRepo.getDefinition(id);
+    if (!current) return null;
+    const published = await this.workflowRepo.setDefinitionLifecycle(id, {
+      status: 'PUBLISHED',
+      active_published_version: current.version || 1,
+      actor_id: actorId,
+    });
+    if (!published) return null;
+    const snapshot = await this.workflowRepo.getPublishedDefinition(id);
+    if (!snapshot) return null;
+    await this.schedulesService.syncDefinitionSchedules(id, snapshot.name, snapshot.nodes || []);
+    await this.dbWatchService.syncDefinitionWatchJobs(id, snapshot.name, snapshot.nodes || []);
+    return this.mapToDto(published);
+  }
+
+  async disable(id: string, actorId = 'system'): Promise<TemplateResponseDto | null> {
+    const current = await this.workflowRepo.getDefinition(id);
+    if (!current || !effectiveLifecycle(current).active_published_version) return null;
+    const updated = await this.workflowRepo.setDefinitionLifecycle(id, {
+      status: 'DISABLED',
+      actor_id: actorId,
+    });
+    if (!updated) return null;
+    await this.schedulesService.syncDefinitionSchedules(id, updated.name || '', []);
+    await this.dbWatchService.syncDefinitionWatchJobs(id, updated.name || '', []);
+    return this.mapToDto(updated);
+  }
+
+  async reactivate(id: string, actorId = 'system'): Promise<TemplateResponseDto | null> {
+    const current = await this.workflowRepo.getDefinition(id);
+    if (!current || !effectiveLifecycle(current).active_published_version) return null;
+    const updated = await this.workflowRepo.setDefinitionLifecycle(id, {
+      status: 'PUBLISHED',
+      active_published_version: effectiveLifecycle(current).active_published_version,
+      actor_id: actorId,
+    });
+    if (!updated) return null;
+    const snapshot = await this.workflowRepo.getPublishedDefinition(id);
+    if (!snapshot) return null;
+    await this.schedulesService.syncDefinitionSchedules(id, snapshot.name, snapshot.nodes || []);
+    await this.dbWatchService.syncDefinitionWatchJobs(id, snapshot.name, snapshot.nodes || []);
+    return this.mapToDto(updated);
   }
 
   async delete(id: string): Promise<boolean> {
@@ -96,8 +148,8 @@ export class TemplatesService {
     return true;
   }
 
-  async export(id: string): Promise<WorkflowExportDocument | null> {
-    const template = await this.findOne(id);
+  async export(id: string, publishedOnly = false): Promise<WorkflowExportDocument | null> {
+    const template = publishedOnly ? await this.findPublished(id) : await this.findOne(id);
     if (!template) return null;
 
     const redactedPaths: string[] = [];
@@ -161,9 +213,7 @@ export class TemplatesService {
 
   async diffVersions(id: string, fromVersion: number, toVersion?: number): Promise<WorkflowVersionDiffResponse | null> {
     const from = await this.workflowRepo.getDefinitionVersion(id, fromVersion);
-    const to = toVersion
-      ? await this.workflowRepo.getDefinitionVersion(id, toVersion)
-      : await this.workflowRepo.getDefinition(id);
+    const to = toVersion ? await this.workflowRepo.getDefinitionVersion(id, toVersion) : await this.workflowRepo.getDefinition(id);
 
     if (!from || !to) return null;
 
@@ -180,19 +230,19 @@ export class TemplatesService {
   }
 
   async rollback(id: string, version: number, actorId = 'system'): Promise<TemplateResponseDto | null> {
+    const current = await this.workflowRepo.getDefinition(id);
+    if (!current) return null;
     const snapshot = await this.workflowRepo.getDefinitionVersion(id, version);
     if (!snapshot) return null;
 
-    await this.assertCredentialBindings(
-      snapshot.nodes || [],
-      snapshot.group_id || snapshot.metadata?.group_id || null,
-    );
+    await this.assertCredentialBindings(snapshot.nodes || [], snapshot.group_id || snapshot.metadata?.group_id || null);
     await this.assertNoWorkflowCallCycle(id, snapshot.nodes || []);
-    const restored = await this.workflowRepo.restoreDefinitionVersion(id, version, { updated_by: actorId });
+    const restored = await this.workflowRepo.restoreDefinitionVersion(id, version, {
+      updated_by: actorId,
+      ...effectiveLifecycle(current),
+    });
     if (!restored) return null;
 
-    await this.schedulesService.syncDefinitionSchedules(id, restored.name, restored.nodes || []);
-    await this.dbWatchService.syncDefinitionWatchJobs(id, restored.name, restored.nodes || []);
     return this.mapToDto(restored);
   }
 
@@ -204,7 +254,12 @@ export class TemplatesService {
       group_id: row.group_id ?? row.metadata?.group_id,
       tags: row.tags ?? row.metadata?.tags,
       version_note: row.version_note ?? row.metadata?.version_note,
+      lifecycle_status: row.lifecycle_status ?? row.metadata?.lifecycle_status,
+      active_published_version: row.active_published_version ?? row.metadata?.active_published_version,
+      published_at: row.published_at ?? row.metadata?.published_at,
+      published_by: row.published_by ?? row.metadata?.published_by,
     });
+    const lifecycle = effectiveLifecycle({ ...row, metadata });
 
     return {
       id: row.id,
@@ -219,6 +274,11 @@ export class TemplatesService {
       edges: row.edges || [],
       version: row.version || 1,
       is_active: row.is_active !== undefined ? row.is_active : row.status !== 'DELETED',
+      lifecycle_status: lifecycle.lifecycle_status,
+      active_published_version: lifecycle.active_published_version,
+      has_unpublished_changes: lifecycle.active_published_version !== Number(row.version || 1),
+      published_at: lifecycle.published_at,
+      published_by: lifecycle.published_by,
       created_by: row.created_by || row.metadata?.created_by || 'admin',
       updated_by: row.updated_by || row.metadata?.updated_by || 'admin',
       created_at: row.created_at || new Date(),
@@ -234,12 +294,19 @@ export class TemplatesService {
       tags: Array.isArray(input?.tags)
         ? input.tags.map((tag) => String(tag).trim()).filter(Boolean)
         : typeof input?.tags === 'string'
-          ? input.tags.split(',').map((tag) => tag.trim()).filter(Boolean)
+          ? input.tags
+              .split(',')
+              .map((tag) => tag.trim())
+              .filter(Boolean)
           : [],
       version_note: typeof input?.version_note === 'string' ? input.version_note : '',
       imported_from: normalizeImportSourceMetadata(input?.imported_from),
       created_by: typeof input?.created_by === 'string' ? input.created_by : null,
       updated_by: typeof input?.updated_by === 'string' ? input.updated_by : null,
+      lifecycle_status: ['DRAFT', 'PUBLISHED', 'DISABLED'].includes(input?.lifecycle_status) ? input.lifecycle_status : undefined,
+      active_published_version: Number.isInteger(input?.active_published_version) ? input.active_published_version : null,
+      published_at: typeof input?.published_at === 'string' ? input.published_at : null,
+      published_by: typeof input?.published_by === 'string' ? input.published_by : null,
     };
   }
 
@@ -293,15 +360,11 @@ export class TemplatesService {
     if (!groupId) {
       throw new BadRequestException('Workflow group_id is required when using credentials');
     }
-    await Promise.all(
-      credentialIds.map((credentialId) => this.credentialsService.getForRuntime(credentialId, groupId)),
-    );
+    await Promise.all(credentialIds.map((credentialId) => this.credentialsService.getForRuntime(credentialId, groupId)));
   }
 
   private async assertApprovalAssignments(nodes: any[], groupId?: string | null): Promise<void> {
-    const approvalNodes = (nodes || []).filter(
-      (node) => (node?.data?.nodeType || node?.node_type || node?.type) === 'approval',
-    );
+    const approvalNodes = (nodes || []).filter((node) => (node?.data?.nodeType || node?.node_type || node?.type) === 'approval');
 
     for (const node of approvalNodes) {
       const data = node?.data || node?.config || node || {};
@@ -321,9 +384,7 @@ export class TemplatesService {
         }
         const expiresInHours = Number(data.externalApprovalExpiresInHours ?? 24);
         if (!Number.isInteger(expiresInHours) || expiresInHours < 1 || expiresInHours > 168) {
-          throw new BadRequestException(
-            `Approval node ${node.id || ''} external link expiry must be between 1 and 168 hours`,
-          );
+          throw new BadRequestException(`Approval node ${node.id || ''} external link expiry must be between 1 and 168 hours`);
         }
         continue;
       }
@@ -336,9 +397,7 @@ export class TemplatesService {
       }
       const user = await this.authzService.getUser(assignee);
       if (user.status !== 'active' || !user.group_ids.includes(groupId)) {
-        throw new BadRequestException(
-          `Approval node ${node.id || ''} assignee must be an active member of the workflow group`,
-        );
+        throw new BadRequestException(`Approval node ${node.id || ''} assignee must be an active member of the workflow group`);
       }
     }
   }
@@ -492,13 +551,11 @@ function extractPluginDependencies(nodes: any[]) {
     }
     const version = node?.data?.plugin_version || node?.plugin_version;
     const key = `${pluginId}@${typeof version === 'string' ? version : ''}`;
-    const current =
-      dependencies.get(key) ||
-      {
-        plugin_id: pluginId,
-        ...(typeof version === 'string' && version ? { version } : {}),
-        node_ids: [],
-      };
+    const current = dependencies.get(key) || {
+      plugin_id: pluginId,
+      ...(typeof version === 'string' && version ? { version } : {}),
+      node_ids: [],
+    };
     if (node?.id) {
       current.node_ids.push(String(node.id));
     }
@@ -514,6 +571,29 @@ function extractWorkflowCallTargets(nodes: any[]): string[] {
     .map((node) => node?.data?.targetWorkflowId || node?.data?.targetDefinitionId || node?.targetWorkflowId)
     .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
     .map((value) => value.trim());
+}
+
+function effectiveLifecycle(row: any): {
+  lifecycle_status: 'DRAFT' | 'PUBLISHED' | 'DISABLED';
+  active_published_version: number | null;
+  published_at: string | null;
+  published_by: string | null;
+} {
+  const explicitStatus = row?.lifecycle_status ?? row?.metadata?.lifecycle_status;
+  const lifecycle_status = ['DRAFT', 'PUBLISHED', 'DISABLED'].includes(explicitStatus) ? explicitStatus : 'PUBLISHED';
+  const hasExplicitVersion = row?.active_published_version !== undefined || row?.metadata?.active_published_version !== undefined;
+  const explicitVersion = row?.active_published_version ?? row?.metadata?.active_published_version;
+  const active_published_version = Number.isInteger(explicitVersion)
+    ? Number(explicitVersion)
+    : hasExplicitVersion || lifecycle_status === 'DRAFT'
+      ? null
+      : Number(row?.version || 1);
+  return {
+    lifecycle_status,
+    active_published_version,
+    published_at: row?.published_at ?? row?.metadata?.published_at ?? null,
+    published_by: row?.published_by ?? row?.metadata?.published_by ?? null,
+  };
 }
 
 function parseWorkflowExportDocument(document: any): WorkflowExportDocument {
@@ -565,34 +645,23 @@ function parseWorkflowExportDocument(document: any): WorkflowExportDocument {
     workflow: {
       definition_id: typeof workflow.definition_id === 'string' ? workflow.definition_id : undefined,
       version: Number.isInteger(workflow.version) && workflow.version > 0 ? workflow.version : undefined,
-      exported_version_note:
-        typeof workflow.exported_version_note === 'string'
-          ? workflow.exported_version_note
-          : typeof metadata.version_note === 'string'
-            ? metadata.version_note
-            : '',
+      exported_version_note: typeof workflow.exported_version_note === 'string' ? workflow.exported_version_note : typeof metadata.version_note === 'string' ? metadata.version_note : '',
       name: workflow.name.trim(),
       metadata: {
         description: typeof metadata.description === 'string' ? metadata.description : '',
         group: typeof metadata.group === 'string' ? metadata.group : '',
-        group_id: typeof metadata.group_id === 'string' && metadata.group_id.trim()
-          ? metadata.group_id.trim()
-          : null,
+        group_id: typeof metadata.group_id === 'string' && metadata.group_id.trim() ? metadata.group_id.trim() : null,
         tags: Array.isArray(metadata.tags) ? metadata.tags.map((tag) => String(tag).trim()).filter(Boolean) : [],
         version_note: typeof metadata.version_note === 'string' ? metadata.version_note : '',
         imported_from: normalizeImportSourceMetadata(metadata.imported_from),
       },
       nodes: workflow.nodes,
       edges: workflow.edges,
-      plugin_dependencies: Array.isArray(workflow.plugin_dependencies)
-        ? workflow.plugin_dependencies
-        : extractPluginDependencies(workflow.nodes),
+      plugin_dependencies: Array.isArray(workflow.plugin_dependencies) ? workflow.plugin_dependencies : extractPluginDependencies(workflow.nodes),
     },
     security: {
       secrets_policy: 'redacted',
-      redacted_paths: Array.isArray(document.security?.redacted_paths)
-        ? document.security.redacted_paths.map(String)
-        : [],
+      redacted_paths: Array.isArray(document.security?.redacted_paths) ? document.security.redacted_paths.map(String) : [],
     },
   };
 }
@@ -617,8 +686,7 @@ function normalizeImportSourceMetadata(value: any) {
     schema_version: typeof value.schema_version === 'string' ? value.schema_version : 'pxm.workflow.v1',
     definition_id: typeof value.definition_id === 'string' ? value.definition_id : undefined,
     version: Number.isInteger(version) && version > 0 ? version : undefined,
-    exported_version_note:
-      typeof value.exported_version_note === 'string' ? value.exported_version_note : undefined,
+    exported_version_note: typeof value.exported_version_note === 'string' ? value.exported_version_note : undefined,
     exported_at: typeof value.exported_at === 'string' ? value.exported_at : undefined,
   };
 

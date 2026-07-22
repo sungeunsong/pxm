@@ -72,6 +72,26 @@ export const TemplateListModal: React.FC<TemplateListModalProps> = ({
     await navigator.clipboard.writeText(id);
   };
 
+  const handleLifecycle = async (
+    template: WorkflowTemplate,
+    action: 'publish' | 'disable' | 'reactivate',
+  ) => {
+    const message = action === 'publish'
+      ? `v${template.version}을 외부 실행 버전으로 배포하시겠습니까?`
+      : action === 'disable'
+        ? '신규 API 실행과 자동 실행을 중지하시겠습니까? 기존 인스턴스는 계속 처리됩니다.'
+        : `배포 버전 v${template.active_published_version}을 다시 활성화하시겠습니까?`;
+    if (!confirm(message)) return;
+    try {
+      const updated = await templatesApi[action](template.id);
+      setTemplates((items) => items.map((item) => item.id === updated.id ? updated : item));
+      if (versionTemplate?.id === updated.id) setVersionTemplate(updated);
+    } catch (err) {
+      console.error(`Failed to ${action} workflow:`, err);
+      alert('워크플로우 배포 상태 변경에 실패했습니다.');
+    }
+  };
+
   const handleShowVersions = async (event: React.MouseEvent, template: WorkflowTemplate) => {
     event.stopPropagation();
     setVersionTemplate(template);
@@ -179,6 +199,12 @@ export const TemplateListModal: React.FC<TemplateListModalProps> = ({
                       <div className="template-header">
                         <h3 className="template-name">{template.name}</h3>
                         <span className="template-version">v{template.version}</span>
+                        <span className={`template-lifecycle ${template.lifecycle_status.toLowerCase()}`}>
+                          {lifecycleLabel(template.lifecycle_status)}
+                        </span>
+                        {template.has_unpublished_changes && (
+                          <span className="template-unpublished">미배포 변경</span>
+                        )}
                       </div>
                       {template.description && (
                         <p className="template-description">{template.description}</p>
@@ -208,6 +234,21 @@ export const TemplateListModal: React.FC<TemplateListModalProps> = ({
                       </div>
                     </div>
                     <div className="template-actions">
+                      {(template.lifecycle_status === 'DRAFT' || template.has_unpublished_changes) && (
+                        <Button onClick={() => void handleLifecycle(template, 'publish')} variant="primary" size="sm">
+                          배포
+                        </Button>
+                      )}
+                      {template.lifecycle_status === 'PUBLISHED' && !template.has_unpublished_changes && (
+                        <Button onClick={() => void handleLifecycle(template, 'disable')} variant="secondary" size="sm">
+                          배포 중지
+                        </Button>
+                      )}
+                      {template.lifecycle_status === 'DISABLED' && (
+                        <Button onClick={() => void handleLifecycle(template, 'reactivate')} variant="secondary" size="sm">
+                          재활성화
+                        </Button>
+                      )}
                       <Button
                         onClick={() => handleSelect(template)}
                         variant="primary"
@@ -263,6 +304,10 @@ export const TemplateListModal: React.FC<TemplateListModalProps> = ({
     </div>
   );
 };
+
+function lifecycleLabel(status: WorkflowTemplate['lifecycle_status']) {
+  return status === 'PUBLISHED' ? '배포됨' : status === 'DISABLED' ? '배포 중지' : '초안';
+}
 
 function TemplateVersionPanel({
   versionTemplate,

@@ -1,20 +1,12 @@
 export abstract class WorkflowRepositoryPort {
-  abstract createDefinition(
-    id: string,
-    name: string,
-    nodes: any[],
-    edges: any[],
-    metadata?: WorkflowDefinitionMetadata,
-  ): Promise<void>;
+  abstract createDefinition(id: string, name: string, nodes: any[], edges: any[], metadata?: WorkflowDefinitionMetadata): Promise<void>;
   abstract listDefinitions(): Promise<any[]>;
   abstract getDefinition(id: string): Promise<any>;
+  abstract getPublishedDefinition(id: string): Promise<any>;
+  abstract setDefinitionLifecycle(id: string, lifecycle: WorkflowLifecycleUpdate): Promise<any>;
   abstract listDefinitionVersions(id: string): Promise<WorkflowDefinitionVersion[]>;
   abstract getDefinitionVersion(id: string, version: number): Promise<any>;
-  abstract restoreDefinitionVersion(
-    id: string,
-    version: number,
-    metadata?: WorkflowDefinitionMetadata,
-  ): Promise<any>;
+  abstract restoreDefinitionVersion(id: string, version: number, metadata?: WorkflowDefinitionMetadata): Promise<any>;
   abstract deleteDefinition(id: string): Promise<boolean>;
 }
 
@@ -27,6 +19,16 @@ export type WorkflowDefinitionMetadata = {
   imported_from?: WorkflowImportSourceMetadata;
   created_by?: string | null;
   updated_by?: string | null;
+  lifecycle_status?: 'DRAFT' | 'PUBLISHED' | 'DISABLED';
+  active_published_version?: number | null;
+  published_at?: string | null;
+  published_by?: string | null;
+};
+
+export type WorkflowLifecycleUpdate = {
+  status: 'PUBLISHED' | 'DISABLED';
+  active_published_version?: number | null;
+  actor_id?: string | null;
 };
 
 export type WorkflowImportSourceMetadata = {
@@ -81,61 +83,24 @@ export type WorkflowInstanceAccess = {
 };
 
 export abstract class WorkflowInstanceRepositoryPort {
-  abstract createInstance(
-    id: string,
-    definitionId: string,
-    status: string,
-    ctx: any,
-    access?: WorkflowInstanceAccess,
-  ): Promise<void>;
+  abstract createInstance(id: string, definitionId: string, status: string, ctx: any, access?: WorkflowInstanceAccess): Promise<void>;
   abstract listInstances(actor?: WorkflowHistoryActor): Promise<any[]>;
   abstract listChildInstances(parentInstanceId: string): Promise<any[]>;
   abstract getInstance(id: string): Promise<any>;
   abstract updateInstanceStatus(id: string, status: string): Promise<void>;
   abstract updateInstanceCtx(id: string, ctx: any): Promise<void>;
   abstract completeJobsForInstance(id: string): Promise<void>;
-  abstract createToken(token: {
-    id: string;
-    instanceId: string;
-    nodeId: string;
-    status: string;
-    parentTokenId?: string;
-    scopeKey?: string;
-  }): Promise<void>;
-  abstract createJob(job: {
-    instanceId: string;
-    tokenId?: string | null;
-    type: string;
-    runAt: Date;
-    payload: any;
-  }): Promise<void>;
+  abstract createToken(token: { id: string; instanceId: string; nodeId: string; status: string; parentTokenId?: string; scopeKey?: string }): Promise<void>;
+  abstract createJob(job: { instanceId: string; tokenId?: string | null; type: string; runAt: Date; payload: any }): Promise<void>;
 }
 
 export abstract class WorkflowTaskRepositoryPort {
-  abstract createTask(
-    id: string,
-    instanceId: string,
-    nodeId: string,
-    assignee: string,
-    status: string,
-    payload: any,
-  ): Promise<void>;
+  abstract createTask(id: string, instanceId: string, nodeId: string, assignee: string, status: string, payload: any): Promise<void>;
   abstract listTasks(assignee: string): Promise<any[]>;
   abstract getTask(id: string): Promise<any>;
-  abstract completeTask(
-    command: CompleteWorkflowTaskCommand,
-  ): Promise<CompleteWorkflowTaskResult>;
-  abstract claimExternalApprovalTasks(
-    owner: string,
-    now: Date,
-    claimUntil: Date,
-    limit: number,
-  ): Promise<ExternalApprovalClaim[]>;
-  abstract setExternalApprovalDeliveryToken(
-    taskId: string,
-    owner: string,
-    input: ExternalApprovalDeliveryToken,
-  ): Promise<boolean>;
+  abstract completeTask(command: CompleteWorkflowTaskCommand): Promise<CompleteWorkflowTaskResult>;
+  abstract claimExternalApprovalTasks(owner: string, now: Date, claimUntil: Date, limit: number): Promise<ExternalApprovalClaim[]>;
+  abstract setExternalApprovalDeliveryToken(taskId: string, owner: string, input: ExternalApprovalDeliveryToken): Promise<boolean>;
   abstract markExternalApprovalDelivery(
     taskId: string,
     owner: string,
@@ -147,23 +112,10 @@ export abstract class WorkflowTaskRepositoryPort {
     },
   ): Promise<void>;
   abstract requeueExternalApproval(taskId: string): Promise<boolean>;
-  abstract findExternalApprovalByTokenHash(
-    tokenHash: string,
-  ): Promise<ExternalApprovalTask | null>;
-  abstract setExternalApprovalOtp(
-    taskId: string,
-    tokenHash: string,
-    input: ExternalApprovalOtp,
-  ): Promise<boolean>;
-  abstract incrementExternalApprovalOtpFailures(
-    taskId: string,
-    tokenHash: string,
-  ): Promise<number>;
-  abstract clearExternalApprovalOtp(
-    taskId: string,
-    tokenHash: string,
-    otpHash: string,
-  ): Promise<void>;
+  abstract findExternalApprovalByTokenHash(tokenHash: string): Promise<ExternalApprovalTask | null>;
+  abstract setExternalApprovalOtp(taskId: string, tokenHash: string, input: ExternalApprovalOtp): Promise<boolean>;
+  abstract incrementExternalApprovalOtpFailures(taskId: string, tokenHash: string): Promise<number>;
+  abstract clearExternalApprovalOtp(taskId: string, tokenHash: string, otpHash: string): Promise<void>;
   abstract listTaskHistory(query: WorkflowTaskHistoryQuery): Promise<WorkflowTaskHistoryPage>;
   abstract getTaskHistoryItem(id: string): Promise<WorkflowTaskHistoryItem | null>;
 }
@@ -280,17 +232,9 @@ export type CompleteWorkflowTaskResult = {
 };
 
 export abstract class OutboxRepositoryPort {
-  abstract fetchAfter(
-    instanceId: string,
-    afterId: number,
-    limit?: number,
-  ): Promise<any[]>;
+  abstract fetchAfter(instanceId: string, afterId: number, limit?: number): Promise<any[]>;
 
-  abstract appendEvent(
-    instanceId: string,
-    eventType: string,
-    payload: any,
-  ): Promise<any>;
+  abstract appendEvent(instanceId: string, eventType: string, payload: any): Promise<any>;
 
   abstract fetchTrace(instanceId: string, limit?: number): Promise<any[]>;
 }
@@ -355,33 +299,15 @@ export type WorkflowScheduleStatus = {
 };
 
 export abstract class WorkflowScheduleRepositoryPort {
-  abstract replaceDefinitionSchedules(
-    definitionId: string,
-    jobs: WorkflowScheduleJob[],
-  ): Promise<void>;
+  abstract replaceDefinitionSchedules(definitionId: string, jobs: WorkflowScheduleJob[]): Promise<void>;
 
-  abstract claimDueSchedules(
-    now: Date,
-    owner: string,
-    limit: number,
-  ): Promise<WorkflowScheduleJob[]>;
+  abstract claimDueSchedules(now: Date, owner: string, limit: number): Promise<WorkflowScheduleJob[]>;
 
-  abstract markScheduleSuccess(
-    id: string,
-    nextRunAt: Date,
-    instanceId: string,
-  ): Promise<void>;
+  abstract markScheduleSuccess(id: string, nextRunAt: Date, instanceId: string): Promise<void>;
 
-  abstract markScheduleFailure(
-    id: string,
-    error: string,
-    nextRunAt: Date,
-  ): Promise<void>;
+  abstract markScheduleFailure(id: string, error: string, nextRunAt: Date): Promise<void>;
 
-  abstract getDefinitionScheduleStatus(
-    definitionId: string,
-    limit?: number,
-  ): Promise<WorkflowScheduleStatus>;
+  abstract getDefinitionScheduleStatus(definitionId: string, limit?: number): Promise<WorkflowScheduleStatus>;
 }
 
 export type WorkflowInputPresetScope = 'private' | 'group' | 'shared';
@@ -419,10 +345,7 @@ export abstract class WorkflowInputPresetRepositoryPort {
   abstract listAllInputPresets(): Promise<WorkflowInputPreset[]>;
   abstract listInputPresets(workflowId: string): Promise<WorkflowInputPreset[]>;
   abstract getInputPreset(workflowId: string, idOrAlias: string): Promise<WorkflowInputPreset | null>;
-  abstract upsertInputPreset(
-    workflowId: string,
-    preset: UpsertWorkflowInputPreset,
-  ): Promise<WorkflowInputPreset>;
+  abstract upsertInputPreset(workflowId: string, preset: UpsertWorkflowInputPreset): Promise<WorkflowInputPreset>;
   abstract deleteInputPreset(workflowId: string, presetId: string): Promise<boolean>;
 }
 

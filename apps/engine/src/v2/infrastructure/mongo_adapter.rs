@@ -110,6 +110,13 @@ fn bson_to_json(b: &Bson) -> Value {
     mongodb::bson::from_bson(b.clone()).unwrap_or(Value::Null)
 }
 
+fn bson_i32(value: &Bson) -> Option<i32> {
+    value
+        .as_i32()
+        .or_else(|| value.as_i64().and_then(|number| i32::try_from(number).ok()))
+        .or_else(|| value.as_f64().map(|number| number as i32))
+}
+
 fn token_to_doc(t: &V2Token) -> Document {
     doc! {
         "_id": t.id.to_string(),
@@ -806,12 +813,22 @@ impl ProcessDefinitionRepositoryPort for MongoAdapter {
     async fn load_definition_graph(
         &self,
         definition_id: Uuid,
+        version: Option<i32>,
     ) -> Result<(Vec<NodeDef>, Vec<EdgeRule>)> {
-        let coll = self.db.collection::<Document>("v2_process_definitions");
-
-        let doc_opt = coll
-            .find_one(doc! { "_id": definition_id.to_string() }, None)
-            .await?;
+        let doc_opt = if let Some(version) = version {
+            self.db
+                .collection::<Document>("v2_process_definition_versions")
+                .find_one(
+                    doc! { "definition_id": definition_id.to_string(), "version": version },
+                    None,
+                )
+                .await?
+        } else {
+            self.db
+                .collection::<Document>("v2_process_definitions")
+                .find_one(doc! { "_id": definition_id.to_string() }, None)
+                .await?
+        };
         let Some(doc) = doc_opt else {
             anyhow::bail!("Process definition not found: {}", definition_id);
         };
@@ -891,6 +908,48 @@ impl ProcessDefinitionRepositoryPort for MongoAdapter {
         }
 
         Ok((nodes, edges))
+    }
+
+    async fn load_active_definition_graph(
+        &self,
+        definition_id: Uuid,
+    ) -> Result<(Vec<NodeDef>, Vec<EdgeRule>, i32)> {
+        let current = self
+            .db
+            .collection::<Document>("v2_process_definitions")
+            .find_one(doc! { "_id": definition_id.to_string() }, None)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Process definition not found: {}", definition_id))?;
+        let lifecycle = current
+            .get_str("lifecycle_status")
+            .or_else(|_| {
+                current
+                    .get_document("metadata")?
+                    .get_str("lifecycle_status")
+            })
+            .unwrap_or("PUBLISHED");
+        if lifecycle != "PUBLISHED" {
+            anyhow::bail!(
+                "Workflow is not published or is disabled: {}",
+                definition_id
+            );
+        }
+        let version = current
+            .get("active_published_version")
+            .and_then(bson_i32)
+            .or_else(|| {
+                current
+                    .get_document("metadata")
+                    .ok()?
+                    .get("active_published_version")
+                    .and_then(bson_i32)
+            })
+            .or_else(|| current.get("version").and_then(bson_i32))
+            .ok_or_else(|| anyhow::anyhow!("Published workflow version is missing: {}", definition_id))?;
+        let (nodes, edges) = self
+            .load_definition_graph(definition_id, Some(version))
+            .await?;
+        Ok((nodes, edges, version))
     }
 }
 

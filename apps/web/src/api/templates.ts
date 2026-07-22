@@ -12,6 +12,11 @@ export interface WorkflowTemplate {
   edges: Edge[];
   version: number;
   is_active: boolean;
+  lifecycle_status: 'DRAFT' | 'PUBLISHED' | 'DISABLED';
+  active_published_version: number | null;
+  has_unpublished_changes: boolean;
+  published_at?: string | null;
+  published_by?: string | null;
   created_by?: string;
   updated_by?: string;
   created_at: string;
@@ -348,5 +353,27 @@ export const templatesApi = {
     }
 
     return response.json();
+  },
+
+  async publish(id: string): Promise<WorkflowTemplate> {
+    const response = await fetch(`${API_BASE_URL}/templates/${id}/deploy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    if (!response.ok) throw new Error(`Failed to publish workflow: ${response.statusText}`);
+    return (await response.json()).template;
+  },
+
+  async disable(id: string): Promise<WorkflowTemplate> {
+    const response = await fetch(`${API_BASE_URL}/templates/${id}/disable`, { method: 'POST' });
+    if (!response.ok) throw new Error(`Failed to disable workflow: ${response.statusText}`);
+    return (await response.json()).template;
+  },
+
+  async reactivate(id: string): Promise<WorkflowTemplate> {
+    const response = await fetch(`${API_BASE_URL}/templates/${id}/reactivate`, { method: 'POST' });
+    if (!response.ok) throw new Error(`Failed to reactivate workflow: ${response.statusText}`);
+    return (await response.json()).template;
   },
 };

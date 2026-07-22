@@ -36,6 +36,9 @@ type DesignerTab = {
   templateId: string | null;
   templateName: string;
   templateVersion?: number;
+  lifecycleStatus?: WorkflowTemplate['lifecycle_status'];
+  activePublishedVersion?: number | null;
+  hasUnpublishedChanges?: boolean;
   description: string;
   group: string;
   groupId: string;
@@ -595,6 +598,9 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
                   templateId: updated.id,
                   templateName: updated.name,
                   templateVersion: updated.version,
+                  lifecycleStatus: updated.lifecycle_status,
+                  activePublishedVersion: updated.active_published_version,
+                  hasUnpublishedChanges: updated.has_unpublished_changes,
                   description: updated.description || '',
                   group: updated.group || '',
                   groupId: updated.group_id || '',
@@ -629,6 +635,9 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
                   templateId: created.id,
                   templateName: created.name,
                   templateVersion: created.version,
+                  lifecycleStatus: created.lifecycle_status,
+                  activePublishedVersion: created.active_published_version,
+                  hasUnpublishedChanges: created.has_unpublished_changes,
                   description: created.description || '',
                   group: created.group || '',
                   groupId: created.group_id || '',
@@ -939,6 +948,16 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
                 </span>
                 <span className="workflow-tab-title">{getDesignerTabTitle(tab)}</span>
                 {tab.templateVersion && <span className="workflow-tab-version">v{tab.templateVersion}</span>}
+                {tab.lifecycleStatus && (
+                  <span className={`workflow-tab-lifecycle ${tab.lifecycleStatus.toLowerCase()}`}>
+                    {tab.lifecycleStatus === 'PUBLISHED'
+                      ? `배포 v${tab.activePublishedVersion}`
+                      : tab.lifecycleStatus === 'DISABLED'
+                        ? '배포 중지'
+                        : '초안'}
+                  </span>
+                )}
+                {tab.hasUnpublishedChanges && <span className="workflow-tab-unpublished">미배포</span>}
               </button>
               <button
                 type="button"
@@ -1266,6 +1285,9 @@ function createDesignerTabFromTemplate(template: WorkflowTemplate, tabId = creat
     templateId: template.id,
     templateName: template.name,
     templateVersion: template.version,
+    lifecycleStatus: template.lifecycle_status,
+    activePublishedVersion: template.active_published_version,
+    hasUnpublishedChanges: template.has_unpublished_changes,
     description: template.description || '',
     group: template.group || '',
     groupId: template.group_id || '',

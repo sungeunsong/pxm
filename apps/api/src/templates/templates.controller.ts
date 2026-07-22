@@ -2,12 +2,7 @@ import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get,
 import type { Request, Response } from 'express';
 import { TemplatesService } from './templates.service';
 import { CreateTemplateDto, UpdateTemplateDto } from './dto/template.dto';
-import {
-  WorkflowInputPresetRepositoryPort,
-  type WorkflowInputPreset,
-  WorkflowInstanceRepositoryPort,
-  WorkflowScheduleRepositoryPort,
-} from '../db/ports/db.ports';
+import { WorkflowInputPresetRepositoryPort, type WorkflowInputPreset, WorkflowInstanceRepositoryPort, WorkflowScheduleRepositoryPort } from '../db/ports/db.ports';
 import { InstancesService } from '../instances/instances.service';
 import { actorFromRequest, instanceAccessFromRequest } from '../instances/history-auth';
 import { randomUUID } from 'crypto';
@@ -29,9 +24,20 @@ export class TemplatesController {
 
   @Post()
   async create(@Body() dto: CreateTemplateDto, @Req() req: Request) {
-    const actor = actorFromRequest(req); assertCanManageGroup(actor, dto.group_id);
-    const template = await this.templatesService.create({ ...dto, created_by: actor.actor_id || 'system', updated_by: actor.actor_id || 'system' });
-    await this.audit.append({ action: 'workflow.created', resource_type: 'workflow', resource_id: template.id, group_id: template.group_id, actor_id: actor.actor_id });
+    const actor = actorFromRequest(req);
+    assertCanManageGroup(actor, dto.group_id);
+    const template = await this.templatesService.create({
+      ...dto,
+      created_by: actor.actor_id || 'system',
+      updated_by: actor.actor_id || 'system',
+    });
+    await this.audit.append({
+      action: 'workflow.created',
+      resource_type: 'workflow',
+      resource_id: template.id,
+      group_id: template.group_id,
+      actor_id: actor.actor_id,
+    });
     return template;
   }
 
@@ -39,38 +45,49 @@ export class TemplatesController {
   async findAll(@Query('activeOnly') activeOnly: string | undefined, @Req() req: Request) {
     const active = activeOnly !== 'false';
     const actor = actorFromRequest(req);
-    return (await this.templatesService.findAll(active)).filter((template) => canReadTemplate(actor, template));
+    const canManage = isAdmin(actor) || actor.roles.includes('group_manager');
+    const templates = canManage ? await this.templatesService.findAll(active) : await this.templatesService.findPublishedAll();
+    return templates.filter((template) => canReadTemplate(actor, template));
   }
 
   @Get('input-presets')
   async listAllInputPresets(@Req() req: Request) {
     const actor = actorFromRequest(req);
-    const templates = (await this.templatesService.findAll(true))
-      .filter((template) => canReadTemplate(actor, template));
+    const canManage = isAdmin(actor) || actor.roles.includes('group_manager');
+    const templates = (canManage ? await this.templatesService.findAll(true) : await this.templatesService.findPublishedAll()).filter((template) => canReadTemplate(actor, template));
     const templateById = new Map(templates.map((template) => [template.id, template]));
     const presets = await this.inputPresetRepo.listAllInputPresets();
 
     return presets.flatMap((preset) => {
       const template = templateById.get(preset.workflow_id);
       if (!template || !canUseInputPreset(actor, preset)) return [];
-      return [{
-        ...preset,
-        scope: normalizeInputPresetScope(preset.scope),
-        owner_group_id: template.group_id || null,
-        workflow_name: template.name,
-        workflow_version: template.version || 1,
-        workflow_group_name: template.group || null,
-        can_manage: canManageInputPreset(actor, preset),
-      }];
+      return [
+        {
+          ...preset,
+          scope: normalizeInputPresetScope(preset.scope),
+          owner_group_id: template.group_id || null,
+          workflow_name: template.name,
+          workflow_version: template.version || 1,
+          workflow_group_name: template.group || null,
+          can_manage: canManageInputPreset(actor, preset),
+        },
+      ];
     });
   }
 
   @Post('import')
   async import(@Body() body: any, @Req() req: Request) {
-    const actor = actorFromRequest(req); assertCanManageGroup(actor, body?.workflow?.metadata?.group_id || null);
+    const actor = actorFromRequest(req);
+    assertCanManageGroup(actor, body?.workflow?.metadata?.group_id || null);
     try {
       const template = await this.templatesService.import(body, actor.actor_id || 'system');
-      await this.audit.append({ action: 'workflow.imported', resource_type: 'workflow', resource_id: template.id, group_id: template.group_id, actor_id: actor.actor_id });
+      await this.audit.append({
+        action: 'workflow.imported',
+        resource_type: 'workflow',
+        resource_id: template.id,
+        group_id: template.group_id,
+        actor_id: actor.actor_id,
+      });
       return template;
     } catch (error) {
       throw new BadRequestException(error instanceof Error ? error.message : 'Invalid workflow import document');
@@ -80,7 +97,9 @@ export class TemplatesController {
   @Get(':id/export')
   async export(@Param('id') id: string, @Req() req: Request) {
     await this.assertReadableTemplate(id, req);
-    const document = await this.templatesService.export(id);
+    const actor = actorFromRequest(req);
+    const canManage = isAdmin(actor) || actor.roles.includes('group_manager');
+    const document = await this.templatesService.export(id, !canManage);
     if (!document) {
       throw new NotFoundException('Template not found');
     }
@@ -89,7 +108,7 @@ export class TemplatesController {
 
   @Get(':id/versions')
   async versions(@Param('id') id: string, @Req() req: Request) {
-    await this.assertReadableTemplate(id, req);
+    await this.assertManageableTemplate(id, req);
     const versions = await this.templatesService.listVersions(id);
     if (!versions) {
       throw new NotFoundException('Template not found');
@@ -98,13 +117,8 @@ export class TemplatesController {
   }
 
   @Get(':id/versions/diff')
-  async versionDiff(
-    @Param('id') id: string,
-    @Query('from', ParseIntPipe) from: number,
-    @Query('to') to?: string,
-    @Req() req?: Request,
-  ) {
-    await this.assertReadableTemplate(id, req);
+  async versionDiff(@Param('id') id: string, @Query('from', ParseIntPipe) from: number, @Query('to') to?: string, @Req() req?: Request) {
+    await this.assertManageableTemplate(id, req);
     const toVersion = to ? Number.parseInt(to, 10) : undefined;
     if (to && !Number.isFinite(toVersion)) {
       throw new BadRequestException('to must be a number');
@@ -118,12 +132,8 @@ export class TemplatesController {
   }
 
   @Get(':id/versions/:version')
-  async version(
-    @Param('id') id: string,
-    @Param('version', ParseIntPipe) version: number,
-    @Req() req: Request,
-  ) {
-    await this.assertReadableTemplate(id, req);
+  async version(@Param('id') id: string, @Param('version', ParseIntPipe) version: number, @Req() req: Request) {
+    await this.assertManageableTemplate(id, req);
     const template = await this.templatesService.getVersion(id, version);
     if (!template) {
       throw new NotFoundException('Template version not found');
@@ -132,19 +142,21 @@ export class TemplatesController {
   }
 
   @Post(':id/versions/:version/rollback')
-  async rollbackVersion(
-    @Param('id') id: string,
-    @Param('version', ParseIntPipe) version: number,
-    @Req() req: Request,
-  ) {
-    const current = await this.assertReadableTemplate(id, req);
-    assertCanManageGroup(actorFromRequest(req), current.group_id);
+  async rollbackVersion(@Param('id') id: string, @Param('version', ParseIntPipe) version: number, @Req() req: Request) {
+    await this.assertManageableTemplate(id, req);
     const actor = actorFromRequest(req);
     const template = await this.templatesService.rollback(id, version, actor.actor_id || 'system');
     if (!template) {
       throw new NotFoundException('Template version not found');
     }
-    await this.audit.append({ action: 'workflow.rolled_back', resource_type: 'workflow', resource_id: id, group_id: template.group_id, actor_id: actor.actor_id, details: { restored_version: version, new_version: template.version } });
+    await this.audit.append({
+      action: 'workflow.rolled_back',
+      resource_type: 'workflow',
+      resource_id: id,
+      group_id: template.group_id,
+      actor_id: actor.actor_id,
+      details: { restored_version: version, new_version: template.version },
+    });
     return template;
   }
 
@@ -162,14 +174,23 @@ export class TemplatesController {
     const actor = actorFromRequest(req);
     assertCanManageGroup(actor, current.group_id);
     assertCanManageGroup(actor, dto.group_id !== undefined ? dto.group_id : current.group_id);
-    const template = await this.templatesService.update(id, { ...dto, updated_by: actor.actor_id || 'system' });
+    const template = await this.templatesService.update(id, {
+      ...dto,
+      updated_by: actor.actor_id || 'system',
+    });
     if (!template) {
       throw new Error('Template not found');
     }
     await this.audit.append({
       action: current.group_id !== template.group_id ? 'workflow.group_changed' : 'workflow.updated',
-      resource_type: 'workflow', resource_id: id, group_id: template.group_id, actor_id: actor.actor_id,
-      details: { previous_group_id: current.group_id || null, group_id: template.group_id || null },
+      resource_type: 'workflow',
+      resource_id: id,
+      group_id: template.group_id,
+      actor_id: actor.actor_id,
+      details: {
+        previous_group_id: current.group_id || null,
+        group_id: template.group_id || null,
+      },
     });
     return template;
   }
@@ -177,15 +198,16 @@ export class TemplatesController {
   @Post(':id/deploy')
   async deploy(
     @Param('id') id: string,
-    @Body() body: {
+    @Body()
+    body: {
       name?: string;
       description?: string;
       group?: string;
       group_id?: string | null;
       tags?: string[];
       version_note?: string;
-      nodes: any[];
-      edges: any[];
+      nodes?: any[];
+      edges?: any[];
     },
     @Req() req: Request,
   ) {
@@ -196,31 +218,73 @@ export class TemplatesController {
     const actor = actorFromRequest(req);
     assertCanManageGroup(actor, current.group_id);
     assertCanManageGroup(actor, body.group_id !== undefined ? body.group_id : current.group_id);
-    const template = await this.templatesService.update(id, {
-      name: body.name,
-      description: body.description,
-      group: body.group,
-      group_id: body.group_id,
-      tags: body.tags,
-      version_note: body.version_note,
-      nodes: body.nodes,
-      edges: body.edges,
-      updated_by: actor.actor_id || 'system',
-    });
+    const shouldSave = body.nodes !== undefined || body.edges !== undefined;
+    if (shouldSave) {
+      await this.templatesService.update(id, {
+        name: body.name,
+        description: body.description,
+        group: body.group,
+        group_id: body.group_id,
+        tags: body.tags,
+        version_note: body.version_note,
+        nodes: body.nodes,
+        edges: body.edges,
+        updated_by: actor.actor_id || 'system',
+      });
+    }
+    const template = await this.templatesService.publish(id, actor.actor_id || 'system');
     if (!template) {
       throw new Error('Template not found');
     }
-    console.log(`[BFF] Template ${id} deployed. Nodes: ${body.nodes.length}, Edges: ${body.edges.length}`);
-    await this.audit.append({ action: 'workflow.deployed', resource_type: 'workflow', resource_id: id, group_id: template.group_id, actor_id: actor.actor_id });
+    console.log(`[BFF] Template ${id} published at v${template.version}.`);
+    await this.audit.append({
+      action: 'workflow.deployed',
+      resource_type: 'workflow',
+      resource_id: id,
+      group_id: template.group_id,
+      actor_id: actor.actor_id,
+      details: { active_published_version: template.active_published_version },
+    });
+    return { success: true, template };
+  }
+
+  @Post(':id/disable')
+  async disable(@Param('id') id: string, @Req() req: Request) {
+    const current = await this.assertReadableTemplate(id, req);
+    const actor = actorFromRequest(req);
+    assertCanManageGroup(actor, current.group_id);
+    const template = await this.templatesService.disable(id, actor.actor_id || 'system');
+    if (!template) throw new NotFoundException('Template not found');
+    await this.audit.append({
+      action: 'workflow.disabled',
+      resource_type: 'workflow',
+      resource_id: id,
+      group_id: template.group_id,
+      actor_id: actor.actor_id,
+    });
+    return { success: true, template };
+  }
+
+  @Post(':id/reactivate')
+  async reactivate(@Param('id') id: string, @Req() req: Request) {
+    const current = await this.assertReadableTemplate(id, req);
+    const actor = actorFromRequest(req);
+    assertCanManageGroup(actor, current.group_id);
+    const template = await this.templatesService.reactivate(id, actor.actor_id || 'system');
+    if (!template) throw new BadRequestException('Workflow has no published version');
+    await this.audit.append({
+      action: 'workflow.reactivated',
+      resource_type: 'workflow',
+      resource_id: id,
+      group_id: template.group_id,
+      actor_id: actor.actor_id,
+      details: { active_published_version: template.active_published_version },
+    });
     return { success: true, template };
   }
 
   @Post(':id/schedule/toggle')
-  async toggleSchedule(
-    @Param('id') id: string,
-    @Body() body: { enabled?: boolean },
-    @Req() req: Request,
-  ) {
+  async toggleSchedule(@Param('id') id: string, @Body() body: { enabled?: boolean }, @Req() req: Request) {
     const template = await this.templatesService.findOne(id);
     if (!template) {
       throw new NotFoundException('Template not found');
@@ -256,15 +320,15 @@ export class TemplatesController {
       throw new NotFoundException('Template not found');
     }
 
-    return { success: true, enabled: body?.enabled === true, template: updated };
+    return {
+      success: true,
+      enabled: body?.enabled === true,
+      template: updated,
+    };
   }
 
   @Post(':id/db-watch/toggle')
-  async toggleDbWatch(
-    @Param('id') id: string,
-    @Body() body: { enabled?: boolean },
-    @Req() req: Request,
-  ) {
+  async toggleDbWatch(@Param('id') id: string, @Body() body: { enabled?: boolean }, @Req() req: Request) {
     const template = await this.templatesService.findOne(id);
     if (!template) {
       throw new NotFoundException('Template not found');
@@ -300,7 +364,11 @@ export class TemplatesController {
       throw new NotFoundException('Template not found');
     }
 
-    return { success: true, enabled: body?.enabled === true, template: updated };
+    return {
+      success: true,
+      enabled: body?.enabled === true,
+      template: updated,
+    };
   }
 
   @Get(':id/schedule/status')
@@ -327,11 +395,7 @@ export class TemplatesController {
   }
 
   @Get(':id/input-presets/:presetId')
-  async getInputPreset(
-    @Param('id') id: string,
-    @Param('presetId') presetId: string,
-    @Req() req: Request,
-  ) {
+  async getInputPreset(@Param('id') id: string, @Param('presetId') presetId: string, @Req() req: Request) {
     await this.assertReadableTemplate(id, req);
     const template = await this.templatesService.findOne(id);
     const preset = await this.inputPresetRepo.getInputPreset(id, presetId);
@@ -347,11 +411,7 @@ export class TemplatesController {
   }
 
   @Post(':id/input-presets')
-  async saveInputPreset(
-    @Param('id') id: string,
-    @Body() body: InputPresetRequest,
-    @Req() req?: Request,
-  ) {
+  async saveInputPreset(@Param('id') id: string, @Body() body: InputPresetRequest, @Req() req?: Request) {
     const template = await this.templatesService.findOne(id);
     if (!template) {
       throw new NotFoundException('Template not found');
@@ -370,7 +430,7 @@ export class TemplatesController {
     const requestedAlias = normalizePresetAlias(body.alias || body.name);
     const existing = body.id ? await this.inputPresetRepo.getInputPreset(id, body.id) : null;
     if (body.id && !existing) throw new NotFoundException('Input preset not found');
-    if (!body.id && await this.inputPresetRepo.getInputPreset(id, requestedAlias)) {
+    if (!body.id && (await this.inputPresetRepo.getInputPreset(id, requestedAlias))) {
       throw new BadRequestException('같은 alias의 파라미터 세트가 이미 있습니다. 관리 화면에서 수정하세요.');
     }
     if (existing && !canManageInputPreset(actor, existing)) {
@@ -403,11 +463,7 @@ export class TemplatesController {
   }
 
   @Delete(':id/input-presets/:presetId')
-  async deleteInputPreset(
-    @Param('id') id: string,
-    @Param('presetId') presetId: string,
-    @Req() req: Request,
-  ) {
+  async deleteInputPreset(@Param('id') id: string, @Param('presetId') presetId: string, @Req() req: Request) {
     await this.assertReadableTemplate(id, req);
     const preset = await this.inputPresetRepo.getInputPreset(id, presetId);
     if (!preset) throw new NotFoundException('Input preset not found');
@@ -433,34 +489,37 @@ export class TemplatesController {
       throw new Error('Template not found');
     }
     const actor = actorFromRequest(req);
-    await this.audit.append({ action: 'workflow.deleted', resource_type: 'workflow', resource_id: id, group_id: template.group_id, actor_id: actor.actor_id });
+    await this.audit.append({
+      action: 'workflow.deleted',
+      resource_type: 'workflow',
+      resource_id: id,
+      group_id: template.group_id,
+      actor_id: actor.actor_id,
+    });
     return { message: 'Template deleted successfully' };
   }
 
   @Post(':id/execute')
-  async execute(
-    @Param('id') id: string,
-    @Body() body?: StartWorkflowRequest,
-    @Req() req?: Request,
-    @Res({ passthrough: true }) res?: Response,
-  ) {
-    return this.start(id, body, req, res);
+  async execute(@Param('id') id: string, @Body() body?: StartWorkflowRequest, @Req() req?: Request, @Res({ passthrough: true }) res?: Response) {
+    const actor = actorFromRequest(req);
+    const allowDraft = !actor.api_key_id && actor.actor_type === 'user';
+    return this.startWorkflow(id, body, req, res, allowDraft);
   }
 
   @Post(':id/start')
-  async start(
-    @Param('id') id: string,
-    @Body() body?: StartWorkflowRequest,
-    @Req() req?: Request,
-    @Res({ passthrough: true }) res?: Response,
-  ) {
+  async start(@Param('id') id: string, @Body() body?: StartWorkflowRequest, @Req() req?: Request, @Res({ passthrough: true }) res?: Response) {
+    return this.startWorkflow(id, body, req, res, false);
+  }
+
+  private async startWorkflow(id: string, body?: StartWorkflowRequest, req?: Request, res?: Response, allowDraft = false) {
     // 템플릿 조회
-    const template = await this.templatesService.findOne(id);
+    const template = allowDraft ? await this.templatesService.findOne(id) : await this.templatesService.findPublished(id);
     if (!template) {
-      throw new Error('Template not found');
+      throw new BadRequestException('Workflow is not published or is disabled');
     }
     const actor = actorFromRequest(req);
     if (!canReadTemplate(actor, template)) throw new NotFoundException('Template not found');
+    if (allowDraft) assertCanManageGroup(actor, template.group_id);
     assertCanExecuteWorkflow(actor, id);
 
     // 실행 요청마다 새로운 인스턴스를 발급한다
@@ -475,9 +534,7 @@ export class TemplatesController {
 
     const requestedPreset = body?.preset_id || body?.preset_alias || body?.preset;
     const inputOverrides = body?.input || body?.formData || {};
-    const inputPreset = requestedPreset
-      ? await this.inputPresetRepo.getInputPreset(template.id, requestedPreset)
-      : null;
+    const inputPreset = requestedPreset ? await this.inputPresetRepo.getInputPreset(template.id, requestedPreset) : null;
     if (requestedPreset && !inputPreset) {
       throw new NotFoundException('Input preset not found');
     }
@@ -496,12 +553,8 @@ export class TemplatesController {
       group_id: template.group_id || requestAccess.group_id,
       workflow_version_id: template.version ? `${template.id}:${template.version}` : null,
     };
-    const groupSnapshot = template.group_id
-      ? await this.authzService.getGroup(template.group_id).catch(() => null)
-      : null;
-    const apiKeySnapshot = actor.api_key_id
-      ? await this.authzService.getApiKey(actor.api_key_id).catch(() => null)
-      : null;
+    const groupSnapshot = template.group_id ? await this.authzService.getGroup(template.group_id).catch(() => null) : null;
+    const apiKeySnapshot = actor.api_key_id ? await this.authzService.getApiKey(actor.api_key_id).catch(() => null) : null;
     const ctx = {
       runtime: {
         cursor: startNode.id,
@@ -510,13 +563,24 @@ export class TemplatesController {
         template_id: template.id,
         template_name: template.name,
         snapshot: {
-          workflow: { id: template.id, name: template.name, version: template.version || 1 },
+          workflow: {
+            id: template.id,
+            name: template.name,
+            version: template.version || 1,
+          },
           group: template.group_id
-            ? { id: template.group_id, name: groupSnapshot?.name || template.group || template.group_id }
+            ? {
+                id: template.group_id,
+                name: groupSnapshot?.name || template.group || template.group_id,
+              }
             : null,
           caller: { type: actor.actor_type, id: actor.actor_id },
           api_key: apiKeySnapshot
-            ? { id: apiKeySnapshot.id, name: apiKeySnapshot.name, prefix: apiKeySnapshot.key_prefix }
+            ? {
+                id: apiKeySnapshot.id,
+                name: apiKeySnapshot.name,
+                prefix: apiKeySnapshot.key_prefix,
+              }
             : null,
           business_actor: actor.business_actor || null,
         },
@@ -577,10 +641,7 @@ export class TemplatesController {
       return acceptedResponse;
     }
 
-    const waitResult = await this.waitForInstanceResult(
-      instanceId,
-      body?.sync_timeout_ms,
-    );
+    const waitResult = await this.waitForInstanceResult(instanceId, body?.sync_timeout_ms);
 
     if (waitResult.timedOut) {
       res?.status(HttpStatus.ACCEPTED);
@@ -635,10 +696,23 @@ export class TemplatesController {
   }
 
   private async assertReadableTemplate(id: string, req?: Request) {
-    const template = await this.templatesService.findOne(id);
-    if (!template || !canReadTemplate(actorFromRequest(req), template)) {
+    const actor = actorFromRequest(req);
+    const canManage = isAdmin(actor) || actor.roles.includes('group_manager');
+    const template = canManage ? await this.templatesService.findOne(id) : await this.templatesService.findPublished(id);
+    if (!template || !canReadTemplate(actor, template)) {
       throw new NotFoundException('Template not found');
     }
+    return template;
+  }
+
+  private async assertManageableTemplate(id: string, req?: Request) {
+    const template = await this.templatesService.findOne(id);
+    if (!template) throw new NotFoundException('Template not found');
+    const actor = actorFromRequest(req);
+    if (!canReadTemplate(actor, template)) {
+      throw new NotFoundException('Template not found');
+    }
+    assertCanManageGroup(actor, template.group_id);
     return template;
   }
 }
@@ -694,9 +768,7 @@ export function validateInputPresetValues(nodes: any[], value: unknown): string[
   }
 
   const startNode = nodes.find((node) => node?.data?.nodeType === 'start');
-  const fields: any[] = Array.isArray(startNode?.data?.formSchema?.fields)
-    ? startNode.data.formSchema.fields.filter((field: any) => field?.id || field?.name)
-    : [];
+  const fields: any[] = Array.isArray(startNode?.data?.formSchema?.fields) ? startNode.data.formSchema.fields.filter((field: any) => field?.id || field?.name) : [];
   if (fields.length === 0) return errors;
 
   const values = value as Record<string, any>;
@@ -750,9 +822,7 @@ function findSensitivePresetPaths(value: Record<string, any>, prefix = ''): stri
     if (isSensitivePresetKey(key)) return [path];
     if (item && typeof item === 'object' && !Array.isArray(item)) return findSensitivePresetPaths(item, path);
     if (Array.isArray(item)) {
-      return item.flatMap((entry, index) => entry && typeof entry === 'object' && !Array.isArray(entry)
-        ? findSensitivePresetPaths(entry, `${path}[${index}]`)
-        : []);
+      return item.flatMap((entry, index) => (entry && typeof entry === 'object' && !Array.isArray(entry) ? findSensitivePresetPaths(entry, `${path}[${index}]`) : []));
     }
     return [];
   });
@@ -772,18 +842,11 @@ function sanitizeJsonObject(value: Record<string, any>): Record<string, any> {
 }
 
 function sanitizeJsonValue(value: any): any {
-  if (
-    typeof value === 'string' ||
-    typeof value === 'number' ||
-    typeof value === 'boolean' ||
-    value === null
-  ) {
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' || value === null) {
     return value;
   }
   if (Array.isArray(value)) {
-    return value
-      .map((item) => sanitizeJsonValue(item))
-      .filter((item) => item !== undefined);
+    return value.map((item) => sanitizeJsonValue(item)).filter((item) => item !== undefined);
   }
   if (value && typeof value === 'object') {
     return sanitizeJsonObject(value);
@@ -808,10 +871,7 @@ function normalizeInputPresetScope(scope: WorkflowInputPreset['scope'] | 'public
   return scope === 'public' ? 'group' : scope;
 }
 
-export function canUseInputPreset(
-  actor: ReturnType<typeof actorFromRequest>,
-  preset: WorkflowInputPreset,
-): boolean {
+export function canUseInputPreset(actor: ReturnType<typeof actorFromRequest>, preset: WorkflowInputPreset): boolean {
   if (isAdmin(actor)) return true;
   const scope = normalizeInputPresetScope(preset.scope as WorkflowInputPreset['scope'] | 'public');
   if (scope === 'private') return Boolean(actor.actor_id && preset.created_by === actor.actor_id);
@@ -819,10 +879,7 @@ export function canUseInputPreset(
   return scope === 'shared' && (preset.shared_group_ids || []).some((groupId) => (actor.group_ids || []).includes(groupId));
 }
 
-export function canManageInputPreset(
-  actor: ReturnType<typeof actorFromRequest>,
-  preset: WorkflowInputPreset,
-): boolean {
+export function canManageInputPreset(actor: ReturnType<typeof actorFromRequest>, preset: WorkflowInputPreset): boolean {
   if (isAdmin(actor)) return true;
   if (actor.api_key_id) return false;
   if (actor.actor_id && preset.created_by === actor.actor_id && normalizeInputPresetScope(preset.scope as any) === 'private') {
@@ -849,20 +906,13 @@ function assertCanExecuteWorkflow(actor: ReturnType<typeof actorFromRequest>, wo
   }
 }
 
-function canReadTemplate(
-  actor: ReturnType<typeof actorFromRequest>,
-  template: { id: string; group_id?: string | null },
-) {
+function canReadTemplate(actor: ReturnType<typeof actorFromRequest>, template: { id: string; group_id?: string | null }) {
   if (!actor.actor_id && actor.roles.includes('operator')) {
     return process.env.NODE_ENV !== 'production' && process.env.AUTHZ_ALLOW_DEVELOPMENT_BYPASS === 'true';
   }
   if (!actor.api_key_id && actor.roles.includes('admin')) return true;
   if (actor.api_key_id) {
-    return Boolean(
-      (actor.scopes?.includes('workflow:read') || actor.scopes?.includes('workflow:execute')) &&
-      template.group_id && actor.group_ids?.includes(template.group_id) &&
-      actor.allowed_workflow_ids.includes(template.id),
-    );
+    return Boolean((actor.scopes?.includes('workflow:read') || actor.scopes?.includes('workflow:execute')) && template.group_id && actor.group_ids?.includes(template.group_id) && actor.allowed_workflow_ids.includes(template.id));
   }
   return Boolean(template.group_id && actor.group_ids?.includes(template.group_id));
 }

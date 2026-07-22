@@ -1,97 +1,29 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Db } from 'mongodb';
 import { MONGO_DB } from '../mongo.provider';
-import {
-  WorkflowDefinitionMetadata,
-  WorkflowRepositoryPort,
-  WorkflowInstanceRepositoryPort,
-  WorkflowTaskRepositoryPort,
-  OutboxRepositoryPort,
-  EngineQueueRepositoryPort,
-  WorkflowScheduleJob,
-  WorkflowScheduleRepositoryPort,
-  WorkflowScheduleStatus,
-  WorkflowHistoryActor,
-  WorkflowInstanceAccess,
-  WorkflowDefinitionVersion,
-  WorkflowInputPreset,
-  WorkflowInputPresetRepositoryPort,
-  UpsertWorkflowInputPreset,
-  AppendPxmApiKeyUsageLog,
-  AuthzRepositoryPort,
-  CreatePxmApiKey,
-  CreatePxmSession,
-  PxmApiKey,
-  PxmApiKeyUsageLog,
-  PxmGroup,
-  PxmServiceAccount,
-  PxmUser,
-  PxmSession,
-  PxmSessionSecurityPolicy,
-  UpsertPxmGroup,
-  UpsertPxmServiceAccount,
-  UpsertPxmUser,
-  UpsertPxmSessionSecurityPolicy,
-  CompleteWorkflowTaskCommand,
-  CompleteWorkflowTaskResult,
-  ExternalApprovalClaim,
-  ExternalApprovalDeliveryToken,
-  ExternalApprovalOtp,
-  ExternalApprovalTask,
-  WorkflowTaskHistoryItem,
-  WorkflowTaskHistoryPage,
-  WorkflowTaskHistoryQuery,
-} from '../ports/db.ports';
+import { WorkflowDefinitionMetadata, WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleJob, WorkflowScheduleRepositoryPort, WorkflowScheduleStatus, WorkflowHistoryActor, WorkflowInstanceAccess, WorkflowDefinitionVersion, WorkflowInputPreset, WorkflowInputPresetRepositoryPort, UpsertWorkflowInputPreset, AppendPxmApiKeyUsageLog, AuthzRepositoryPort, CreatePxmApiKey, CreatePxmSession, PxmApiKey, PxmApiKeyUsageLog, PxmGroup, PxmServiceAccount, PxmUser, PxmSession, PxmSessionSecurityPolicy, UpsertPxmGroup, UpsertPxmServiceAccount, UpsertPxmUser, UpsertPxmSessionSecurityPolicy, CompleteWorkflowTaskCommand, CompleteWorkflowTaskResult, ExternalApprovalClaim, ExternalApprovalDeliveryToken, ExternalApprovalOtp, ExternalApprovalTask, WorkflowTaskHistoryItem, WorkflowTaskHistoryPage, WorkflowTaskHistoryQuery } from '../ports/db.ports';
 
 @Injectable()
-export class MongodbAdapter
-  implements
-    WorkflowRepositoryPort,
-    WorkflowInstanceRepositoryPort,
-    WorkflowTaskRepositoryPort,
-    OutboxRepositoryPort,
-    EngineQueueRepositoryPort,
-    WorkflowScheduleRepositoryPort,
-    WorkflowInputPresetRepositoryPort,
-    AuthzRepositoryPort
-{
+export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleRepositoryPort, WorkflowInputPresetRepositoryPort, AuthzRepositoryPort {
   constructor(@Inject(MONGO_DB) private readonly db: Db) {}
   private inputPresetIndexesReady = false;
   private authzIndexesReady = false;
 
   private async loadNodeLabels(instanceId: string): Promise<Map<string, string>> {
-    const inst = await this.db
-      .collection<any>('v2_process_instances')
-      .findOne({ _id: instanceId });
+    const inst = await this.db.collection<any>('v2_process_instances').findOne({ _id: instanceId });
     if (!inst?.process_definition_id) {
       return new Map();
     }
 
-    const def = await this.db
-      .collection<any>('v2_process_definitions')
-      .findOne({ _id: inst.process_definition_id });
+    const def = await this.db.collection<any>('v2_process_definitions').findOne({ _id: inst.process_definition_id });
 
-    return new Map(
-      (def?.nodes || []).map((node: any) => [
-        node.node_id,
-        node.config?.label ||
-          node.config?.ui_node?.data?.label ||
-          node.label ||
-          node.node_id,
-      ]),
-    );
+    return new Map((def?.nodes || []).map((node: any) => [node.node_id, node.config?.label || node.config?.ui_node?.data?.label || node.label || node.node_id]));
   }
 
   // ==========================================
   // WorkflowRepositoryPort 구현 (V2 정의 대응)
   // ==========================================
-  async createDefinition(
-    id: string,
-    name: string,
-    nodes: any[],
-    edges: any[],
-    metadata: WorkflowDefinitionMetadata = {},
-  ): Promise<void> {
+  async createDefinition(id: string, name: string, nodes: any[], edges: any[], metadata: WorkflowDefinitionMetadata = {}): Promise<void> {
     const formattedNodes = nodes.map((n) => ({
       node_id: n.id,
       node_type: n.data?.nodeType || 'task',
@@ -112,10 +44,9 @@ export class MongodbAdapter
     }));
 
     const now = new Date().toISOString();
-    const existing = await this.db
-      .collection<any>('v2_process_definitions')
-      .findOne({ _id: id }, { projection: { version: 1, created_by: 1 } });
+    const existing = await this.db.collection<any>('v2_process_definitions').findOne({ _id: id }, { projection: { version: 1, created_by: 1 } });
     const nextVersion = Number(existing?.version || 0) + 1;
+    const lifecycleStatus = metadata.lifecycle_status || 'DRAFT';
 
     await this.db.collection<any>('v2_process_definitions').updateOne(
       { _id: id },
@@ -130,6 +61,10 @@ export class MongodbAdapter
           tags: metadata.tags || [],
           version_note: metadata.version_note || '',
           metadata,
+          lifecycle_status: lifecycleStatus,
+          active_published_version: metadata.active_published_version ?? null,
+          published_at: metadata.published_at ?? null,
+          published_by: metadata.published_by ?? null,
           updated_by: metadata.updated_by || null,
           nodes: formattedNodes,
           edges: formattedEdges,
@@ -184,13 +119,15 @@ export class MongodbAdapter
       updated_at: doc.updated_at,
       created_by: doc.created_by || doc.metadata?.created_by || null,
       updated_by: doc.updated_by || doc.metadata?.updated_by || null,
+      lifecycle_status: doc.lifecycle_status || doc.metadata?.lifecycle_status,
+      active_published_version: doc.active_published_version ?? doc.metadata?.active_published_version,
+      published_at: doc.published_at || doc.metadata?.published_at || null,
+      published_by: doc.published_by || doc.metadata?.published_by || null,
     }));
   }
 
   async getDefinition(id: string): Promise<any> {
-    const doc = await this.db
-      .collection<any>('v2_process_definitions')
-      .findOne({ _id: id, status: { $ne: 'DELETED' } });
+    const doc = await this.db.collection<any>('v2_process_definitions').findOne({ _id: id, status: { $ne: 'DELETED' } });
 
     if (!doc) return null;
 
@@ -208,6 +145,10 @@ export class MongodbAdapter
       updated_at: doc.updated_at,
       created_by: doc.created_by || doc.metadata?.created_by || null,
       updated_by: doc.updated_by || doc.metadata?.updated_by || null,
+      lifecycle_status: doc.lifecycle_status || doc.metadata?.lifecycle_status,
+      active_published_version: doc.active_published_version ?? doc.metadata?.active_published_version,
+      published_at: doc.published_at || doc.metadata?.published_at || null,
+      published_by: doc.published_by || doc.metadata?.published_by || null,
       nodes: (doc.nodes || []).map(
         (n: any) =>
           n.config?.ui_node || {
@@ -230,12 +171,55 @@ export class MongodbAdapter
     };
   }
 
+  async getPublishedDefinition(id: string): Promise<any> {
+    const current = await this.getDefinition(id);
+    if (!current) return null;
+    const status = current.lifecycle_status || 'PUBLISHED';
+    if (status !== 'PUBLISHED') return null;
+    const version = Number(current.active_published_version || current.version || 1);
+    const snapshot = await this.getDefinitionVersion(id, version);
+    const published = snapshot || (version === Number(current.version) ? current : null);
+    return published
+      ? {
+          ...published,
+          lifecycle_status: status,
+          active_published_version: version,
+          published_at: current.published_at || null,
+          published_by: current.published_by || null,
+        }
+      : null;
+  }
+
+  async setDefinitionLifecycle(id: string, lifecycle: import('../ports/db.ports').WorkflowLifecycleUpdate): Promise<any> {
+    const current = await this.getDefinition(id);
+    if (!current) return null;
+    const now = new Date().toISOString();
+    const previousActiveVersion = current.active_published_version ?? null;
+    const activeVersion =
+      lifecycle.active_published_version ??
+      previousActiveVersion ??
+      (lifecycle.status === 'PUBLISHED' ? current.version : null);
+    await this.db.collection<any>('v2_process_definitions').updateOne(
+      { _id: id, status: { $ne: 'DELETED' } },
+      {
+        $set: {
+          lifecycle_status: lifecycle.status,
+          active_published_version: activeVersion,
+          published_at: lifecycle.status === 'PUBLISHED' ? now : current.published_at || null,
+          published_by: lifecycle.status === 'PUBLISHED' ? lifecycle.actor_id || null : current.published_by || null,
+          'metadata.lifecycle_status': lifecycle.status,
+          'metadata.active_published_version': activeVersion,
+          'metadata.published_at': lifecycle.status === 'PUBLISHED' ? now : current.published_at || null,
+          'metadata.published_by': lifecycle.status === 'PUBLISHED' ? lifecycle.actor_id || null : current.published_by || null,
+          updated_at: now,
+        },
+      },
+    );
+    return this.getDefinition(id);
+  }
+
   async listDefinitionVersions(id: string): Promise<WorkflowDefinitionVersion[]> {
-    const docs = await this.db
-      .collection<any>('v2_process_definition_versions')
-      .find({ definition_id: id })
-      .sort({ version: -1 })
-      .toArray();
+    const docs = await this.db.collection<any>('v2_process_definition_versions').find({ definition_id: id }).sort({ version: -1 }).toArray();
 
     return docs.map((doc) => ({
       definition_id: doc.definition_id,
@@ -250,40 +234,28 @@ export class MongodbAdapter
       updated_at: doc.updated_at,
       created_by: doc.created_by || doc.metadata?.created_by || null,
       updated_by: doc.updated_by || doc.metadata?.updated_by || null,
+      lifecycle_status: doc.lifecycle_status || doc.metadata?.lifecycle_status,
+      active_published_version: doc.active_published_version ?? doc.metadata?.active_published_version,
       node_count: Array.isArray(doc.nodes) ? doc.nodes.length : 0,
       edge_count: Array.isArray(doc.edges) ? doc.edges.length : 0,
     }));
   }
 
   async getDefinitionVersion(id: string, version: number): Promise<any> {
-    const doc = await this.db
-      .collection<any>('v2_process_definition_versions')
-      .findOne({ definition_id: id, version });
+    const doc = await this.db.collection<any>('v2_process_definition_versions').findOne({ definition_id: id, version });
 
     return doc ? this.mapDefinitionDocument(doc) : null;
   }
 
-  async restoreDefinitionVersion(
-    id: string,
-    version: number,
-    metadata: WorkflowDefinitionMetadata = {},
-  ): Promise<any> {
+  async restoreDefinitionVersion(id: string, version: number, metadata: WorkflowDefinitionMetadata = {}): Promise<any> {
     const snapshot = await this.getDefinitionVersion(id, version);
     if (!snapshot) return null;
 
-    await this.createDefinition(
-      id,
-      snapshot.name,
-      snapshot.nodes || [],
-      snapshot.edges || [],
-      {
-        ...(snapshot.metadata || {}),
-        ...metadata,
-        version_note:
-          metadata.version_note ||
-          `Rollback to v${version}${snapshot.version_note ? `: ${snapshot.version_note}` : ''}`,
-      },
-    );
+    await this.createDefinition(id, snapshot.name, snapshot.nodes || [], snapshot.edges || [], {
+      ...(snapshot.metadata || {}),
+      ...metadata,
+      version_note: metadata.version_note || `Rollback to v${version}${snapshot.version_note ? `: ${snapshot.version_note}` : ''}`,
+    });
 
     return this.getDefinition(id);
   }
@@ -343,13 +315,7 @@ export class MongodbAdapter
   // ==========================================
   // WorkflowInstanceRepositoryPort 구현 (V2 인스턴스 대응)
   // ==========================================
-  async createInstance(
-    id: string,
-    definitionId: string,
-    status: string,
-    ctx: any,
-    access?: WorkflowInstanceAccess,
-  ): Promise<void> {
+  async createInstance(id: string, definitionId: string, status: string, ctx: any, access?: WorkflowInstanceAccess): Promise<void> {
     const now = new Date().toISOString();
     const normalizedAccess = normalizeAccess(ctx, access);
     await this.db.collection<any>('v2_process_instances').insertOne({
@@ -375,20 +341,13 @@ export class MongodbAdapter
   }
 
   async listInstances(actor?: WorkflowHistoryActor): Promise<any[]> {
-    const instances = await this.db
-      .collection<any>('v2_process_instances')
-      .find(buildMongoHistoryFilter(actor))
-      .sort({ created_at: -1 })
-      .limit(50)
-      .toArray();
+    const instances = await this.db.collection<any>('v2_process_instances').find(buildMongoHistoryFilter(actor)).sort({ created_at: -1 }).limit(50).toArray();
 
     const result: any[] = [];
     for (const inst of instances) {
       let templateName = inst.context?.runtime?.snapshot?.workflow?.name || 'Unknown';
       if (inst.process_definition_id) {
-        const def = await this.db
-          .collection<any>('v2_process_definitions')
-          .findOne({ _id: inst.process_definition_id });
+        const def = await this.db.collection<any>('v2_process_definitions').findOne({ _id: inst.process_definition_id });
         if (def) {
           templateName = def.name;
         }
@@ -419,10 +378,7 @@ export class MongodbAdapter
   }
 
   async listChildInstances(parentInstanceId: string): Promise<any[]> {
-    const children = await this.db
-      .collection<any>('v2_process_instances')
-      .find({ 'context.runtime.parent_instance_id': parentInstanceId })
-      .toArray();
+    const children = await this.db.collection<any>('v2_process_instances').find({ 'context.runtime.parent_instance_id': parentInstanceId }).toArray();
 
     return children.map((inst) => ({
       id: inst._id,
@@ -446,9 +402,7 @@ export class MongodbAdapter
   }
 
   async getInstance(id: string): Promise<any> {
-    const inst = await this.db
-      .collection<any>('v2_process_instances')
-      .findOne({ _id: id });
+    const inst = await this.db.collection<any>('v2_process_instances').findOne({ _id: id });
 
     if (!inst) return null;
 
@@ -516,14 +470,7 @@ export class MongodbAdapter
     );
   }
 
-  async createToken(token: {
-    id: string;
-    instanceId: string;
-    nodeId: string;
-    status: string;
-    parentTokenId?: string;
-    scopeKey?: string;
-  }): Promise<void> {
+  async createToken(token: { id: string; instanceId: string; nodeId: string; status: string; parentTokenId?: string; scopeKey?: string }): Promise<void> {
     const now = new Date().toISOString();
     await this.db.collection<any>('v2_tokens').insertOne({
       _id: token.id,
@@ -537,22 +484,10 @@ export class MongodbAdapter
     });
   }
 
-  async createJob(job: {
-    instanceId: string;
-    tokenId?: string | null;
-    type: string;
-    runAt: Date;
-    payload: any;
-  }): Promise<void> {
+  async createJob(job: { instanceId: string; tokenId?: string | null; type: string; runAt: Date; payload: any }): Promise<void> {
     const now = new Date().toISOString();
     // Atomic sequence 발급
-    const counterDoc = await this.db
-      .collection<any>('v2_counters')
-      .findOneAndUpdate(
-        { _id: 'v2_engine_jobs' },
-        { $inc: { seq: 1 } },
-        { upsert: true, returnDocument: 'after' },
-      );
+    const counterDoc = await this.db.collection<any>('v2_counters').findOneAndUpdate({ _id: 'v2_engine_jobs' }, { $inc: { seq: 1 } }, { upsert: true, returnDocument: 'after' });
 
     let seq = Date.now();
     if (counterDoc) {
@@ -599,22 +534,16 @@ export class MongodbAdapter
   }> {
     const jobs = this.db.collection<any>('v2_engine_jobs');
     const statusRows = await jobs
-      .aggregate<{ _id: string; count: number }>([
-        { $group: { _id: '$status', count: { $sum: 1 } } },
-      ])
+      .aggregate<{
+        _id: string;
+        count: number;
+      }>([{ $group: { _id: '$status', count: { $sum: 1 } } }])
       .toArray();
-    const byStatus = Object.fromEntries(
-      statusRows.map((row) => [row._id || 'UNKNOWN', row.count]),
-    );
+    const byStatus = Object.fromEntries(statusRows.map((row) => [row._id || 'UNKNOWN', row.count]));
 
-    const oldestQueued = await jobs.findOne(
-      { status: 'QUEUED' },
-      { sort: { run_at: 1, _id: 1 }, projection: { run_at: 1 } },
-    );
+    const oldestQueued = await jobs.findOne({ status: 'QUEUED' }, { sort: { run_at: 1, _id: 1 }, projection: { run_at: 1 } });
     const oldestQueuedAt = oldestQueued?.run_at || null;
-    const oldestQueuedAgeMs = oldestQueuedAt
-      ? Math.max(0, Date.now() - Date.parse(oldestQueuedAt))
-      : null;
+    const oldestQueuedAgeMs = oldestQueuedAt ? Math.max(0, Date.now() - Date.parse(oldestQueuedAt)) : null;
 
     const runningWorkers = await jobs
       .aggregate<{
@@ -635,9 +564,10 @@ export class MongodbAdapter
       .toArray();
 
     const maxAttemptRow = await jobs
-      .aggregate<{ _id: null; max_attempt: number }>([
-        { $group: { _id: null, max_attempt: { $max: '$attempt' } } },
-      ])
+      .aggregate<{
+        _id: null;
+        max_attempt: number;
+      }>([{ $group: { _id: null, max_attempt: { $max: '$attempt' } } }])
       .next();
     const workerHeartbeats = await this.db
       .collection<any>('v2_process_instances')
@@ -680,10 +610,7 @@ export class MongodbAdapter
     };
   }
 
-  async replaceDefinitionSchedules(
-    definitionId: string,
-    jobs: WorkflowScheduleJob[],
-  ): Promise<void> {
+  async replaceDefinitionSchedules(definitionId: string, jobs: WorkflowScheduleJob[]): Promise<void> {
     const now = new Date().toISOString();
     const collection = this.db.collection<any>('v2_schedule_jobs');
     const activeIds = jobs.map((job) => job.id);
@@ -733,11 +660,7 @@ export class MongodbAdapter
     }
   }
 
-  async claimDueSchedules(
-    now: Date,
-    owner: string,
-    limit: number,
-  ): Promise<WorkflowScheduleJob[]> {
+  async claimDueSchedules(now: Date, owner: string, limit: number): Promise<WorkflowScheduleJob[]> {
     const collection = this.db.collection<any>('v2_schedule_jobs');
     const claimed: WorkflowScheduleJob[] = [];
     const nowIso = now.toISOString();
@@ -749,11 +672,7 @@ export class MongodbAdapter
           active: true,
           status: 'WAITING',
           next_run_at: { $lte: nowIso },
-          $or: [
-            { locked_until: null },
-            { locked_until: { $lt: nowIso } },
-            { lock_owner: owner },
-          ],
+          $or: [{ locked_until: null }, { locked_until: { $lt: nowIso } }, { lock_owner: owner }],
         },
         {
           $set: {
@@ -777,11 +696,7 @@ export class MongodbAdapter
     return claimed;
   }
 
-  async markScheduleSuccess(
-    id: string,
-    nextRunAt: Date,
-    instanceId: string,
-  ): Promise<void> {
+  async markScheduleSuccess(id: string, nextRunAt: Date, instanceId: string): Promise<void> {
     const now = new Date().toISOString();
     const current = await this.db.collection<any>('v2_schedule_jobs').findOne({ _id: id });
     await this.db.collection<any>('v2_schedule_jobs').updateOne(
@@ -812,11 +727,7 @@ export class MongodbAdapter
     });
   }
 
-  async markScheduleFailure(
-    id: string,
-    error: string,
-    nextRunAt: Date,
-  ): Promise<void> {
+  async markScheduleFailure(id: string, error: string, nextRunAt: Date): Promise<void> {
     const now = new Date().toISOString();
     const current = await this.db.collection<any>('v2_schedule_jobs').findOne({ _id: id });
     await this.db.collection<any>('v2_schedule_jobs').updateOne(
@@ -845,19 +756,9 @@ export class MongodbAdapter
     });
   }
 
-  async getDefinitionScheduleStatus(
-    definitionId: string,
-    limit = 10,
-  ): Promise<WorkflowScheduleStatus> {
-    const jobDoc = await this.db
-      .collection<any>('v2_schedule_jobs')
-      .findOne({ definition_id: definitionId }, { sort: { updated_at: -1 } });
-    const runs = await this.db
-      .collection<any>('v2_schedule_runs')
-      .find({ definition_id: definitionId })
-      .sort({ created_at: -1 })
-      .limit(limit)
-      .toArray();
+  async getDefinitionScheduleStatus(definitionId: string, limit = 10): Promise<WorkflowScheduleStatus> {
+    const jobDoc = await this.db.collection<any>('v2_schedule_jobs').findOne({ definition_id: definitionId }, { sort: { updated_at: -1 } });
+    const runs = await this.db.collection<any>('v2_schedule_runs').find({ definition_id: definitionId }).sort({ created_at: -1 }).limit(limit).toArray();
 
     return {
       job: jobDoc ? mapScheduleDoc(jobDoc) : null,
@@ -878,14 +779,7 @@ export class MongodbAdapter
   // ==========================================
   // WorkflowTaskRepositoryPort 구현 (V2 태스크 대응)
   // ==========================================
-  async createTask(
-    id: string,
-    instanceId: string,
-    nodeId: string,
-    assignee: string,
-    status: string,
-    payload: any,
-  ): Promise<void> {
+  async createTask(id: string, instanceId: string, nodeId: string, assignee: string, status: string, payload: any): Promise<void> {
     const now = new Date().toISOString();
     await this.db.collection<any>('v2_tasks').insertOne({
       _id: id,
@@ -901,17 +795,11 @@ export class MongodbAdapter
   }
 
   async listTasks(assignee: string): Promise<any[]> {
-    const tasks = await this.db
-      .collection<any>('v2_tasks')
-      .find({ assignee, status: 'OPEN' })
-      .sort({ created_at: -1 })
-      .toArray();
+    const tasks = await this.db.collection<any>('v2_tasks').find({ assignee, status: 'OPEN' }).sort({ created_at: -1 }).toArray();
 
     const result: any[] = [];
     for (const t of tasks) {
-      const inst = await this.db
-        .collection<any>('v2_process_instances')
-        .findOne({ _id: t.instance_id });
+      const inst = await this.db.collection<any>('v2_process_instances').findOne({ _id: t.instance_id });
 
       result.push({
         id: t._id,
@@ -963,10 +851,7 @@ export class MongodbAdapter
       };
     }
     if (query.cursor) {
-      taskMatch.$or = [
-        { created_at: { $lt: query.cursor.created_at } },
-        { created_at: query.cursor.created_at, _id: { $lt: query.cursor.id } },
-      ];
+      taskMatch.$or = [{ created_at: { $lt: query.cursor.created_at } }, { created_at: query.cursor.created_at, _id: { $lt: query.cursor.id } }];
     }
 
     const joinedMatch: Record<string, any> = {};
@@ -974,20 +859,43 @@ export class MongodbAdapter
     if (query.group_ids) joinedMatch.effective_group_id = { $in: query.group_ids };
     if (query.allowed_workflow_ids) joinedMatch.effective_workflow_id = { $in: query.allowed_workflow_ids };
 
-    const rows = await this.db.collection<any>('v2_tasks').aggregate([
-      { $match: taskMatch },
-      { $sort: { created_at: -1, _id: -1 } },
-      { $lookup: { from: 'v2_process_instances', localField: 'instance_id', foreignField: '_id', as: 'instance' } },
-      { $unwind: '$instance' },
-      { $addFields: {
-        effective_group_id: { $ifNull: ['$instance.group_id', '$instance.context.runtime.access.group_id'] },
-        effective_workflow_id: { $ifNull: ['$instance.definition_id', '$instance.process_definition_id'] },
-      } },
-      ...(Object.keys(joinedMatch).length ? [{ $match: joinedMatch }] : []),
-      { $lookup: { from: 'v2_process_definitions', localField: 'effective_workflow_id', foreignField: '_id', as: 'definition' } },
-      { $unwind: { path: '$definition', preserveNullAndEmptyArrays: true } },
-      { $limit: query.limit + 1 },
-    ]).toArray();
+    const rows = await this.db
+      .collection<any>('v2_tasks')
+      .aggregate([
+        { $match: taskMatch },
+        { $sort: { created_at: -1, _id: -1 } },
+        {
+          $lookup: {
+            from: 'v2_process_instances',
+            localField: 'instance_id',
+            foreignField: '_id',
+            as: 'instance',
+          },
+        },
+        { $unwind: '$instance' },
+        {
+          $addFields: {
+            effective_group_id: {
+              $ifNull: ['$instance.group_id', '$instance.context.runtime.access.group_id'],
+            },
+            effective_workflow_id: {
+              $ifNull: ['$instance.definition_id', '$instance.process_definition_id'],
+            },
+          },
+        },
+        ...(Object.keys(joinedMatch).length ? [{ $match: joinedMatch }] : []),
+        {
+          $lookup: {
+            from: 'v2_process_definitions',
+            localField: 'effective_workflow_id',
+            foreignField: '_id',
+            as: 'definition',
+          },
+        },
+        { $unwind: { path: '$definition', preserveNullAndEmptyArrays: true } },
+        { $limit: query.limit + 1 },
+      ])
+      .toArray();
     return {
       items: rows.slice(0, query.limit).map(mapTaskHistoryMongo),
       has_more: rows.length > query.limit,
@@ -995,27 +903,45 @@ export class MongodbAdapter
   }
 
   async getTaskHistoryItem(id: string): Promise<WorkflowTaskHistoryItem | null> {
-    const rows = await this.db.collection<any>('v2_tasks').aggregate([
-      { $match: { _id: id } },
-      { $lookup: { from: 'v2_process_instances', localField: 'instance_id', foreignField: '_id', as: 'instance' } },
-      { $unwind: '$instance' },
-      { $addFields: {
-        effective_group_id: { $ifNull: ['$instance.group_id', '$instance.context.runtime.access.group_id'] },
-        effective_workflow_id: { $ifNull: ['$instance.definition_id', '$instance.process_definition_id'] },
-      } },
-      { $lookup: { from: 'v2_process_definitions', localField: 'effective_workflow_id', foreignField: '_id', as: 'definition' } },
-      { $unwind: { path: '$definition', preserveNullAndEmptyArrays: true } },
-      { $limit: 1 },
-    ]).toArray();
+    const rows = await this.db
+      .collection<any>('v2_tasks')
+      .aggregate([
+        { $match: { _id: id } },
+        {
+          $lookup: {
+            from: 'v2_process_instances',
+            localField: 'instance_id',
+            foreignField: '_id',
+            as: 'instance',
+          },
+        },
+        { $unwind: '$instance' },
+        {
+          $addFields: {
+            effective_group_id: {
+              $ifNull: ['$instance.group_id', '$instance.context.runtime.access.group_id'],
+            },
+            effective_workflow_id: {
+              $ifNull: ['$instance.definition_id', '$instance.process_definition_id'],
+            },
+          },
+        },
+        {
+          $lookup: {
+            from: 'v2_process_definitions',
+            localField: 'effective_workflow_id',
+            foreignField: '_id',
+            as: 'definition',
+          },
+        },
+        { $unwind: { path: '$definition', preserveNullAndEmptyArrays: true } },
+        { $limit: 1 },
+      ])
+      .toArray();
     return rows[0] ? mapTaskHistoryMongo(rows[0]) : null;
   }
 
-  async claimExternalApprovalTasks(
-    owner: string,
-    now: Date,
-    claimUntil: Date,
-    limit: number,
-  ): Promise<ExternalApprovalClaim[]> {
+  async claimExternalApprovalTasks(owner: string, now: Date, claimUntil: Date, limit: number): Promise<ExternalApprovalClaim[]> {
     const collection = this.db.collection<any>('v2_tasks');
     const claims: ExternalApprovalClaim[] = [];
     const nowIso = now.toISOString();
@@ -1027,7 +953,9 @@ export class MongodbAdapter
           $and: [
             {
               $or: [
-                { 'payload.external_approval.attempt_count': { $exists: false } },
+                {
+                  'payload.external_approval.attempt_count': { $exists: false },
+                },
                 { 'payload.external_approval.attempt_count': { $lt: 10 } },
               ],
             },
@@ -1069,11 +997,7 @@ export class MongodbAdapter
     return claims;
   }
 
-  async setExternalApprovalDeliveryToken(
-    taskId: string,
-    owner: string,
-    input: ExternalApprovalDeliveryToken,
-  ): Promise<boolean> {
+  async setExternalApprovalDeliveryToken(taskId: string, owner: string, input: ExternalApprovalDeliveryToken): Promise<boolean> {
     const result = await this.db.collection<any>('v2_tasks').updateOne(
       {
         _id: taskId,
@@ -1102,7 +1026,11 @@ export class MongodbAdapter
     taskId: string,
     owner: string,
     status: 'SENT' | 'FAILED',
-    input: { sent_at?: string | null; retry_at?: string | null; error?: string | null },
+    input: {
+      sent_at?: string | null;
+      retry_at?: string | null;
+      error?: string | null;
+    },
   ): Promise<void> {
     await this.db.collection<any>('v2_tasks').updateOne(
       { _id: taskId, 'payload.external_approval.claim_owner': owner },
@@ -1160,22 +1088,14 @@ export class MongodbAdapter
     return task ? (mapTaskDoc(task) as ExternalApprovalTask) : null;
   }
 
-  async setExternalApprovalOtp(
-    taskId: string,
-    tokenHash: string,
-    input: ExternalApprovalOtp,
-  ): Promise<boolean> {
+  async setExternalApprovalOtp(taskId: string, tokenHash: string, input: ExternalApprovalOtp): Promise<boolean> {
     const now = new Date().toISOString();
     const result = await this.db.collection<any>('v2_tasks').updateOne(
       {
         _id: taskId,
         status: 'OPEN',
         'payload.external_approval.token_hash': tokenHash,
-        $or: [
-          { 'payload.external_approval.otp_next_send_at': { $exists: false } },
-          { 'payload.external_approval.otp_next_send_at': null },
-          { 'payload.external_approval.otp_next_send_at': { $lte: now } },
-        ],
+        $or: [{ 'payload.external_approval.otp_next_send_at': { $exists: false } }, { 'payload.external_approval.otp_next_send_at': null }, { 'payload.external_approval.otp_next_send_at': { $lte: now } }],
       },
       {
         $set: {
@@ -1192,18 +1112,18 @@ export class MongodbAdapter
 
   async incrementExternalApprovalOtpFailures(taskId: string, tokenHash: string): Promise<number> {
     const task = await this.db.collection<any>('v2_tasks').findOneAndUpdate(
-      { _id: taskId, status: 'OPEN', 'payload.external_approval.token_hash': tokenHash },
+      {
+        _id: taskId,
+        status: 'OPEN',
+        'payload.external_approval.token_hash': tokenHash,
+      },
       { $inc: { 'payload.external_approval.otp_attempts': 1 } },
       { returnDocument: 'after' },
     );
     return Number(task?.payload?.external_approval?.otp_attempts) || 0;
   }
 
-  async clearExternalApprovalOtp(
-    taskId: string,
-    tokenHash: string,
-    otpHash: string,
-  ): Promise<void> {
+  async clearExternalApprovalOtp(taskId: string, tokenHash: string, otpHash: string): Promise<void> {
     await this.db.collection<any>('v2_tasks').updateOne(
       {
         _id: taskId,
@@ -1225,7 +1145,10 @@ export class MongodbAdapter
 
   async completeTask(command: CompleteWorkflowTaskCommand): Promise<CompleteWorkflowTaskResult> {
     const session = this.db.client.startSession();
-    let result: CompleteWorkflowTaskResult = { outcome: 'not_found', task: null };
+    let result: CompleteWorkflowTaskResult = {
+      outcome: 'not_found',
+      task: null,
+    };
     try {
       await session.withTransaction(async () => {
         const collection = this.db.collection<any>('v2_tasks');
@@ -1236,7 +1159,10 @@ export class MongodbAdapter
         }
         if (task.status !== 'OPEN') {
           const sameKey = sameTaskCompletion(task.completion, command);
-          result = { outcome: sameKey ? 'idempotent' : 'already_completed', task: mapTaskDoc(task) };
+          result = {
+            outcome: sameKey ? 'idempotent' : 'already_completed',
+            task: mapTaskDoc(task),
+          };
           return;
         }
 
@@ -1247,68 +1173,77 @@ export class MongodbAdapter
           completionFilter['payload.external_approval.token_hash'] = command.external_approval.token_hash;
           completionFilter['payload.external_approval.consumed_at'] = null;
         }
-        const completionSet: Record<string, unknown> = { status: command.status, completion, updated_at: now };
+        const completionSet: Record<string, unknown> = {
+          status: command.status,
+          completion,
+          updated_at: now,
+        };
         if (command.external_approval) {
           completionSet['payload.external_approval.consumed_at'] = now;
           completionSet['payload.external_approval.auth_method'] = command.external_approval.auth_method;
           completionSet['payload.external_approval.completed_email'] = command.external_approval.email;
         }
-        const update = await collection.updateOne(
-          completionFilter,
-          { $set: completionSet },
-          { session },
-        );
+        const update = await collection.updateOne(completionFilter, { $set: completionSet }, { session });
         if (update.modifiedCount !== 1) {
           const current = await collection.findOne({ _id: command.task_id }, { session });
           const sameKey = sameTaskCompletion(current?.completion, command);
-          result = { outcome: sameKey ? 'idempotent' : 'already_completed', task: current ? mapTaskDoc(current) : null };
+          result = {
+            outcome: sameKey ? 'idempotent' : 'already_completed',
+            task: current ? mapTaskDoc(current) : null,
+          };
           return;
         }
 
-        const counterDoc = await this.db.collection<any>('v2_counters').findOneAndUpdate(
-          { _id: 'v2_engine_jobs' },
-          { $inc: { seq: 1 } },
-          { upsert: true, returnDocument: 'after', session },
-        );
+        const counterDoc = await this.db.collection<any>('v2_counters').findOneAndUpdate({ _id: 'v2_engine_jobs' }, { $inc: { seq: 1 } }, { upsert: true, returnDocument: 'after', session });
         const sequence = Number((counterDoc as any)?.seq || Date.now());
-        await this.db.collection<any>('v2_engine_jobs').insertOne({
-          _id: sequence,
-          instance_id: task.instance_id,
-          token_id: task.token_id || null,
-          job_type: 'RESUME',
-          run_at: now,
-          attempt: 0,
-          status: 'QUEUED',
-          payload: {
-            action: command.action,
-            completed_node_id: task.node_id,
-            task_id: command.task_id,
-            result: command.result || null,
-            comment: command.comment || null,
+        await this.db.collection<any>('v2_engine_jobs').insertOne(
+          {
+            _id: sequence,
+            instance_id: task.instance_id,
+            token_id: task.token_id || null,
+            job_type: 'RESUME',
+            run_at: now,
+            attempt: 0,
+            status: 'QUEUED',
+            payload: {
+              action: command.action,
+              completed_node_id: task.node_id,
+              task_id: command.task_id,
+              result: command.result || null,
+              comment: command.comment || null,
+            },
+            created_at: now,
+            updated_at: now,
           },
-          created_at: now,
-          updated_at: now,
-        }, { session });
-        await this.db.collection<any>('v2_process_instances').updateOne(
-          { _id: task.instance_id },
-          { $set: { state: 'RUNNING', status: 'RUNNING', updated_at: now } },
           { session },
         );
-        await this.db.collection<any>('v2_event_outbox').insertOne({
-          instance_id: task.instance_id,
-          token_id: task.token_id || null,
-          node_id: task.node_id,
-          event_type: command.action === 'approve' ? 'TASK_APPROVED' : 'TASK_REJECTED',
-          payload: {
-            task_id: command.task_id,
-            action: command.action,
-            status: command.status,
-            actor_id: command.actor_id,
-            approval_channel: command.external_approval ? 'external_email' : 'pxm_user',
+        await this.db.collection<any>('v2_process_instances').updateOne({ _id: task.instance_id }, { $set: { state: 'RUNNING', status: 'RUNNING', updated_at: now } }, { session });
+        await this.db.collection<any>('v2_event_outbox').insertOne(
+          {
+            instance_id: task.instance_id,
+            token_id: task.token_id || null,
+            node_id: task.node_id,
+            event_type: command.action === 'approve' ? 'TASK_APPROVED' : 'TASK_REJECTED',
+            payload: {
+              task_id: command.task_id,
+              action: command.action,
+              status: command.status,
+              actor_id: command.actor_id,
+              approval_channel: command.external_approval ? 'external_email' : 'pxm_user',
+            },
+            created_at: now,
           },
-          created_at: now,
-        }, { session });
-        result = { outcome: 'completed', task: mapTaskDoc({ ...task, status: command.status, completion, updated_at: now }) };
+          { session },
+        );
+        result = {
+          outcome: 'completed',
+          task: mapTaskDoc({
+            ...task,
+            status: command.status,
+            completion,
+            updated_at: now,
+          }),
+        };
       });
       return result;
     } finally {
@@ -1316,29 +1251,11 @@ export class MongodbAdapter
     }
   }
 
-  async fetchAfter(
-    instanceId: string,
-    afterId: number,
-    limit = 100,
-  ): Promise<any[]> {
+  async fetchAfter(instanceId: string, afterId: number, limit = 100): Promise<any[]> {
     const nodeLabels = await this.loadNodeLabels(instanceId);
-    const [logs, outbox] = await Promise.all([
-      this.db
-        .collection<any>('v2_execution_logs')
-        .find({ instance_id: instanceId })
-        .sort({ created_at: 1 })
-        .toArray(),
-      this.db
-        .collection<any>('v2_event_outbox')
-        .find({ instance_id: instanceId })
-        .sort({ created_at: 1 })
-        .toArray(),
-    ]);
+    const [logs, outbox] = await Promise.all([this.db.collection<any>('v2_execution_logs').find({ instance_id: instanceId }).sort({ created_at: 1 }).toArray(), this.db.collection<any>('v2_event_outbox').find({ instance_id: instanceId }).sort({ created_at: 1 }).toArray()]);
 
-    return [
-      ...logs.map((doc) => ({ ...doc, source: 'execution_log' })),
-      ...outbox.map((doc) => ({ ...doc, source: 'outbox' })),
-    ]
+    return [...logs.map((doc) => ({ ...doc, source: 'execution_log' })), ...outbox.map((doc) => ({ ...doc, source: 'outbox' }))]
       .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
       .map((doc, idx) => {
         const nodeId = doc.node_id || doc.payload?.node_id || null;
@@ -1361,25 +1278,9 @@ export class MongodbAdapter
 
   async fetchTrace(instanceId: string, limit = 200): Promise<any[]> {
     const nodeLabels = await this.loadNodeLabels(instanceId);
-    const [logs, outbox] = await Promise.all([
-      this.db
-        .collection<any>('v2_execution_logs')
-        .find({ instance_id: instanceId })
-        .sort({ created_at: 1 })
-        .limit(limit)
-        .toArray(),
-      this.db
-        .collection<any>('v2_event_outbox')
-        .find({ instance_id: instanceId })
-        .sort({ created_at: 1 })
-        .limit(limit)
-        .toArray(),
-    ]);
+    const [logs, outbox] = await Promise.all([this.db.collection<any>('v2_execution_logs').find({ instance_id: instanceId }).sort({ created_at: 1 }).limit(limit).toArray(), this.db.collection<any>('v2_event_outbox').find({ instance_id: instanceId }).sort({ created_at: 1 }).limit(limit).toArray()]);
 
-    return [
-      ...logs.map((doc) => ({ ...doc, source: 'execution_log' })),
-      ...outbox.map((doc) => ({ ...doc, source: 'outbox' })),
-    ]
+    return [...logs.map((doc) => ({ ...doc, source: 'execution_log' })), ...outbox.map((doc) => ({ ...doc, source: 'outbox' }))]
       .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
       .slice(0, limit)
       .map((doc, idx) => {
@@ -1399,11 +1300,7 @@ export class MongodbAdapter
       });
   }
 
-  async appendEvent(
-    instanceId: string,
-    eventType: string,
-    payload: any,
-  ): Promise<any> {
+  async appendEvent(instanceId: string, eventType: string, payload: any): Promise<any> {
     const now = new Date().toISOString();
     const result = await this.db.collection<any>('v2_event_outbox').insertOne({
       instance_id: instanceId,
@@ -1449,16 +1346,11 @@ export class MongodbAdapter
     return doc ? mapInputPresetDoc(doc) : null;
   }
 
-  async upsertInputPreset(
-    workflowId: string,
-    preset: UpsertWorkflowInputPreset,
-  ): Promise<WorkflowInputPreset> {
+  async upsertInputPreset(workflowId: string, preset: UpsertWorkflowInputPreset): Promise<WorkflowInputPreset> {
     await this.ensureInputPresetIndexes();
     const now = new Date().toISOString();
     const alias = preset.alias || slugifyPresetAlias(preset.name);
-    const filter = preset.id
-      ? { _id: preset.id, workflow_id: workflowId }
-      : { workflow_id: workflowId, alias };
+    const filter = preset.id ? { _id: preset.id, workflow_id: workflowId } : { workflow_id: workflowId, alias };
     const id = preset.id || crypto.randomUUID();
 
     await this.db.collection<any>('workflow_input_presets').updateOne(
@@ -1486,20 +1378,13 @@ export class MongodbAdapter
       { upsert: true },
     );
 
-    const saved = await this.db.collection<any>('workflow_input_presets').findOne(
-      preset.id ? { _id: preset.id, workflow_id: workflowId } : { workflow_id: workflowId, alias },
-    );
+    const saved = await this.db.collection<any>('workflow_input_presets').findOne(preset.id ? { _id: preset.id, workflow_id: workflowId } : { workflow_id: workflowId, alias });
     return mapInputPresetDoc(saved);
   }
 
   async deleteInputPreset(workflowId: string, presetId: string): Promise<boolean> {
     await this.ensureInputPresetIndexes();
-    const result = await this.db
-      .collection<any>('workflow_input_presets')
-      .updateOne(
-        { _id: presetId, workflow_id: workflowId },
-        { $set: { enabled: false, updated_at: new Date().toISOString() } },
-      );
+    const result = await this.db.collection<any>('workflow_input_presets').updateOne({ _id: presetId, workflow_id: workflowId }, { $set: { enabled: false, updated_at: new Date().toISOString() } });
     return result.matchedCount > 0;
   }
 
@@ -1635,17 +1520,20 @@ export class MongodbAdapter
 
   async getUserPasswordHash(id: string): Promise<string | null> {
     await this.ensureAuthzIndexes();
-    const doc = await this.db.collection<any>('pxm_users').findOne(
-      { _id: id },
-      { projection: { password_hash: 1 } },
-    );
+    const doc = await this.db.collection<any>('pxm_users').findOne({ _id: id }, { projection: { password_hash: 1 } });
     return doc?.password_hash || null;
   }
 
   async updateUserPasswordHash(id: string, passwordHash: string, actor?: string | null): Promise<boolean> {
     const result = await this.db.collection<any>('pxm_users').updateOne(
       { _id: id, status: 'active' },
-      { $set: { password_hash: passwordHash, updated_by: actor || id, updated_at: new Date().toISOString() } },
+      {
+        $set: {
+          password_hash: passwordHash,
+          updated_by: actor || id,
+          updated_at: new Date().toISOString(),
+        },
+      },
     );
     return result.matchedCount > 0;
   }
@@ -1653,37 +1541,69 @@ export class MongodbAdapter
   async updateUserProfile(id: string, displayName: string, email?: string | null): Promise<PxmUser | null> {
     const result = await this.db.collection<any>('pxm_users').findOneAndUpdate(
       { _id: id, status: 'active' },
-      { $set: { display_name: displayName, email: email || null, updated_by: id, updated_at: new Date().toISOString() } },
+      {
+        $set: {
+          display_name: displayName,
+          email: email || null,
+          updated_by: id,
+          updated_at: new Date().toISOString(),
+        },
+      },
       { returnDocument: 'after' },
     );
     return result ? mapUserDoc(result) : null;
   }
 
   async createSession(session: CreatePxmSession): Promise<PxmSession> {
-    await this.ensureAuthzIndexes(); const now = new Date().toISOString();
-    const doc = { _id: session.id, ...session, created_at: now, last_seen_at: now, revoked_at: null, revoke_reason: null };
-    await this.db.collection<any>('pxm_sessions').insertOne(doc); return mapSessionDoc(doc);
+    await this.ensureAuthzIndexes();
+    const now = new Date().toISOString();
+    const doc = {
+      _id: session.id,
+      ...session,
+      created_at: now,
+      last_seen_at: now,
+      revoked_at: null,
+      revoke_reason: null,
+    };
+    await this.db.collection<any>('pxm_sessions').insertOne(doc);
+    return mapSessionDoc(doc);
   }
   async findSessionByTokenHash(tokenHash: string): Promise<PxmSession | null> {
-    await this.ensureAuthzIndexes(); const doc = await this.db.collection<any>('pxm_sessions').findOne({ token_hash: tokenHash });
+    await this.ensureAuthzIndexes();
+    const doc = await this.db.collection<any>('pxm_sessions').findOne({ token_hash: tokenHash });
     return doc ? mapSessionDoc(doc) : null;
   }
   async touchSession(id: string, lastSeenAt: string, idleExpiresAt: string): Promise<void> {
     await this.db.collection<any>('pxm_sessions').updateOne({ _id: id, revoked_at: null }, { $set: { last_seen_at: lastSeenAt, idle_expires_at: idleExpiresAt } });
   }
   async revokeSession(id: string, reason: string): Promise<boolean> {
-    const result = await this.db.collection<any>('pxm_sessions').updateOne({ _id: id, revoked_at: null }, { $set: { revoked_at: new Date().toISOString(), revoke_reason: reason } }); return result.modifiedCount > 0;
+    const result = await this.db.collection<any>('pxm_sessions').updateOne(
+      { _id: id, revoked_at: null },
+      {
+        $set: { revoked_at: new Date().toISOString(), revoke_reason: reason },
+      },
+    );
+    return result.modifiedCount > 0;
   }
   async revokeUserSessions(userId: string, reason: string, exceptId?: string): Promise<number> {
-    const filter: any = { user_id: userId, revoked_at: null }; if (exceptId) filter._id = { $ne: exceptId };
-    const result = await this.db.collection<any>('pxm_sessions').updateMany(filter, { $set: { revoked_at: new Date().toISOString(), revoke_reason: reason } }); return result.modifiedCount;
+    const filter: any = { user_id: userId, revoked_at: null };
+    if (exceptId) filter._id = { $ne: exceptId };
+    const result = await this.db.collection<any>('pxm_sessions').updateMany(filter, {
+      $set: { revoked_at: new Date().toISOString(), revoke_reason: reason },
+    });
+    return result.modifiedCount;
   }
   async revokeAllSessions(reason: string, exceptId?: string): Promise<number> {
-    const filter: any = { revoked_at: null }; if (exceptId) filter._id = { $ne: exceptId };
-    const result = await this.db.collection<any>('pxm_sessions').updateMany(filter, { $set: { revoked_at: new Date().toISOString(), revoke_reason: reason } }); return result.modifiedCount;
+    const filter: any = { revoked_at: null };
+    if (exceptId) filter._id = { $ne: exceptId };
+    const result = await this.db.collection<any>('pxm_sessions').updateMany(filter, {
+      $set: { revoked_at: new Date().toISOString(), revoke_reason: reason },
+    });
+    return result.modifiedCount;
   }
   async listUserSessions(userId: string): Promise<PxmSession[]> {
-    await this.ensureAuthzIndexes(); return (await this.db.collection<any>('pxm_sessions').find({ user_id: userId }).sort({ created_at: -1 }).toArray()).map(mapSessionDoc);
+    await this.ensureAuthzIndexes();
+    return (await this.db.collection<any>('pxm_sessions').find({ user_id: userId }).sort({ created_at: -1 }).toArray()).map(mapSessionDoc);
   }
   async getSessionSecurityPolicy(): Promise<PxmSessionSecurityPolicy | null> {
     await this.ensureAuthzIndexes();
@@ -1809,10 +1729,7 @@ export class MongodbAdapter
 
   async touchApiKey(id: string, usedAt: string): Promise<void> {
     await this.ensureAuthzIndexes();
-    await this.db.collection<any>('pxm_api_keys').updateOne(
-      { _id: id },
-      { $set: { last_used_at: usedAt, updated_at: usedAt } },
-    );
+    await this.db.collection<any>('pxm_api_keys').updateOne({ _id: id }, { $set: { last_used_at: usedAt, updated_at: usedAt } });
   }
 
   async appendApiKeyUsageLog(log: AppendPxmApiKeyUsageLog): Promise<PxmApiKeyUsageLog> {
@@ -1898,7 +1815,7 @@ function mapUserDoc(doc: any): PxmUser {
     ? doc.memberships.filter((item: any) => item?.group_id && (item.role === 'group_manager' || item.role === 'user'))
     : groupIds.map((group_id: string) => ({
         group_id,
-        role: doc.role === 'group_manager' ? 'group_manager' as const : 'user' as const,
+        role: doc.role === 'group_manager' ? ('group_manager' as const) : ('user' as const),
       }));
   return {
     id: doc._id,
@@ -1916,11 +1833,30 @@ function mapUserDoc(doc: any): PxmUser {
 }
 
 function mapSessionDoc(doc: any): PxmSession {
-  return { id: doc._id, token_hash: doc.token_hash, csrf_hash: doc.csrf_hash, user_id: doc.user_id, ip: doc.ip || null, user_agent: doc.user_agent || null, created_at: doc.created_at, last_seen_at: doc.last_seen_at, idle_expires_at: doc.idle_expires_at, absolute_expires_at: doc.absolute_expires_at, idle_timeout_minutes: Number(doc.idle_timeout_minutes) || undefined, revoked_at: doc.revoked_at || null, revoke_reason: doc.revoke_reason || null };
+  return {
+    id: doc._id,
+    token_hash: doc.token_hash,
+    csrf_hash: doc.csrf_hash,
+    user_id: doc.user_id,
+    ip: doc.ip || null,
+    user_agent: doc.user_agent || null,
+    created_at: doc.created_at,
+    last_seen_at: doc.last_seen_at,
+    idle_expires_at: doc.idle_expires_at,
+    absolute_expires_at: doc.absolute_expires_at,
+    idle_timeout_minutes: Number(doc.idle_timeout_minutes) || undefined,
+    revoked_at: doc.revoked_at || null,
+    revoke_reason: doc.revoke_reason || null,
+  };
 }
 
 function mapSessionSecurityPolicyDoc(doc: any): PxmSessionSecurityPolicy {
-  return { idle_timeout_minutes: Number(doc.idle_timeout_minutes), absolute_timeout_hours: Number(doc.absolute_timeout_hours), updated_by: doc.updated_by || null, updated_at: doc.updated_at };
+  return {
+    idle_timeout_minutes: Number(doc.idle_timeout_minutes),
+    absolute_timeout_hours: Number(doc.absolute_timeout_hours),
+    updated_by: doc.updated_by || null,
+    updated_at: doc.updated_at,
+  };
 }
 
 function mapServiceAccountDoc(doc: any): PxmServiceAccount {
@@ -2014,16 +1950,7 @@ function normalizeAccess(ctx: any, access?: WorkflowInstanceAccess): WorkflowIns
     ...existing,
     ...(access || {}),
   };
-  if (
-    !merged.workspace_id &&
-    !merged.group_id &&
-    !merged.requester_id &&
-    !merged.client_id &&
-    !merged.approver_ids &&
-    !merged.caller &&
-    !merged.business_actor &&
-    !merged.workflow_version_id
-  ) {
+  if (!merged.workspace_id && !merged.group_id && !merged.requester_id && !merged.client_id && !merged.approver_ids && !merged.caller && !merged.business_actor && !merged.workflow_version_id) {
     return null;
   }
   return {
@@ -2061,7 +1988,10 @@ function buildMongoHistoryFilter(actor?: WorkflowHistoryActor): Record<string, a
     or.push({ workspace_id: { $in: workspaceIds } });
     or.push({ 'context.runtime.access.workspace_id': { $in: workspaceIds } });
     if (workspaceIds.includes('default')) {
-      or.push({ workspace_id: { $exists: false }, 'context.runtime.access.workspace_id': { $exists: false } });
+      or.push({
+        workspace_id: { $exists: false },
+        'context.runtime.access.workspace_id': { $exists: false },
+      });
     }
   }
 
@@ -2099,11 +2029,7 @@ function buildMongoHistoryFilter(actor?: WorkflowHistoryActor): Record<string, a
     }
   }
 
-  if (
-    (actor.roles.includes('user') || actor.actor_type === 'service_account') &&
-    (actor.scopes || []).includes('workflow:read') &&
-    actor.allowed_workflow_ids.length > 0
-  ) {
+  if ((actor.roles.includes('user') || actor.actor_type === 'service_account') && (actor.scopes || []).includes('workflow:read') && actor.allowed_workflow_ids.length > 0) {
     or.push({ process_definition_id: { $in: actor.allowed_workflow_ids } });
   }
 
@@ -2133,12 +2059,7 @@ function taskCompletion(command: CompleteWorkflowTaskCommand, completedAt: strin
 }
 
 function sameTaskCompletion(completion: any, command: CompleteWorkflowTaskCommand): boolean {
-  return Boolean(
-    command.idempotency_key &&
-    completion?.idempotency_key === command.idempotency_key &&
-    completion?.actor_id === command.actor_id &&
-    completion?.action === command.action,
-  );
+  return Boolean(command.idempotency_key && completion?.idempotency_key === command.idempotency_key && completion?.actor_id === command.actor_id && completion?.action === command.action);
 }
 
 function mapTaskDoc(task: any) {
@@ -2165,11 +2086,7 @@ function mapTaskHistoryMongo(task: any): WorkflowTaskHistoryItem {
     instance_id: String(task.instance_id),
     workflow_id: task.effective_workflow_id ? String(task.effective_workflow_id) : null,
     workflow_name: task.instance?.context?.template_name || task.definition?.name || null,
-    workflow_version:
-      task.instance?.context?.runtime?.snapshot?.workflow?.version ||
-      task.instance?.workflow_version_id ||
-      task.definition?.version ||
-      null,
+    workflow_version: task.instance?.context?.runtime?.snapshot?.workflow?.version || task.instance?.workflow_version_id || task.definition?.version || null,
     group_id: task.effective_group_id ? String(task.effective_group_id) : null,
     node_id: String(task.node_id),
     node_label: node?.config?.label || node?.config?.ui_node?.data?.label || task.node_id || null,
@@ -2179,8 +2096,7 @@ function mapTaskHistoryMongo(task: any): WorkflowTaskHistoryItem {
     action: completion?.action === 'approve' || completion?.action === 'reject' ? completion.action : null,
     comment: typeof completion?.comment === 'string' ? completion.comment : null,
     result: completion?.result && typeof completion.result === 'object' ? completion.result : null,
-    authentication_method:
-      external?.auth_method || (completion?.api_key_id ? 'api_key' : completion ? 'pxm_session' : null),
+    authentication_method: external?.auth_method || (completion?.api_key_id ? 'api_key' : completion ? 'pxm_session' : null),
     delivery_status: external?.delivery_status || null,
     delivery_attempt_count: Number(external?.attempt_count || 0),
     delivery_last_error: typeof external?.last_error === 'string' ? external.last_error : null,

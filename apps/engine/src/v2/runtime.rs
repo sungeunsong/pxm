@@ -902,6 +902,22 @@ fn workflow_call_depth(context: &Value) -> i64 {
         .unwrap_or(0)
 }
 
+fn instance_workflow_version(context: &Value) -> Option<i32> {
+    context
+        .pointer("/runtime/snapshot/workflow/version")
+        .and_then(Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .or_else(|| {
+            context
+                .pointer("/runtime/access/workflow_version_id")
+                .and_then(Value::as_str)
+                .and_then(|value| value.rsplit(':').next())
+                .and_then(|value| value.parse::<i32>().ok())
+                .filter(|value| *value > 0)
+        })
+}
+
 fn max_workflow_call_depth() -> i64 {
     std::env::var("WORKFLOW_CALL_MAX_DEPTH")
         .ok()
@@ -1427,7 +1443,10 @@ pub async fn run_v2_once(ctx: &V2RuntimeContext, worker_id: &str) -> Result<bool
 
         let (nodes, edges) = ctx
             .def_repo
-            .load_definition_graph(instance.process_definition_id)
+            .load_definition_graph(
+                instance.process_definition_id,
+                instance_workflow_version(&instance.context),
+            )
             .await?;
         let mut active_tokens = Vec::new();
 
@@ -2333,9 +2352,9 @@ async fn execute_token_flow(
 
                     let child_form_data = resolve_workflow_call_input(node, &instance.context)?;
                     let call_mode = workflow_call_mode(node);
-                    let (child_nodes, _) = ctx
+                    let (child_nodes, _, child_workflow_version) = ctx
                         .def_repo
-                        .load_definition_graph(target_definition_id)
+                        .load_active_definition_graph(target_definition_id)
                         .await?;
                     let child_start_node = child_nodes
                         .iter()
@@ -2352,7 +2371,16 @@ async fn execute_token_flow(
                             "parent_token_id": token.id,
                             "parent_node_id": token.node_id,
                             "call_mode": call_mode,
-                            "call_depth": current_depth + 1
+                            "call_depth": current_depth + 1,
+                            "snapshot": {
+                                "workflow": {
+                                    "id": target_definition_id,
+                                    "version": child_workflow_version
+                                }
+                            },
+                            "access": {
+                                "workflow_version_id": format!("{}:{}", target_definition_id, child_workflow_version)
+                            }
                         },
                         "data": {
                             "formData": child_form_data,

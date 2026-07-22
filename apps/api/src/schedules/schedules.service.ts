@@ -1,11 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import {
-  WorkflowInstanceRepositoryPort,
-  WorkflowRepositoryPort,
-  WorkflowScheduleJob,
-  WorkflowScheduleRepositoryPort,
-} from '../db/ports/db.ports';
+import { WorkflowInstanceRepositoryPort, WorkflowRepositoryPort, WorkflowScheduleJob, WorkflowScheduleRepositoryPort } from '../db/ports/db.ports';
 
 @Injectable()
 export class SchedulesService implements OnModuleInit, OnModuleDestroy {
@@ -25,9 +20,12 @@ export class SchedulesService implements OnModuleInit, OnModuleDestroy {
     if (!enabled) return;
 
     const pollMs = positiveInt(process.env.SCHEDULE_START_POLL_MS, 1000);
-    this.timer = setInterval(() => {
-      void this.tick();
-    }, Math.max(1000, pollMs));
+    this.timer = setInterval(
+      () => {
+        void this.tick();
+      },
+      Math.max(1000, pollMs),
+    );
     this.timer.unref?.();
     void this.tick();
   }
@@ -38,11 +36,7 @@ export class SchedulesService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async syncDefinitionSchedules(
-    definitionId: string,
-    definitionName: string,
-    nodes: any[],
-  ): Promise<void> {
+  async syncDefinitionSchedules(definitionId: string, definitionName: string, nodes: any[]): Promise<void> {
     const now = new Date();
     const jobs = (nodes || [])
       .filter((node) => node?.data?.nodeType === 'start')
@@ -64,9 +58,7 @@ export class SchedulesService implements OnModuleInit, OnModuleDestroy {
 
       await runWithConcurrency(jobs, concurrency, (job) => this.runSchedule(job));
     } catch (error) {
-      this.logger.error(
-        `Schedule tick failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      this.logger.error(`Schedule tick failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       this.running = false;
     }
@@ -76,14 +68,12 @@ export class SchedulesService implements OnModuleInit, OnModuleDestroy {
     const nextRunAt = computeNextRunAt(job, new Date());
 
     try {
-      const definition = await this.workflowRepo.getDefinition(job.definitionId);
+      const definition = await this.workflowRepo.getPublishedDefinition(job.definitionId);
       if (!definition) {
-        throw new Error(`Workflow definition not found: ${job.definitionId}`);
+        throw new Error(`Workflow is not published or is disabled: ${job.definitionId}`);
       }
 
-      const startNode =
-        (definition.nodes || []).find((node: any) => node.id === job.startNodeId) ||
-        (definition.nodes || []).find((node: any) => node?.data?.nodeType === 'start');
+      const startNode = (definition.nodes || []).find((node: any) => node.id === job.startNodeId) || (definition.nodes || []).find((node: any) => node?.data?.nodeType === 'start');
       if (!startNode) {
         throw new Error(`Start node not found: ${job.startNodeId}`);
       }
@@ -97,8 +87,17 @@ export class SchedulesService implements OnModuleInit, OnModuleDestroy {
           template_id: definition.id,
           template_name: definition.name,
           snapshot: {
-            workflow: { id: definition.id, name: definition.name, version: definition.version || 1 },
-            group: definition.group_id ? { id: definition.group_id, name: definition.group || definition.group_id } : null,
+            workflow: {
+              id: definition.id,
+              name: definition.name,
+              version: definition.version || 1,
+            },
+            group: definition.group_id
+              ? {
+                  id: definition.group_id,
+                  name: definition.group || definition.group_id,
+                }
+              : null,
             caller: { type: 'service_account', id: 'scheduler' },
             api_key: null,
           },
@@ -120,7 +119,11 @@ export class SchedulesService implements OnModuleInit, OnModuleDestroy {
         workspace_id: 'default',
         group_id: definition.group_id || null,
         workflow_version_id: definition.version ? `${definition.id}:${definition.version}` : null,
-        caller: { type: 'service_account', id: 'scheduler', api_key_id: null },
+        caller: {
+          type: 'service_account',
+          id: 'scheduler',
+          api_key_id: null,
+        },
       });
       await this.instanceRepo.createJob({
         instanceId,
@@ -142,20 +145,12 @@ export class SchedulesService implements OnModuleInit, OnModuleDestroy {
       await this.scheduleRepo.markScheduleSuccess(job.id, nextRunAt, instanceId);
       this.logger.log(`Scheduled workflow started: schedule=${job.id} instance=${instanceId}`);
     } catch (error) {
-      await this.scheduleRepo.markScheduleFailure(
-        job.id,
-        error instanceof Error ? error.message : String(error),
-        nextRunAt,
-      );
+      await this.scheduleRepo.markScheduleFailure(job.id, error instanceof Error ? error.message : String(error), nextRunAt);
     }
   }
 }
 
-async function runWithConcurrency<T>(
-  items: T[],
-  concurrency: number,
-  worker: (item: T) => Promise<void>,
-): Promise<void> {
+async function runWithConcurrency<T>(items: T[], concurrency: number, worker: (item: T) => Promise<void>): Promise<void> {
   let nextIndex = 0;
   const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
     while (nextIndex < items.length) {
@@ -173,12 +168,7 @@ function positiveInt(value: unknown, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function buildScheduleJob(
-  definitionId: string,
-  definitionName: string,
-  node: any,
-  now: Date,
-): WorkflowScheduleJob | null {
+function buildScheduleJob(definitionId: string, definitionName: string, node: any, now: Date): WorkflowScheduleJob | null {
   const data = node.data || {};
   const triggerType = data.triggerType || data.startTriggerType || 'manual';
   if (triggerType !== 'schedule') {
@@ -205,10 +195,7 @@ function buildScheduleJob(
     intervalSeconds: scheduleType === 'interval' ? intervalSeconds : null,
     cronExpression: scheduleType === 'cron' ? cronExpression : null,
     input: isPlainObject(data.scheduleInput) ? data.scheduleInput : {},
-    nextRunAt:
-      scheduleType === 'interval'
-        ? new Date(now.getTime() + intervalSeconds! * 1000)
-        : nextCronRun(cronExpression, now),
+    nextRunAt: scheduleType === 'interval' ? new Date(now.getTime() + intervalSeconds! * 1000) : nextCronRun(cronExpression, now),
     active: data.scheduleEnabled === true,
   };
 
@@ -248,13 +235,7 @@ function nextCronRun(expression: string, from: Date): Date {
 }
 
 function matchesCron(fields: string[], date: Date): boolean {
-  return (
-    matchesCronField(fields[0], date.getMinutes(), 0, 59) &&
-    matchesCronField(fields[1], date.getHours(), 0, 23) &&
-    matchesCronField(fields[2], date.getDate(), 1, 31) &&
-    matchesCronField(fields[3], date.getMonth() + 1, 1, 12) &&
-    matchesCronField(fields[4], date.getDay(), 0, 7)
-  );
+  return matchesCronField(fields[0], date.getMinutes(), 0, 59) && matchesCronField(fields[1], date.getHours(), 0, 23) && matchesCronField(fields[2], date.getDate(), 1, 31) && matchesCronField(fields[3], date.getMonth() + 1, 1, 12) && matchesCronField(fields[4], date.getDay(), 0, 7);
 }
 
 function matchesCronField(field: string, value: number, min: number, max: number): boolean {

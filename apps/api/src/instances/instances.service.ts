@@ -1,13 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateInstanceDto } from './dto/create-instance.dto';
 import { randomUUID } from 'crypto';
-import {
-  OutboxRepositoryPort,
-  WorkflowHistoryActor,
-  WorkflowInstanceAccess,
-  WorkflowInstanceRepositoryPort,
-  WorkflowRepositoryPort,
-} from '../db/ports/db.ports';
+import { OutboxRepositoryPort, WorkflowHistoryActor, WorkflowInstanceAccess, WorkflowInstanceRepositoryPort, WorkflowRepositoryPort } from '../db/ports/db.ports';
 
 @Injectable()
 export class InstancesService {
@@ -19,24 +13,50 @@ export class InstancesService {
 
   async createInstance(dto: CreateInstanceDto, access?: WorkflowInstanceAccess) {
     const instanceId = randomUUID();
-    const definitionId = dto.template_id ?? randomUUID();
-    const ctx = withAccess(dto.ctx ?? {}, access);
+    const definitionId = dto.template_id;
+    if (!definitionId) throw new BadRequestException('template_id is required');
+    const definition = await this.workflowRepo.getPublishedDefinition(definitionId);
+    if (!definition) throw new BadRequestException('Workflow is not published or is disabled');
+    const startNode = (definition.nodes || []).find((node: any) => node?.data?.nodeType === 'start');
+    if (!startNode) throw new BadRequestException('Start node not found');
+    const versionAccess = {
+      ...(access || {}),
+      group_id: definition.group_id || access?.group_id || null,
+      workflow_version_id: `${definition.id}:${definition.version || 1}`,
+    };
+    const input = dto.ctx ?? {};
+    const ctx = withAccess(
+      {
+        ...input,
+        runtime: {
+          ...(input.runtime || {}),
+          cursor: startNode.id,
+          nodes: definition.nodes || [],
+          edges: definition.edges || [],
+          template_id: definition.id,
+          template_name: definition.name,
+          snapshot: {
+            ...(input.runtime?.snapshot || {}),
+            workflow: {
+              id: definition.id,
+              name: definition.name,
+              version: definition.version || 1,
+            },
+          },
+        },
+      },
+      versionAccess,
+    );
 
     // 1) V2 process instance 생성
-    await this.instanceRepo.createInstance(
-      instanceId,
-      definitionId,
-      'CREATED',
-      ctx,
-      access,
-    );
+    await this.instanceRepo.createInstance(instanceId, definitionId, 'CREATED', ctx, versionAccess);
 
     // 2) V2 engine job START 생성
     await this.instanceRepo.createJob({
       instanceId,
       type: 'START',
       runAt: new Date(),
-      payload: { reason: 'api_create' },
+      payload: { node_id: startNode.id, reason: 'api_create' },
     });
 
     // 3) V2 시작 토큰 생성 (Explicit Token 기반 구동용)
@@ -44,8 +64,8 @@ export class InstancesService {
     await this.instanceRepo.createToken({
       id: tokenId,
       instanceId,
-      nodeId: 'start', // 기본 시작 지점
-      status: 'READY',
+      nodeId: startNode.id,
+      status: 'ACTIVE',
     });
 
     return { instance_id: instanceId };
@@ -79,7 +99,11 @@ export class InstancesService {
 
   async getTerminalOutputs(
     id: string,
-    options: { nodeId?: string; after?: number; actor?: WorkflowHistoryActor } = {},
+    options: {
+      nodeId?: string;
+      after?: number;
+      actor?: WorkflowHistoryActor;
+    } = {},
   ) {
     const instance = await this.getReadableInstance(id, options.actor);
     const context = instance.context ?? instance.ctx ?? {};
@@ -101,23 +125,12 @@ export class InstancesService {
     };
   }
 
-  async scrubTerminalOutputs(options: {
-    instanceId?: string;
-    olderThanDays?: number;
-    dryRun?: boolean;
-    limit?: number;
-    actor?: WorkflowHistoryActor;
-  }) {
-    const olderThanDays = clampRetentionDays(
-      options.olderThanDays,
-      Number(process.env.TERMINAL_OUTPUT_RETENTION_DAYS ?? 7),
-    );
+  async scrubTerminalOutputs(options: { instanceId?: string; olderThanDays?: number; dryRun?: boolean; limit?: number; actor?: WorkflowHistoryActor }) {
+    const olderThanDays = clampRetentionDays(options.olderThanDays, Number(process.env.TERMINAL_OUTPUT_RETENTION_DAYS ?? 7));
     const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
     const dryRun = options.dryRun === true;
     const limit = Math.min(Math.max(Number(options.limit || 50), 1), 500);
-    const candidates = options.instanceId
-      ? [await this.getReadableInstance(options.instanceId, options.actor)]
-      : (await this.findAll(options.actor)).slice(0, limit);
+    const candidates = options.instanceId ? [await this.getReadableInstance(options.instanceId, options.actor)] : (await this.findAll(options.actor)).slice(0, limit);
 
     const results: Array<{
       instance_id: string;
@@ -215,18 +228,9 @@ export class InstancesService {
     return terminated;
   }
 
-  async previewRetry(
-    id: string,
-    mode: 'full_instance' | 'failed_node' = 'full_instance',
-    actor?: WorkflowHistoryActor,
-  ) {
+  async previewRetry(id: string, mode: 'full_instance' | 'failed_node' = 'full_instance', actor?: WorkflowHistoryActor) {
     const analysis = await this.analyzeRetryTarget(id, mode, actor);
-    const sideEffectWarnings =
-      mode === 'failed_node'
-        ? analysis.targetNode
-          ? buildSideEffectWarnings([analysis.targetNode])
-          : []
-        : buildSideEffectWarnings(analysis.definition.nodes || []);
+    const sideEffectWarnings = mode === 'failed_node' ? (analysis.targetNode ? buildSideEffectWarnings([analysis.targetNode]) : []) : buildSideEffectWarnings(analysis.definition.nodes || []);
     return {
       instance_id: id,
       template_id: analysis.definition.id,
@@ -255,20 +259,14 @@ export class InstancesService {
       context_summary: {
         data_keys: Object.keys(analysis.context.data || {}),
         output_keys: Object.keys(analysis.context.data?.outputs || {}),
-        retry_history_count: Array.isArray(analysis.context.runtime?.retry_history)
-          ? analysis.context.runtime.retry_history.length
-          : 0,
+        retry_history_count: Array.isArray(analysis.context.runtime?.retry_history) ? analysis.context.runtime.retry_history.length : 0,
       },
       side_effect_warnings: sideEffectWarnings,
       requires_confirmation: sideEffectWarnings.some((warning) => warning.severity === 'high'),
     };
   }
 
-  async retryInstance(
-    id: string,
-    mode: 'full_instance' | 'failed_node' = 'full_instance',
-    actor?: WorkflowHistoryActor,
-  ) {
+  async retryInstance(id: string, mode: 'full_instance' | 'failed_node' = 'full_instance', actor?: WorkflowHistoryActor) {
     if (mode === 'failed_node') {
       return this.retryFailedNode(id, actor);
     }
@@ -288,7 +286,9 @@ export class InstancesService {
       throw new BadRequestException('Source instance has no workflow definition');
     }
 
-    const definition = await this.workflowRepo.getDefinition(definitionId);
+    const sourceContext = source.context ?? source.ctx ?? {};
+    const sourceVersion = workflowVersionFromContext(sourceContext);
+    const definition = sourceVersion ? await this.workflowRepo.getDefinitionVersion(definitionId, sourceVersion) : await this.workflowRepo.getDefinition(definitionId);
     if (!definition) {
       throw new NotFoundException('Workflow definition not found');
     }
@@ -298,7 +298,6 @@ export class InstancesService {
       throw new BadRequestException('Start node not found in workflow definition');
     }
 
-    const sourceContext = source.context ?? source.ctx ?? {};
     const formData = sourceContext.data?.formData || {};
     const instanceId = randomUUID();
     const ctx = {
@@ -420,11 +419,7 @@ export class InstancesService {
     };
   }
 
-  private async analyzeRetryTarget(
-    id: string,
-    mode: 'full_instance' | 'failed_node',
-    actor?: WorkflowHistoryActor,
-  ) {
+  private async analyzeRetryTarget(id: string, mode: 'full_instance' | 'failed_node', actor?: WorkflowHistoryActor) {
     const instance = await this.getReadableInstance(id, actor);
 
     const status = String(instance.state ?? instance.status ?? '').toUpperCase();
@@ -433,16 +428,15 @@ export class InstancesService {
       throw new BadRequestException('Instance has no workflow definition');
     }
 
-    const definition = await this.workflowRepo.getDefinition(definitionId);
+    const context = instance.context ?? instance.ctx ?? {};
+    const sourceVersion = workflowVersionFromContext(context);
+    const definition = sourceVersion ? await this.workflowRepo.getDefinitionVersion(definitionId, sourceVersion) : await this.workflowRepo.getDefinition(definitionId);
     if (!definition) {
       throw new NotFoundException('Workflow definition not found');
     }
 
-    const context = instance.context ?? instance.ctx ?? {};
     const trace = await this.outboxRepo.fetchTrace(id, 500);
-    const failedEvent = [...trace]
-      .reverse()
-      .find((event: any) => ['INSTANCE_FAILED', 'NODE_FAILED'].includes(event.type || event.event_type) && event.node_id);
+    const failedEvent = [...trace].reverse().find((event: any) => ['INSTANCE_FAILED', 'NODE_FAILED'].includes(event.type || event.event_type) && event.node_id);
 
     if (status !== 'FAILED') {
       return {
@@ -498,11 +492,7 @@ export class InstancesService {
       status,
       failedEvent,
       canRetry: Boolean(failedNode && supported),
-      reason: failedNode
-        ? supported
-          ? null
-          : 'Failed-node retry supports service/script/command/workflow_call nodes only'
-        : 'Failed node is not found in workflow definition',
+      reason: failedNode ? (supported ? null : 'Failed-node retry supports service/script/command/workflow_call nodes only') : 'Failed node is not found in workflow definition',
       targetNode: failedNode || null,
       targetNodeType: failedNodeType,
     };
@@ -556,6 +546,19 @@ function accessFromInstance(instance: any): WorkflowInstanceAccess {
   };
 }
 
+function workflowVersionFromContext(context: any): number | null {
+  const snapshotVersion = Number(context?.runtime?.snapshot?.workflow?.version);
+  if (Number.isInteger(snapshotVersion) && snapshotVersion > 0) return snapshotVersion;
+  const versionId = context?.runtime?.access?.workflow_version_id;
+  const parsed = Number.parseInt(
+    String(versionId || '')
+      .split(':')
+      .at(-1) || '',
+    10,
+  );
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 function canReadInstance(instance: any, actor?: WorkflowHistoryActor): boolean {
   if (!actor) {
     return true;
@@ -575,10 +578,7 @@ function canReadInstance(instance: any, actor?: WorkflowHistoryActor): boolean {
   if (roles.has('operator') && actor.workspace_ids.includes(workspaceId)) {
     return true;
   }
-  if (access.group_id && (
-    actor.group_roles?.[access.group_id] === 'group_manager'
-    || (!actor.group_roles && roles.has('group_manager') && actor.group_ids?.includes(access.group_id))
-  )) {
+  if (access.group_id && (actor.group_roles?.[access.group_id] === 'group_manager' || (!actor.group_roles && roles.has('group_manager') && actor.group_ids?.includes(access.group_id)))) {
     return true;
   }
   if (roles.has('workflow_owner') && actor.owned_workflow_ids.includes(definitionId)) {
@@ -591,17 +591,9 @@ function canReadInstance(instance: any, actor?: WorkflowHistoryActor): boolean {
     return true;
   }
   if (roles.has('api_client')) {
-    return Boolean(
-      (actorId && access.client_id === actorId) ||
-        actor.allowed_instance_ids.includes(instanceId) ||
-        actor.allowed_workflow_ids.includes(definitionId),
-    );
+    return Boolean((actorId && access.client_id === actorId) || actor.allowed_instance_ids.includes(instanceId) || actor.allowed_workflow_ids.includes(definitionId));
   }
-  if (
-    (roles.has('user') || actor.actor_type === 'service_account') &&
-    (actor.scopes || []).includes('workflow:read') &&
-    actor.allowed_workflow_ids.includes(definitionId)
-  ) {
+  if ((roles.has('user') || actor.actor_type === 'service_account') && (actor.scopes || []).includes('workflow:read') && actor.allowed_workflow_ids.includes(definitionId)) {
     return true;
   }
 
@@ -624,15 +616,18 @@ function collectCommandNodes(context: any, trace: any[]): Map<string, any> {
     if (!nodeId || !commandId) {
       continue;
     }
-    nodes.set(String(nodeId), nodes.get(String(nodeId)) || {
-      id: String(nodeId),
-      data: {
-        nodeType: 'command',
-        label: event.node_label || String(nodeId),
-        commandId,
-        outputPath: event.payload?.output_path,
+    nodes.set(
+      String(nodeId),
+      nodes.get(String(nodeId)) || {
+        id: String(nodeId),
+        data: {
+          nodeType: 'command',
+          label: event.node_label || String(nodeId),
+          commandId,
+          outputPath: event.payload?.output_path,
+        },
       },
-    });
+    );
   }
 
   return nodes;
@@ -642,34 +637,16 @@ function buildTerminalOutputSnapshot(context: any, trace: any[], node: any) {
   const nodeId = String(node.id || node.node_id);
   const data = node.data || node.config || {};
   const relatedEvents = [...(trace || [])].filter((event) => event.node_id === nodeId || event.payload?.node_id === nodeId);
-  const latestCommandEvent = [...relatedEvents]
-    .reverse()
-    .find((event) => event.payload?.command_id || event.type === 'NODE_COMPLETED' || event.event_type === 'NODE_COMPLETED');
-  const outputPath =
-    latestCommandEvent?.payload?.output_path ||
-    data.outputPath ||
-    data.output_path ||
-    `commandResults.${nodeId}`;
-  const output =
-    getContextValueAtPath(context, outputPath) ||
-    getContextValueAtPath(context, `data.outputs.${outputPath}`);
-  const status = String(latestCommandEvent?.type || latestCommandEvent?.event_type || '').includes('FAILED')
-    ? 'FAILED'
-    : output
-      ? 'COMPLETED'
-      : 'PENDING';
+  const latestCommandEvent = [...relatedEvents].reverse().find((event) => event.payload?.command_id || event.type === 'NODE_COMPLETED' || event.event_type === 'NODE_COMPLETED');
+  const outputPath = latestCommandEvent?.payload?.output_path || data.outputPath || data.output_path || `commandResults.${nodeId}`;
+  const output = getContextValueAtPath(context, outputPath) || getContextValueAtPath(context, `data.outputs.${outputPath}`);
+  const status = String(latestCommandEvent?.type || latestCommandEvent?.event_type || '').includes('FAILED') ? 'FAILED' : output ? 'COMPLETED' : 'PENDING';
 
   return {
     node_id: nodeId,
     node_label: String(data.label || node.label || latestCommandEvent?.node_label || nodeId),
     status,
-    command_id: sanitizeTerminalText(String(
-      output?.command_id ||
-      latestCommandEvent?.payload?.command_id ||
-      data.commandId ||
-      data.command_id ||
-      'command',
-    )),
+    command_id: sanitizeTerminalText(String(output?.command_id || latestCommandEvent?.payload?.command_id || data.commandId || data.command_id || 'command')),
     output_path: outputPath,
     exit_code: output?.exit_code ?? latestCommandEvent?.payload?.exit_code ?? null,
     timed_out: Boolean(output?.timed_out ?? latestCommandEvent?.payload?.timed_out ?? false),
@@ -738,10 +715,7 @@ function sanitizeTerminalObject(value: any): any {
   return String(value);
 }
 
-function scrubContextTerminalOutputs(
-  context: any,
-  options: { scrubbedAt: string; retentionDays: number },
-): { scrubbedOutputs: number; scrubbedBytes: number } {
+function scrubContextTerminalOutputs(context: any, options: { scrubbedAt: string; retentionDays: number }): { scrubbedOutputs: number; scrubbedBytes: number } {
   let scrubbedOutputs = 0;
   let scrubbedBytes = 0;
 
@@ -754,9 +728,7 @@ function scrubContextTerminalOutputs(
       return;
     }
 
-    const hasCommandShape =
-      typeof value.command_id === 'string' &&
-      (typeof value.stdout === 'string' || typeof value.stderr === 'string');
+    const hasCommandShape = typeof value.command_id === 'string' && (typeof value.stdout === 'string' || typeof value.stderr === 'string');
     if (hasCommandShape) {
       scrubbedBytes += Buffer.byteLength(value.stdout || '', 'utf8');
       scrubbedBytes += Buffer.byteLength(value.stderr || '', 'utf8');
@@ -803,9 +775,7 @@ function parseDate(value: any): Date | null {
 }
 
 function buildSideEffectWarnings(nodes: any[]) {
-  return nodes
-    .map((node) => detectSideEffect(node))
-    .filter((warning): warning is NonNullable<ReturnType<typeof detectSideEffect>> => Boolean(warning));
+  return nodes.map((node) => detectSideEffect(node)).filter((warning): warning is NonNullable<ReturnType<typeof detectSideEffect>> => Boolean(warning));
 }
 
 function detectSideEffect(node: any): {
@@ -872,9 +842,7 @@ function detectSideEffect(node: any): {
       node_label: label,
       node_type: nodeType,
       severity: highRiskMethods.includes(method) ? 'high' : 'low',
-      message: highRiskMethods.includes(method)
-        ? `HTTP ${method} 요청은 외부 시스템에 변경을 다시 보낼 수 있습니다.`
-        : `HTTP ${method} 요청은 외부 시스템을 다시 호출합니다.`,
+      message: highRiskMethods.includes(method) ? `HTTP ${method} 요청은 외부 시스템에 변경을 다시 보낼 수 있습니다.` : `HTTP ${method} 요청은 외부 시스템을 다시 호출합니다.`,
     };
   }
 
@@ -886,9 +854,7 @@ function detectSideEffect(node: any): {
       node_label: label,
       node_type: nodeType,
       severity: highRiskOperations.includes(operation) ? 'high' : 'low',
-      message: highRiskOperations.includes(operation)
-        ? `DB ${operation} 작업은 데이터를 다시 변경할 수 있습니다.`
-        : 'DB 노드는 외부 저장소를 다시 조회하거나 사용할 수 있습니다.',
+      message: highRiskOperations.includes(operation) ? `DB ${operation} 작업은 데이터를 다시 변경할 수 있습니다.` : 'DB 노드는 외부 저장소를 다시 조회하거나 사용할 수 있습니다.',
     };
   }
 
