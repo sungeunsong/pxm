@@ -17,6 +17,7 @@ import {
   PanelLeftOpen,
   Braces,
   LockKeyhole,
+  Stethoscope,
 } from 'lucide-react';
 import { DashboardPage } from './dashboard/DashboardPage';
 import { FlowDesigner } from './flow-designer/FlowDesigner';
@@ -37,6 +38,7 @@ import { SecurityPolicyPage } from './security/SecurityPolicyPage';
 import { sessionApi, type SessionUser } from './api/session';
 import { AUTH_REQUIRED_EVENT } from './api/fetch-security';
 import { approvalSampleUiEnabled } from './config/features';
+import { RuntimeIntegrityPage } from './runtime-integrity/RuntimeIntegrityPage';
 import './App.css';
 
 type ActiveTab =
@@ -51,7 +53,8 @@ type ActiveTab =
   | 'plugins'
   | 'pluginRegistry'
   | 'access'
-  | 'security';
+  | 'security'
+  | 'integrity';
 
 const DEFAULT_TAB: ActiveTab = 'dashboard';
 
@@ -68,6 +71,7 @@ const ROUTE_TO_TAB: Record<string, ActiveTab> = {
   'plugin-registry': 'pluginRegistry',
   access: 'access',
   security: 'security',
+  integrity: 'integrity',
 };
 
 const TAB_TO_ROUTE: Record<ActiveTab, string> = {
@@ -83,6 +87,7 @@ const TAB_TO_ROUTE: Record<ActiveTab, string> = {
   pluginRegistry: 'plugin-registry',
   access: 'access',
   security: 'security',
+  integrity: 'integrity',
 };
 
 const readTabFromHash = (): ActiveTab | null => {
@@ -183,6 +188,15 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
           >
             <LockKeyhole size={16} />
             <span>제품 설정</span>
+          </button>}
+
+          {user.role === 'admin' && <button
+            title="실행 이상 점검"
+            className={`sidebar-menu-item ${activeTab === 'integrity' ? 'active' : ''}`}
+            onClick={() => setActiveTab('integrity')}
+          >
+            <Stethoscope size={16} />
+            <span>실행 이상 점검</span>
           </button>}
           
           {user.role !== 'user' && <button
@@ -318,6 +332,7 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
               {activeTab === 'commands' && "Command Registry 관리"}
               {activeTab === 'plugins' && "Plugin Control 관리"}
               {activeTab === 'pluginRegistry' && "Plugin Registry 관리"}
+              {activeTab === 'integrity' && "워크플로우 실행 이상 점검"}
             </h1>
             <p className="header-subtitle">
               {activeTab === 'dashboard' && "전체 워크플로우 실시간 상태 모니터링 및 주요 KPI 요약"}
@@ -332,6 +347,7 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
               {activeTab === 'commands' && "workflow에서 사용할 allowlist command를 최고관리자가 등록하고 통제합니다"}
               {activeTab === 'plugins' && "Flow Designer에서 사용할 플러그인의 활성 상태와 workspace 정책을 관리합니다"}
               {activeTab === 'pluginRegistry' && "플러그인 manifest를 등록, 검증, hot reload합니다"}
+              {activeTab === 'integrity' && "연결이 끊겼거나 처리 작업 없이 멈춘 실행 데이터를 진단하고 안전하게 복구합니다"}
             </p>
           </div>
 
@@ -374,6 +390,11 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
             {activeTab === 'pluginRegistry' && (
               <div className="info-banner-bubble">
                 파일 manifest는 읽기 전용이며, 운영자가 추가한 manifest는 Mongo registry에 저장됩니다.
+              </div>
+            )}
+            {activeTab === 'integrity' && (
+              <div className="info-banner-bubble info-orange">
+                점검만으로 데이터가 변경되지는 않으며, 복구 전 현재 상태를 다시 확인합니다.
               </div>
             )}
             
@@ -442,6 +463,8 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
           {activeTab === 'plugins' && <PluginControlPage />}
 
           {activeTab === 'pluginRegistry' && <PluginRegistryPage />}
+
+          {activeTab === 'integrity' && <RuntimeIntegrityPage />}
         </main>
       </div>
       {accountOpen && <AccountDialog user={user} onChange={onUserChange} onClose={() => setAccountOpen(false)} />}

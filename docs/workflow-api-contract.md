@@ -626,6 +626,24 @@ Authorization: Bearer pxm_live_xxx
 
 여러 role이 있으면 허용 범위는 합집합으로 계산한다.
 
+### Runtime Integrity Admin API
+
+`POST /api/runtime-integrity/scan`
+
+- 최고관리자 `admin`만 호출할 수 있다.
+- 기본적으로 마지막 변경 후 60초가 지난 runtime 데이터만 검사한다.
+- 점검은 읽기 전용이며 Job, Token, Task, instance 상태를 변경하지 않는다.
+- 응답은 안전한 자동 복구 가능 항목과 수동 확인 필요 항목을 구분한다.
+
+`POST /api/runtime-integrity/repair`
+
+- 최고관리자 `admin`만 호출할 수 있고 `Idempotency-Key` header가 필요하다.
+- 요청에는 점검 결과의 `finding_type`, `resource_id`, `observed_updated_at`과 처리 사유 `reason`을 전달한다.
+- API는 복구 직전에 같은 이상 상태인지 다시 확인한다. 상태가 바뀌었으면 `no_longer_present`로 응답하고 변경하지 않는다.
+- 연결 없는 Job·Token·Task 정리와 처리 Job이 사라진 RUNNING instance 재등록만 지원한다.
+- 승인 Task 재생성이나 사라진 workflow 정의 추정은 자동 처리하지 않는다.
+- 실제 변경과 중복 재요청 결과는 `management_audit_logs`에 기록한다.
+
 ### Endpoint Rules
 
 `GET /api/instances`

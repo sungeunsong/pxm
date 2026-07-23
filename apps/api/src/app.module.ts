@@ -15,6 +15,7 @@ import { AuthzModule } from './authz/authz.module';
 import { ManagementAuditModule } from './audit/management-audit.module';
 import { AuthenticatedGuard } from './authz/authenticated.guard';
 import { HealthModule } from './health/health.module';
+import { RuntimeIntegrityModule } from './runtime-integrity/runtime-integrity.module';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { HealthModule } from './health/health.module';
     AuthzModule,
     ManagementAuditModule,
     HealthModule,
+    RuntimeIntegrityModule,
   ],
   providers: [
     {

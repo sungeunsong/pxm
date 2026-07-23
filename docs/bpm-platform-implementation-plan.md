@@ -405,7 +405,7 @@
   - [x] API 저장과 Engine job/outbox 생성의 transaction 경계 재검증
   - [ ] instance 일시중지/재개와 신규 job claim 차단
   - [x] API/Engine 비정상 종료 및 재시작 후 미완료 job 자동 복구 검증
-  - [ ] orphan instance/token/task/job 탐지 API와 안전한 복구 절차
+  - [x] orphan instance/token/task/job 탐지 API와 안전한 복구 절차
   - [ ] Schedule/DB Watch/Timer/Approval 대기 중 재시작 시나리오 자동화
   - [ ] graceful shutdown 시 신규 claim 중단과 실행 중 job 처리 정책
 
@@ -416,6 +416,15 @@
 - 이미 완료된 instance의 job은 workflow를 다시 실행하지 않고 완료 처리한다.
 - 회수 주기는 `ENGINE_STALE_RECLAIM_INTERVAL_MS`(기본 5초), lock 없는 job의 대기 시간은 `ENGINE_STALE_JOB_SECONDS`(기본 60초)로 조정한다.
 - `pnpm e2e:process-restart-recovery`는 격리된 임시 MongoDB에서 API와 Engine을 강제 종료·재시작하고 미완료 작업 복구와 완료 작업의 중복 실행 방지를 검증한다.
+
+런타임 이상 점검 기준:
+
+- 최고관리자가 관리자 화면의 `실행 이상 점검`에서 수동으로 실행하며, 점검만으로 데이터는 변경되지 않는다.
+- 연결된 instance가 없는 활성 Job·Token·승인 Task, 활성 Token은 있지만 처리 Job이 없는 RUNNING instance를 안전한 복구 대상으로 표시한다.
+- 승인 Task가 사라진 승인 대기 instance와 workflow 정의가 사라진 instance는 자동 변경하지 않고 수동 확인 대상으로 표시한다.
+- 60초 이내에 변경된 데이터는 정상 처리 중인 짧은 구간일 수 있어 기본 점검 대상에서 제외한다.
+- 복구 직전에 상태와 마지막 변경 시각을 다시 확인하고, 이미 상태가 달라졌으면 아무것도 변경하지 않는다.
+- 복구 요청은 `Idempotency-Key`로 중복 처리를 막고 처리 사유와 결과를 관리 감사 로그에 기록한다.
 
 ### 4. 운영 관측과 장애 대응
 

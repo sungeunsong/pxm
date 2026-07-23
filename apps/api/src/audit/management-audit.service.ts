@@ -1,6 +1,6 @@
 import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { Db } from 'mongodb';
+import { ClientSession, Db } from 'mongodb';
 import { isAdmin, managerGroupIds } from '../authz/management-auth';
 import { MONGO_DB } from '../db/mongo.provider';
 import type { WorkflowHistoryActor } from '../db/ports/db.ports';
@@ -8,7 +8,7 @@ import type { WorkflowHistoryActor } from '../db/ports/db.ports';
 export type ManagementAuditEvent = {
   event_id?: string;
   action: string;
-  resource_type: 'workflow' | 'task' | 'group' | 'user' | 'service_account' | 'api_key' | 'credential' | 'security_policy';
+  resource_type: 'workflow' | 'task' | 'group' | 'user' | 'service_account' | 'api_key' | 'credential' | 'security_policy' | 'runtime_integrity';
   resource_id: string;
   group_id?: string | null;
   actor_id?: string | null;
@@ -20,7 +20,7 @@ export type ManagementAuditEvent = {
 export class ManagementAuditService {
   constructor(@Inject(MONGO_DB) private readonly db: Db) {}
 
-  async append(event: ManagementAuditEvent): Promise<void> {
+  async append(event: ManagementAuditEvent, session?: ClientSession): Promise<void> {
     const { event_id: eventId, ...payload } = event;
     const document = {
       _id: eventId || randomUUID(),
@@ -31,7 +31,15 @@ export class ManagementAuditService {
       created_at: new Date().toISOString(),
     };
     if (eventId) {
-      await this.collection.updateOne({ _id: eventId }, { $setOnInsert: document }, { upsert: true });
+      await this.collection.updateOne(
+        { _id: eventId },
+        { $setOnInsert: document },
+        session ? { upsert: true, session } : { upsert: true },
+      );
+      return;
+    }
+    if (session) {
+      await this.collection.insertOne(document, { session });
       return;
     }
     await this.collection.insertOne(document);
