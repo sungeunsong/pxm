@@ -214,18 +214,34 @@ impl JobQueuePort for PostgresAdapter {
     }
 
     async fn reclaim_stale_jobs(&self) -> Result<i64> {
+        let stale_seconds = std::env::var("ENGINE_STALE_JOB_SECONDS")
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|value| *value > 0.0)
+            .unwrap_or(60.0);
         let res = sqlx::query(
             r#"
             update v2_engine_jobs j
             set status = 'QUEUED',
                 run_at = now(),
                 updated_at = now()
-            from v2_process_instances i
-            where j.instance_id = i.id
-              and j.status = 'RUNNING'
-              and (i.lock_until is null or i.lock_until < now())
+            where j.status = 'RUNNING'
+              and (
+                exists (
+                  select 1 from v2_process_instances i
+                  where i.id = j.instance_id and i.lock_until < now()
+                )
+                or (
+                  j.updated_at < now() - ($1::double precision * interval '1 second')
+                  and not exists (
+                    select 1 from v2_process_instances i
+                    where i.id = j.instance_id and i.lock_until >= now()
+                  )
+                )
+              )
             "#,
         )
+        .bind(stale_seconds)
         .execute(&self.pool)
         .await?;
         Ok(res.rows_affected() as i64)

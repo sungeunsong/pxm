@@ -404,10 +404,18 @@
   - [x] task/retry/terminate API idempotency 적용
   - [x] API 저장과 Engine job/outbox 생성의 transaction 경계 재검증
   - [ ] instance 일시중지/재개와 신규 job claim 차단
-  - [ ] API/Engine 비정상 종료 및 재시작 후 미완료 job 자동 복구 검증
+  - [x] API/Engine 비정상 종료 및 재시작 후 미완료 job 자동 복구 검증
   - [ ] orphan instance/token/task/job 탐지 API와 안전한 복구 절차
   - [ ] Schedule/DB Watch/Timer/Approval 대기 중 재시작 시나리오 자동화
   - [ ] graceful shutdown 시 신규 claim 중단과 실행 중 job 처리 정책
+
+재시작 복구 기준:
+
+- Engine 시작 직후 멈춘 `RUNNING` job을 한 번 회수하고, 처리할 job이 계속 쌓여 있어도 주기적으로 다시 확인한다.
+- instance lock이 만료된 job은 즉시 회수한다. lock이 없거나 instance가 없는 job은 정상 worker의 lock 획득 구간과 충돌하지 않도록 기본 60초가 지난 뒤 회수한다.
+- 이미 완료된 instance의 job은 workflow를 다시 실행하지 않고 완료 처리한다.
+- 회수 주기는 `ENGINE_STALE_RECLAIM_INTERVAL_MS`(기본 5초), lock 없는 job의 대기 시간은 `ENGINE_STALE_JOB_SECONDS`(기본 60초)로 조정한다.
+- `pnpm e2e:process-restart-recovery`는 격리된 임시 MongoDB에서 API와 Engine을 강제 종료·재시작하고 미완료 작업 복구와 완료 작업의 중복 실행 방지를 검증한다.
 
 ### 4. 운영 관측과 장애 대응
 

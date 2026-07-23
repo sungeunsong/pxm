@@ -117,6 +117,13 @@ fn bson_i32(value: &Bson) -> Option<i32> {
         .or_else(|| value.as_f64().map(|number| number as i32))
 }
 
+fn bson_i64(value: &Bson) -> Option<i64> {
+    value
+        .as_i64()
+        .or_else(|| value.as_i32().map(i64::from))
+        .or_else(|| value.as_f64().map(|number| number as i64))
+}
+
 fn token_to_doc(t: &V2Token) -> Document {
     doc! {
         "_id": t.id.to_string(),
@@ -159,11 +166,7 @@ fn doc_to_token(doc: &Document) -> Result<V2Token> {
 fn doc_to_job(doc: &Document) -> Result<V2Job> {
     let id = doc
         .get("_id")
-        .and_then(|v| {
-            v.as_i64()
-                .or_else(|| v.as_i32().map(|i| i as i64))
-                .or_else(|| v.as_f64().map(|f| f as i64))
-        })
+        .and_then(bson_i64)
         .ok_or_else(|| anyhow::anyhow!("_id missing or not a number"))?;
 
     let inst_str = doc.get_str("instance_id")?;
@@ -430,7 +433,14 @@ impl JobQueuePort for MongoAdapter {
     async fn reclaim_stale_jobs(&self) -> Result<i64> {
         let jobs_coll = self.db.collection::<Document>("v2_engine_jobs");
         let _instances_coll = self.db.collection::<Document>("v2_process_instances");
-        let now = Utc::now().to_rfc3339();
+        let now_dt = Utc::now();
+        let now = now_dt.to_rfc3339();
+        let stale_seconds = std::env::var("ENGINE_STALE_JOB_SECONDS")
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(60);
+        let stale_before = (now_dt - chrono::Duration::seconds(stale_seconds)).to_rfc3339();
 
         // MongoDB에서 lookup을 활용해 Stale Job 일괄 회수
         // 1) 고사 상태인(lock_until 이 현재 이전이거나 null인) 인스턴스 목록을 lookup
@@ -452,9 +462,18 @@ impl JobQueuePort for MongoAdapter {
             doc! {
                 "$match": {
                     "$or": [
-                        { "inst": { "$exists": false } },
-                        { "inst.lock_until": null },
-                        { "inst.lock_until": { "$lt": &now } }
+                        { "inst.lock_until": { "$lt": &now } },
+                        {
+                            "$and": [
+                                { "updated_at": { "$lt": &stale_before } },
+                                {
+                                    "$or": [
+                                        { "inst": { "$exists": false } },
+                                        { "inst.lock_until": null }
+                                    ]
+                                }
+                            ]
+                        }
                     ]
                 }
             },
@@ -464,7 +483,7 @@ impl JobQueuePort for MongoAdapter {
         let mut stale_ids = Vec::new();
         while cursor.advance().await? {
             let doc = cursor.deserialize_current()?;
-            if let Some(id) = doc.get("_id").and_then(|v| v.as_i64()) {
+            if let Some(id) = doc.get("_id").and_then(bson_i64) {
                 stale_ids.push(id);
             }
         }

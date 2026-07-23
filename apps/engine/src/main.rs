@@ -15,6 +15,11 @@ async fn main() -> Result<()> {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(300);
+    let reclaim_interval_ms: u64 = std::env::var("ENGINE_STALE_RECLAIM_INTERVAL_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(5_000);
 
     println!("[engine] Starting. db_type={db_type}, worker_id={worker_id}, poll_ms={poll_ms}");
 
@@ -88,23 +93,27 @@ async fn main() -> Result<()> {
 
     println!("[engine] connected and context initialized.");
 
+    let reclaimed = v2_context.job_queue.reclaim_stale_jobs().await?;
+    if reclaimed > 0 {
+        println!("[engine] reclaimed {reclaimed} stale RUNNING V2 jobs at startup");
+    }
+
     let mut last_reap = std::time::Instant::now();
 
     loop {
+        if last_reap.elapsed() >= Duration::from_millis(reclaim_interval_ms) {
+            let reclaimed = v2_context.job_queue.reclaim_stale_jobs().await?;
+            if reclaimed > 0 {
+                println!("[engine] reclaimed {reclaimed} stale RUNNING V2 jobs");
+            }
+            last_reap = std::time::Instant::now();
+        }
+
         // 1) V2 엔진 루프 시도
         let v2_processed = v2::runtime::run_v2_once(&v2_context, &worker_id).await?;
         if v2_processed {
             // 잡이 처리되었으므로 즉시 다음 잡을 처리하기 위해 루프 지속
             continue;
-        }
-
-        // 2) 대기 중 정기적인 Stale Job 회수
-        if last_reap.elapsed() > Duration::from_secs(5) {
-            let n2 = v2_context.job_queue.reclaim_stale_jobs().await?;
-            if n2 > 0 {
-                println!("[engine] reclaimed {n2} stale RUNNING V2 jobs");
-            }
-            last_reap = std::time::Instant::now();
         }
 
         tokio::time::sleep(Duration::from_millis(poll_ms)).await;
