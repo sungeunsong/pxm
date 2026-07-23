@@ -136,6 +136,20 @@ HTTP `202 Accepted`
 
 End node의 `resultPath`가 비어 있으면 `context.data`만 result로 저장한다. `runtime.nodes`, `runtime.edges`, `runtime.cursor` 같은 내부 실행 데이터는 기본 result에 포함하지 않는다.
 
+## Retry And Terminate Idempotency
+
+- `POST /api/instances/:instance_id/retry`
+- `POST /api/instances/:instance_id/terminate`
+
+두 API는 선택적으로 `Idempotency-Key` 헤더를 받는다. 사용자의 중복 클릭이나 호출 시스템의 재전송 가능성이 있으면 요청마다 고유한 key를 보내야 한다.
+
+- 같은 호출자·instance·API에서 같은 key를 다시 보내면 새 작업을 만들지 않고 기존 결과를 반환한다.
+- 재사용 응답에는 `idempotent_replay: true`와 `Idempotency-Replayed: true` 헤더가 포함된다.
+- Retry에서 같은 key를 `full_instance`와 `failed_node`처럼 다른 요청에 재사용하면 HTTP `409 Conflict`를 반환한다.
+- Retry의 instance·token·job·event 저장과 Terminate의 상태·job·event 변경은 각각 한 DB transaction으로 처리한다.
+- key 원문은 저장하지 않으며 기본 보관 시간은 24시간이다. `INSTANCE_COMMAND_IDEMPOTENCY_TTL_HOURS`로 변경할 수 있다.
+- 헤더가 없으면 기존 동작을 유지하며 응답의 `idempotent_replay`는 `false`다.
+
 ## Trace And Stream
 
 - `GET /api/instances/:instance_id/trace`: 최근 trace/event 목록 조회.

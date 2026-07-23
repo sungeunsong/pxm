@@ -110,8 +110,58 @@ export type IdempotentWorkflowStartResult = {
   instance_id: string;
 };
 
+export type IdempotentInstanceCommand = {
+  key_hash: string;
+  request_hash: string;
+  expires_at: Date;
+  result: Record<string, any>;
+  create_instances?: Array<{
+    id: string;
+    definition_id: string;
+    status: string;
+    context: any;
+    access?: WorkflowInstanceAccess;
+  }>;
+  update_instances?: Array<{
+    id: string;
+    status?: string;
+    context?: any;
+    complete_jobs?: boolean;
+  }>;
+  tokens?: Array<{
+    id: string;
+    instance_id: string;
+    node_id: string;
+    status: string;
+  }>;
+  jobs?: Array<{
+    instance_id: string;
+    token_id?: string | null;
+    type: string;
+    run_at: Date;
+    payload: any;
+  }>;
+  events?: Array<{
+    instance_id: string;
+    event_type: string;
+    payload: any;
+  }>;
+};
+
+export type IdempotentInstanceCommandResult = {
+  outcome: 'created' | 'replayed' | 'conflict';
+  result: Record<string, any>;
+};
+
+export type ExistingIdempotentInstanceCommandResult = {
+  outcome: 'missing' | 'replayed' | 'conflict';
+  result: Record<string, any>;
+};
+
 export abstract class WorkflowInstanceRepositoryPort {
   abstract createIdempotentStart(input: IdempotentWorkflowStart): Promise<IdempotentWorkflowStartResult>;
+  abstract getIdempotentCommand(keyHash: string, requestHash: string): Promise<ExistingIdempotentInstanceCommandResult>;
+  abstract executeIdempotentCommand(input: IdempotentInstanceCommand): Promise<IdempotentInstanceCommandResult>;
   abstract createInstance(id: string, definitionId: string, status: string, ctx: any, access?: WorkflowInstanceAccess): Promise<void>;
   abstract listInstances(actor?: WorkflowHistoryActor): Promise<any[]>;
   abstract listChildInstances(parentInstanceId: string): Promise<any[]>;

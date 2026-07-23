@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Db } from 'mongodb';
 import { MONGO_DB } from '../mongo.provider';
-import { WorkflowDefinitionMetadata, WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleJob, WorkflowScheduleRepositoryPort, WorkflowScheduleStatus, WorkflowHistoryActor, WorkflowInstanceAccess, WorkflowDefinitionVersion, WorkflowInputPreset, WorkflowInputPresetRepositoryPort, UpsertWorkflowInputPreset, AppendPxmApiKeyUsageLog, AuthzRepositoryPort, CreatePxmApiKey, CreatePxmSession, PxmApiKey, PxmApiKeyUsageLog, PxmGroup, PxmServiceAccount, PxmUser, PxmSession, PxmSessionSecurityPolicy, UpsertPxmGroup, UpsertPxmServiceAccount, UpsertPxmUser, UpsertPxmSessionSecurityPolicy, CompleteWorkflowTaskCommand, CompleteWorkflowTaskResult, ExternalApprovalClaim, ExternalApprovalDeliveryToken, ExternalApprovalOtp, ExternalApprovalTask, WorkflowTaskHistoryItem, WorkflowTaskHistoryPage, WorkflowTaskHistoryQuery, IdempotentWorkflowStart, IdempotentWorkflowStartResult } from '../ports/db.ports';
+import { WorkflowDefinitionMetadata, WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleJob, WorkflowScheduleRepositoryPort, WorkflowScheduleStatus, WorkflowHistoryActor, WorkflowInstanceAccess, WorkflowDefinitionVersion, WorkflowInputPreset, WorkflowInputPresetRepositoryPort, UpsertWorkflowInputPreset, AppendPxmApiKeyUsageLog, AuthzRepositoryPort, CreatePxmApiKey, CreatePxmSession, PxmApiKey, PxmApiKeyUsageLog, PxmGroup, PxmServiceAccount, PxmUser, PxmSession, PxmSessionSecurityPolicy, UpsertPxmGroup, UpsertPxmServiceAccount, UpsertPxmUser, UpsertPxmSessionSecurityPolicy, CompleteWorkflowTaskCommand, CompleteWorkflowTaskResult, ExternalApprovalClaim, ExternalApprovalDeliveryToken, ExternalApprovalOtp, ExternalApprovalTask, WorkflowTaskHistoryItem, WorkflowTaskHistoryPage, WorkflowTaskHistoryQuery, IdempotentWorkflowStart, IdempotentWorkflowStartResult, IdempotentInstanceCommand, IdempotentInstanceCommandResult, ExistingIdempotentInstanceCommandResult } from '../ports/db.ports';
 
 @Injectable()
 export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleRepositoryPort, WorkflowInputPresetRepositoryPort, AuthzRepositoryPort {
@@ -9,6 +9,7 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
   private inputPresetIndexesReady = false;
   private authzIndexesReady = false;
   private startIdempotencyIndexesReady = false;
+  private instanceCommandIdempotencyIndexesReady = false;
 
   private async loadNodeLabels(instanceId: string): Promise<Map<string, string>> {
     const inst = await this.db.collection<any>('v2_process_instances').findOne({ _id: instanceId });
@@ -420,6 +421,151 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
     if (this.startIdempotencyIndexesReady) return;
     await this.db.collection('v2_start_idempotency').createIndex({ expires_at: 1 }, { expireAfterSeconds: 0 });
     this.startIdempotencyIndexesReady = true;
+  }
+
+  async executeIdempotentCommand(input: IdempotentInstanceCommand): Promise<IdempotentInstanceCommandResult> {
+    await this.ensureInstanceCommandIdempotencyIndexes();
+    const session = this.db.client.startSession();
+    let result: IdempotentInstanceCommandResult = { outcome: 'created', result: input.result };
+    try {
+      await session.withTransaction(async () => {
+        const idempotency = this.db.collection<any>('v2_instance_command_idempotency');
+        const existing = await idempotency.findOne({ _id: input.key_hash }, { session });
+        if (existing && new Date(existing.expires_at).getTime() > Date.now()) {
+          result = {
+            outcome: existing.request_hash === input.request_hash ? 'replayed' : 'conflict',
+            result: existing.result || {},
+          };
+          return;
+        }
+        if (existing) await idempotency.deleteOne({ _id: input.key_hash }, { session });
+
+        const now = new Date().toISOString();
+        await idempotency.insertOne(
+          {
+            _id: input.key_hash,
+            request_hash: input.request_hash,
+            result: input.result,
+            expires_at: input.expires_at,
+            created_at: new Date(),
+          },
+          { session },
+        );
+
+        for (const instance of input.create_instances || []) {
+          const access = normalizeAccess(instance.context, instance.access);
+          await this.db.collection<any>('v2_process_instances').insertOne(
+            {
+              _id: instance.id,
+              process_definition_id: instance.definition_id,
+              state: instance.status,
+              status: instance.status,
+              context: access ? applyAccessToContext(instance.context, access) : instance.context,
+              workspace_id: access?.workspace_id,
+              group_id: access?.group_id || null,
+              requester_id: access?.requester_id,
+              client_id: access?.client_id,
+              approver_ids: access?.approver_ids || [],
+              caller: access?.caller || null,
+              business_actor: access?.business_actor || null,
+              workflow_version_id: access?.workflow_version_id || null,
+              lock_owner: null,
+              lock_until: null,
+              heartbeat_at: null,
+              created_at: now,
+              updated_at: now,
+            },
+            { session },
+          );
+        }
+        for (const update of input.update_instances || []) {
+          const fields: Record<string, any> = { updated_at: now };
+          if (update.status) {
+            fields.state = update.status;
+            fields.status = update.status;
+          }
+          if (update.context !== undefined) fields.context = update.context;
+          await this.db.collection<any>('v2_process_instances').updateOne({ _id: update.id }, { $set: fields }, { session });
+          if (update.complete_jobs) {
+            await this.db.collection<any>('v2_engine_jobs').updateMany(
+              { instance_id: update.id, status: { $in: ['QUEUED', 'RUNNING'] } },
+              { $set: { status: 'COMPLETED', updated_at: now } },
+              { session },
+            );
+          }
+        }
+        for (const token of input.tokens || []) {
+          await this.db.collection<any>('v2_tokens').insertOne(
+            {
+              _id: token.id,
+              instance_id: token.instance_id,
+              node_id: token.node_id,
+              status: token.status === 'READY' ? 'ACTIVE' : token.status,
+              parent_token_id: null,
+              scope_key: null,
+              created_at: now,
+              updated_at: now,
+            },
+            { session },
+          );
+        }
+        for (const job of input.jobs || []) {
+          const counter = await this.db.collection<any>('v2_counters').findOneAndUpdate(
+            { _id: 'v2_engine_jobs' },
+            { $inc: { seq: 1 } },
+            { upsert: true, returnDocument: 'after', session },
+          );
+          const jobId = Number((counter as any)?.value?.seq ?? (counter as any)?.seq ?? Date.now());
+          await this.db.collection<any>('v2_engine_jobs').insertOne(
+            {
+              _id: jobId,
+              instance_id: job.instance_id,
+              token_id: job.token_id || null,
+              job_type: job.type,
+              run_at: job.run_at.toISOString(),
+              attempt: 0,
+              status: 'QUEUED',
+              payload: job.payload,
+              created_at: now,
+              updated_at: now,
+            },
+            { session },
+          );
+        }
+        for (const event of input.events || []) {
+          await this.db.collection<any>('v2_event_outbox').insertOne(
+            {
+              instance_id: event.instance_id,
+              token_id: null,
+              node_id: null,
+              event_type: event.event_type,
+              payload: event.payload,
+              created_at: now,
+            },
+            { session },
+          );
+        }
+      });
+      return result;
+    } finally {
+      await session.endSession();
+    }
+  }
+
+  async getIdempotentCommand(keyHash: string, requestHash: string): Promise<ExistingIdempotentInstanceCommandResult> {
+    await this.ensureInstanceCommandIdempotencyIndexes();
+    const existing = await this.db.collection<any>('v2_instance_command_idempotency').findOne({ _id: keyHash });
+    if (!existing || new Date(existing.expires_at).getTime() <= Date.now()) return { outcome: 'missing', result: {} };
+    return {
+      outcome: existing.request_hash === requestHash ? 'replayed' : 'conflict',
+      result: existing.result || {},
+    };
+  }
+
+  private async ensureInstanceCommandIdempotencyIndexes(): Promise<void> {
+    if (this.instanceCommandIdempotencyIndexesReady) return;
+    await this.db.collection('v2_instance_command_idempotency').createIndex({ expires_at: 1 }, { expireAfterSeconds: 0 });
+    this.instanceCommandIdempotencyIndexesReady = true;
   }
 
   async createInstance(id: string, definitionId: string, status: string, ctx: any, access?: WorkflowInstanceAccess): Promise<void> {

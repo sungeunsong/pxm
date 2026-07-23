@@ -1,6 +1,6 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateInstanceDto } from './dto/create-instance.dto';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { OutboxRepositoryPort, WorkflowHistoryActor, WorkflowInstanceAccess, WorkflowInstanceRepositoryPort, WorkflowRepositoryPort } from '../db/ports/db.ports';
 
 @Injectable()
@@ -190,10 +190,50 @@ export class InstancesService {
     };
   }
 
-  async terminateInstance(id: string, actor?: WorkflowHistoryActor) {
+  async terminateInstance(id: string, actor?: WorkflowHistoryActor, idempotencyKey?: string) {
     await this.ensureReadableInstance(id, actor);
+    const key = normalizeIdempotencyKey(idempotencyKey);
+    if (key) {
+      const hashes = instanceCommandHashes(actor, id, 'terminate', key, { command: 'terminate' });
+      const existing = await this.instanceRepo.getIdempotentCommand(hashes.key_hash, hashes.request_hash);
+      if (existing.outcome === 'replayed') return { ...existing.result, idempotent_replay: true };
+      if (existing.outcome === 'conflict') throw new ConflictException('Idempotency-Key was already used with a different terminate request');
+      const targets = await this.collectTerminationTargets(id, new Set<string>());
+      const terminated = targets.filter((target) => target.shouldTerminate).map((target) => target.id);
+      const response = { success: true, instance_id: id, terminated_instances: terminated };
+      const command = await this.instanceRepo.executeIdempotentCommand({
+        ...hashes,
+        expires_at: new Date(Date.now() + instanceCommandIdempotencyTtlMs()),
+        result: response,
+        update_instances: targets.map((target) => ({
+          id: target.id,
+          status: target.shouldTerminate ? 'TERMINATED' : undefined,
+          complete_jobs: true,
+        })),
+        events: terminated.map((instanceId) => ({
+          instance_id: instanceId,
+          event_type: 'INSTANCE_TERMINATED',
+          payload: { reason: 'operator_terminated' },
+        })),
+      });
+      if (command.outcome === 'conflict') throw new ConflictException('Idempotency-Key was already used with a different terminate request');
+      return { ...command.result, idempotent_replay: command.outcome === 'replayed' };
+    }
     const terminated = await this.terminateInstanceRecursive(id, new Set<string>());
-    return { success: true, instance_id: id, terminated_instances: terminated };
+    return { success: true, instance_id: id, terminated_instances: terminated, idempotent_replay: false };
+  }
+
+  private async collectTerminationTargets(id: string, visited: Set<string>): Promise<Array<{ id: string; shouldTerminate: boolean }>> {
+    if (visited.has(id)) return [];
+    visited.add(id);
+    const instance = await this.instanceRepo.getInstance(id);
+    if (!instance) throw new NotFoundException('Instance not found');
+    const status = String(instance.state ?? instance.status ?? '').toUpperCase();
+    const targets = [{ id, shouldTerminate: !['COMPLETED', 'FAILED', 'TERMINATED'].includes(status) }];
+    for (const child of await this.instanceRepo.listChildInstances(id)) {
+      targets.push(...(await this.collectTerminationTargets(child.id, visited)));
+    }
+    return targets;
   }
 
   private async terminateInstanceRecursive(id: string, visited: Set<string>): Promise<string[]> {
@@ -266,9 +306,17 @@ export class InstancesService {
     };
   }
 
-  async retryInstance(id: string, mode: 'full_instance' | 'failed_node' = 'full_instance', actor?: WorkflowHistoryActor) {
+  async retryInstance(id: string, mode: 'full_instance' | 'failed_node' = 'full_instance', actor?: WorkflowHistoryActor, idempotencyKey?: string) {
+    const key = normalizeIdempotencyKey(idempotencyKey);
+    const hashes = key ? instanceCommandHashes(actor, id, 'retry', key, { command: 'retry', mode }) : null;
+    if (hashes) {
+      await this.ensureReadableInstance(id, actor);
+      const existing = await this.instanceRepo.getIdempotentCommand(hashes.key_hash, hashes.request_hash);
+      if (existing.outcome === 'replayed') return { ...existing.result, idempotent_replay: true };
+      if (existing.outcome === 'conflict') throw new ConflictException('Idempotency-Key was already used with a different retry request');
+    }
     if (mode === 'failed_node') {
-      return this.retryFailedNode(id, actor);
+      return this.retryFailedNode(id, actor, key, hashes);
     }
 
     const source = await this.getReadableInstance(id, actor);
@@ -320,6 +368,35 @@ export class InstancesService {
     };
 
     const access = accessFromInstance(source);
+    const tokenId = randomUUID();
+    const response = {
+      instance_id: instanceId,
+      source_instance_id: id,
+      template_id: definition.id,
+      template_name: definition.name,
+      status: 'CREATED',
+      retry_mode: 'full_instance',
+      trace_url: `/api/instances/${instanceId}/trace`,
+      stream_url: `/api/instances/${instanceId}/stream`,
+      result_url: `/api/instances/${instanceId}/result`,
+    };
+    if (key) {
+      const command = await this.instanceRepo.executeIdempotentCommand({
+        ...hashes!,
+        expires_at: new Date(Date.now() + instanceCommandIdempotencyTtlMs()),
+        result: response,
+        create_instances: [{ id: instanceId, definition_id: definition.id, status: 'CREATED', context: withAccess(ctx, access), access }],
+        tokens: [{ id: tokenId, instance_id: instanceId, node_id: startNode.id, status: 'ACTIVE' }],
+        jobs: [{
+          instance_id: instanceId,
+          type: 'START',
+          run_at: new Date(),
+          payload: { node_id: startNode.id, reason: 'instance_retry', source_instance_id: id, retry_mode: 'full_instance' },
+        }],
+      });
+      if (command.outcome === 'conflict') throw new ConflictException('Idempotency-Key was already used with a different retry request');
+      return { ...command.result, idempotent_replay: command.outcome === 'replayed' };
+    }
     await this.instanceRepo.createInstance(instanceId, definition.id, 'CREATED', withAccess(ctx, access), access);
     await this.instanceRepo.createJob({
       instanceId,
@@ -333,26 +410,21 @@ export class InstancesService {
       },
     });
     await this.instanceRepo.createToken({
-      id: randomUUID(),
+      id: tokenId,
       instanceId,
       nodeId: startNode.id,
       status: 'ACTIVE',
     });
 
-    return {
-      instance_id: instanceId,
-      source_instance_id: id,
-      template_id: definition.id,
-      template_name: definition.name,
-      status: 'CREATED',
-      retry_mode: 'full_instance',
-      trace_url: `/api/instances/${instanceId}/trace`,
-      stream_url: `/api/instances/${instanceId}/stream`,
-      result_url: `/api/instances/${instanceId}/result`,
-    };
+    return { ...response, idempotent_replay: false };
   }
 
-  private async retryFailedNode(id: string, actor?: WorkflowHistoryActor) {
+  private async retryFailedNode(
+    id: string,
+    actor?: WorkflowHistoryActor,
+    idempotencyKey?: string | null,
+    hashes?: ReturnType<typeof instanceCommandHashes> | null,
+  ) {
     const analysis = await this.analyzeRetryTarget(id, 'failed_node', actor);
     if (!analysis.canRetry) {
       throw new BadRequestException(analysis.reason || 'Failed-node retry is not available');
@@ -380,6 +452,42 @@ export class InstancesService {
       },
     };
 
+    const response = {
+      instance_id: id,
+      template_id: definition.id,
+      template_name: definition.name,
+      status: 'RUNNING',
+      retry_mode: 'failed_node',
+      node_id: failedNodeId,
+      node_type: failedNodeType,
+      trace_url: `/api/instances/${id}/trace`,
+      stream_url: `/api/instances/${id}/stream`,
+      result_url: `/api/instances/${id}/result`,
+    };
+    if (idempotencyKey) {
+      const command = await this.instanceRepo.executeIdempotentCommand({
+        ...(hashes || instanceCommandHashes(actor, id, 'retry', idempotencyKey, { command: 'retry', mode: 'failed_node' })),
+        expires_at: new Date(Date.now() + instanceCommandIdempotencyTtlMs()),
+        result: response,
+        update_instances: [{ id, status: 'RUNNING', context: nextContext }],
+        tokens: [{ id: tokenId, instance_id: id, node_id: failedNodeId, status: 'ACTIVE' }],
+        jobs: [{
+          instance_id: id,
+          token_id: tokenId,
+          type: 'RETRY',
+          run_at: new Date(),
+          payload: { node_id: failedNodeId, reason: 'failed_node_retry', retry_mode: 'failed_node' },
+        }],
+        events: [{
+          instance_id: id,
+          event_type: 'FAILED_NODE_RETRY_REQUESTED',
+          payload: { node_id: failedNodeId, node_type: failedNodeType, retry_mode: 'failed_node' },
+        }],
+      });
+      if (command.outcome === 'conflict') throw new ConflictException('Idempotency-Key was already used with a different retry request');
+      return { ...command.result, idempotent_replay: command.outcome === 'replayed' };
+    }
+
     await this.instanceRepo.updateInstanceCtx(id, nextContext);
     await this.instanceRepo.updateInstanceStatus(id, 'RUNNING');
     await this.instanceRepo.createToken({
@@ -405,18 +513,7 @@ export class InstancesService {
       retry_mode: 'failed_node',
     });
 
-    return {
-      instance_id: id,
-      template_id: definition.id,
-      template_name: definition.name,
-      status: 'RUNNING',
-      retry_mode: 'failed_node',
-      node_id: failedNodeId,
-      node_type: failedNodeType,
-      trace_url: `/api/instances/${id}/trace`,
-      stream_url: `/api/instances/${id}/stream`,
-      result_url: `/api/instances/${id}/result`,
-    };
+    return { ...response, idempotent_replay: false };
   }
 
   private async analyzeRetryTarget(id: string, mode: 'full_instance' | 'failed_node', actor?: WorkflowHistoryActor) {
@@ -764,6 +861,49 @@ function clampRetentionDays(value: any, fallback: number) {
     return Math.min(Math.max(fallback || 7, 1), 3650);
   }
   return Math.min(Math.max(Math.floor(days), 1), 3650);
+}
+
+function normalizeIdempotencyKey(value?: string): string | null {
+  if (value === undefined) return null;
+  const key = value.trim();
+  if (!key || key.length > 200 || /[\u0000-\u001f\u007f]/.test(key)) {
+    throw new BadRequestException('Idempotency-Key must contain 1 to 200 printable characters');
+  }
+  return key;
+}
+
+function instanceCommandHashes(
+  actor: WorkflowHistoryActor | undefined,
+  instanceId: string,
+  command: 'retry' | 'terminate',
+  key: string,
+  request: Record<string, any>,
+) {
+  const principal = actor?.api_key_id ? `api_key:${actor.api_key_id}` : `${actor?.actor_type || 'unknown'}:${actor?.actor_id || 'anonymous'}`;
+  return {
+    key_hash: sha256(`instance-command:v1:${principal}:${instanceId}:${command}:${key}`),
+    request_hash: sha256(stableStringify({ instance_id: instanceId, ...request })),
+  };
+}
+
+function instanceCommandIdempotencyTtlMs(): number {
+  const hours = Number(process.env.INSTANCE_COMMAND_IDEMPOTENCY_TTL_HOURS ?? 24);
+  return (Number.isFinite(hours) && hours > 0 ? hours : 24) * 60 * 60 * 1000;
+}
+
+function sha256(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right));
+    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
 }
 
 function parseDate(value: any): Date | null {

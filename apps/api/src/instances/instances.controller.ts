@@ -1,5 +1,5 @@
-import { Body, Controller, Get, NotFoundException, Param, Post, Query, Req, Sse } from '@nestjs/common';
-import type { Request } from 'express';
+import { Body, Controller, Get, Headers, NotFoundException, Param, Post, Query, Req, Res, Sse } from '@nestjs/common';
+import type { Request, Response } from 'express';
 import { Observable } from 'rxjs';
 import { OutboxService } from '../outbox/outbox.service';
 import { actorFromRequest, instanceAccessFromRequest } from './history-auth';
@@ -63,18 +63,25 @@ export class InstancesController {
   async retry(
     @Param('id') id: string,
     @Body() body?: { mode?: 'full_instance' | 'failed_node' },
+    @Headers('idempotency-key') idempotencyKey?: string,
     @Req() req?: Request,
+    @Res({ passthrough: true }) res?: Response,
   ) {
-    return this.instances.retryInstance(
+    const result = await this.instances.retryInstance(
       id,
       body?.mode === 'failed_node' ? 'failed_node' : 'full_instance',
       actorFromRequest(req),
+      idempotencyKey,
     );
+    if (result.idempotent_replay) res?.setHeader('Idempotency-Replayed', 'true');
+    return result;
   }
 
   @Post('/instances/:id/terminate')
-  async terminate(@Param('id') id: string, @Req() req: Request) {
-    return this.instances.terminateInstance(id, actorFromRequest(req));
+  async terminate(@Param('id') id: string, @Headers('idempotency-key') idempotencyKey: string | undefined, @Req() req: Request, @Res({ passthrough: true }) res?: Response) {
+    const result = await this.instances.terminateInstance(id, actorFromRequest(req), idempotencyKey);
+    if (result.idempotent_replay) res?.setHeader('Idempotency-Replayed', 'true');
+    return result;
   }
 
   @Get('/instances/:id/trace')
