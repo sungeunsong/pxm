@@ -148,6 +148,11 @@ export type IdempotentInstanceCommand = {
   }>;
 };
 
+export type WorkflowInstanceMutation = Pick<
+  IdempotentInstanceCommand,
+  'create_instances' | 'update_instances' | 'tokens' | 'jobs' | 'events'
+>;
+
 export type IdempotentInstanceCommandResult = {
   outcome: 'created' | 'replayed' | 'conflict';
   result: Record<string, any>;
@@ -162,6 +167,7 @@ export abstract class WorkflowInstanceRepositoryPort {
   abstract createIdempotentStart(input: IdempotentWorkflowStart): Promise<IdempotentWorkflowStartResult>;
   abstract getIdempotentCommand(keyHash: string, requestHash: string): Promise<ExistingIdempotentInstanceCommandResult>;
   abstract executeIdempotentCommand(input: IdempotentInstanceCommand): Promise<IdempotentInstanceCommandResult>;
+  abstract executeInstanceMutation(input: WorkflowInstanceMutation): Promise<void>;
   abstract createInstance(id: string, definitionId: string, status: string, ctx: any, access?: WorkflowInstanceAccess): Promise<void>;
   abstract listInstances(actor?: WorkflowHistoryActor): Promise<any[]>;
   abstract listChildInstances(parentInstanceId: string): Promise<any[]>;

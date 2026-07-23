@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { PG_POOL } from '../pg.provider';
-import { WorkflowDefinitionMetadata, WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleJob, WorkflowScheduleRepositoryPort, WorkflowScheduleStatus, WorkflowHistoryActor, WorkflowInstanceAccess, WorkflowDefinitionVersion, WorkflowInputPreset, WorkflowInputPresetRepositoryPort, UpsertWorkflowInputPreset, AppendPxmApiKeyUsageLog, AuthzRepositoryPort, CreatePxmApiKey, CreatePxmSession, PxmApiKey, PxmApiKeyUsageLog, PxmGroup, PxmServiceAccount, PxmUser, PxmSession, PxmSessionSecurityPolicy, UpsertPxmGroup, UpsertPxmServiceAccount, UpsertPxmUser, UpsertPxmSessionSecurityPolicy, CompleteWorkflowTaskCommand, CompleteWorkflowTaskResult, ExternalApprovalClaim, ExternalApprovalDeliveryToken, ExternalApprovalOtp, ExternalApprovalTask, WorkflowTaskHistoryItem, WorkflowTaskHistoryPage, WorkflowTaskHistoryQuery, IdempotentWorkflowStart, IdempotentWorkflowStartResult, IdempotentInstanceCommand, IdempotentInstanceCommandResult, ExistingIdempotentInstanceCommandResult } from '../ports/db.ports';
+import { WorkflowDefinitionMetadata, WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleJob, WorkflowScheduleRepositoryPort, WorkflowScheduleStatus, WorkflowHistoryActor, WorkflowInstanceAccess, WorkflowDefinitionVersion, WorkflowInputPreset, WorkflowInputPresetRepositoryPort, UpsertWorkflowInputPreset, AppendPxmApiKeyUsageLog, AuthzRepositoryPort, CreatePxmApiKey, CreatePxmSession, PxmApiKey, PxmApiKeyUsageLog, PxmGroup, PxmServiceAccount, PxmUser, PxmSession, PxmSessionSecurityPolicy, UpsertPxmGroup, UpsertPxmServiceAccount, UpsertPxmUser, UpsertPxmSessionSecurityPolicy, CompleteWorkflowTaskCommand, CompleteWorkflowTaskResult, ExternalApprovalClaim, ExternalApprovalDeliveryToken, ExternalApprovalOtp, ExternalApprovalTask, WorkflowTaskHistoryItem, WorkflowTaskHistoryPage, WorkflowTaskHistoryQuery, IdempotentWorkflowStart, IdempotentWorkflowStartResult, IdempotentInstanceCommand, IdempotentInstanceCommandResult, ExistingIdempotentInstanceCommandResult, WorkflowInstanceMutation } from '../ports/db.ports';
 
 @Injectable()
 export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleRepositoryPort, WorkflowInputPresetRepositoryPort, AuthzRepositoryPort {
@@ -427,6 +427,68 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
       outcome: rows[0].request_hash === requestHash ? 'replayed' : 'conflict',
       result: rows[0].result || {},
     };
+  }
+
+  async executeInstanceMutation(input: WorkflowInstanceMutation): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await this.applyInstanceMutation(input, client);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  private async applyInstanceMutation(input: WorkflowInstanceMutation, client: PoolClient): Promise<void> {
+    for (const instance of input.create_instances || []) {
+      const access = normalizeAccess(instance.context, instance.access);
+      const context = access ? applyAccessToContext(instance.context, access) : instance.context;
+      await client.query(
+        `INSERT INTO v2_process_instances (id, process_definition_id, state, context, started_at, created_at, updated_at)
+         VALUES ($1::uuid, $2::uuid, $3, $4::jsonb, NOW(), NOW(), NOW())`,
+        [instance.id, instance.definition_id, instance.status, JSON.stringify(context)],
+      );
+    }
+    for (const update of input.update_instances || []) {
+      await client.query(
+        `UPDATE v2_process_instances
+         SET state = COALESCE($1, state), context = COALESCE($2::jsonb, context), updated_at = NOW()
+         WHERE id = $3::uuid`,
+        [update.status || null, update.context === undefined ? null : JSON.stringify(update.context), update.id],
+      );
+      if (update.complete_jobs) {
+        await client.query(
+          `UPDATE v2_engine_jobs SET status = 'COMPLETED', updated_at = NOW()
+           WHERE instance_id = $1::uuid AND status IN ('QUEUED', 'RUNNING')`,
+          [update.id],
+        );
+      }
+    }
+    for (const token of input.tokens || []) {
+      await client.query(
+        `INSERT INTO v2_tokens (id, instance_id, node_id, status, parent_token_id, scope_key, created_at, updated_at)
+         VALUES ($1::uuid, $2::uuid, $3, $4, NULL, NULL, NOW(), NOW())`,
+        [token.id, token.instance_id, token.node_id, token.status],
+      );
+    }
+    for (const job of input.jobs || []) {
+      await client.query(
+        `INSERT INTO v2_engine_jobs (instance_id, token_id, type, run_at, attempt, status, payload, created_at, updated_at)
+         VALUES ($1::uuid, $2::uuid, $3, $4, 0, 'QUEUED', $5::jsonb, NOW(), NOW())`,
+        [job.instance_id, job.token_id || null, job.type, job.run_at, JSON.stringify(job.payload)],
+      );
+    }
+    for (const event of input.events || []) {
+      await client.query(
+        `INSERT INTO v2_event_outbox (instance_id, event_type, payload)
+         VALUES ($1::uuid, $2, $3::jsonb)`,
+        [event.instance_id, event.event_type, JSON.stringify(event.payload)],
+      );
+    }
   }
 
   private async ensureInstanceCommandIdempotencyTable(): Promise<void> {

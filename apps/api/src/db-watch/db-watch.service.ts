@@ -565,27 +565,21 @@ export class DbWatchService implements OnModuleInit, OnModuleDestroy {
       },
     };
 
-    await this.instanceRepo.createInstance(instanceId, definition.id, 'CREATED', ctx, {
+    const access = {
       workspace_id: 'default',
       group_id: definition.group_id || null,
       workflow_version_id: definition.version ? `${definition.id}:${definition.version}` : null,
       caller: { type: 'service_account', id: 'db_watch', api_key_id: null },
-    });
-    await this.instanceRepo.createJob({
-      instanceId,
-      type: 'START',
-      runAt: new Date(),
-      payload: {
-        node_id: startNode.id,
-        reason: 'db_watch_start',
-        db_watch_job_id: job._id,
-      },
-    });
-    await this.instanceRepo.createToken({
-      id: randomUUID(),
-      instanceId,
-      nodeId: startNode.id,
-      status: 'ACTIVE',
+    };
+    await this.instanceRepo.executeInstanceMutation({
+      create_instances: [{ id: instanceId, definition_id: definition.id, status: 'CREATED', context: ctx, access }],
+      tokens: [{ id: randomUUID(), instance_id: instanceId, node_id: startNode.id, status: 'ACTIVE' }],
+      jobs: [{
+        instance_id: instanceId,
+        type: 'START',
+        run_at: new Date(),
+        payload: { node_id: startNode.id, reason: 'db_watch_start', db_watch_job_id: job._id },
+      }],
     });
 
     await this.db.collection<any>('v2_db_watch_events').updateOne(

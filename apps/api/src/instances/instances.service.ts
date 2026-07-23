@@ -48,24 +48,11 @@ export class InstancesService {
       versionAccess,
     );
 
-    // 1) V2 process instance 생성
-    await this.instanceRepo.createInstance(instanceId, definitionId, 'CREATED', ctx, versionAccess);
-
-    // 2) V2 engine job START 생성
-    await this.instanceRepo.createJob({
-      instanceId,
-      type: 'START',
-      runAt: new Date(),
-      payload: { node_id: startNode.id, reason: 'api_create' },
-    });
-
-    // 3) V2 시작 토큰 생성 (Explicit Token 기반 구동용)
     const tokenId = randomUUID();
-    await this.instanceRepo.createToken({
-      id: tokenId,
-      instanceId,
-      nodeId: startNode.id,
-      status: 'ACTIVE',
+    await this.instanceRepo.executeInstanceMutation({
+      create_instances: [{ id: instanceId, definition_id: definitionId, status: 'CREATED', context: ctx, access: versionAccess }],
+      tokens: [{ id: tokenId, instance_id: instanceId, node_id: startNode.id, status: 'ACTIVE' }],
+      jobs: [{ instance_id: instanceId, type: 'START', run_at: new Date(), payload: { node_id: startNode.id, reason: 'api_create' } }],
     });
 
     return { instance_id: instanceId };
@@ -219,7 +206,20 @@ export class InstancesService {
       if (command.outcome === 'conflict') throw new ConflictException('Idempotency-Key was already used with a different terminate request');
       return { ...command.result, idempotent_replay: command.outcome === 'replayed' };
     }
-    const terminated = await this.terminateInstanceRecursive(id, new Set<string>());
+    const targets = await this.collectTerminationTargets(id, new Set<string>());
+    const terminated = targets.filter((target) => target.shouldTerminate).map((target) => target.id);
+    await this.instanceRepo.executeInstanceMutation({
+      update_instances: targets.map((target) => ({
+        id: target.id,
+        status: target.shouldTerminate ? 'TERMINATED' : undefined,
+        complete_jobs: true,
+      })),
+      events: terminated.map((instanceId) => ({
+        instance_id: instanceId,
+        event_type: 'INSTANCE_TERMINATED',
+        payload: { reason: 'operator_terminated' },
+      })),
+    });
     return { success: true, instance_id: id, terminated_instances: terminated, idempotent_replay: false };
   }
 
@@ -234,38 +234,6 @@ export class InstancesService {
       targets.push(...(await this.collectTerminationTargets(child.id, visited)));
     }
     return targets;
-  }
-
-  private async terminateInstanceRecursive(id: string, visited: Set<string>): Promise<string[]> {
-    if (visited.has(id)) {
-      return [];
-    }
-    visited.add(id);
-
-    const instance = await this.instanceRepo.getInstance(id);
-    if (!instance) {
-      throw new NotFoundException('Instance not found');
-    }
-
-    const terminated: string[] = [];
-    const status = String(instance.state ?? instance.status ?? '').toUpperCase();
-    if (!['COMPLETED', 'FAILED', 'TERMINATED'].includes(status)) {
-      await this.instanceRepo.updateInstanceStatus(id, 'TERMINATED');
-      await this.instanceRepo.completeJobsForInstance(id);
-      await this.outboxRepo.appendEvent(id, 'INSTANCE_TERMINATED', {
-        reason: 'operator_terminated',
-      });
-      terminated.push(id);
-    } else {
-      await this.instanceRepo.completeJobsForInstance(id);
-    }
-
-    const children = await this.instanceRepo.listChildInstances(id);
-    for (const child of children) {
-      terminated.push(...(await this.terminateInstanceRecursive(child.id, visited)));
-    }
-
-    return terminated;
   }
 
   async previewRetry(id: string, mode: 'full_instance' | 'failed_node' = 'full_instance', actor?: WorkflowHistoryActor) {
@@ -397,23 +365,15 @@ export class InstancesService {
       if (command.outcome === 'conflict') throw new ConflictException('Idempotency-Key was already used with a different retry request');
       return { ...command.result, idempotent_replay: command.outcome === 'replayed' };
     }
-    await this.instanceRepo.createInstance(instanceId, definition.id, 'CREATED', withAccess(ctx, access), access);
-    await this.instanceRepo.createJob({
-      instanceId,
-      type: 'START',
-      runAt: new Date(),
-      payload: {
-        node_id: startNode.id,
-        reason: 'instance_retry',
-        source_instance_id: id,
-        retry_mode: 'full_instance',
-      },
-    });
-    await this.instanceRepo.createToken({
-      id: tokenId,
-      instanceId,
-      nodeId: startNode.id,
-      status: 'ACTIVE',
+    await this.instanceRepo.executeInstanceMutation({
+      create_instances: [{ id: instanceId, definition_id: definition.id, status: 'CREATED', context: withAccess(ctx, access), access }],
+      tokens: [{ id: tokenId, instance_id: instanceId, node_id: startNode.id, status: 'ACTIVE' }],
+      jobs: [{
+        instance_id: instanceId,
+        type: 'START',
+        run_at: new Date(),
+        payload: { node_id: startNode.id, reason: 'instance_retry', source_instance_id: id, retry_mode: 'full_instance' },
+      }],
     });
 
     return { ...response, idempotent_replay: false };
@@ -488,29 +448,21 @@ export class InstancesService {
       return { ...command.result, idempotent_replay: command.outcome === 'replayed' };
     }
 
-    await this.instanceRepo.updateInstanceCtx(id, nextContext);
-    await this.instanceRepo.updateInstanceStatus(id, 'RUNNING');
-    await this.instanceRepo.createToken({
-      id: tokenId,
-      instanceId: id,
-      nodeId: failedNodeId,
-      status: 'ACTIVE',
-    });
-    await this.instanceRepo.createJob({
-      instanceId: id,
-      tokenId,
-      type: 'RETRY',
-      runAt: new Date(),
-      payload: {
-        node_id: failedNodeId,
-        reason: 'failed_node_retry',
-        retry_mode: 'failed_node',
-      },
-    });
-    await this.outboxRepo.appendEvent(id, 'FAILED_NODE_RETRY_REQUESTED', {
-      node_id: failedNodeId,
-      node_type: failedNodeType,
-      retry_mode: 'failed_node',
+    await this.instanceRepo.executeInstanceMutation({
+      update_instances: [{ id, status: 'RUNNING', context: nextContext }],
+      tokens: [{ id: tokenId, instance_id: id, node_id: failedNodeId, status: 'ACTIVE' }],
+      jobs: [{
+        instance_id: id,
+        token_id: tokenId,
+        type: 'RETRY',
+        run_at: new Date(),
+        payload: { node_id: failedNodeId, reason: 'failed_node_retry', retry_mode: 'failed_node' },
+      }],
+      events: [{
+        instance_id: id,
+        event_type: 'FAILED_NODE_RETRY_REQUESTED',
+        payload: { node_id: failedNodeId, node_type: failedNodeType, retry_mode: 'failed_node' },
+      }],
     });
 
     return { ...response, idempotent_replay: false };

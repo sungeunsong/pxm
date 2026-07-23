@@ -150,6 +150,21 @@ End node의 `resultPath`가 비어 있으면 `context.data`만 result로 저장�
 - key 원문은 저장하지 않으며 기본 보관 시간은 24시간이다. `INSTANCE_COMMAND_IDEMPOTENCY_TTL_HOURS`로 변경할 수 있다.
 - 헤더가 없으면 기존 동작을 유지하며 응답의 `idempotent_replay`는 `false`다.
 
+## Execution Storage Transaction
+
+워크플로우 실행을 시작할 때 생성되는 process instance, 시작 token, Engine START job은 하나의 DB transaction으로 저장한다. 셋 중 하나라도 저장에 실패하면 앞서 저장된 데이터도 모두 rollback한다.
+
+이 transaction은 다음 실행 경로에 공통 적용된다.
+
+- 관리자 Draft 미리보기와 Published Start
+- 직접 instance 생성 API
+- Schedule Start
+- DB Watch Start
+- 전체 instance retry와 failed-node retry
+- instance terminate의 상태·대기 Job·종료 event 변경
+
+Workflow Call의 자식 instance·token·job 생성은 Engine runtime transaction 안에서 이미 처리한다. Schedule run 기록과 DB Watch event/cursor 같은 trigger 제어 정보는 실행 데이터 transaction이 성공한 뒤 갱신한다.
+
 ## Trace And Stream
 
 - `GET /api/instances/:instance_id/trace`: 최근 trace/event 목록 조회.

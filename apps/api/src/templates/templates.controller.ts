@@ -646,21 +646,15 @@ export class TemplatesController {
       idempotentReplay = result.outcome === 'replayed';
       if (idempotentReplay) res?.setHeader('Idempotency-Replayed', 'true');
     } else {
-      await this.instanceRepo.createInstance(instanceId, template.id, 'CREATED', ctx, access);
-      await this.instanceRepo.createJob({
-        instanceId,
-        type: 'START',
-        runAt: new Date(),
-        payload: {
-          node_id: startNode.id,
-          reason: 'template_execute',
-        },
-      });
-      await this.instanceRepo.createToken({
-        id: startTokenId,
-        instanceId,
-        nodeId: startNode.id,
-        status: 'ACTIVE',
+      await this.instanceRepo.executeInstanceMutation({
+        create_instances: [{ id: instanceId, definition_id: template.id, status: 'CREATED', context: ctx, access }],
+        tokens: [{ id: startTokenId, instance_id: instanceId, node_id: startNode.id, status: 'ACTIVE' }],
+        jobs: [{
+          instance_id: instanceId,
+          type: 'START',
+          run_at: new Date(),
+          payload: { node_id: startNode.id, reason: 'template_execute' },
+        }],
       });
     }
 

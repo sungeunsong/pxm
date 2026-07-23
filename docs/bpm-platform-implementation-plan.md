@@ -402,7 +402,7 @@
   - [x] stale Engine job reclaim 기본 처리
   - [x] Start API idempotency key 저장과 동일 요청 중복 instance 방지
   - [x] task/retry/terminate API idempotency 적용
-  - [ ] API 저장과 Engine job/outbox 생성의 transaction 경계 재검증
+  - [x] API 저장과 Engine job/outbox 생성의 transaction 경계 재검증
   - [ ] instance 일시중지/재개와 신규 job claim 차단
   - [ ] API/Engine 비정상 종료 및 재시작 후 미완료 job 자동 복구 검증
   - [ ] orphan instance/token/task/job 탐지 API와 안전한 복구 절차
