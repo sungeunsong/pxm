@@ -282,10 +282,16 @@ impl JobQueuePort for MongoAdapter {
     async fn fetch_and_mark_running(&self, worker_id: &str) -> Result<Option<V2Job>> {
         let coll = self.db.collection::<Document>("v2_engine_jobs");
         let now = Utc::now().to_rfc3339();
+        let paused_instance_ids = self
+            .db
+            .collection::<Document>("v2_process_instances")
+            .distinct("_id", doc! { "is_paused": true }, None)
+            .await?;
 
         let filter = doc! {
             "status": "QUEUED",
-            "run_at": { "$lte": &now }
+            "run_at": { "$lte": &now },
+            "instance_id": { "$nin": paused_instance_ids }
         };
 
         let update = doc! {
@@ -999,6 +1005,7 @@ impl WorkflowInstanceRepositoryPort for MongoAdapter {
                 id,
                 process_definition_id: def_id,
                 state,
+                is_paused: doc.get_bool("is_paused").unwrap_or(false),
                 context: bson_to_json(context_bson),
             }))
         } else {

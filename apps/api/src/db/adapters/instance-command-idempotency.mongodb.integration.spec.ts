@@ -106,4 +106,39 @@ describeMongo('Mongo instance command idempotency', () => {
     expect(await db.collection('v2_engine_jobs').countDocuments({ instance_id: instanceId, status: 'COMPLETED' })).toBe(1);
     expect(await db.collection('v2_event_outbox').countDocuments({ instance_id: instanceId, event_type: 'INSTANCE_TERMINATED' })).toBe(1);
   });
+
+  it('stores pause control separately from the runtime state', async () => {
+    const keyHash = `pause-${randomUUID()}`;
+    commandKeys.push(keyHash);
+    const instanceId = randomUUID();
+    createdInstanceIds.push(instanceId);
+    const now = new Date().toISOString();
+    await db.collection('v2_process_instances').insertOne({
+      _id: instanceId,
+      process_definition_id: definitionId,
+      state: 'RUNNING',
+      status: 'RUNNING',
+      is_paused: false,
+      context: {},
+      created_at: now,
+      updated_at: now,
+    });
+
+    const command: IdempotentInstanceCommand = {
+      key_hash: keyHash,
+      request_hash: 'same-pause',
+      expires_at: new Date(Date.now() + 60_000),
+      result: { success: true, instance_id: instanceId, paused: true, runtime_state: 'RUNNING', changed: true },
+      update_instances: [{ id: instanceId, paused: true, paused_by: 'operator-1', pause_origin_instance_id: instanceId }],
+      events: [{ instance_id: instanceId, event_type: 'INSTANCE_PAUSED', payload: { reason: 'operator_paused' } }],
+    };
+
+    const outcomes = await Promise.all(Array.from({ length: 4 }, () => adapter.executeIdempotentCommand(command)));
+    expect(outcomes.filter((item) => item.outcome === 'created')).toHaveLength(1);
+    expect(outcomes.filter((item) => item.outcome === 'replayed')).toHaveLength(3);
+    expect(await db.collection('v2_process_instances').findOne({ _id: instanceId })).toEqual(
+      expect.objectContaining({ state: 'RUNNING', is_paused: true, paused_by: 'operator-1', pause_origin_instance_id: instanceId }),
+    );
+    expect(await db.collection('v2_event_outbox').countDocuments({ instance_id: instanceId, event_type: 'INSTANCE_PAUSED' })).toBe(1);
+  });
 });

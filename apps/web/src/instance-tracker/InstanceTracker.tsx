@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Search, Eye, Filter, CheckCircle2, AlertTriangle, PlayCircle, Clock, RotateCcw, ShieldAlert, StopCircle } from 'lucide-react';
+import { Search, Eye, Filter, CheckCircle2, AlertTriangle, PlayCircle, Clock, RotateCcw, ShieldAlert, StopCircle, PauseCircle } from 'lucide-react';
 import './InstanceTracker.css';
 
 interface Instance {
@@ -7,6 +7,7 @@ interface Instance {
   template_id: string;
   template_name?: string;
   state: string;
+  is_paused: boolean;
   created_at: string;
   updated_at: string;
   retry_source_instance_id?: string | null;
@@ -60,6 +61,7 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
   const [filterState, setFilterState] = useState<string>('ALL');
   const [retryingId, setRetryingId] = useState<string | null>(null);
   const [terminatingId, setTerminatingId] = useState<string | null>(null);
+  const [controllingId, setControllingId] = useState<string | null>(null);
   const [previewLoadingId, setPreviewLoadingId] = useState<string | null>(null);
   const [retryPreview, setRetryPreview] = useState<RetryPreview | null>(null);
 
@@ -78,6 +80,7 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
           template_id: String(row.template_id || row.definition_id || ''),
           template_name: row.template_name || row.definition_name || 'Untitled Workflow',
           state: String(row.state || row.status || 'RUNNING').toUpperCase(),
+          is_paused: row.is_paused === true,
           created_at: row.created_at || new Date().toISOString(),
           updated_at: row.updated_at || row.created_at || new Date().toISOString(),
           retry_source_instance_id:
@@ -115,9 +118,11 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
     }
   };
 
+  const displayState = (instance: Instance) => instance.is_paused ? 'PAUSED' : instance.state;
+
   const filteredInstances = instances.filter(inst => {
     if (filterState === 'ALL') return true;
-    return inst.state.toUpperCase() === filterState;
+    return displayState(inst) === filterState;
   });
   const retriesBySource = instances.reduce<Record<string, Instance[]>>((acc, inst) => {
     if (inst.retry_source_instance_id) {
@@ -194,6 +199,25 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
     }
   };
 
+  const setInstancePaused = async (instanceId: string, paused: boolean) => {
+    setControllingId(instanceId);
+    try {
+      const response = await fetch(`/api/instances/${instanceId}/${paused ? 'pause' : 'resume'}`, {
+        method: 'POST',
+        headers: { 'Idempotency-Key': crypto.randomUUID() },
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(payload?.message || `${paused ? 'pause' : 'resume'} api failed: ${response.status}`);
+      }
+      await fetchInstances();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : `실행 ${paused ? '일시중지' : '재개'} 요청에 실패했습니다.`);
+    } finally {
+      setControllingId(null);
+    }
+  };
+
   return (
     <div className="instance-tracker">
       <div className="tracker-header-title">
@@ -216,6 +240,12 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
             onClick={() => setFilterState('WAITING')}
           >
             결재대기 (WAITING)
+          </button>
+          <button
+            className={`filter-btn ${filterState === 'PAUSED' ? 'active' : ''}`}
+            onClick={() => setFilterState('PAUSED')}
+          >
+            일시중지 (PAUSED)
           </button>
           <button 
             className={`filter-btn ${filterState === 'COMPLETED' ? 'active' : ''}`}
@@ -282,9 +312,9 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
                       )}
                     </td>
                     <td className="inst-status-cell">
-                      <div className={`status-badge-wrapper ${inst.state.toLowerCase()}`}>
-                        {getStatusIcon(inst.state)}
-                        <span>{inst.state}</span>
+                      <div className={`status-badge-wrapper ${displayState(inst).toLowerCase()}`}>
+                        {inst.is_paused ? <PauseCircle className="status-icon paused" size={16} /> : getStatusIcon(inst.state)}
+                        <span>{displayState(inst)}</span>
                       </div>
                     </td>
                     <td className="time-cell">{new Date(inst.created_at).toLocaleString()}</td>
@@ -304,6 +334,16 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
                         >
                           <RotateCcw size={12} />
                           {retryingId === inst.id || previewLoadingId === inst.id ? '확인 중' : '전체 재시도'}
+                        </button>
+                      )}
+                      {['CREATED', 'RUNNING', 'WAITING'].includes(inst.state.toUpperCase()) && (
+                        <button
+                          className="btn-pause-instance"
+                          onClick={() => setInstancePaused(inst.id, !inst.is_paused)}
+                          disabled={controllingId === inst.id}
+                        >
+                          {inst.is_paused ? <PlayCircle size={12} /> : <PauseCircle size={12} />}
+                          {controllingId === inst.id ? '처리 중' : inst.is_paused ? '재개' : '일시중지'}
                         </button>
                       )}
                       {['CREATED', 'RUNNING', 'WAITING'].includes(inst.state.toUpperCase()) && (

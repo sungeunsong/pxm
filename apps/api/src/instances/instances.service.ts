@@ -223,6 +223,99 @@ export class InstancesService {
     return { success: true, instance_id: id, terminated_instances: terminated, idempotent_replay: false };
   }
 
+  async setInstancePaused(id: string, paused: boolean, actor?: WorkflowHistoryActor, idempotencyKey?: string) {
+    const instance = await this.getReadableInstance(id, actor);
+    const runtimeState = String(instance.state ?? instance.status ?? '').toUpperCase();
+    if (['COMPLETED', 'FAILED', 'TERMINATED'].includes(runtimeState)) {
+      throw new ConflictException(`Cannot ${paused ? 'pause' : 'resume'} a terminal instance`);
+    }
+
+    const currentPaused = instance.is_paused === true;
+    const pauseTargets = await this.collectPauseTargets(id, id, paused, new Set<string>());
+    const changedTargets = pauseTargets.filter((target) => target.changed);
+    const response = {
+      success: true,
+      instance_id: id,
+      paused,
+      runtime_state: runtimeState,
+      changed: currentPaused !== paused || changedTargets.length > 0,
+      affected_instance_ids: changedTargets.map((target) => target.id),
+    };
+    const key = normalizeIdempotencyKey(idempotencyKey);
+    const command = paused ? 'pause' : 'resume';
+    const hashes = key ? instanceCommandHashes(actor, id, command, key, { command }) : null;
+
+    if (hashes) {
+      const existing = await this.instanceRepo.getIdempotentCommand(hashes.key_hash, hashes.request_hash);
+      if (existing.outcome === 'replayed') return { ...existing.result, idempotent_replay: true };
+      if (existing.outcome === 'conflict') {
+        throw new ConflictException(`Idempotency-Key was already used with a different ${command} request`);
+      }
+    }
+
+    const actorId = actor?.api_key_id || actor?.actor_id || null;
+    const mutation = {
+      update_instances: changedTargets.map((target) => ({
+        id: target.id,
+        paused,
+        paused_by: paused ? actorId : null,
+        pause_origin_instance_id: paused ? id : null,
+      })),
+      events: changedTargets.map((target) => ({
+        instance_id: target.id,
+        event_type: paused ? 'INSTANCE_PAUSED' : 'INSTANCE_RESUMED',
+        payload: {
+          reason: paused ? 'operator_paused' : 'operator_resumed',
+          runtime_state: target.runtimeState,
+          actor_id: actorId,
+          pause_origin_instance_id: id,
+          in_flight_policy: 'finish_current_transaction',
+        },
+      })),
+    };
+
+    if (hashes) {
+      const result = await this.instanceRepo.executeIdempotentCommand({
+        ...hashes,
+        expires_at: new Date(Date.now() + instanceCommandIdempotencyTtlMs()),
+        result: response,
+        ...mutation,
+      });
+      if (result.outcome === 'conflict') {
+        throw new ConflictException(`Idempotency-Key was already used with a different ${command} request`);
+      }
+      return { ...result.result, idempotent_replay: result.outcome === 'replayed' };
+    }
+
+    if (!response.changed) {
+      return { ...response, idempotent_replay: false };
+    }
+    await this.instanceRepo.executeInstanceMutation(mutation);
+    return { ...response, idempotent_replay: false };
+  }
+
+  private async collectPauseTargets(
+    id: string,
+    rootId: string,
+    paused: boolean,
+    visited: Set<string>,
+  ): Promise<Array<{ id: string; runtimeState: string; changed: boolean }>> {
+    if (visited.has(id)) return [];
+    visited.add(id);
+    const instance = await this.instanceRepo.getInstance(id);
+    if (!instance) return [];
+    const runtimeState = String(instance.state ?? instance.status ?? '').toUpperCase();
+    const terminal = ['COMPLETED', 'FAILED', 'TERMINATED'].includes(runtimeState);
+    const changed = paused
+      ? !terminal && instance.is_paused !== true
+      : instance.is_paused === true && (id === rootId || instance.pause_origin_instance_id === rootId);
+    const targets = [{ id, runtimeState, changed }];
+    for (const child of await this.instanceRepo.listChildInstances(id)) {
+      targets.push(...(await this.collectPauseTargets(String(child.id || child._id), rootId, paused, visited)));
+    }
+    return targets;
+  }
+
   private async collectTerminationTargets(id: string, visited: Set<string>): Promise<Array<{ id: string; shouldTerminate: boolean }>> {
     if (visited.has(id)) return [];
     visited.add(id);
@@ -827,7 +920,7 @@ function normalizeIdempotencyKey(value?: string): string | null {
 function instanceCommandHashes(
   actor: WorkflowHistoryActor | undefined,
   instanceId: string,
-  command: 'retry' | 'terminate',
+  command: 'retry' | 'terminate' | 'pause' | 'resume',
   key: string,
   request: Record<string, any>,
 ) {

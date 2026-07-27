@@ -139,6 +139,7 @@ pub struct V2Instance {
     pub id: Uuid,
     pub process_definition_id: Uuid,
     pub state: String,
+    pub is_paused: bool,
     pub context: Value,
 }
 

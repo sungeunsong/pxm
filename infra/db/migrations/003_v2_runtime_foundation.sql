@@ -62,6 +62,10 @@ create table if not exists v2_process_instances (
   id uuid primary key,
   process_definition_id uuid not null references v2_process_definitions(id),
   state text not null, -- CREATED/RUNNING/WAITING/COMPLETED/FAILED/TERMINATED
+  is_paused boolean not null default false,
+  paused_at timestamptz,
+  paused_by text,
+  pause_origin_instance_id uuid,
   context jsonb not null default '{}'::jsonb,
   started_at timestamptz,
   completed_at timestamptz,

@@ -16,6 +16,8 @@
     "e2e:workflow-lifecycle": "cd apps/api && node scripts/smoke-workflow-lifecycle.mjs",
     "e2e:start-idempotency": "cd apps/api && node scripts/smoke-start-idempotency.mjs",
     "e2e:instance-command-idempotency": "cd apps/api && node scripts/smoke-instance-command-idempotency.mjs",
+    "e2e:instance-pause-resume": "cargo build --manifest-path apps/engine/Cargo.toml && cd apps/api && node scripts/smoke-instance-pause-resume.mjs",
+    "e2e:waiting-pause-resume": "cargo build --manifest-path apps/engine/Cargo.toml && cd apps/api && node scripts/smoke-waiting-pause-resume.mjs",
     "e2e:process-restart-recovery": "pnpm --dir apps/api build && cargo build --manifest-path apps/engine/Cargo.toml && cd apps/api && node scripts/smoke-process-restart-recovery.mjs",
     "smoke:mongo:approval": "cd apps/api && API_BASE_URL=${API_BASE_URL:-http://localhost:3011/api} MONGODB_URL=${MONGODB_URL:-mongodb://127.0.0.1:27017/?replicaSet=rs0} MONGO_DB_NAME=${MONGO_DB_NAME:-pxm_db} node scripts/smoke-mongo-approval.mjs",
     "smoke:mongo:gateway": "cd apps/api && API_BASE_URL=${API_BASE_URL:-http://localhost:3011/api} MONGODB_URL=${MONGODB_URL:-mongodb://127.0.0.1:27017/?replicaSet=rs0} MONGO_DB_NAME=${MONGO_DB_NAME:-pxm_db} node scripts/smoke-mongo-gateway.mjs",

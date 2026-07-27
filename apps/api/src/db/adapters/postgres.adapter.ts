@@ -373,9 +373,22 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
       for (const update of input.update_instances || []) {
         await client.query(
           `UPDATE v2_process_instances
-           SET state = COALESCE($1, state), context = COALESCE($2::jsonb, context), updated_at = NOW()
-           WHERE id = $3::uuid`,
-          [update.status || null, update.context === undefined ? null : JSON.stringify(update.context), update.id],
+           SET state = COALESCE($1, state),
+               context = COALESCE($2::jsonb, context),
+               is_paused = COALESCE($3::boolean, is_paused),
+               paused_at = CASE WHEN $3::boolean IS NULL THEN paused_at WHEN $3 THEN NOW() ELSE NULL END,
+               paused_by = CASE WHEN $3::boolean IS NULL THEN paused_by WHEN $3 THEN $4 ELSE NULL END,
+               pause_origin_instance_id = CASE WHEN $3::boolean IS NULL THEN pause_origin_instance_id WHEN $3 THEN $5::uuid ELSE NULL END,
+               updated_at = NOW()
+           WHERE id = $6::uuid`,
+          [
+            update.status || null,
+            update.context === undefined ? null : JSON.stringify(update.context),
+            update.paused === undefined ? null : update.paused,
+            update.paused_by || null,
+            update.pause_origin_instance_id || null,
+            update.id,
+          ],
         );
         if (update.complete_jobs) {
           await client.query(
@@ -456,9 +469,22 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
     for (const update of input.update_instances || []) {
       await client.query(
         `UPDATE v2_process_instances
-         SET state = COALESCE($1, state), context = COALESCE($2::jsonb, context), updated_at = NOW()
-         WHERE id = $3::uuid`,
-        [update.status || null, update.context === undefined ? null : JSON.stringify(update.context), update.id],
+         SET state = COALESCE($1, state),
+             context = COALESCE($2::jsonb, context),
+             is_paused = COALESCE($3::boolean, is_paused),
+             paused_at = CASE WHEN $3::boolean IS NULL THEN paused_at WHEN $3 THEN NOW() ELSE NULL END,
+             paused_by = CASE WHEN $3::boolean IS NULL THEN paused_by WHEN $3 THEN $4 ELSE NULL END,
+             pause_origin_instance_id = CASE WHEN $3::boolean IS NULL THEN pause_origin_instance_id WHEN $3 THEN $5::uuid ELSE NULL END,
+             updated_at = NOW()
+         WHERE id = $6::uuid`,
+        [
+          update.status || null,
+          update.context === undefined ? null : JSON.stringify(update.context),
+          update.paused === undefined ? null : update.paused,
+          update.paused_by || null,
+          update.pause_origin_instance_id || null,
+          update.id,
+        ],
       );
       if (update.complete_jobs) {
         await client.query(

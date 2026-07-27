@@ -83,10 +83,13 @@ impl JobQueuePort for PostgresAdapter {
 
         let row = sqlx::query(
             r#"
-            select id, instance_id, token_id, type as "job_type", attempt, payload
-            from v2_engine_jobs
-            where status = 'QUEUED' and run_at <= now()
-            order by id asc
+            select j.id, j.instance_id, j.token_id, j.type as "job_type", j.attempt, j.payload
+            from v2_engine_jobs j
+            join v2_process_instances i on i.id = j.instance_id
+            where j.status = 'QUEUED'
+              and j.run_at <= now()
+              and coalesce(i.is_paused, false) = false
+            order by j.id asc
             for update skip locked
             limit 1
             "#,
@@ -726,7 +729,7 @@ impl WorkflowInstanceRepositoryPort for PostgresAdapter {
         let sqlx_tx = get_tx_mut(tx)?;
         let row = sqlx::query(
             r#"
-            select id, process_definition_id, state, context
+            select id, process_definition_id, state, is_paused, context
             from v2_process_instances
             where id = $1
             "#,
@@ -743,6 +746,7 @@ impl WorkflowInstanceRepositoryPort for PostgresAdapter {
             id: r.get("id"),
             process_definition_id: r.get("process_definition_id"),
             state: r.get("state"),
+            is_paused: r.get("is_paused"),
             context: r.get("context"),
         }))
     }

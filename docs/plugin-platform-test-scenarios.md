@@ -128,6 +128,14 @@ curl http://127.0.0.1:3031/health
 pnpm smoke:mongo:approval
 ```
 
+Approval 및 Timer 대기 상태의 일시중지 정책은 다음 자동 E2E로 검증한다.
+
+```bash
+pnpm e2e:waiting-pause-resume
+```
+
+이 테스트는 승인 결과가 저장된 뒤 후속 `RESUME` job이 일시중지 중 실행되지 않는지, 만료된 `TIMER` job이 일시중지 중 실행되지 않는지, 재개 후 두 instance가 정상 완료되는지를 격리 MongoDB에서 확인한다.
+
 3. 성공 출력이 나오는지 확인한다.
 
 ```text

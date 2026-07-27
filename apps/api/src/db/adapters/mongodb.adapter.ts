@@ -485,6 +485,12 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
             fields.status = update.status;
           }
           if (update.context !== undefined) fields.context = update.context;
+          if (update.paused !== undefined) {
+            fields.is_paused = update.paused;
+            fields.paused_at = update.paused ? now : null;
+            fields.paused_by = update.paused ? update.paused_by || null : null;
+            fields.pause_origin_instance_id = update.paused ? update.pause_origin_instance_id || update.id : null;
+          }
           await this.db.collection<any>('v2_process_instances').updateOne({ _id: update.id }, { $set: fields }, { session });
           if (update.complete_jobs) {
             await this.db.collection<any>('v2_engine_jobs').updateMany(
@@ -606,6 +612,12 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
         fields.status = update.status;
       }
       if (update.context !== undefined) fields.context = update.context;
+      if (update.paused !== undefined) {
+        fields.is_paused = update.paused;
+        fields.paused_at = update.paused ? now : null;
+        fields.paused_by = update.paused ? update.paused_by || null : null;
+        fields.pause_origin_instance_id = update.paused ? update.pause_origin_instance_id || update.id : null;
+      }
       await this.db.collection<any>('v2_process_instances').updateOne({ _id: update.id }, { $set: fields }, { session });
       if (update.complete_jobs) {
         await this.db.collection<any>('v2_engine_jobs').updateMany(
@@ -717,6 +729,10 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
         definition_id: inst.process_definition_id,
         state: inst.state,
         status: inst.state || inst.status,
+        is_paused: inst.is_paused === true,
+        paused_at: inst.paused_at || null,
+        paused_by: inst.paused_by || null,
+        pause_origin_instance_id: inst.pause_origin_instance_id || null,
         context: inst.context,
         workspace_id: inst.workspace_id || inst.context?.runtime?.access?.workspace_id || 'default',
         group_id: inst.group_id || inst.context?.runtime?.access?.group_id || null,
@@ -744,6 +760,10 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
       definition_id: inst.process_definition_id,
       state: inst.state,
       status: inst.state || inst.status,
+      is_paused: inst.is_paused === true,
+      paused_at: inst.paused_at || null,
+      paused_by: inst.paused_by || null,
+      pause_origin_instance_id: inst.pause_origin_instance_id || null,
       context: inst.context,
       workspace_id: inst.workspace_id || inst.context?.runtime?.access?.workspace_id || 'default',
       group_id: inst.group_id || inst.context?.runtime?.access?.group_id || null,
@@ -770,6 +790,10 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
       definition_id: inst.process_definition_id,
       state: inst.state,
       status: inst.state || inst.status,
+      is_paused: inst.is_paused === true,
+      paused_at: inst.paused_at || null,
+      paused_by: inst.paused_by || null,
+      pause_origin_instance_id: inst.pause_origin_instance_id || null,
       context: inst.context,
       workspace_id: inst.workspace_id || inst.context?.runtime?.access?.workspace_id || 'default',
       group_id: inst.group_id || inst.context?.runtime?.access?.group_id || null,

@@ -84,6 +84,20 @@ export class InstancesController {
     return result;
   }
 
+  @Post('/instances/:id/pause')
+  async pause(@Param('id') id: string, @Headers('idempotency-key') idempotencyKey: string | undefined, @Req() req: Request, @Res({ passthrough: true }) res?: Response) {
+    const result = await this.instances.setInstancePaused(id, true, actorFromRequest(req), idempotencyKey);
+    if (result.idempotent_replay) res?.setHeader('Idempotency-Replayed', 'true');
+    return result;
+  }
+
+  @Post('/instances/:id/resume')
+  async resume(@Param('id') id: string, @Headers('idempotency-key') idempotencyKey: string | undefined, @Req() req: Request, @Res({ passthrough: true }) res?: Response) {
+    const result = await this.instances.setInstancePaused(id, false, actorFromRequest(req), idempotencyKey);
+    if (result.idempotent_replay) res?.setHeader('Idempotency-Replayed', 'true');
+    return result;
+  }
+
   @Get('/instances/:id/trace')
   async trace(@Param('id') id: string, @Req() req: Request) {
     await this.instances.ensureReadableInstance(id, actorFromRequest(req));

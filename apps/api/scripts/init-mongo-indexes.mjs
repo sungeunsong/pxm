@@ -12,6 +12,7 @@ async function main() {
   await ensureValidators(db);
   await db.collection('v2_process_definitions').createIndex({ created_at: -1 });
   await db.collection('v2_process_instances').createIndex({ state: 1, created_at: -1 });
+  await db.collection('v2_process_instances').createIndex({ is_paused: 1, state: 1, updated_at: 1 });
   await db.collection('v2_process_instances').createIndex({ process_definition_id: 1 });
   await db.collection('v2_tokens').createIndex({ instance_id: 1, status: 1, created_at: 1 });
   await db.collection('v2_tokens').createIndex({ instance_id: 1, node_id: 1 });
@@ -63,6 +64,10 @@ async function ensureValidators(db) {
       _id: { bsonType: 'string' },
       process_definition_id: { bsonType: 'string' },
       state: { enum: ['CREATED', 'RUNNING', 'WAITING', 'COMPLETED', 'FAILED', 'TERMINATED'] },
+      is_paused: { bsonType: 'bool' },
+      paused_at: { bsonType: ['string', 'null'] },
+      paused_by: { bsonType: ['string', 'null'] },
+      pause_origin_instance_id: { bsonType: ['string', 'null'] },
       context: { bsonType: 'object' },
       lock_owner: { bsonType: ['string', 'null'] },
       lock_until: { bsonType: ['string', 'null'] },

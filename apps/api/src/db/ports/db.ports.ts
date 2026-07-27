@@ -127,6 +127,9 @@ export type IdempotentInstanceCommand = {
     status?: string;
     context?: any;
     complete_jobs?: boolean;
+    paused?: boolean;
+    paused_by?: string | null;
+    pause_origin_instance_id?: string | null;
   }>;
   tokens?: Array<{
     id: string;

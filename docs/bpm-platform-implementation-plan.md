@@ -403,7 +403,7 @@
   - [x] Start API idempotency key 저장과 동일 요청 중복 instance 방지
   - [x] task/retry/terminate API idempotency 적용
   - [x] API 저장과 Engine job/outbox 생성의 transaction 경계 재검증
-  - [ ] instance 일시중지/재개와 신규 job claim 차단
+  - [x] instance 일시중지/재개와 신규 job claim 차단
   - [x] API/Engine 비정상 종료 및 재시작 후 미완료 job 자동 복구 검증
   - [x] orphan instance/token/task/job 탐지 API와 안전한 복구 절차
   - [ ] Schedule/DB Watch/Timer/Approval 대기 중 재시작 시나리오 자동화
@@ -425,6 +425,18 @@
 - 60초 이내에 변경된 데이터는 정상 처리 중인 짧은 구간일 수 있어 기본 점검 대상에서 제외한다.
 - 복구 직전에 상태와 마지막 변경 시각을 다시 확인하고, 이미 상태가 달라졌으면 아무것도 변경하지 않는다.
 - 복구 요청은 `Idempotency-Key`로 중복 처리를 막고 처리 사유와 결과를 관리 감사 로그에 기록한다.
+
+일시중지/재개 기준:
+
+- 일시중지는 `RUNNING`/`WAITING` 같은 실제 런타임 상태를 덮어쓰지 않고 별도 `is_paused` 제어 상태로 저장한다.
+- Engine은 일시중지된 instance의 `QUEUED` job을 신규 선점하지 않는다.
+- API 요청 시점에 이미 실행 중인 job은 현재 트랜잭션 경계까지 처리하며, 그 과정에서 생성된 후속 job부터 선점이 차단된다.
+- Workflow Call 부모를 일시중지하면 활성 자식도 함께 중지하며, 재개 시 해당 부모가 중지한 자식만 선택적으로 재개한다.
+- pause/resume API는 `Idempotency-Key`를 지원하고 `INSTANCE_PAUSED`/`INSTANCE_RESUMED` outbox event를 남긴다.
+- 완료·실패·종료된 terminal instance에는 pause/resume을 허용하지 않는다.
+- Approval 대기 중 일시중지되어도 승인·반려 결정은 저장하고 `RESUME` job은 재개 전까지 선점하지 않는다.
+- 일시중지 중 만료된 Timer는 기존 만료 시각을 유지하며, 재개 후 overdue `TIMER` job을 즉시 처리한다.
+- `pnpm e2e:waiting-pause-resume`은 격리 MongoDB에서 승인 결과 보존, Approval 후속 실행 차단, Timer 만료 실행 차단과 재개 후 완료를 검증한다.
 
 ### 4. 운영 관측과 장애 대응
 

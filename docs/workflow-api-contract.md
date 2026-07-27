@@ -12,6 +12,44 @@ Phase 1 기준의 외부 연동용 workflow 실행 계약이다.
 
 관리자용 상태 변경 API는 다음과 같다.
 
+### Instance 일시중지/재개
+
+```http
+POST /instances/{instance_id}/pause
+Idempotency-Key: <caller-generated-key>
+```
+
+```http
+POST /instances/{instance_id}/resume
+Idempotency-Key: <caller-generated-key>
+```
+
+응답:
+
+```json
+{
+  "success": true,
+  "instance_id": "uuid",
+  "paused": true,
+  "runtime_state": "RUNNING",
+  "changed": true,
+  "affected_instance_ids": ["uuid"],
+  "idempotent_replay": false
+}
+```
+
+`paused`는 Engine 신규 job claim을 제어하는 별도 상태이며 `runtime_state`를 변경하지 않는다.
+이미 실행 중인 job은 현재 트랜잭션을 마친 뒤 멈추고, 이후 `QUEUED` job은 resume 전까지 선점되지 않는다.
+동일한 pause/resume 상태를 다시 요청하면 `changed=false`인 성공 응답을 반환한다.
+Workflow Call 부모 instance를 대상으로 하면 활성 자식에게도 전파되며 `affected_instance_ids`에 실제 변경된 instance가 반환된다.
+`COMPLETED`, `FAILED`, `TERMINATED` instance는 `409 Conflict`를 반환한다.
+
+대기 상태별 정책:
+
+- Approval: 일시중지 중에도 승인·반려 요청은 정상 저장한다. 이때 생성된 `RESUME` job은 `QUEUED`로 유지되고 instance 재개 후 처리된다.
+- Timer: 일시중지 중 timer 만료 시각이 지나도 `TIMER` job은 `QUEUED`로 유지된다. 남은 시간을 다시 계산하지 않고 instance 재개 직후 만료 job을 처리한다.
+- Workflow Call: 부모가 일시중지한 활성 자식에게 pause를 전파하고, 부모 재개 시 동일한 `pause_origin_instance_id`를 가진 자식만 재개한다.
+
 - `POST /api/templates/:template_id/deploy`: 현재 저장 버전을 배포한다.
 - `POST /api/templates/:template_id/disable`: 신규 실행을 중지한다.
 - `POST /api/templates/:template_id/reactivate`: 마지막 배포 버전을 다시 활성화한다.

@@ -1401,6 +1401,15 @@ pub async fn run_v2_once(ctx: &V2RuntimeContext, worker_id: &str) -> Result<bool
             return Ok((true, true));
         };
 
+        if instance.is_paused {
+            println!(
+                "[v2_engine] instance {} is paused; releasing job {}",
+                instance.id, job.id
+            );
+            ctx.job_queue.release_job(job.id, 1.0, tx.as_mut()).await?;
+            return Ok((false, true));
+        }
+
         if instance.state == "COMPLETED"
             || instance.state == "FAILED"
             || instance.state == "TERMINATED"
