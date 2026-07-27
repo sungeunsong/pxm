@@ -1,4 +1,7 @@
-use crate::v2::types::{EdgeRule, JobType, NodeDef, V2Instance, V2Job, V2Task, V2Token};
+use crate::v2::types::{
+    EdgeRule, JobType, NodeDef, V2ApprovalBundle, V2ApprovalRequest, V2Instance, V2Job,
+    V2Token,
+};
 use anyhow::Result;
 use serde_json::Value;
 use std::any::Any;
@@ -110,9 +113,11 @@ pub trait TokenRepositoryPort: Send + Sync {
 /// 승인 태스크의 영속성을 처리하는 포트
 #[async_trait]
 pub trait TaskRepositoryPort: Send + Sync {
-    /// token_id 기준으로 승인 태스크를 재사용하거나 생성합니다.
-    async fn find_or_create_task(
+    /// token_id 기준으로 단일 승인 집계와 첫 단계 태스크를 재사용하거나 생성합니다.
+    async fn find_or_create_approval(
         &self,
+        request_id: Uuid,
+        step_id: Uuid,
         task_id: Uuid,
         instance_id: Uuid,
         token_id: Uuid,
@@ -120,10 +125,14 @@ pub trait TaskRepositoryPort: Send + Sync {
         assignee: &str,
         payload: Value,
         tx: &mut dyn Tx,
-    ) -> Result<V2Task>;
+    ) -> Result<V2ApprovalBundle>;
 
-    /// 특정 토큰에 연결된 승인 태스크를 조회합니다.
-    async fn find_task_by_token(&self, token_id: Uuid, tx: &mut dyn Tx) -> Result<Option<V2Task>>;
+    /// 특정 토큰에 연결된 결재 전체 상태를 조회합니다.
+    async fn find_approval_request_by_token(
+        &self,
+        token_id: Uuid,
+        tx: &mut dyn Tx,
+    ) -> Result<Option<V2ApprovalRequest>>;
 }
 
 /// 엔진 상세 실행 로그 적재를 위한 포트

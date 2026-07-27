@@ -346,13 +346,20 @@
 
 - [x] Approval/Human Task end-to-end 운영 수준 보강
   - [x] Approval 노드 task 생성과 approve/reject 후 Engine `RESUME` 기본 흐름
+  - [x] PXM-8 단일 승인 집계 기반
+    - [x] `ApprovalRequest`/`ApprovalStep`/`ApprovalTask` 관계와 MongoDB/PostgreSQL 스키마
+    - [x] 신규 승인 노드 진입 시 token당 Request와 첫 Step을 멱등 생성
+    - [x] Engine이 개별 Task 대신 Request 전체 상태를 기준으로 재진입
+    - [x] Task·Step·Request 최종 상태와 `RESUME` 1회 생성을 같은 transaction으로 보장
+    - [x] 기존 집계 ID 없는 실행 중 Task의 호환 처리
+    - [x] MongoDB/PostgreSQL 승인·반려·동시 승인 integration test와 Mongo E2E
   - [x] fixed/condition/requester-selected assignee 기본 모델
   - [x] task 목록의 caller identity 기반 조회: 임의 `assignee` query 신뢰 제거
   - [x] 로그인 user와 task assignee의 처리 권한 검증
   - [x] API key `task:approve` scope와 USER owner 제한 실제 API 적용
   - [x] task가 속한 workflow/group 및 `allowed_workflow_ids` 검증
   - [x] OPEN task의 승인/반려 compare-and-set으로 동시 중복 처리 차단
-  - [x] task 상태 변경과 Engine `RESUME` job 생성을 transaction으로 보장
+  - [x] task와 승인 집계 상태 변경, Engine `RESUME` job 생성을 transaction으로 보장
   - [x] 승인/반려 `Idempotency-Key`와 동일 요청 결과 재사용
   - [x] actor/API key/business actor/의견/결과 audit 저장
   - [x] task 조회/승인/반려 API DTO와 응답 계약 정리

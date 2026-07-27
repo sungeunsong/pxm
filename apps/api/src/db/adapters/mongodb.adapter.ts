@@ -1188,6 +1188,8 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
         id: t._id,
         instance_id: t.instance_id,
         token_id: t.token_id,
+        approval_request_id: t.approval_request_id || null,
+        approval_step_id: t.approval_step_id || null,
         node_id: t.node_id,
         assignee: t.assignee,
         status: t.status,
@@ -1212,6 +1214,8 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
       id: t._id,
       instance_id: t.instance_id,
       token_id: t.token_id,
+      approval_request_id: t.approval_request_id || null,
+      approval_step_id: t.approval_step_id || null,
       node_id: t.node_id,
       assignee: t.assignee,
       status: t.status,
@@ -1577,30 +1581,90 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
           return;
         }
 
-        const counterDoc = await this.db.collection<any>('v2_counters').findOneAndUpdate({ _id: 'v2_engine_jobs' }, { $inc: { seq: 1 } }, { upsert: true, returnDocument: 'after', session });
-        const sequence = Number((counterDoc as any)?.seq || Date.now());
-        await this.db.collection<any>('v2_engine_jobs').insertOne(
-          {
-            _id: sequence,
-            instance_id: task.instance_id,
-            token_id: task.token_id || null,
-            job_type: 'RESUME',
-            run_at: now,
-            attempt: 0,
-            status: 'QUEUED',
-            payload: {
-              action: command.action,
-              completed_node_id: task.node_id,
-              task_id: command.task_id,
-              result: command.result || null,
-              comment: command.comment || null,
+        let shouldResume = !task.approval_request_id;
+        if (task.approval_request_id) {
+          const requestUpdate = await this.db.collection<any>('v2_approval_requests').updateOne(
+            {
+              _id: task.approval_request_id,
+              instance_id: task.instance_id,
+              token_id: task.token_id,
+              status: 'IN_PROGRESS',
             },
-            created_at: now,
-            updated_at: now,
-          },
-          { session },
-        );
-        await this.db.collection<any>('v2_process_instances').updateOne({ _id: task.instance_id }, { $set: { state: 'RUNNING', status: 'RUNNING', updated_at: now } }, { session });
+            {
+              $set: {
+                status: command.status,
+                result: {
+                  action: command.action,
+                  task_id: command.task_id,
+                  comment: command.comment || null,
+                  result: command.result || null,
+                },
+                completed_at: now,
+                updated_at: now,
+              },
+              $inc: { version: 1 },
+            },
+            { session },
+          );
+          if (requestUpdate.modifiedCount !== 1) {
+            const request = await this.db
+              .collection<any>('v2_approval_requests')
+              .findOne({ _id: task.approval_request_id }, { session });
+            if (!request) {
+              throw new Error(
+                `Approval request ${task.approval_request_id} is missing for task ${task._id}`,
+              );
+            }
+          }
+          shouldResume = requestUpdate.modifiedCount === 1;
+
+          if (task.approval_step_id) {
+            await this.db.collection<any>('v2_approval_steps').updateOne(
+              {
+                _id: task.approval_step_id,
+                request_id: task.approval_request_id,
+                status: 'OPEN',
+              },
+              {
+                $set: {
+                  status: command.status,
+                  completed_at: now,
+                  updated_at: now,
+                },
+                $inc: { version: 1 },
+              },
+              { session },
+            );
+          }
+        }
+
+        if (shouldResume) {
+          const counterDoc = await this.db.collection<any>('v2_counters').findOneAndUpdate({ _id: 'v2_engine_jobs' }, { $inc: { seq: 1 } }, { upsert: true, returnDocument: 'after', session });
+          const sequence = Number((counterDoc as any)?.seq || Date.now());
+          await this.db.collection<any>('v2_engine_jobs').insertOne(
+            {
+              _id: sequence,
+              instance_id: task.instance_id,
+              token_id: task.token_id || null,
+              job_type: 'RESUME',
+              run_at: now,
+              attempt: 0,
+              status: 'QUEUED',
+              payload: {
+                action: command.action,
+                completed_node_id: task.node_id,
+                approval_request_id: task.approval_request_id || null,
+                task_id: command.task_id,
+                result: command.result || null,
+                comment: command.comment || null,
+              },
+              created_at: now,
+              updated_at: now,
+            },
+            { session },
+          );
+          await this.db.collection<any>('v2_process_instances').updateOne({ _id: task.instance_id }, { $set: { state: 'RUNNING', status: 'RUNNING', updated_at: now } }, { session });
+        }
         await this.db.collection<any>('v2_event_outbox').insertOne(
           {
             instance_id: task.instance_id,
@@ -1618,6 +1682,23 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
           },
           { session },
         );
+        if (task.approval_request_id && shouldResume) {
+          await this.db.collection<any>('v2_event_outbox').insertOne(
+            {
+              instance_id: task.instance_id,
+              token_id: task.token_id || null,
+              node_id: task.node_id,
+              event_type: 'APPROVAL_REQUEST_COMPLETED',
+              payload: {
+                approval_request_id: task.approval_request_id,
+                task_id: command.task_id,
+                status: command.status,
+              },
+              created_at: now,
+            },
+            { session },
+          );
+        }
         result = {
           outcome: 'completed',
           task: mapTaskDoc({
@@ -2450,6 +2531,8 @@ function mapTaskDoc(task: any) {
     id: task._id,
     instance_id: task.instance_id,
     token_id: task.token_id,
+    approval_request_id: task.approval_request_id || null,
+    approval_step_id: task.approval_step_id || null,
     node_id: task.node_id,
     assignee: task.assignee,
     status: task.status,

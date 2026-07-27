@@ -153,3 +153,19 @@ pub struct V2Task {
     pub status: String,
     pub payload: Value,
 }
+
+#[derive(Debug, Clone)]
+pub struct V2ApprovalRequest {
+    pub id: Uuid,
+    pub instance_id: Uuid,
+    pub token_id: Uuid,
+    pub node_id: String,
+    pub status: String,
+    pub current_step_order: i32,
+}
+
+#[derive(Debug, Clone)]
+pub struct V2ApprovalBundle {
+    pub request: V2ApprovalRequest,
+    pub task: V2Task,
+}

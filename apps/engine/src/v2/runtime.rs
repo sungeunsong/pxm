@@ -1940,14 +1940,17 @@ async fn execute_token_flow(
             }
 
             "approval" => {
-                // 1) 완료된 Task 확인 (재진입 시나리오)
-                let completed_task = ctx.task_repo.find_task_by_token(token.id, tx).await?;
+                // 1) 결재 전체 상태 확인 (재진입 시나리오)
+                let approval_request = ctx
+                    .task_repo
+                    .find_approval_request_by_token(token.id, tx)
+                    .await?;
 
-                if let Some(task) = completed_task {
-                    if task.status == "APPROVED" || task.status == "REJECTED" {
+                if let Some(request) = approval_request {
+                    if request.status == "APPROVED" || request.status == "REJECTED" {
                         println!(
-                            "[v2_engine] ✅ Approval Task is {}, moving next.",
-                            task.status
+                            "[v2_engine] ✅ Approval Request is {}, moving next.",
+                            request.status
                         );
 
                         ctx.exec_log
@@ -1956,7 +1959,10 @@ async fn execute_token_flow(
                                 Some(token.id),
                                 Some(&token.node_id),
                                 "NODE_COMPLETED",
-                                json!({"approval_status": task.status}),
+                                json!({
+                                    "approval_request_id": request.id,
+                                    "approval_status": request.status
+                                }),
                                 tx,
                             )
                             .await?;
@@ -1965,8 +1971,8 @@ async fn execute_token_flow(
                         token.updated_at = Utc::now();
                         ctx.token_repo.update_tokens(&[token.clone()], tx).await?;
 
-                        if task.status == "REJECTED" {
-                            println!("[v2_engine] 🛑 Task rejected, failing instance.");
+                        if request.status == "REJECTED" {
+                            println!("[v2_engine] 🛑 Approval rejected, failing instance.");
                             instance.state = "FAILED".to_string();
                             ctx.instance_repo
                                 .update_instance(
@@ -2023,7 +2029,7 @@ async fn execute_token_flow(
                         continue;
                     }
 
-                    if task.status == "OPEN" {
+                    if request.status == "PENDING" || request.status == "IN_PROGRESS" {
                         token.status = TokenStatus::Waiting;
                         token.updated_at = Utc::now();
                         ctx.token_repo.update_tokens(&[token.clone()], tx).await?;
@@ -2054,12 +2060,16 @@ async fn execute_token_flow(
                     .await?;
 
                 let task_id = Uuid::new_v4();
+                let request_id = Uuid::new_v4();
+                let step_id = Uuid::new_v4();
                 let (assignee, approval_payload) =
                     resolve_approval_assignment(node, &instance.context);
 
-                let task = ctx
+                let approval = ctx
                     .task_repo
-                    .find_or_create_task(
+                    .find_or_create_approval(
+                        request_id,
+                        step_id,
                         task_id,
                         instance.id,
                         token.id,
@@ -2069,6 +2079,7 @@ async fn execute_token_flow(
                         tx,
                     )
                     .await?;
+                let task = approval.task;
 
                 // 토큰을 WAITING으로 마킹
                 token.status = TokenStatus::Waiting;
@@ -2088,6 +2099,8 @@ async fn execute_token_flow(
                         Some(&token.node_id),
                         "TASK_CREATED",
                         json!({
+                            "approval_request_id": approval.request.id,
+                            "approval_step_order": approval.request.current_step_order,
                             "task_id": task.id,
                             "assignee": assignee,
                             "approval": approval_payload
@@ -2104,6 +2117,7 @@ async fn execute_token_flow(
                         "INSTANCE_WAITING",
                         json!({
                             "state": "WAITING",
+                            "approval_request_id": approval.request.id,
                             "task_id": task.id
                         }),
                         tx,

@@ -1314,22 +1314,84 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
         ...(externalApproval ? { external_approval: externalApproval } : {}),
       };
       await client.query(`UPDATE v2_tasks SET status = $1, payload = $2::jsonb, updated_at = NOW() WHERE id = $3::uuid`, [command.status, JSON.stringify(payload), command.task_id]);
-      await client.query(
-        `INSERT INTO v2_engine_jobs (instance_id, token_id, type, run_at, attempt, status, payload, created_at, updated_at)
-         VALUES ($1::uuid, $2::uuid, 'RESUME', NOW(), 0, 'QUEUED', $3::jsonb, NOW(), NOW())`,
-        [
-          task.instance_id,
-          task.token_id || null,
-          JSON.stringify({
-            action: command.action,
-            completed_node_id: task.node_id,
-            task_id: command.task_id,
-            result: command.result || null,
-            comment: command.comment || null,
-          }),
-        ],
-      );
-      await client.query(`UPDATE v2_process_instances SET state = 'RUNNING', updated_at = NOW() WHERE id = $1::uuid`, [task.instance_id]);
+      let shouldResume = !task.approval_request_id;
+      if (task.approval_request_id) {
+        const requestUpdate = await client.query(
+          `UPDATE v2_approval_requests
+           SET status = $2,
+               result = $3::jsonb,
+               completed_at = NOW(),
+               version = version + 1,
+               updated_at = NOW()
+           WHERE id = $1::uuid
+             AND instance_id = $4::uuid
+             AND token_id = $5::uuid
+             AND status = 'IN_PROGRESS'
+           RETURNING id`,
+          [
+            task.approval_request_id,
+            command.status,
+            JSON.stringify({
+              action: command.action,
+              task_id: command.task_id,
+              comment: command.comment || null,
+              result: command.result || null,
+            }),
+            task.instance_id,
+            task.token_id,
+          ],
+        );
+        if (requestUpdate.rowCount !== 1) {
+          const existing = await client.query(
+            `SELECT id FROM v2_approval_requests WHERE id = $1::uuid`,
+            [task.approval_request_id],
+          );
+          if (existing.rowCount !== 1) {
+            throw new Error(
+              `Approval request ${task.approval_request_id} is missing for task ${task.id}`,
+            );
+          }
+        }
+        shouldResume = requestUpdate.rowCount === 1;
+
+        if (task.approval_step_id) {
+          await client.query(
+            `UPDATE v2_approval_steps
+             SET status = $2,
+                 completed_at = NOW(),
+                 version = version + 1,
+                 updated_at = NOW()
+             WHERE id = $1::uuid
+               AND request_id = $3::uuid
+               AND status = 'OPEN'`,
+            [
+              task.approval_step_id,
+              command.status,
+              task.approval_request_id,
+            ],
+          );
+        }
+      }
+
+      if (shouldResume) {
+        await client.query(
+          `INSERT INTO v2_engine_jobs (instance_id, token_id, type, run_at, attempt, status, payload, created_at, updated_at)
+           VALUES ($1::uuid, $2::uuid, 'RESUME', NOW(), 0, 'QUEUED', $3::jsonb, NOW(), NOW())`,
+          [
+            task.instance_id,
+            task.token_id || null,
+            JSON.stringify({
+              action: command.action,
+              completed_node_id: task.node_id,
+              approval_request_id: task.approval_request_id || null,
+              task_id: command.task_id,
+              result: command.result || null,
+              comment: command.comment || null,
+            }),
+          ],
+        );
+        await client.query(`UPDATE v2_process_instances SET state = 'RUNNING', updated_at = NOW() WHERE id = $1::uuid`, [task.instance_id]);
+      }
       await client.query(
         `INSERT INTO v2_event_outbox (instance_id, token_id, node_id, event_type, payload, created_at)
          VALUES ($1::uuid, $2::uuid, $3, $4, $5::jsonb, NOW())`,
@@ -1347,6 +1409,22 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
           }),
         ],
       );
+      if (task.approval_request_id && shouldResume) {
+        await client.query(
+          `INSERT INTO v2_event_outbox (instance_id, token_id, node_id, event_type, payload, created_at)
+           VALUES ($1::uuid, $2::uuid, $3, 'APPROVAL_REQUEST_COMPLETED', $4::jsonb, NOW())`,
+          [
+            task.instance_id,
+            task.token_id || null,
+            task.node_id,
+            JSON.stringify({
+              approval_request_id: task.approval_request_id,
+              task_id: command.task_id,
+              status: command.status,
+            }),
+          ],
+        );
+      }
       await client.query('COMMIT');
       return {
         outcome: 'completed',

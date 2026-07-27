@@ -24,8 +24,16 @@ async function main() {
   await db.collection('v2_schedule_jobs').createIndex({ definition_id: 1 });
   await db.collection('v2_schedule_runs').createIndex({ definition_id: 1, created_at: -1 });
   await db.collection('v2_schedule_runs').createIndex({ schedule_job_id: 1, created_at: -1 });
+  await db.collection('v2_approval_requests').createIndex({ token_id: 1 }, { unique: true, name: 'ux_v2_approval_requests_token' });
+  await db.collection('v2_approval_requests').createIndex({ instance_id: 1, created_at: 1 }, { name: 'idx_v2_approval_requests_instance' });
+  await db.collection('v2_approval_requests').createIndex({ status: 1, updated_at: 1 }, { name: 'idx_v2_approval_requests_status' });
+  await db.collection('v2_approval_steps').createIndex({ request_id: 1, step_order: 1 }, { unique: true, name: 'ux_v2_approval_steps_request_order' });
   await db.collection('v2_tasks').createIndex({ assignee: 1, status: 1, created_at: -1 });
   await db.collection('v2_tasks').createIndex({ status: 1, created_at: -1, _id: -1 }, { name: 'idx_v2_tasks_history' });
+  await db.collection('v2_tasks').createIndex(
+    { approval_request_id: 1, approval_step_id: 1, status: 1 },
+    { name: 'idx_v2_tasks_approval_request' },
+  );
   await db.collection('v2_tasks').createIndex({ token_id: 1 }, { unique: true, sparse: true });
   await db.collection('v2_tasks').createIndex(
     { 'payload.external_approval.token_hash': 1 },
@@ -195,6 +203,61 @@ async function ensureValidators(db) {
     },
   });
 
+  await upsertValidator(db, 'v2_approval_requests', {
+    bsonType: 'object',
+    required: [
+      '_id',
+      'instance_id',
+      'token_id',
+      'node_id',
+      'status',
+      'current_step_order',
+      'version',
+      'created_at',
+      'updated_at',
+    ],
+    properties: {
+      _id: { bsonType: 'string' },
+      instance_id: { bsonType: 'string' },
+      token_id: { bsonType: 'string' },
+      node_id: { bsonType: 'string' },
+      status: { enum: ['PENDING', 'IN_PROGRESS', 'APPROVED', 'REJECTED', 'CANCELED'] },
+      current_step_order: { bsonType: ['int', 'long', 'double'] },
+      version: { bsonType: ['int', 'long', 'double'] },
+      result: { bsonType: ['object', 'null'] },
+      completed_at: { bsonType: ['string', 'null'] },
+      created_at: { bsonType: 'string' },
+      updated_at: { bsonType: 'string' },
+    },
+  });
+
+  await upsertValidator(db, 'v2_approval_steps', {
+    bsonType: 'object',
+    required: [
+      '_id',
+      'request_id',
+      'step_order',
+      'mode',
+      'required_count',
+      'status',
+      'version',
+      'created_at',
+      'updated_at',
+    ],
+    properties: {
+      _id: { bsonType: 'string' },
+      request_id: { bsonType: 'string' },
+      step_order: { bsonType: ['int', 'long', 'double'] },
+      mode: { enum: ['ALL', 'ANY'] },
+      required_count: { bsonType: ['int', 'long', 'double'] },
+      status: { enum: ['LOCKED', 'OPEN', 'APPROVED', 'REJECTED', 'CANCELED'] },
+      version: { bsonType: ['int', 'long', 'double'] },
+      completed_at: { bsonType: ['string', 'null'] },
+      created_at: { bsonType: 'string' },
+      updated_at: { bsonType: 'string' },
+    },
+  });
+
   await upsertValidator(db, 'v2_tasks', {
     bsonType: 'object',
     required: ['_id', 'instance_id', 'token_id', 'node_id', 'assignee', 'status', 'payload', 'created_at', 'updated_at'],
@@ -202,6 +265,8 @@ async function ensureValidators(db) {
       _id: { bsonType: 'string' },
       instance_id: { bsonType: 'string' },
       token_id: { bsonType: ['string', 'null'] },
+      approval_request_id: { bsonType: ['string', 'null'] },
+      approval_step_id: { bsonType: ['string', 'null'] },
       node_id: { bsonType: 'string' },
       assignee: { bsonType: 'string' },
       status: { enum: ['OPEN', 'APPROVED', 'REJECTED', 'CANCELED'] },

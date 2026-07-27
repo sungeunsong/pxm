@@ -10,6 +10,9 @@ describePostgres('Postgres approval task transaction', () => {
   let adapter: PostgresAdapter;
   let definitionId: string;
   let instanceId: string;
+  let tokenId: string;
+  let requestId: string;
+  let stepId: string;
   let taskId: string;
 
   beforeAll(() => {
@@ -20,6 +23,9 @@ describePostgres('Postgres approval task transaction', () => {
   beforeEach(async () => {
     definitionId = randomUUID();
     instanceId = randomUUID();
+    tokenId = randomUUID();
+    requestId = randomUUID();
+    stepId = randomUUID();
     taskId = randomUUID();
     await pool.query(
       `INSERT INTO v2_process_definitions (id, definition_key, version, name, status)
@@ -32,9 +38,29 @@ describePostgres('Postgres approval task transaction', () => {
       [instanceId, definitionId],
     );
     await pool.query(
-      `INSERT INTO v2_tasks (id, instance_id, node_id, assignee, status, payload)
-       VALUES ($1::uuid, $2::uuid, 'approval', 'alice', 'OPEN', '{}'::jsonb)`,
-      [taskId, instanceId],
+      `INSERT INTO v2_tokens (id, instance_id, node_id, status)
+       VALUES ($1::uuid, $2::uuid, 'approval', 'WAITING')`,
+      [tokenId, instanceId],
+    );
+    await pool.query(
+      `INSERT INTO v2_approval_requests
+         (id, instance_id, token_id, node_id, status, current_step_order, version)
+       VALUES ($1::uuid, $2::uuid, $3::uuid, 'approval', 'IN_PROGRESS', 1, 0)`,
+      [requestId, instanceId, tokenId],
+    );
+    await pool.query(
+      `INSERT INTO v2_approval_steps
+         (id, request_id, step_order, mode, required_count, status, version)
+       VALUES ($1::uuid, $2::uuid, 1, 'ALL', 1, 'OPEN', 0)`,
+      [stepId, requestId],
+    );
+    await pool.query(
+      `INSERT INTO v2_tasks
+         (id, instance_id, token_id, approval_request_id, approval_step_id,
+          node_id, assignee, status, payload)
+       VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid,
+               'approval', 'alice', 'OPEN', '{}'::jsonb)`,
+      [taskId, instanceId, tokenId, requestId, stepId],
     );
   });
 
@@ -86,6 +112,14 @@ describePostgres('Postgres approval task transaction', () => {
     expect(
       (
         await pool.query(
+          `SELECT count(*)::int AS count FROM v2_event_outbox WHERE instance_id = $1::uuid AND event_type = 'APPROVAL_REQUEST_COMPLETED'`,
+          [instanceId],
+        )
+      ).rows[0].count,
+    ).toBe(1);
+    expect(
+      (
+        await pool.query(
           `SELECT count(*)::int AS count FROM v2_event_outbox WHERE instance_id = $1::uuid AND event_type = 'TASK_APPROVED'`,
           [instanceId],
         )
@@ -117,5 +151,73 @@ describePostgres('Postgres approval task transaction', () => {
         )
       ).rows[0].state,
     ).toBe('RUNNING');
+    expect(
+      (
+        await pool.query(
+          `SELECT status, version, result FROM v2_approval_requests WHERE id = $1::uuid`,
+          [requestId],
+        )
+      ).rows[0],
+    ).toEqual(
+      expect.objectContaining({
+        status: 'APPROVED',
+        version: 1,
+        result: expect.objectContaining({ task_id: taskId }),
+      }),
+    );
+    expect(
+      (
+        await pool.query(
+          `SELECT status, version FROM v2_approval_steps WHERE id = $1::uuid`,
+          [stepId],
+        )
+      ).rows[0],
+    ).toEqual(expect.objectContaining({ status: 'APPROVED', version: 1 }));
+  });
+
+  it('rejects the aggregate and still resumes the Engine exactly once', async () => {
+    const result = await adapter.completeTask({
+      task_id: taskId,
+      action: 'reject',
+      status: 'REJECTED',
+      actor_id: 'alice',
+      comment: 'needs revision',
+      idempotency_key: 'approval-rejection-1',
+    });
+
+    expect(result.outcome).toBe('completed');
+    expect(
+      (
+        await pool.query(
+          `SELECT status, version, result FROM v2_approval_requests WHERE id = $1::uuid`,
+          [requestId],
+        )
+      ).rows[0],
+    ).toEqual(
+      expect.objectContaining({
+        status: 'REJECTED',
+        version: 1,
+        result: expect.objectContaining({
+          action: 'reject',
+          comment: 'needs revision',
+        }),
+      }),
+    );
+    expect(
+      (
+        await pool.query(
+          `SELECT status, version FROM v2_approval_steps WHERE id = $1::uuid`,
+          [stepId],
+        )
+      ).rows[0],
+    ).toEqual(expect.objectContaining({ status: 'REJECTED', version: 1 }));
+    expect(
+      (
+        await pool.query(
+          `SELECT count(*)::int AS count FROM v2_engine_jobs WHERE instance_id = $1::uuid AND type = 'RESUME'`,
+          [instanceId],
+        )
+      ).rows[0].count,
+    ).toBe(1);
   });
 });

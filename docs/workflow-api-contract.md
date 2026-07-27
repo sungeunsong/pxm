@@ -469,6 +469,23 @@ group과 workflow 삭제는 기본적으로 soft delete다. Hard delete는 MVP �
 
 ## Approval Task API
 
+### Approval Aggregate Foundation
+
+Approval 노드는 개인별 Task와 결재 전체 상태를 분리한다. 1차 구현은 단일 단계·단일 승인자만 지원하지만, 모든 신규 승인 실행은 아래 집계 구조를 생성한다.
+
+```text
+ApprovalRequest (token당 1개)
+└─ ApprovalStep order=1, mode=ALL, required_count=1
+   └─ ApprovalTask
+```
+
+- `ApprovalRequest`는 instance, token, node와 결재 전체 상태를 연결한다.
+- `ApprovalStep`은 현재 단계의 상태와 향후 `ALL`/`ANY` 확장 지점을 제공한다.
+- `ApprovalTask`는 개인의 승인·반려와 의견·결과를 기록하며 `approval_request_id`, `approval_step_id`를 가진다.
+- Engine은 개별 Task가 아니라 `ApprovalRequest.status`를 기준으로 `WAITING`, 승인 진행 또는 반려 종료를 결정한다.
+- 1차에서는 Task 완료가 곧 단일 Step과 Request의 최종 완료다. 다단계와 복수 승인자는 후속 로드맵에서 추가한다.
+- 기존 배포에서 이미 생성된 집계 ID 없는 Task는 호환 경로로 처리한다.
+
 ### List My Open Tasks
 
 ```http
@@ -488,6 +505,7 @@ Authorization: Bearer pxm_live_xxx
 - session user는 task가 속한 group의 member여야 한다. `admin`도 본인에게 배정된 task만 처리한다.
 - API key는 `task:approve` scope, owner group, `allowed_workflow_ids`를 모두 만족해야 한다.
 - `SERVICE_ACCOUNT`는 Approval task를 처리할 수 없다.
+- 신규 승인 Task 응답에는 결재 전체와 단계를 추적할 수 있는 `approval_request_id`, `approval_step_id`가 포함된다.
 
 ### Approve Or Reject Task
 
@@ -518,8 +536,8 @@ Content-Type: application/json
 }
 ```
 
-- OPEN task 상태 변경과 Engine `RESUME` job 생성, instance `RUNNING` 전이는 같은 DB transaction에서 처리한다.
-- OPEN 상태 compare-and-set/row lock으로 동시에 여러 요청이 들어와도 `RESUME` job은 하나만 생성한다.
+- OPEN Task, ApprovalStep, ApprovalRequest의 최종 상태 변경과 Engine `RESUME` job 생성, instance `RUNNING` 전이는 같은 DB transaction에서 처리한다.
+- OPEN 상태 compare-and-set/row lock과 Request 최종 상태 전이로 동시에 여러 요청이 들어와도 `RESUME` job은 하나만 생성한다.
 - 동일 actor가 동일 `Idempotency-Key`와 동일 action으로 재호출하면 기존 결과를 반환하고 `already_processed=true`로 표시한다.
 - 이미 처리된 task를 다른 key/action으로 호출하면 `409 Conflict`를 반환한다.
 - 담당자, group, workflow 또는 API key scope가 맞지 않으면 `403 Forbidden`을 반환한다.
@@ -546,7 +564,7 @@ Content-Type: application/json
 - 세 endpoint는 PXM 로그인 없이 사용한다.
 - 승인 링크는 단회 사용하며 노드에 설정한 시간 이후 만료된다.
 - OTP가 필요한 task는 10분 유효한 6자리 OTP를 사용한다. 재발송 간격은 60초이고 실패는 최대 5회다.
-- task 완료와 Engine `RESUME`, 링크 소비는 같은 transaction에서 처리한다.
+- Task·ApprovalStep·ApprovalRequest 완료와 Engine `RESUME`, 링크 소비는 같은 transaction에서 처리한다.
 - audit에는 `external_email` 채널, 이메일, `email_link` 또는 `email_otp` 인증 방식과 처리 시각을 기록한다.
 - 상세 응답의 이메일은 마스킹하고 form data의 password/secret/token/credential/API key 계열 필드는 제거한다.
 - SMTP 및 공개 URL 설정은 `docs/external-approval-email.md`를 따른다.
@@ -603,7 +621,7 @@ Authorization: Bearer pxm_live_xxx
 - 일반 user는 본인에게 배정된 task만, group manager는 관리 group, admin은 전체 이력을 조회한다.
 - API key와 service account는 `workflow:read` scope, owner group, `allowed_workflow_ids`를 모두 만족해야 한다.
 - 외부 이메일 링크는 해당 OPEN task 상세만 제공하며 이력 API 접근 권한을 부여하지 않는다.
-- 승인/반려 transaction은 `TASK_APPROVED` 또는 `TASK_REJECTED` outbox event를 함께 생성한다.
+- 승인/반려 transaction은 `TASK_APPROVED` 또는 `TASK_REJECTED`와 최종 `APPROVAL_REQUEST_COMPLETED` outbox event를 함께 생성한다.
 
 ## History API Permission Model
 
