@@ -368,6 +368,15 @@ export class TemplatesService {
 
     for (const node of approvalNodes) {
       const data = node?.data || node?.config || node || {};
+      if (data.approvalLineSource === 'dynamic' || data.approvalType === 'dynamic') {
+        const requestPath = typeof data.approvalRequestPath === 'string'
+          ? data.approvalRequestPath.trim()
+          : 'approval_request';
+        if (!requestPath || !/^[A-Za-z0-9_.-]+$/.test(requestPath)) {
+          throw new BadRequestException(`Approval node ${node.id || ''} has an invalid approval request path`);
+        }
+        continue;
+      }
       // Legacy workflows used an untyped assignee string. They remain loadable until
       // an administrator explicitly chooses one of the new identity channels.
       const channel = data.approverChannel;

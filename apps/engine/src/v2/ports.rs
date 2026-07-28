@@ -1,6 +1,6 @@
 use crate::v2::types::{
-    EdgeRule, JobType, NodeDef, V2ApprovalBundle, V2ApprovalRequest, V2Instance, V2Job,
-    V2Token,
+    EdgeRule, JobType, NodeDef, V2ApprovalBundle, V2ApprovalDefinition, V2ApprovalRequest,
+    V2Instance, V2Job, V2Token,
 };
 use anyhow::Result;
 use serde_json::Value;
@@ -117,13 +117,11 @@ pub trait TaskRepositoryPort: Send + Sync {
     async fn find_or_create_approval(
         &self,
         request_id: Uuid,
-        step_id: Uuid,
         task_id: Uuid,
         instance_id: Uuid,
         token_id: Uuid,
         node_id: &str,
-        assignee: &str,
-        payload: Value,
+        definition: V2ApprovalDefinition,
         tx: &mut dyn Tx,
     ) -> Result<V2ApprovalBundle>;
 

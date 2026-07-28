@@ -118,6 +118,8 @@ export interface CustomNodeData {
   externalApprovalRequireOtp?: boolean;
   externalApprovalExpiresInHours?: number | string;
   approvalType?: string;
+  approvalLineSource?: 'fixed' | 'dynamic';
+  approvalRequestPath?: string;
   requireComment?: boolean;
 
   // Workflow Call 노드 전용

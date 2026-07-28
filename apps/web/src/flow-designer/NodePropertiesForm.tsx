@@ -1070,6 +1070,7 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
   // Approval 노드 속성
   const renderApprovalProperties = () => {
     const data = node.data as any;
+    const approvalLineSource = data.approvalLineSource || (data.approvalType === 'dynamic' ? 'dynamic' : 'fixed');
     const approverChannel = data.approverChannel || 'pxm_user';
     const externalEmail = String(data.assignee || '').trim();
     const externalEmailInvalid =
@@ -1080,6 +1081,31 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
     return (
       <div className="property-section">
         <h4 className="property-section-title">승인 설정</h4>
+        <Select
+          label="결재라인 입력 방식"
+          value={approvalLineSource}
+          onChange={(e) => onUpdate(node.id, {
+            ...data,
+            approvalLineSource: e.target.value as 'fixed' | 'dynamic',
+          })}
+          options={[
+            { value: 'fixed', label: '워크플로우에서 지정' },
+            { value: 'dynamic', label: '실행 요청에서 전달' },
+          ]}
+          helperText="동적 방식은 실행 시 결재 내용과 순차 결재라인을 함께 받습니다."
+          fullWidth
+        />
+        {approvalLineSource === 'dynamic' ? (
+          <Input
+            label="결재 요청 경로"
+            placeholder="approval_request"
+            value={data.approvalRequestPath || 'approval_request'}
+            onChange={(e) => onUpdate(node.id, { ...data, approvalRequestPath: e.target.value.trim() })}
+            helperText="formData 아래에서 결재 요청 객체를 찾을 경로입니다."
+            fullWidth
+          />
+        ) : (
+          <>
         {credentialGroupId ? (
           <div className="property-group">
             <span className="property-label">워크플로우 소유 그룹</span>
@@ -1184,6 +1210,8 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
           ]}
           fullWidth
         />
+          </>
+        )}
         <Checkbox
           label="Require Comment"
           checked={data.requireComment || false}

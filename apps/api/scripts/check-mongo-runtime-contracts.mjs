@@ -55,7 +55,7 @@ async function assertTaskTokenUnique(db) {
         updated_at: now,
       }),
     /duplicate key/,
-    'v2_tasks.token_id must be unique for approval idempotency',
+    'legacy v2_tasks.token_id must be unique for approval idempotency',
   );
 
   await db.collection('v2_tasks').deleteMany({ token_id: tokenId });

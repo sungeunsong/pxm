@@ -4,8 +4,8 @@ use crate::v2::ports::{
     WorkflowInstanceRepositoryPort,
 };
 use crate::v2::types::{
-    EdgeRule, JobType, NodeDef, TokenStatus, V2ApprovalBundle, V2ApprovalRequest,
-    V2Instance, V2Job, V2Task, V2Token,
+    EdgeRule, JobType, NodeDef, TokenStatus, V2ApprovalBundle, V2ApprovalDefinition,
+    V2ApprovalRequest, V2Instance, V2Job, V2Task, V2Token,
 };
 use anyhow::Result;
 use serde_json::Value;
@@ -424,13 +424,11 @@ impl TaskRepositoryPort for PostgresAdapter {
     async fn find_or_create_approval(
         &self,
         request_id: Uuid,
-        step_id: Uuid,
         task_id: Uuid,
         instance_id: Uuid,
         token_id: Uuid,
         node_id: &str,
-        assignee: &str,
-        payload: Value,
+        definition: V2ApprovalDefinition,
         tx: &mut dyn Tx,
     ) -> Result<V2ApprovalBundle> {
         let sqlx_tx = get_tx_mut(tx)?;
@@ -438,8 +436,11 @@ impl TaskRepositoryPort for PostgresAdapter {
         let request_row = sqlx::query(
             r#"
             insert into v2_approval_requests
-              (id, instance_id, token_id, node_id, status, current_step_order, version, created_at, updated_at)
-            values ($1, $2, $3, $4, 'IN_PROGRESS', 1, 0, now(), now())
+              (id, instance_id, token_id, node_id, source, external_request_id,
+               content_snapshot, approval_line_snapshot, total_steps,
+               status, current_step_order, version, created_at, updated_at)
+            values ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+                    'IN_PROGRESS', 1, 0, now(), now())
             on conflict (token_id) do nothing
             returning id, instance_id, token_id, node_id, status, current_step_order
             "#,
@@ -448,6 +449,11 @@ impl TaskRepositoryPort for PostgresAdapter {
         .bind(instance_id)
         .bind(token_id)
         .bind(node_id)
+        .bind(&definition.source)
+        .bind(&definition.external_request_id)
+        .bind(&definition.content_snapshot)
+        .bind(&definition.approval_line_snapshot)
+        .bind(definition.steps.len() as i32)
         .fetch_optional(&mut **sqlx_tx)
         .await?;
 
@@ -467,21 +473,35 @@ impl TaskRepositoryPort for PostgresAdapter {
         };
         let persisted_request_id: Uuid = request_row.get("id");
 
+        for step in &definition.steps {
+            sqlx::query(
+                r#"
+                insert into v2_approval_steps
+                  (id, request_id, step_order, mode, required_count, assignee,
+                   approver_channel, task_payload, status, version, created_at, updated_at)
+                values ($1, $2, $3, 'ALL', 1, $4, $5, $6,
+                        case when $3 = 1 then 'OPEN' else 'LOCKED' end, 0, now(), now())
+                on conflict (request_id, step_order) do nothing
+                "#,
+            )
+            .bind(Uuid::new_v4())
+            .bind(persisted_request_id)
+            .bind(step.step_order)
+            .bind(&step.assignee)
+            .bind(&step.approver_channel)
+            .bind(&step.payload)
+            .execute(&mut **sqlx_tx)
+            .await?;
+        }
         let step_row = sqlx::query(
-            r#"
-            insert into v2_approval_steps
-              (id, request_id, step_order, mode, required_count, status, version, created_at, updated_at)
-            values ($1, $2, 1, 'ALL', 1, 'OPEN', 0, now(), now())
-            on conflict (request_id, step_order)
-            do update set request_id = excluded.request_id
-            returning id
-            "#,
+            "select id, assignee, task_payload from v2_approval_steps where request_id = $1 and step_order = 1",
         )
-        .bind(step_id)
         .bind(persisted_request_id)
         .fetch_one(&mut **sqlx_tx)
         .await?;
         let persisted_step_id: Uuid = step_row.get("id");
+        let assignee: String = step_row.get("assignee");
+        let payload: Value = step_row.get("task_payload");
 
         let task_row = sqlx::query(
             r#"
@@ -489,10 +509,9 @@ impl TaskRepositoryPort for PostgresAdapter {
               (id, instance_id, token_id, node_id, assignee, status, payload,
                approval_request_id, approval_step_id, created_at, updated_at)
             values ($1, $2, $3, $4, $5, 'OPEN', $6, $7, $8, now(), now())
-            on conflict (token_id) where token_id is not null
+            on conflict (approval_step_id) where approval_step_id is not null
             do update set
               approval_request_id = excluded.approval_request_id,
-              approval_step_id = excluded.approval_step_id,
               updated_at = now()
             returning id, instance_id, token_id, node_id, assignee, status, payload
             "#
@@ -501,7 +520,7 @@ impl TaskRepositoryPort for PostgresAdapter {
         .bind(instance_id)
         .bind(token_id)
         .bind(node_id)
-        .bind(assignee)
+        .bind(&assignee)
         .bind(payload)
         .bind(persisted_request_id)
         .bind(persisted_step_id)

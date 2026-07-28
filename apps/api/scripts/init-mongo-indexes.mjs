@@ -34,7 +34,25 @@ async function main() {
     { approval_request_id: 1, approval_step_id: 1, status: 1 },
     { name: 'idx_v2_tasks_approval_request' },
   );
-  await db.collection('v2_tasks').createIndex({ token_id: 1 }, { unique: true, sparse: true });
+  const taskIndexes = await db.collection('v2_tasks').indexes();
+  if (taskIndexes.some((index) => index.name === 'token_id_1')) {
+    await db.collection('v2_tasks').dropIndex('token_id_1');
+  }
+  await db.collection('v2_tasks').createIndex(
+    { token_id: 1 },
+    {
+      unique: true,
+      name: 'ux_v2_tasks_legacy_token',
+      partialFilterExpression: {
+        token_id: { $type: 'string' },
+        approval_request_id: null,
+      },
+    },
+  );
+  await db.collection('v2_tasks').createIndex(
+    { approval_step_id: 1 },
+    { unique: true, sparse: true, name: 'ux_v2_tasks_approval_step' },
+  );
   await db.collection('v2_tasks').createIndex(
     { 'payload.external_approval.token_hash': 1 },
     { unique: true, sparse: true, name: 'ux_v2_tasks_external_approval_token_hash' },

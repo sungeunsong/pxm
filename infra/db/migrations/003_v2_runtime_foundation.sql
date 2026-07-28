@@ -135,6 +135,11 @@ create table if not exists v2_approval_requests (
   instance_id uuid not null references v2_process_instances(id) on delete cascade,
   token_id uuid not null references v2_tokens(id) on delete cascade,
   node_id text not null,
+  source jsonb not null default '{}'::jsonb,
+  external_request_id text,
+  content_snapshot jsonb not null default '{}'::jsonb,
+  approval_line_snapshot jsonb not null default '{}'::jsonb,
+  total_steps int not null default 1,
   status text not null default 'IN_PROGRESS', -- PENDING/IN_PROGRESS/APPROVED/REJECTED/CANCELED
   current_step_order int not null default 1,
   version int not null default 0,
@@ -157,6 +162,9 @@ create table if not exists v2_approval_steps (
   step_order int not null,
   mode text not null default 'ALL', -- ALL/ANY
   required_count int not null default 1,
+  assignee text,
+  approver_channel text,
+  task_payload jsonb not null default '{}'::jsonb,
   status text not null default 'OPEN', -- LOCKED/OPEN/APPROVED/REJECTED/CANCELED
   version int not null default 0,
   completed_at timestamptz,
@@ -198,9 +206,13 @@ create index if not exists idx_v2_tasks_approval_request
 create index if not exists idx_v2_tasks_history
   on v2_tasks (status, created_at desc, id desc);
 
-create unique index if not exists ux_v2_tasks_token
+create unique index if not exists ux_v2_tasks_legacy_token
   on v2_tasks (token_id)
-  where token_id is not null;
+  where token_id is not null and approval_request_id is null;
+
+create unique index if not exists ux_v2_tasks_approval_step
+  on v2_tasks (approval_step_id)
+  where approval_step_id is not null;
 
 create unique index if not exists ux_v2_tasks_external_approval_token_hash
   on v2_tasks ((payload->'external_approval'->>'token_hash'))

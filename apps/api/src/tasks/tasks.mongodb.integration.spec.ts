@@ -92,8 +92,8 @@ describeMongo('Mongo approval task transaction', () => {
 
   afterEach(async () => {
     await Promise.all([
-      db.collection('v2_tasks').deleteMany({ _id: taskId }),
-      db.collection('v2_approval_steps').deleteMany({ _id: stepId }),
+      db.collection('v2_tasks').deleteMany({ approval_request_id: requestId }),
+      db.collection('v2_approval_steps').deleteMany({ request_id: requestId }),
       db.collection('v2_approval_requests').deleteMany({ _id: requestId }),
       db.collection('v2_tokens').deleteMany({ _id: tokenId }),
       db.collection('v2_engine_jobs').deleteMany({ instance_id: instanceId }),
@@ -136,20 +136,16 @@ describeMongo('Mongo approval task transaction', () => {
         .countDocuments({ instance_id: instanceId, job_type: 'RESUME' }),
     ).toBe(1);
     expect(
-      await db
-        .collection('v2_event_outbox')
-        .countDocuments({
-          instance_id: instanceId,
-          event_type: 'APPROVAL_REQUEST_COMPLETED',
-        }),
+      await db.collection('v2_event_outbox').countDocuments({
+        instance_id: instanceId,
+        event_type: 'APPROVAL_REQUEST_COMPLETED',
+      }),
     ).toBe(1);
     expect(
-      await db
-        .collection('v2_event_outbox')
-        .countDocuments({
-          instance_id: instanceId,
-          event_type: 'TASK_APPROVED',
-        }),
+      await db.collection('v2_event_outbox').countDocuments({
+        instance_id: instanceId,
+        event_type: 'TASK_APPROVED',
+      }),
     ).toBe(1);
     expect(await db.collection('v2_tasks').findOne({ _id: taskId })).toEqual(
       expect.objectContaining({
@@ -207,6 +203,201 @@ describeMongo('Mongo approval task transaction', () => {
       await db
         .collection('v2_engine_jobs')
         .countDocuments({ instance_id: instanceId, job_type: 'RESUME' }),
+    ).toBe(1);
+  });
+
+  it('opens sequential tasks one at a time and resumes only after the final approval', async () => {
+    const now = new Date().toISOString();
+    const step2Id = randomUUID();
+    const step3Id = randomUUID();
+    await db
+      .collection('v2_approval_requests')
+      .updateOne({ _id: requestId }, { $set: { total_steps: 3 } });
+    await db.collection('v2_approval_steps').insertMany([
+      {
+        _id: step2Id,
+        request_id: requestId,
+        step_order: 2,
+        mode: 'ALL',
+        required_count: 1,
+        assignee: 'bob',
+        approver_channel: 'pxm_user',
+        task_payload: { step_order: 2 },
+        status: 'LOCKED',
+        version: 0,
+        completed_at: null,
+        created_at: now,
+        updated_at: now,
+      },
+      {
+        _id: step3Id,
+        request_id: requestId,
+        step_order: 3,
+        mode: 'ALL',
+        required_count: 1,
+        assignee: 'carol',
+        approver_channel: 'pxm_user',
+        task_payload: { step_order: 3 },
+        status: 'LOCKED',
+        version: 0,
+        completed_at: null,
+        created_at: now,
+        updated_at: now,
+      },
+    ]);
+
+    await adapter.completeTask({
+      task_id: taskId,
+      action: 'approve',
+      status: 'APPROVED',
+      actor_id: 'alice',
+      idempotency_key: 'sequential-step-1',
+    });
+    let request = await db
+      .collection('v2_approval_requests')
+      .findOne({ _id: requestId });
+    let instance = await db
+      .collection('v2_process_instances')
+      .findOne({ _id: instanceId });
+    let openTasks = await db
+      .collection('v2_tasks')
+      .find({ approval_request_id: requestId, status: 'OPEN' })
+      .toArray();
+    expect(request).toEqual(
+      expect.objectContaining({ status: 'IN_PROGRESS', current_step_order: 2 }),
+    );
+    expect(instance).toEqual(expect.objectContaining({ state: 'WAITING' }));
+    expect(openTasks).toHaveLength(1);
+    expect(openTasks[0]).toEqual(
+      expect.objectContaining({ approval_step_id: step2Id, assignee: 'bob' }),
+    );
+    expect(
+      await db
+        .collection('v2_engine_jobs')
+        .countDocuments({ instance_id: instanceId, job_type: 'RESUME' }),
+    ).toBe(0);
+
+    await adapter.completeTask({
+      task_id: openTasks[0]._id,
+      action: 'approve',
+      status: 'APPROVED',
+      actor_id: 'bob',
+      idempotency_key: 'sequential-step-2',
+    });
+    openTasks = await db
+      .collection('v2_tasks')
+      .find({ approval_request_id: requestId, status: 'OPEN' })
+      .toArray();
+    expect(openTasks).toHaveLength(1);
+    expect(openTasks[0]).toEqual(
+      expect.objectContaining({ approval_step_id: step3Id, assignee: 'carol' }),
+    );
+    expect(
+      await db
+        .collection('v2_engine_jobs')
+        .countDocuments({ instance_id: instanceId, job_type: 'RESUME' }),
+    ).toBe(0);
+
+    await adapter.completeTask({
+      task_id: openTasks[0]._id,
+      action: 'approve',
+      status: 'APPROVED',
+      actor_id: 'carol',
+      idempotency_key: 'sequential-step-3',
+    });
+    request = await db
+      .collection('v2_approval_requests')
+      .findOne({ _id: requestId });
+    instance = await db
+      .collection('v2_process_instances')
+      .findOne({ _id: instanceId });
+    expect(request).toEqual(
+      expect.objectContaining({ status: 'APPROVED', current_step_order: 3 }),
+    );
+    expect(instance).toEqual(expect.objectContaining({ state: 'RUNNING' }));
+    expect(
+      await db
+        .collection('v2_engine_jobs')
+        .countDocuments({ instance_id: instanceId, job_type: 'RESUME' }),
+    ).toBe(1);
+  });
+
+  it('rejects the whole request without opening any later step', async () => {
+    const now = new Date().toISOString();
+    const step2Id = randomUUID();
+    const step3Id = randomUUID();
+    await db
+      .collection('v2_approval_requests')
+      .updateOne({ _id: requestId }, { $set: { total_steps: 3 } });
+    await db.collection('v2_approval_steps').insertMany([
+      {
+        _id: step2Id,
+        request_id: requestId,
+        step_order: 2,
+        mode: 'ALL',
+        required_count: 1,
+        assignee: 'bob',
+        approver_channel: 'pxm_user',
+        task_payload: { step_order: 2 },
+        status: 'LOCKED',
+        version: 0,
+        completed_at: null,
+        created_at: now,
+        updated_at: now,
+      },
+      {
+        _id: step3Id,
+        request_id: requestId,
+        step_order: 3,
+        mode: 'ALL',
+        required_count: 1,
+        assignee: 'carol',
+        approver_channel: 'pxm_user',
+        task_payload: { step_order: 3 },
+        status: 'LOCKED',
+        version: 0,
+        completed_at: null,
+        created_at: now,
+        updated_at: now,
+      },
+    ]);
+    await adapter.completeTask({
+      task_id: taskId,
+      action: 'approve',
+      status: 'APPROVED',
+      actor_id: 'alice',
+      idempotency_key: 'reject-flow-step-1',
+    });
+    const step2Task = await db.collection('v2_tasks').findOne({
+      approval_request_id: requestId,
+      approval_step_id: step2Id,
+    });
+    await adapter.completeTask({
+      task_id: step2Task!._id,
+      action: 'reject',
+      status: 'REJECTED',
+      actor_id: 'bob',
+      idempotency_key: 'reject-flow-step-2',
+    });
+
+    expect(
+      await db.collection('v2_approval_requests').findOne({ _id: requestId }),
+    ).toEqual(
+      expect.objectContaining({ status: 'REJECTED', current_step_order: 2 }),
+    );
+    expect(
+      await db.collection('v2_approval_steps').findOne({ _id: step3Id }),
+    ).toEqual(expect.objectContaining({ status: 'LOCKED' }));
+    expect(
+      await db
+        .collection('v2_tasks')
+        .countDocuments({ approval_step_id: step3Id }),
+    ).toBe(0);
+    expect(
+      await db.collection('v2_engine_jobs').countDocuments({
+        instance_id: instanceId,
+        job_type: 'RESUME',
+      }),
     ).toBe(1);
   });
 });

@@ -19,7 +19,8 @@ use crate::v2::ports::{
     TransactionManagerPort, Tx, WorkflowInstanceRepositoryPort,
 };
 use crate::v2::types::{
-    EdgeRule, GatewayType, JobType, NodeDef, TokenStatus, V2Instance, V2Job, V2Token,
+    EdgeRule, GatewayType, JobType, NodeDef, TokenStatus, V2ApprovalDefinition,
+    V2ApprovalStepInput, V2Instance, V2Job, V2Token,
 };
 
 pub struct V2RuntimeContext {
@@ -1219,9 +1220,181 @@ fn resolve_approval_assignment(node: &NodeDef, context: &Value) -> (String, Valu
     }
 }
 
+fn context_value_at_path<'a>(context: &'a Value, path: &str) -> Option<&'a Value> {
+    path.split('.')
+        .filter(|part| !part.is_empty())
+        .try_fold(context, |value, part| value.get(part))
+}
+
+fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2ApprovalDefinition> {
+    let approval_line = node.config.get("approvalLine").unwrap_or(&Value::Null);
+    let model = approval_line
+        .get("mode")
+        .or_else(|| node.config.get("approvalLineSource"))
+        .or_else(|| node.config.get("approvalLineType"))
+        .or_else(|| node.config.get("approvalType"))
+        .and_then(Value::as_str)
+        .unwrap_or("fixed")
+        .to_ascii_lowercase();
+
+    if model != "dynamic" {
+        let (assignee, payload) = resolve_approval_assignment(node, context);
+        let approver_channel = payload
+            .get("approver_channel")
+            .and_then(Value::as_str)
+            .unwrap_or("pxm_user")
+            .to_string();
+        return Ok(V2ApprovalDefinition {
+            source: json!({"type": "workflow_node"}),
+            external_request_id: None,
+            content_snapshot: json!({}),
+            approval_line_snapshot: json!({
+                "mode": "fixed",
+                "steps": [{"order": 1, "assignee": assignee, "approver_channel": approver_channel}]
+            }),
+            steps: vec![V2ApprovalStepInput {
+                step_order: 1,
+                assignee,
+                approver_channel,
+                payload,
+            }],
+        });
+    }
+
+    let path = node
+        .config
+        .get("approvalRequestPath")
+        .and_then(Value::as_str)
+        .unwrap_or("approval_request");
+    let form_data = get_form_data(context)
+        .ok_or_else(|| anyhow::anyhow!("dynamic approval requires formData"))?;
+    let request = context_value_at_path(form_data, path)
+        .and_then(Value::as_object)
+        .ok_or_else(|| anyhow::anyhow!("dynamic approval request '{}' must be an object", path))?;
+    let source = request
+        .get("source")
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("dynamic approval source is required"))?;
+    let external_request_id = request
+        .get("request_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("dynamic approval request_id is required"))?
+        .to_string();
+    let content = request
+        .get("content")
+        .and_then(Value::as_object)
+        .ok_or_else(|| anyhow::anyhow!("dynamic approval content must be an object"))?;
+    let content_snapshot = json!({
+        "title": content.get("title").cloned().unwrap_or(Value::Null),
+        "summary": content.get("summary").cloned().unwrap_or(Value::Null),
+        "requester": content.get("requester").cloned().unwrap_or(Value::Null),
+        "source_url": content.get("source_url").cloned().unwrap_or(Value::Null)
+    });
+    let line = request
+        .get("approval_line")
+        .and_then(Value::as_object)
+        .ok_or_else(|| anyhow::anyhow!("dynamic approval approval_line must be an object"))?;
+    let raw_steps = line
+        .get("steps")
+        .and_then(Value::as_array)
+        .filter(|steps| !steps.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("dynamic approval steps must not be empty"))?;
+    if raw_steps.len() > 100 {
+        anyhow::bail!("dynamic approval supports at most 100 steps");
+    }
+
+    let default_channel = node
+        .config
+        .get("approverChannel")
+        .and_then(Value::as_str)
+        .unwrap_or("pxm_user");
+    let external_require_otp = node
+        .config
+        .get("externalApprovalRequireOtp")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let external_expires_in_hours = node
+        .config
+        .get("externalApprovalExpiresInHours")
+        .and_then(Value::as_u64)
+        .unwrap_or(24)
+        .clamp(1, 168);
+    let mut steps = Vec::with_capacity(raw_steps.len());
+    let mut normalized_steps = Vec::with_capacity(raw_steps.len());
+    for (index, raw_step) in raw_steps.iter().enumerate() {
+        let step = raw_step
+            .as_object()
+            .ok_or_else(|| anyhow::anyhow!("approval step {} must be an object", index + 1))?;
+        let expected_order = (index + 1) as i32;
+        let order = step
+            .get("order")
+            .and_then(Value::as_i64)
+            .unwrap_or(expected_order as i64) as i32;
+        if order != expected_order {
+            anyhow::bail!("approval step order must be contiguous from 1");
+        }
+        let assignee = step
+            .get("assignee")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("approval step {} assignee is required", order))?
+            .to_string();
+        let approver_channel = step
+            .get("approver_channel")
+            .and_then(Value::as_str)
+            .unwrap_or(default_channel)
+            .to_string();
+        if approver_channel != "pxm_user" && approver_channel != "external_email" {
+            anyhow::bail!("approval step {} has unsupported approver_channel", order);
+        }
+        if approver_channel == "external_email"
+            && (!assignee.contains('@') || assignee.starts_with('@') || assignee.ends_with('@'))
+        {
+            anyhow::bail!("approval step {} has invalid external email", order);
+        }
+        let label = step.get("label").cloned().unwrap_or(Value::Null);
+        let payload = json!({
+            "approval_model": "dynamic",
+            "step_order": order,
+            "step_label": label,
+            "assignee": assignee,
+            "approver_channel": approver_channel,
+            "content": content_snapshot,
+            "external_require_otp": external_require_otp,
+            "external_expires_in_hours": external_expires_in_hours
+        });
+        normalized_steps.push(json!({
+            "order": order,
+            "label": label,
+            "assignee": assignee,
+            "approver_channel": approver_channel
+        }));
+        steps.push(V2ApprovalStepInput {
+            step_order: order,
+            assignee,
+            approver_channel,
+            payload,
+        });
+    }
+
+    Ok(V2ApprovalDefinition {
+        source,
+        external_request_id: Some(external_request_id),
+        content_snapshot,
+        approval_line_snapshot: json!({"mode": "sequential", "steps": normalized_steps}),
+        steps,
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{execute_command_node, resolve_approval_assignment, V2RetryPolicy};
+    use super::{
+        execute_command_node, resolve_approval_assignment, resolve_approval_definition,
+        V2RetryPolicy,
+    };
     use crate::v2::types::NodeDef;
     use serde_json::json;
 
@@ -1236,6 +1409,45 @@ mod tests {
         let (assignee, payload) = resolve_approval_assignment(&node, &json!({}));
         assert_eq!(assignee, "manager");
         assert_eq!(payload["approval_model"], "fixed");
+    }
+
+    #[test]
+    fn resolves_dynamic_sequential_approval_snapshot() {
+        let node = NodeDef {
+            node_id: "approval".to_string(),
+            node_type: "approval".to_string(),
+            config: json!({"approvalType": "dynamic"}),
+        };
+        let context = json!({"data":{"formData":{"approval_request":{
+            "source":"acrapoint",
+            "request_id":"AP-42",
+            "content":{"title":"구매 결재","summary":"노트북","requester":"kim","ignored":"drop"},
+            "approval_line":{"steps":[
+                {"order":1,"assignee":"lead"},
+                {"order":2,"assignee":"director"}
+            ]}
+        }}}});
+
+        let definition = resolve_approval_definition(&node, &context).unwrap();
+        assert_eq!(definition.external_request_id.as_deref(), Some("AP-42"));
+        assert_eq!(definition.steps.len(), 2);
+        assert_eq!(definition.steps[1].step_order, 2);
+        assert_eq!(definition.content_snapshot.get("ignored"), None);
+    }
+
+    #[test]
+    fn rejects_non_contiguous_dynamic_approval_steps() {
+        let node = NodeDef {
+            node_id: "approval".to_string(),
+            node_type: "approval".to_string(),
+            config: json!({"approvalType": "dynamic"}),
+        };
+        let context = json!({"data":{"formData":{"approval_request":{
+            "source":"acrapoint","request_id":"AP-42","content":{},
+            "approval_line":{"steps":[{"order":2,"assignee":"lead"}]}
+        }}}});
+
+        assert!(resolve_approval_definition(&node, &context).is_err());
     }
 
     #[test]
@@ -2061,21 +2273,19 @@ async fn execute_token_flow(
 
                 let task_id = Uuid::new_v4();
                 let request_id = Uuid::new_v4();
-                let step_id = Uuid::new_v4();
-                let (assignee, approval_payload) =
-                    resolve_approval_assignment(node, &instance.context);
+                let approval_definition =
+                    resolve_approval_definition(node, &instance.context)?;
+                let assignee = approval_definition.steps[0].assignee.clone();
 
                 let approval = ctx
                     .task_repo
                     .find_or_create_approval(
                         request_id,
-                        step_id,
                         task_id,
                         instance.id,
                         token.id,
                         &token.node_id,
-                        &assignee,
-                        approval_payload.clone(),
+                        approval_definition,
                         tx,
                     )
                     .await?;
@@ -2103,7 +2313,7 @@ async fn execute_token_flow(
                             "approval_step_order": approval.request.current_step_order,
                             "task_id": task.id,
                             "assignee": assignee,
-                            "approval": approval_payload
+                            "approval": task.payload
                         }),
                         tx,
                     )

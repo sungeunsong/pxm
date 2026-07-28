@@ -4,8 +4,8 @@ use crate::v2::ports::{
     WorkflowInstanceRepositoryPort,
 };
 use crate::v2::types::{
-    EdgeRule, JobType, NodeDef, TokenStatus, V2ApprovalBundle, V2ApprovalRequest,
-    V2Instance, V2Job, V2Task, V2Token,
+    EdgeRule, JobType, NodeDef, TokenStatus, V2ApprovalBundle, V2ApprovalDefinition,
+    V2ApprovalRequest, V2Instance, V2Job, V2Task, V2Token,
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -726,13 +726,11 @@ impl TaskRepositoryPort for MongoAdapter {
     async fn find_or_create_approval(
         &self,
         request_id: Uuid,
-        step_id: Uuid,
         task_id: Uuid,
         instance_id: Uuid,
         token_id: Uuid,
         node_id: &str,
-        assignee: &str,
-        payload: Value,
+        definition: V2ApprovalDefinition,
         tx: &mut dyn Tx,
     ) -> Result<V2ApprovalBundle> {
         let mut session = get_session_mut(tx)?;
@@ -748,6 +746,11 @@ impl TaskRepositoryPort for MongoAdapter {
                 "instance_id": instance_id.to_string(),
                 "token_id": token_id.to_string(),
                 "node_id": node_id,
+                "source": json_to_bson(&definition.source),
+                "external_request_id": &definition.external_request_id,
+                "content_snapshot": json_to_bson(&definition.content_snapshot),
+                "approval_line_snapshot": json_to_bson(&definition.approval_line_snapshot),
+                "total_steps": definition.steps.len() as i32,
                 "status": "IN_PROGRESS",
                 "current_step_order": 1,
                 "version": 0,
@@ -784,51 +787,59 @@ impl TaskRepositoryPort for MongoAdapter {
         })?;
         let mut request = doc_to_approval_request(&request_doc)?;
 
-        let step_filter = doc! {
-            "request_id": request.id.to_string(),
-            "step_order": 1
-        };
-        let step_update = doc! {
-            "$setOnInsert": {
-                "_id": step_id.to_string(),
-                "request_id": request.id.to_string(),
-                "step_order": 1,
-                "mode": "ALL",
-                "required_count": 1,
-                "status": "OPEN",
-                "version": 0,
-                "completed_at": Bson::Null,
-                "created_at": &now,
-                "updated_at": &now
-            }
-        };
         let step_options = mongodb::options::FindOneAndUpdateOptions::builder()
             .upsert(true)
             .return_document(mongodb::options::ReturnDocument::After)
             .build();
-        let step_doc = if let Some(ref mut sess) = session {
-            step_coll
-                .find_one_and_update_with_session(
-                    step_filter,
-                    step_update,
-                    step_options,
-                    sess,
-                )
-                .await?
-        } else {
-            step_coll
-                .find_one_and_update(step_filter, step_update, step_options)
-                .await?
+        let mut first_step_doc = None;
+        for step in &definition.steps {
+            let step_filter = doc! {
+                "request_id": request.id.to_string(),
+                "step_order": step.step_order
+            };
+            let step_update = doc! {
+                "$setOnInsert": {
+                    "_id": Uuid::new_v4().to_string(),
+                    "request_id": request.id.to_string(),
+                    "step_order": step.step_order,
+                    "mode": "ALL",
+                    "required_count": 1,
+                    "assignee": &step.assignee,
+                    "approver_channel": &step.approver_channel,
+                    "task_payload": json_to_bson(&step.payload),
+                    "status": if step.step_order == 1 { "OPEN" } else { "LOCKED" },
+                    "version": 0,
+                    "completed_at": Bson::Null,
+                    "created_at": &now,
+                    "updated_at": &now
+                }
+            };
+            let persisted = if let Some(ref mut sess) = session {
+                step_coll
+                    .find_one_and_update_with_session(
+                        step_filter,
+                        step_update,
+                        step_options.clone(),
+                        sess,
+                    )
+                    .await?
+            } else {
+                step_coll
+                    .find_one_and_update(step_filter, step_update, step_options.clone())
+                    .await?
+            };
+            if step.step_order == 1 {
+                first_step_doc = persisted;
+            }
         }
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "failed to create or load approval step for request {}",
-                request.id
-            )
+        let step_doc = first_step_doc.ok_or_else(|| {
+            anyhow::anyhow!("failed to create or load first approval step for request {}", request.id)
         })?;
         let persisted_step_id = Uuid::parse_str(step_doc.get_str("_id")?)?;
+        let assignee = step_doc.get_str("assignee")?.to_string();
+        let payload = bson_to_json(step_doc.get("task_payload").unwrap_or(&Bson::Null));
 
-        let task_filter = doc! { "token_id": token_id.to_string() };
+        let task_filter = doc! { "approval_step_id": persisted_step_id.to_string() };
         let task_update = doc! {
             "$set": {
                 "approval_request_id": request.id.to_string(),
@@ -840,7 +851,7 @@ impl TaskRepositoryPort for MongoAdapter {
                 "instance_id": instance_id.to_string(),
                 "token_id": token_id.to_string(),
                 "node_id": node_id,
-                "assignee": assignee,
+                "assignee": &assignee,
                 "status": "OPEN",
                 "payload": json_to_bson(&payload),
                 "created_at": &now
