@@ -1554,6 +1554,37 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
         }
 
         const now = new Date().toISOString();
+        if (command.external_approval) {
+          const external = task.payload?.external_approval;
+          if (
+            external?.token_hash !== command.external_approval.token_hash ||
+            external?.consumed_at
+          ) {
+            result = { outcome: 'already_completed', task: mapTaskDoc(task) };
+            return;
+          }
+        }
+        let lockedRequest: any = null;
+        if (task.approval_request_id) {
+          lockedRequest = await this.db.collection<any>('v2_approval_requests').findOneAndUpdate(
+            {
+              _id: task.approval_request_id,
+              instance_id: task.instance_id,
+              token_id: task.token_id,
+              status: 'IN_PROGRESS',
+            },
+            {
+              $set: { updated_at: now },
+              $inc: { version: 1 },
+            },
+            { session, returnDocument: 'after' },
+          );
+          if (!lockedRequest) {
+            throw new Error(
+              `Approval request ${task.approval_request_id} is not in progress for task ${task._id}`,
+            );
+          }
+        }
         const completion = taskCompletion(command, now);
         const completionFilter: any = { _id: command.task_id, status: 'OPEN' };
         if (command.external_approval) {
@@ -1582,36 +1613,33 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
         }
 
         let shouldResume = !task.approval_request_id;
-        let nextTask: any = null;
+        const nextTasks: any[] = [];
         if (task.approval_request_id) {
-          const request = await this.db.collection<any>('v2_approval_requests').findOne(
-            {
-              _id: task.approval_request_id,
-              instance_id: task.instance_id,
-              token_id: task.token_id,
-            },
-            { session },
-          );
-          if (!request) {
-            throw new Error(`Approval request ${task.approval_request_id} is missing for task ${task._id}`);
-          }
+          const request = lockedRequest;
           if (request.status !== 'IN_PROGRESS' || !task.approval_step_id) {
             throw new Error(`Approval task ${task._id} is not the open step of an in-progress request`);
           }
-          const stepUpdate = await this.db.collection<any>('v2_approval_steps').updateOne(
+          const step = await this.db.collection<any>('v2_approval_steps').findOne(
             {
               _id: task.approval_step_id,
               request_id: task.approval_request_id,
               step_order: request.current_step_order,
               status: 'OPEN',
             },
+            { session },
+          );
+          if (!step) {
+            throw new Error(`Approval task ${task._id} does not match current step ${request.current_step_order}`);
+          }
+          const stepTouch = await this.db.collection<any>('v2_approval_steps').updateOne(
+            { _id: step._id, status: 'OPEN', version: step.version || 0 },
             {
-              $set: { status: command.status, completed_at: now, updated_at: now },
+              $set: { updated_at: now },
               $inc: { version: 1 },
             },
             { session },
           );
-          if (stepUpdate.modifiedCount !== 1) {
+          if (stepTouch.modifiedCount !== 1) {
             throw new Error(`Approval task ${task._id} does not match current step ${request.current_step_order}`);
           }
 
@@ -1622,78 +1650,119 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
             result: command.result || null,
           };
           if (command.status === 'REJECTED') {
+            await this.db.collection<any>('v2_approval_steps').updateOne(
+              { _id: step._id, status: 'OPEN' },
+              { $set: { status: 'REJECTED', completed_at: now, updated_at: now } },
+              { session },
+            );
+            await this.db.collection<any>('v2_tasks').updateMany(
+              { approval_step_id: step._id, status: 'OPEN' },
+              { $set: { status: 'CANCELED', updated_at: now } },
+              { session },
+            );
             const requestUpdate = await this.db.collection<any>('v2_approval_requests').updateOne(
               { _id: task.approval_request_id, status: 'IN_PROGRESS' },
               {
                 $set: { status: 'REJECTED', result: terminalResult, completed_at: now, updated_at: now },
-                $inc: { version: 1 },
               },
               { session },
             );
             shouldResume = requestUpdate.modifiedCount === 1;
           } else {
-            const nextStep = await this.db.collection<any>('v2_approval_steps').findOne(
-              {
-                request_id: task.approval_request_id,
-                step_order: request.current_step_order + 1,
-                status: 'LOCKED',
-              },
-              { session },
-            );
-            if (nextStep) {
-              const opened = await this.db.collection<any>('v2_approval_steps').updateOne(
-                { _id: nextStep._id, status: 'LOCKED' },
-                { $set: { status: 'OPEN', updated_at: now }, $inc: { version: 1 } },
+            let stepCompleted = step.mode === 'ANY';
+            if (step.mode === 'ANY') {
+              await this.db.collection<any>('v2_tasks').updateMany(
+                { approval_step_id: step._id, status: 'OPEN' },
+                { $set: { status: 'CANCELED', updated_at: now } },
                 { session },
               );
-              if (opened.modifiedCount !== 1) {
-                throw new Error(`Approval step ${nextStep._id} could not be opened`);
-              }
-              await this.db.collection<any>('v2_approval_requests').updateOne(
-                { _id: task.approval_request_id, status: 'IN_PROGRESS' },
-                {
-                  $set: { current_step_order: nextStep.step_order, updated_at: now },
-                  $inc: { version: 1 },
-                },
+            } else {
+              stepCompleted = await this.db.collection<any>('v2_tasks').countDocuments(
+                { approval_step_id: step._id, status: 'OPEN' },
                 { session },
-              );
-              nextTask = {
-                _id: crypto.randomUUID(),
-                instance_id: task.instance_id,
-                token_id: task.token_id,
-                node_id: task.node_id,
-                assignee: nextStep.assignee,
-                status: 'OPEN',
-                payload: nextStep.task_payload || {},
-                approval_request_id: task.approval_request_id,
-                approval_step_id: nextStep._id,
-                created_at: now,
-                updated_at: now,
-              };
-              await this.db.collection<any>('v2_tasks').insertOne(nextTask, { session });
+              ) === 0;
+            }
+
+            if (!stepCompleted) {
               shouldResume = false;
             } else {
-              const requestUpdate = await this.db.collection<any>('v2_approval_requests').updateOne(
+              await this.db.collection<any>('v2_approval_requests').updateOne(
+                { _id: task.approval_request_id, status: 'IN_PROGRESS' },
+                { $set: { updated_at: now } },
+                { session },
+              );
+              await this.db.collection<any>('v2_approval_steps').updateOne(
+                { _id: step._id, status: 'OPEN' },
+                { $set: { status: 'APPROVED', completed_at: now, updated_at: now } },
+                { session },
+              );
+              const nextStep = await this.db.collection<any>('v2_approval_steps').findOne(
                 {
-                  _id: task.approval_request_id,
-                  status: 'IN_PROGRESS',
-                  $expr: {
-                    $eq: [
-                      '$current_step_order',
-                      { $ifNull: ['$total_steps', '$current_step_order'] },
-                    ],
-                  },
-                },
-                {
-                  $set: { status: 'APPROVED', result: terminalResult, completed_at: now, updated_at: now },
-                  $inc: { version: 1 },
+                  request_id: task.approval_request_id,
+                  step_order: request.current_step_order + 1,
+                  status: 'LOCKED',
                 },
                 { session },
               );
-              if (requestUpdate.modifiedCount !== 1) {
-                throw new Error(`Approval request ${task.approval_request_id} has a missing next step`);
+              if (nextStep) {
+                const opened = await this.db.collection<any>('v2_approval_steps').updateOne(
+                  { _id: nextStep._id, status: 'LOCKED' },
+                  { $set: { status: 'OPEN', updated_at: now }, $inc: { version: 1 } },
+                  { session },
+                );
+                if (opened.modifiedCount !== 1) {
+                  throw new Error(`Approval step ${nextStep._id} could not be opened`);
+                }
+                await this.db.collection<any>('v2_approval_requests').updateOne(
+                  { _id: task.approval_request_id, status: 'IN_PROGRESS' },
+                  {
+                    $set: { current_step_order: nextStep.step_order, updated_at: now },
+                  },
+                  { session },
+                );
+                const specs = Array.isArray(nextStep.task_specs) && nextStep.task_specs.length
+                  ? nextStep.task_specs
+                  : [{ assignee: nextStep.assignee, payload: nextStep.task_payload || {} }];
+                for (const spec of specs) {
+                  const nextTask = {
+                    _id: crypto.randomUUID(),
+                    instance_id: task.instance_id,
+                    token_id: task.token_id,
+                    node_id: task.node_id,
+                    assignee: spec.assignee,
+                    status: 'OPEN',
+                    payload: spec.payload || {},
+                    approval_request_id: task.approval_request_id,
+                    approval_step_id: nextStep._id,
+                    created_at: now,
+                    updated_at: now,
+                  };
+                  await this.db.collection<any>('v2_tasks').insertOne(nextTask, { session });
+                  nextTasks.push(nextTask);
+                }
+                shouldResume = false;
+              } else {
+                const requestUpdate = await this.db.collection<any>('v2_approval_requests').updateOne(
+                  {
+                    _id: task.approval_request_id,
+                    status: 'IN_PROGRESS',
+                    $expr: {
+                      $eq: [
+                        '$current_step_order',
+                        { $ifNull: ['$total_steps', '$current_step_order'] },
+                      ],
+                    },
+                  },
+                  {
+                    $set: { status: 'APPROVED', result: terminalResult, completed_at: now, updated_at: now },
+                  },
+                  { session },
+                );
+                if (requestUpdate.modifiedCount !== 1) {
+                  throw new Error(`Approval request ${task.approval_request_id} has a missing next step`);
+                }
+                shouldResume = true;
               }
-              shouldResume = true;
             }
           }
         }
@@ -1742,7 +1811,7 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
           },
           { session },
         );
-        if (nextTask) {
+        for (const nextTask of nextTasks) {
           await this.db.collection<any>('v2_event_outbox').insertOne(
             {
               instance_id: task.instance_id,

@@ -1279,12 +1279,29 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      const { rows } = await client.query(`SELECT * FROM v2_tasks WHERE id = $1::uuid FOR UPDATE`, [command.task_id]);
-      const task = rows[0];
+      const { rows } = await client.query(`SELECT * FROM v2_tasks WHERE id = $1::uuid`, [command.task_id]);
+      let task = rows[0];
       if (!task) {
         await client.query('ROLLBACK');
         return { outcome: 'not_found', task: null };
       }
+      let lockedRequest: any = null;
+      if (task.approval_request_id) {
+        const requestResult = await client.query(
+          `SELECT * FROM v2_approval_requests
+           WHERE id = $1::uuid AND instance_id = $2::uuid AND token_id = $3::uuid
+           FOR UPDATE`,
+          [task.approval_request_id, task.instance_id, task.token_id],
+        );
+        lockedRequest = requestResult.rows[0];
+        if (!lockedRequest) {
+          throw new Error(`Approval request ${task.approval_request_id} is missing for task ${task.id}`);
+        }
+      }
+      task = (await client.query(
+        `SELECT * FROM v2_tasks WHERE id = $1::uuid FOR UPDATE`,
+        [command.task_id],
+      )).rows[0];
       if (task.status !== 'OPEN') {
         await client.query('COMMIT');
         const sameKey = sameTaskCompletion(task.payload?.completion, command);
@@ -1315,31 +1332,22 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
       };
       await client.query(`UPDATE v2_tasks SET status = $1, payload = $2::jsonb, updated_at = NOW() WHERE id = $3::uuid`, [command.status, JSON.stringify(payload), command.task_id]);
       let shouldResume = !task.approval_request_id;
-      let nextTask: any = null;
+      const nextTasks: any[] = [];
       if (task.approval_request_id) {
-        const requestResult = await client.query(
-          `SELECT * FROM v2_approval_requests
-           WHERE id = $1::uuid AND instance_id = $2::uuid AND token_id = $3::uuid
-           FOR UPDATE`,
-          [task.approval_request_id, task.instance_id, task.token_id],
-        );
-        const request = requestResult.rows[0];
-        if (!request) {
-          throw new Error(`Approval request ${task.approval_request_id} is missing for task ${task.id}`);
-        }
+        const request = lockedRequest;
         if (request.status !== 'IN_PROGRESS' || !task.approval_step_id) {
           throw new Error(`Approval task ${task.id} is not the open step of an in-progress request`);
         }
 
-        const stepUpdate = await client.query(
-          `UPDATE v2_approval_steps
-           SET status = $2, completed_at = NOW(), version = version + 1, updated_at = NOW()
-           WHERE id = $1::uuid AND request_id = $3::uuid
-             AND step_order = $4 AND status = 'OPEN'
-           RETURNING step_order`,
-          [task.approval_step_id, command.status, task.approval_request_id, request.current_step_order],
+        const stepResult = await client.query(
+          `SELECT * FROM v2_approval_steps
+           WHERE id = $1::uuid AND request_id = $2::uuid
+             AND step_order = $3 AND status = 'OPEN'
+           FOR UPDATE`,
+          [task.approval_step_id, task.approval_request_id, request.current_step_order],
         );
-        if (stepUpdate.rowCount !== 1) {
+        const step = stepResult.rows[0];
+        if (!step) {
           throw new Error(`Approval task ${task.id} does not match current step ${request.current_step_order}`);
         }
 
@@ -1350,6 +1358,17 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
           result: command.result || null,
         });
         if (command.status === 'REJECTED') {
+          await client.query(
+            `UPDATE v2_approval_steps
+             SET status = 'REJECTED', completed_at = NOW(), version = version + 1, updated_at = NOW()
+             WHERE id = $1::uuid AND status = 'OPEN'`,
+            [step.id],
+          );
+          await client.query(
+            `UPDATE v2_tasks SET status = 'CANCELED', updated_at = NOW()
+             WHERE approval_step_id = $1::uuid AND status = 'OPEN'`,
+            [step.id],
+          );
           const requestUpdate = await client.query(
             `UPDATE v2_approval_requests
              SET status = 'REJECTED', result = $2::jsonb, completed_at = NOW(),
@@ -1359,55 +1378,87 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
           );
           shouldResume = requestUpdate.rowCount === 1;
         } else {
-          const nextStepResult = await client.query(
-            `SELECT * FROM v2_approval_steps
-             WHERE request_id = $1::uuid AND step_order = $2 AND status = 'LOCKED'
-             FOR UPDATE`,
-            [task.approval_request_id, request.current_step_order + 1],
-          );
-          const nextStep = nextStepResult.rows[0];
-          if (nextStep) {
+          let stepCompleted = step.mode === 'ANY';
+          if (step.mode === 'ANY') {
             await client.query(
-              `UPDATE v2_approval_steps SET status = 'OPEN', version = version + 1, updated_at = NOW()
-               WHERE id = $1::uuid AND status = 'LOCKED'`,
-              [nextStep.id],
+              `UPDATE v2_tasks SET status = 'CANCELED', updated_at = NOW()
+               WHERE approval_step_id = $1::uuid AND status = 'OPEN'`,
+              [step.id],
             );
-            await client.query(
-              `UPDATE v2_approval_requests
-               SET current_step_order = $2, version = version + 1, updated_at = NOW()
-               WHERE id = $1::uuid AND status = 'IN_PROGRESS'`,
-              [task.approval_request_id, nextStep.step_order],
+          } else {
+            const remaining = await client.query(
+              `SELECT count(*)::int AS count FROM v2_tasks
+               WHERE approval_step_id = $1::uuid AND status = 'OPEN'`,
+              [step.id],
             );
-            const nextTaskResult = await client.query(
-              `INSERT INTO v2_tasks
-                 (id, instance_id, token_id, node_id, assignee, status, payload,
-                  approval_request_id, approval_step_id, created_at, updated_at)
-               VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, 'OPEN', $6::jsonb,
-                       $7::uuid, $8::uuid, NOW(), NOW())
-               ON CONFLICT (approval_step_id) WHERE approval_step_id IS NOT NULL
-               DO UPDATE SET updated_at = v2_tasks.updated_at
-               RETURNING *`,
-              [
-                crypto.randomUUID(), task.instance_id, task.token_id, task.node_id,
-                nextStep.assignee, JSON.stringify(nextStep.task_payload || {}),
-                task.approval_request_id, nextStep.id,
-              ],
-            );
-            nextTask = nextTaskResult.rows[0];
+            stepCompleted = remaining.rows[0].count === 0;
+          }
+
+          if (!stepCompleted) {
             shouldResume = false;
           } else {
-            const requestUpdate = await client.query(
-              `UPDATE v2_approval_requests
-               SET status = 'APPROVED', result = $2::jsonb, completed_at = NOW(),
-                   version = version + 1, updated_at = NOW()
-               WHERE id = $1::uuid AND status = 'IN_PROGRESS'
-                 AND current_step_order = total_steps`,
-              [task.approval_request_id, terminalResult],
+            await client.query(
+              `UPDATE v2_approval_steps
+               SET status = 'APPROVED', completed_at = NOW(), version = version + 1, updated_at = NOW()
+               WHERE id = $1::uuid AND status = 'OPEN'`,
+              [step.id],
             );
-            if (requestUpdate.rowCount !== 1) {
-              throw new Error(`Approval request ${task.approval_request_id} has a missing next step`);
+
+            const nextStepResult = await client.query(
+              `SELECT * FROM v2_approval_steps
+               WHERE request_id = $1::uuid AND step_order = $2 AND status = 'LOCKED'
+               FOR UPDATE`,
+              [task.approval_request_id, request.current_step_order + 1],
+            );
+            const nextStep = nextStepResult.rows[0];
+            if (nextStep) {
+              await client.query(
+                `UPDATE v2_approval_steps SET status = 'OPEN', version = version + 1, updated_at = NOW()
+                 WHERE id = $1::uuid AND status = 'LOCKED'`,
+                [nextStep.id],
+              );
+              await client.query(
+                `UPDATE v2_approval_requests
+                 SET current_step_order = $2, version = version + 1, updated_at = NOW()
+                 WHERE id = $1::uuid AND status = 'IN_PROGRESS'`,
+                [task.approval_request_id, nextStep.step_order],
+              );
+              const specs = Array.isArray(nextStep.task_specs) && nextStep.task_specs.length
+                ? nextStep.task_specs
+                : [{ assignee: nextStep.assignee, payload: nextStep.task_payload || {} }];
+              for (const spec of specs) {
+                const nextTaskResult = await client.query(
+                  `INSERT INTO v2_tasks
+                     (id, instance_id, token_id, node_id, assignee, status, payload,
+                      approval_request_id, approval_step_id, created_at, updated_at)
+                   VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, 'OPEN', $6::jsonb,
+                           $7::uuid, $8::uuid, NOW(), NOW())
+                   ON CONFLICT (approval_step_id, assignee) WHERE approval_step_id IS NOT NULL
+                   DO UPDATE SET updated_at = v2_tasks.updated_at
+                   RETURNING *`,
+                  [
+                    crypto.randomUUID(), task.instance_id, task.token_id, task.node_id,
+                    spec.assignee, JSON.stringify(spec.payload || {}),
+                    task.approval_request_id, nextStep.id,
+                  ],
+                );
+                nextTasks.push(nextTaskResult.rows[0]);
+              }
+              shouldResume = false;
+            } else {
+              const requestUpdate = await client.query(
+                `UPDATE v2_approval_requests
+                 SET status = 'APPROVED', result = $2::jsonb, completed_at = NOW(),
+                     version = version + 1, updated_at = NOW()
+                 WHERE id = $1::uuid AND status = 'IN_PROGRESS'
+                   AND current_step_order = total_steps`,
+                [task.approval_request_id, terminalResult],
+              );
+              if (requestUpdate.rowCount !== 1) {
+                throw new Error(`Approval request ${task.approval_request_id} has a missing next step`);
+              }
+              shouldResume = true;
             }
-            shouldResume = true;
           }
         }
       }
@@ -1448,7 +1499,7 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
           }),
         ],
       );
-      if (nextTask) {
+      for (const nextTask of nextTasks) {
         await client.query(
           `INSERT INTO v2_event_outbox (instance_id, token_id, node_id, event_type, payload, created_at)
            VALUES ($1::uuid, $2::uuid, $3, 'TASK_CREATED', $4::jsonb, NOW())`,

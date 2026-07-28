@@ -785,7 +785,7 @@ impl TaskRepositoryPort for MongoAdapter {
                 token_id
             )
         })?;
-        let mut request = doc_to_approval_request(&request_doc)?;
+        let request = doc_to_approval_request(&request_doc)?;
 
         let step_options = mongodb::options::FindOneAndUpdateOptions::builder()
             .upsert(true)
@@ -793,6 +793,19 @@ impl TaskRepositoryPort for MongoAdapter {
             .build();
         let mut first_step_doc = None;
         for step in &definition.steps {
+            let first = &step.tasks[0];
+            let task_specs = Value::Array(
+                step.tasks
+                    .iter()
+                    .map(|task| {
+                        serde_json::json!({
+                            "assignee": task.assignee,
+                            "approver_channel": task.approver_channel,
+                            "payload": task.payload
+                        })
+                    })
+                    .collect(),
+            );
             let step_filter = doc! {
                 "request_id": request.id.to_string(),
                 "step_order": step.step_order
@@ -802,11 +815,12 @@ impl TaskRepositoryPort for MongoAdapter {
                     "_id": Uuid::new_v4().to_string(),
                     "request_id": request.id.to_string(),
                     "step_order": step.step_order,
-                    "mode": "ALL",
-                    "required_count": 1,
-                    "assignee": &step.assignee,
-                    "approver_channel": &step.approver_channel,
-                    "task_payload": json_to_bson(&step.payload),
+                    "mode": &step.mode,
+                    "required_count": if step.mode == "ALL" { step.tasks.len() as i32 } else { 1 },
+                    "assignee": &first.assignee,
+                    "approver_channel": &first.approver_channel,
+                    "task_payload": json_to_bson(&first.payload),
+                    "task_specs": json_to_bson(&task_specs),
                     "status": if step.step_order == 1 { "OPEN" } else { "LOCKED" },
                     "version": 0,
                     "completed_at": Bson::Null,
@@ -836,105 +850,55 @@ impl TaskRepositoryPort for MongoAdapter {
             anyhow::anyhow!("failed to create or load first approval step for request {}", request.id)
         })?;
         let persisted_step_id = Uuid::parse_str(step_doc.get_str("_id")?)?;
-        let assignee = step_doc.get_str("assignee")?.to_string();
-        let payload = bson_to_json(step_doc.get("task_payload").unwrap_or(&Bson::Null));
-
-        let task_filter = doc! { "approval_step_id": persisted_step_id.to_string() };
-        let task_update = doc! {
-            "$set": {
-                "approval_request_id": request.id.to_string(),
-                "approval_step_id": persisted_step_id.to_string(),
-                "updated_at": &now
-            },
-            "$setOnInsert": {
-                "_id": task_id.to_string(),
-                "instance_id": instance_id.to_string(),
-                "token_id": token_id.to_string(),
-                "node_id": node_id,
-                "assignee": &assignee,
-                "status": "OPEN",
-                "payload": json_to_bson(&payload),
-                "created_at": &now
-            }
-        };
         let task_options = mongodb::options::FindOneAndUpdateOptions::builder()
             .upsert(true)
             .return_document(mongodb::options::ReturnDocument::After)
             .build();
-        let task_doc = if let Some(ref mut sess) = session {
-            task_coll
-                .find_one_and_update_with_session(
-                    task_filter,
-                    task_update,
-                    task_options,
-                    sess,
-                )
-                .await?
-        } else {
-            task_coll
-                .find_one_and_update(task_filter, task_update, task_options)
-                .await?
-        }
-        .ok_or_else(|| anyhow::anyhow!("failed to create or load task for token {}", token_id))?;
-        let task = doc_to_task(&task_doc)?;
-
-        if task.status == "APPROVED" || task.status == "REJECTED" {
-            let terminal_status = task.status.clone();
-            let terminal_now = Utc::now().to_rfc3339();
-            let request_update = doc! {
-                "$set": {
-                    "status": &terminal_status,
-                    "result": { "task_id": task.id.to_string(), "status": &terminal_status },
-                    "completed_at": &terminal_now,
-                    "updated_at": &terminal_now
-                },
-                "$inc": { "version": 1 }
+        let task_specs = bson_to_json(step_doc.get("task_specs").unwrap_or(&Bson::Null));
+        let mut tasks = Vec::new();
+        for (index, spec) in task_specs.as_array().into_iter().flatten().enumerate() {
+            let assignee = spec.get("assignee").and_then(Value::as_str).unwrap_or("admin");
+            let payload = spec.get("payload").cloned().unwrap_or(Value::Null);
+            let task_filter = doc! {
+                "approval_step_id": persisted_step_id.to_string(),
+                "assignee": assignee
             };
-            let step_update = doc! {
+            let task_update = doc! {
                 "$set": {
-                    "status": &terminal_status,
-                    "completed_at": &terminal_now,
-                    "updated_at": &terminal_now
+                    "approval_request_id": request.id.to_string(),
+                    "approval_step_id": persisted_step_id.to_string(),
+                    "updated_at": &now
                 },
-                "$inc": { "version": 1 }
+                "$setOnInsert": {
+                    "_id": if index == 0 { task_id.to_string() } else { Uuid::new_v4().to_string() },
+                    "instance_id": instance_id.to_string(),
+                    "token_id": token_id.to_string(),
+                    "node_id": node_id,
+                    "assignee": assignee,
+                    "status": "OPEN",
+                    "payload": json_to_bson(&payload),
+                    "created_at": &now
+                }
             };
-            if let Some(ref mut sess) = session {
-                step_coll
-                    .update_one_with_session(
-                        doc! { "_id": persisted_step_id.to_string(), "status": "OPEN" },
-                        step_update,
-                        None,
+            let task_doc = if let Some(ref mut sess) = session {
+                task_coll
+                    .find_one_and_update_with_session(
+                        task_filter,
+                        task_update,
+                        task_options.clone(),
                         sess,
                     )
-                    .await?;
-                request_coll
-                    .update_one_with_session(
-                        doc! { "_id": request.id.to_string(), "status": "IN_PROGRESS" },
-                        request_update,
-                        None,
-                        sess,
-                    )
-                    .await?;
+                    .await?
             } else {
-                step_coll
-                    .update_one(
-                        doc! { "_id": persisted_step_id.to_string(), "status": "OPEN" },
-                        step_update,
-                        None,
-                    )
-                    .await?;
-                request_coll
-                    .update_one(
-                        doc! { "_id": request.id.to_string(), "status": "IN_PROGRESS" },
-                        request_update,
-                        None,
-                    )
-                    .await?;
+                task_coll
+                    .find_one_and_update(task_filter, task_update, task_options.clone())
+                    .await?
             }
-            request.status = terminal_status;
+            .ok_or_else(|| anyhow::anyhow!("failed to create or load task for token {}", token_id))?;
+            tasks.push(doc_to_task(&task_doc)?);
         }
 
-        Ok(V2ApprovalBundle { request, task })
+        Ok(V2ApprovalBundle { request, tasks })
     }
 
     async fn find_approval_request_by_token(

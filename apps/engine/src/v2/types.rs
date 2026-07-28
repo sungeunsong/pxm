@@ -165,11 +165,17 @@ pub struct V2ApprovalRequest {
 }
 
 #[derive(Debug, Clone)]
-pub struct V2ApprovalStepInput {
-    pub step_order: i32,
+pub struct V2ApprovalTaskInput {
     pub assignee: String,
     pub approver_channel: String,
     pub payload: Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct V2ApprovalStepInput {
+    pub step_order: i32,
+    pub mode: String,
+    pub tasks: Vec<V2ApprovalTaskInput>,
 }
 
 #[derive(Debug, Clone)]
@@ -184,5 +190,5 @@ pub struct V2ApprovalDefinition {
 #[derive(Debug, Clone)]
 pub struct V2ApprovalBundle {
     pub request: V2ApprovalRequest,
-    pub task: V2Task,
+    pub tasks: Vec<V2Task>,
 }

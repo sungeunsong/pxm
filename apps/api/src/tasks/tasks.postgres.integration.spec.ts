@@ -220,4 +220,109 @@ describePostgres('Postgres approval task transaction', () => {
       ).rows[0].count,
     ).toBe(1);
   });
+
+  it('completes an ALL step once after concurrent approvals', async () => {
+    const bobTaskId = randomUUID();
+    await pool.query(
+      `UPDATE v2_approval_steps SET mode = 'ALL', required_count = 2 WHERE id = $1::uuid`,
+      [stepId],
+    );
+    await pool.query(
+      `INSERT INTO v2_tasks
+         (id, instance_id, token_id, approval_request_id, approval_step_id,
+          node_id, assignee, status, payload)
+       VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid,
+               'approval', 'bob', 'OPEN', '{}'::jsonb)`,
+      [bobTaskId, instanceId, tokenId, requestId, stepId],
+    );
+
+    const outcomes = await Promise.all([
+      adapter.completeTask({
+        task_id: taskId, action: 'approve', status: 'APPROVED',
+        actor_id: 'alice', idempotency_key: 'all-alice',
+      }),
+      adapter.completeTask({
+        task_id: bobTaskId, action: 'approve', status: 'APPROVED',
+        actor_id: 'bob', idempotency_key: 'all-bob',
+      }),
+    ]);
+    expect(outcomes.map((item) => item.outcome)).toEqual([
+      'completed',
+      'completed',
+    ]);
+    expect((await pool.query(
+      `SELECT status FROM v2_approval_requests WHERE id = $1::uuid`,
+      [requestId],
+    )).rows[0].status).toBe('APPROVED');
+    expect((await pool.query(
+      `SELECT count(*)::int AS count FROM v2_engine_jobs
+       WHERE instance_id = $1::uuid AND type = 'RESUME'`,
+      [instanceId],
+    )).rows[0].count).toBe(1);
+  });
+
+  it('completes ANY on the first approval and cancels siblings', async () => {
+    const bobTaskId = randomUUID();
+    await pool.query(
+      `UPDATE v2_approval_steps SET mode = 'ANY', required_count = 1 WHERE id = $1::uuid`,
+      [stepId],
+    );
+    await pool.query(
+      `INSERT INTO v2_tasks
+         (id, instance_id, token_id, approval_request_id, approval_step_id,
+          node_id, assignee, status, payload)
+       VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid,
+               'approval', 'bob', 'OPEN', '{}'::jsonb)`,
+      [bobTaskId, instanceId, tokenId, requestId, stepId],
+    );
+
+    await adapter.completeTask({
+      task_id: taskId, action: 'approve', status: 'APPROVED',
+      actor_id: 'alice', idempotency_key: 'any-alice',
+    });
+    expect((await pool.query(
+      `SELECT status FROM v2_tasks WHERE id = $1::uuid`,
+      [bobTaskId],
+    )).rows[0].status).toBe('CANCELED');
+    expect((await adapter.completeTask({
+      task_id: bobTaskId, action: 'approve', status: 'APPROVED',
+      actor_id: 'bob', idempotency_key: 'any-bob-late',
+    })).outcome).toBe('already_completed');
+  });
+
+  it('keeps rejection final under concurrent approve and reject', async () => {
+    const bobTaskId = randomUUID();
+    await pool.query(
+      `UPDATE v2_approval_steps SET mode = 'ALL', required_count = 2 WHERE id = $1::uuid`,
+      [stepId],
+    );
+    await pool.query(
+      `INSERT INTO v2_tasks
+         (id, instance_id, token_id, approval_request_id, approval_step_id,
+          node_id, assignee, status, payload)
+       VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid,
+               'approval', 'bob', 'OPEN', '{}'::jsonb)`,
+      [bobTaskId, instanceId, tokenId, requestId, stepId],
+    );
+
+    await Promise.all([
+      adapter.completeTask({
+        task_id: taskId, action: 'approve', status: 'APPROVED',
+        actor_id: 'alice', idempotency_key: 'race-approve',
+      }),
+      adapter.completeTask({
+        task_id: bobTaskId, action: 'reject', status: 'REJECTED',
+        actor_id: 'bob', idempotency_key: 'race-reject',
+      }),
+    ]);
+    expect((await pool.query(
+      `SELECT status FROM v2_approval_requests WHERE id = $1::uuid`,
+      [requestId],
+    )).rows[0].status).toBe('REJECTED');
+    expect((await pool.query(
+      `SELECT count(*)::int AS count FROM v2_engine_jobs
+       WHERE instance_id = $1::uuid AND type = 'RESUME'`,
+      [instanceId],
+    )).rows[0].count).toBe(1);
+  });
 });

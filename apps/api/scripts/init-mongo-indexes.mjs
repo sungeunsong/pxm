@@ -49,9 +49,19 @@ async function main() {
       },
     },
   );
+  if (taskIndexes.some((index) => index.name === 'ux_v2_tasks_approval_step')) {
+    await db.collection('v2_tasks').dropIndex('ux_v2_tasks_approval_step');
+  }
   await db.collection('v2_tasks').createIndex(
-    { approval_step_id: 1 },
-    { unique: true, sparse: true, name: 'ux_v2_tasks_approval_step' },
+    { approval_step_id: 1, assignee: 1 },
+    {
+      unique: true,
+      name: 'ux_v2_tasks_approval_step_assignee',
+      partialFilterExpression: {
+        approval_step_id: { $type: 'string' },
+        assignee: { $type: 'string' },
+      },
+    },
   );
   await db.collection('v2_tasks').createIndex(
     { 'payload.external_approval.token_hash': 1 },

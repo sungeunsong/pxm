@@ -474,12 +474,25 @@ impl TaskRepositoryPort for PostgresAdapter {
         let persisted_request_id: Uuid = request_row.get("id");
 
         for step in &definition.steps {
+            let first = &step.tasks[0];
+            let task_specs = Value::Array(
+                step.tasks
+                    .iter()
+                    .map(|task| {
+                        serde_json::json!({
+                            "assignee": task.assignee,
+                            "approver_channel": task.approver_channel,
+                            "payload": task.payload
+                        })
+                    })
+                    .collect(),
+            );
             sqlx::query(
                 r#"
                 insert into v2_approval_steps
                   (id, request_id, step_order, mode, required_count, assignee,
-                   approver_channel, task_payload, status, version, created_at, updated_at)
-                values ($1, $2, $3, 'ALL', 1, $4, $5, $6,
+                   approver_channel, task_payload, task_specs, status, version, created_at, updated_at)
+                values ($1, $2, $3, $4, $5, $6, $7, $8, $9,
                         case when $3 = 1 then 'OPEN' else 'LOCKED' end, 0, now(), now())
                 on conflict (request_id, step_order) do nothing
                 "#,
@@ -487,57 +500,60 @@ impl TaskRepositoryPort for PostgresAdapter {
             .bind(Uuid::new_v4())
             .bind(persisted_request_id)
             .bind(step.step_order)
-            .bind(&step.assignee)
-            .bind(&step.approver_channel)
-            .bind(&step.payload)
+            .bind(&step.mode)
+            .bind(if step.mode == "ALL" { step.tasks.len() as i32 } else { 1 })
+            .bind(&first.assignee)
+            .bind(&first.approver_channel)
+            .bind(&first.payload)
+            .bind(task_specs)
             .execute(&mut **sqlx_tx)
             .await?;
         }
         let step_row = sqlx::query(
-            "select id, assignee, task_payload from v2_approval_steps where request_id = $1 and step_order = 1",
+            "select id, task_specs from v2_approval_steps where request_id = $1 and step_order = 1",
         )
         .bind(persisted_request_id)
         .fetch_one(&mut **sqlx_tx)
         .await?;
         let persisted_step_id: Uuid = step_row.get("id");
-        let assignee: String = step_row.get("assignee");
-        let payload: Value = step_row.get("task_payload");
+        let task_specs: Value = step_row.get("task_specs");
+        let mut tasks = Vec::new();
+        for (index, spec) in task_specs.as_array().into_iter().flatten().enumerate() {
+            let assignee = spec.get("assignee").and_then(Value::as_str).unwrap_or("admin");
+            let payload = spec.get("payload").cloned().unwrap_or(Value::Null);
+            let task_row = sqlx::query(
+                r#"
+                insert into v2_tasks
+                  (id, instance_id, token_id, node_id, assignee, status, payload,
+                   approval_request_id, approval_step_id, created_at, updated_at)
+                values ($1, $2, $3, $4, $5, 'OPEN', $6, $7, $8, now(), now())
+                on conflict (approval_step_id, assignee) where approval_step_id is not null
+                do update set updated_at = v2_tasks.updated_at
+                returning id, instance_id, token_id, node_id, assignee, status, payload
+                "#,
+            )
+            .bind(if index == 0 { task_id } else { Uuid::new_v4() })
+            .bind(instance_id)
+            .bind(token_id)
+            .bind(node_id)
+            .bind(assignee)
+            .bind(payload)
+            .bind(persisted_request_id)
+            .bind(persisted_step_id)
+            .fetch_one(&mut **sqlx_tx)
+            .await?;
+            tasks.push(V2Task {
+                id: task_row.get("id"),
+                instance_id: task_row.get("instance_id"),
+                token_id: task_row.get("token_id"),
+                node_id: task_row.get("node_id"),
+                assignee: task_row.get("assignee"),
+                status: task_row.get("status"),
+                payload: task_row.get("payload"),
+            });
+        }
 
-        let task_row = sqlx::query(
-            r#"
-            insert into v2_tasks
-              (id, instance_id, token_id, node_id, assignee, status, payload,
-               approval_request_id, approval_step_id, created_at, updated_at)
-            values ($1, $2, $3, $4, $5, 'OPEN', $6, $7, $8, now(), now())
-            on conflict (approval_step_id) where approval_step_id is not null
-            do update set
-              approval_request_id = excluded.approval_request_id,
-              updated_at = now()
-            returning id, instance_id, token_id, node_id, assignee, status, payload
-            "#
-        )
-        .bind(task_id)
-        .bind(instance_id)
-        .bind(token_id)
-        .bind(node_id)
-        .bind(&assignee)
-        .bind(payload)
-        .bind(persisted_request_id)
-        .bind(persisted_step_id)
-        .fetch_one(&mut **sqlx_tx)
-        .await?;
-
-        let task = V2Task {
-            id: task_row.get("id"),
-            instance_id: task_row.get("instance_id"),
-            token_id: task_row.get("token_id"),
-            node_id: task_row.get("node_id"),
-            assignee: task_row.get("assignee"),
-            status: task_row.get("status"),
-            payload: task_row.get("payload"),
-        };
-
-        let mut request = V2ApprovalRequest {
+        let request = V2ApprovalRequest {
             id: persisted_request_id,
             instance_id: request_row.get("instance_id"),
             token_id: request_row.get("token_id"),
@@ -546,38 +562,7 @@ impl TaskRepositoryPort for PostgresAdapter {
             current_step_order: request_row.get("current_step_order"),
         };
 
-        if task.status == "APPROVED" || task.status == "REJECTED" {
-            sqlx::query(
-                r#"
-                update v2_approval_steps
-                set status = $2, completed_at = now(), version = version + 1, updated_at = now()
-                where id = $1 and status = 'OPEN'
-                "#,
-            )
-            .bind(persisted_step_id)
-            .bind(&task.status)
-            .execute(&mut **sqlx_tx)
-            .await?;
-            sqlx::query(
-                r#"
-                update v2_approval_requests
-                set status = $2,
-                    result = jsonb_build_object('task_id', $3::text, 'status', $2::text),
-                    completed_at = now(),
-                    version = version + 1,
-                    updated_at = now()
-                where id = $1 and status = 'IN_PROGRESS'
-                "#,
-            )
-            .bind(persisted_request_id)
-            .bind(&task.status)
-            .bind(task.id)
-            .execute(&mut **sqlx_tx)
-            .await?;
-            request.status = task.status.clone();
-        }
-
-        Ok(V2ApprovalBundle { request, task })
+        Ok(V2ApprovalBundle { request, tasks })
     }
 
     async fn find_approval_request_by_token(

@@ -165,6 +165,7 @@ create table if not exists v2_approval_steps (
   assignee text,
   approver_channel text,
   task_payload jsonb not null default '{}'::jsonb,
+  task_specs jsonb not null default '[]'::jsonb,
   status text not null default 'OPEN', -- LOCKED/OPEN/APPROVED/REJECTED/CANCELED
   version int not null default 0,
   completed_at timestamptz,
@@ -210,8 +211,8 @@ create unique index if not exists ux_v2_tasks_legacy_token
   on v2_tasks (token_id)
   where token_id is not null and approval_request_id is null;
 
-create unique index if not exists ux_v2_tasks_approval_step
-  on v2_tasks (approval_step_id)
+create unique index if not exists ux_v2_tasks_approval_step_assignee
+  on v2_tasks (approval_step_id, assignee)
   where approval_step_id is not null;
 
 create unique index if not exists ux_v2_tasks_external_approval_token_hash

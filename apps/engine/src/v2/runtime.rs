@@ -8,6 +8,7 @@ use mongodb::{
 };
 use rand::Rng;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::io::Write;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -20,7 +21,7 @@ use crate::v2::ports::{
 };
 use crate::v2::types::{
     EdgeRule, GatewayType, JobType, NodeDef, TokenStatus, V2ApprovalDefinition,
-    V2ApprovalStepInput, V2Instance, V2Job, V2Token,
+    V2ApprovalStepInput, V2ApprovalTaskInput, V2Instance, V2Job, V2Token,
 };
 
 pub struct V2RuntimeContext {
@@ -1250,13 +1251,18 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
             content_snapshot: json!({}),
             approval_line_snapshot: json!({
                 "mode": "fixed",
-                "steps": [{"order": 1, "assignee": assignee, "approver_channel": approver_channel}]
+                "steps": [{"order": 1, "mode": "ALL", "approvers": [{
+                    "assignee": assignee, "approver_channel": approver_channel
+                }]}]
             }),
             steps: vec![V2ApprovalStepInput {
                 step_order: 1,
-                assignee,
-                approver_channel,
-                payload,
+                mode: "ALL".to_string(),
+                tasks: vec![V2ApprovalTaskInput {
+                    assignee,
+                    approver_channel,
+                    payload,
+                }],
             }],
         });
     }
@@ -1335,48 +1341,87 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
         if order != expected_order {
             anyhow::bail!("approval step order must be contiguous from 1");
         }
-        let assignee = step
-            .get("assignee")
+        let mode = step
+            .get("mode")
             .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("approval step {} assignee is required", order))?
-            .to_string();
-        let approver_channel = step
-            .get("approver_channel")
-            .and_then(Value::as_str)
-            .unwrap_or(default_channel)
-            .to_string();
-        if approver_channel != "pxm_user" && approver_channel != "external_email" {
-            anyhow::bail!("approval step {} has unsupported approver_channel", order);
-        }
-        if approver_channel == "external_email"
-            && (!assignee.contains('@') || assignee.starts_with('@') || assignee.ends_with('@'))
-        {
-            anyhow::bail!("approval step {} has invalid external email", order);
+            .unwrap_or("ALL")
+            .to_ascii_uppercase();
+        if mode != "ALL" && mode != "ANY" {
+            anyhow::bail!("approval step {} mode must be ALL or ANY", order);
         }
         let label = step.get("label").cloned().unwrap_or(Value::Null);
-        let payload = json!({
-            "approval_model": "dynamic",
-            "step_order": order,
-            "step_label": label,
-            "assignee": assignee,
-            "approver_channel": approver_channel,
-            "content": content_snapshot,
-            "external_require_otp": external_require_otp,
-            "external_expires_in_hours": external_expires_in_hours
-        });
+        let raw_approvers = step
+            .get("approvers")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_else(|| vec![raw_step.clone()]);
+        if raw_approvers.is_empty() {
+            anyhow::bail!("approval step {} approvers must not be empty", order);
+        }
+        if raw_approvers.len() > 100 {
+            anyhow::bail!("approval step {} supports at most 100 approvers", order);
+        }
+        let mut seen = HashSet::new();
+        let mut tasks = Vec::with_capacity(raw_approvers.len());
+        let mut normalized_approvers = Vec::with_capacity(raw_approvers.len());
+        for raw_approver in raw_approvers {
+            let approver = raw_approver
+                .as_object()
+                .ok_or_else(|| anyhow::anyhow!("approval step {} approver must be an object", order))?;
+            let assignee = approver
+                .get("assignee")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("approval step {} assignee is required", order))?
+                .to_string();
+            let approver_channel = approver
+                .get("approver_channel")
+                .and_then(Value::as_str)
+                .unwrap_or(default_channel)
+                .to_string();
+            if approver_channel != "pxm_user" && approver_channel != "external_email" {
+                anyhow::bail!("approval step {} has unsupported approver_channel", order);
+            }
+            if approver_channel == "external_email"
+                && (!assignee.contains('@') || assignee.starts_with('@') || assignee.ends_with('@'))
+            {
+                anyhow::bail!("approval step {} has invalid external email", order);
+            }
+            if !seen.insert(assignee.clone()) {
+                anyhow::bail!("approval step {} has duplicate assignee {}", order, assignee);
+            }
+            let payload = json!({
+                "approval_model": "dynamic",
+                "step_order": order,
+                "step_mode": mode,
+                "step_label": label,
+                "assignee": assignee,
+                "approver_channel": approver_channel,
+                "content": content_snapshot,
+                "external_require_otp": external_require_otp,
+                "external_expires_in_hours": external_expires_in_hours
+            });
+            normalized_approvers.push(json!({
+                "assignee": assignee,
+                "approver_channel": approver_channel
+            }));
+            tasks.push(V2ApprovalTaskInput {
+                assignee,
+                approver_channel,
+                payload,
+            });
+        }
         normalized_steps.push(json!({
             "order": order,
+            "mode": mode,
             "label": label,
-            "assignee": assignee,
-            "approver_channel": approver_channel
+            "approvers": normalized_approvers
         }));
         steps.push(V2ApprovalStepInput {
             step_order: order,
-            assignee,
-            approver_channel,
-            payload,
+            mode,
+            tasks,
         });
     }
 
@@ -1445,6 +1490,49 @@ mod tests {
         let context = json!({"data":{"formData":{"approval_request":{
             "source":"acrapoint","request_id":"AP-42","content":{},
             "approval_line":{"steps":[{"order":2,"assignee":"lead"}]}
+        }}}});
+
+        assert!(resolve_approval_definition(&node, &context).is_err());
+    }
+
+    #[test]
+    fn resolves_all_and_any_multi_approver_steps() {
+        let node = NodeDef {
+            node_id: "approval".to_string(),
+            node_type: "approval".to_string(),
+            config: json!({"approvalType": "dynamic"}),
+        };
+        let context = json!({"data":{"formData":{"approval_request":{
+            "source":"acrapoint","request_id":"AP-43","content":{},
+            "approval_line":{"steps":[
+                {"order":1,"mode":"ALL","approvers":[
+                    {"assignee":"lead-a"},{"assignee":"lead-b"}
+                ]},
+                {"order":2,"mode":"ANY","approvers":[
+                    {"assignee":"director-a"},{"assignee":"director-b"}
+                ]}
+            ]}
+        }}}});
+
+        let definition = resolve_approval_definition(&node, &context).unwrap();
+        assert_eq!(definition.steps[0].mode, "ALL");
+        assert_eq!(definition.steps[0].tasks.len(), 2);
+        assert_eq!(definition.steps[1].mode, "ANY");
+        assert_eq!(definition.steps[1].tasks.len(), 2);
+    }
+
+    #[test]
+    fn rejects_duplicate_approvers_in_the_same_step() {
+        let node = NodeDef {
+            node_id: "approval".to_string(),
+            node_type: "approval".to_string(),
+            config: json!({"approvalType": "dynamic"}),
+        };
+        let context = json!({"data":{"formData":{"approval_request":{
+            "source":"acrapoint","request_id":"AP-44","content":{},
+            "approval_line":{"steps":[{"order":1,"mode":"ALL","approvers":[
+                {"assignee":"lead"},{"assignee":"lead"}
+            ]}]}
         }}}});
 
         assert!(resolve_approval_definition(&node, &context).is_err());
@@ -2275,8 +2363,6 @@ async fn execute_token_flow(
                 let request_id = Uuid::new_v4();
                 let approval_definition =
                     resolve_approval_definition(node, &instance.context)?;
-                let assignee = approval_definition.steps[0].assignee.clone();
-
                 let approval = ctx
                     .task_repo
                     .find_or_create_approval(
@@ -2289,7 +2375,6 @@ async fn execute_token_flow(
                         tx,
                     )
                     .await?;
-                let task = approval.task;
 
                 // 토큰을 WAITING으로 마킹
                 token.status = TokenStatus::Waiting;
@@ -2302,22 +2387,24 @@ async fn execute_token_flow(
                     .update_instance(instance.id, &instance.state, instance.context.clone(), tx)
                     .await?;
 
-                ctx.outbox
-                    .append_event(
-                        instance.id,
-                        Some(token.id),
-                        Some(&token.node_id),
-                        "TASK_CREATED",
-                        json!({
-                            "approval_request_id": approval.request.id,
-                            "approval_step_order": approval.request.current_step_order,
-                            "task_id": task.id,
-                            "assignee": assignee,
-                            "approval": task.payload
-                        }),
-                        tx,
-                    )
-                    .await?;
+                for task in &approval.tasks {
+                    ctx.outbox
+                        .append_event(
+                            instance.id,
+                            Some(token.id),
+                            Some(&token.node_id),
+                            "TASK_CREATED",
+                            json!({
+                                "approval_request_id": approval.request.id,
+                                "approval_step_order": approval.request.current_step_order,
+                                "task_id": task.id,
+                                "assignee": task.assignee,
+                                "approval": task.payload
+                            }),
+                            tx,
+                        )
+                        .await?;
+                }
 
                 ctx.outbox
                     .append_event(
@@ -2328,7 +2415,7 @@ async fn execute_token_flow(
                         json!({
                             "state": "WAITING",
                             "approval_request_id": approval.request.id,
-                            "task_id": task.id
+                            "task_ids": approval.tasks.iter().map(|task| task.id).collect::<Vec<_>>()
                         }),
                         tx,
                     )
