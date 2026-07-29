@@ -436,12 +436,14 @@ impl TaskRepositoryPort for PostgresAdapter {
         let request_row = sqlx::query(
             r#"
             insert into v2_approval_requests
-              (id, instance_id, token_id, node_id, source, external_request_id,
+              (id, instance_id, token_id, node_id, source, source_provider, external_request_id,
+               external_revision, payload_hash,
                content_snapshot, approval_line_snapshot, total_steps,
                status, current_step_order, version, created_at, updated_at)
             values ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+                    $10, $11, $12,
                     'IN_PROGRESS', 1, 0, now(), now())
-            on conflict (token_id) do nothing
+            on conflict do nothing
             returning id, instance_id, token_id, node_id, status, current_step_order
             "#,
         )
@@ -450,7 +452,10 @@ impl TaskRepositoryPort for PostgresAdapter {
         .bind(token_id)
         .bind(node_id)
         .bind(&definition.source)
+        .bind(&definition.source_provider)
         .bind(&definition.external_request_id)
+        .bind(definition.external_revision)
+        .bind(&definition.payload_hash)
         .bind(&definition.content_snapshot)
         .bind(&definition.approval_line_snapshot)
         .bind(definition.steps.len() as i32)
@@ -460,16 +465,32 @@ impl TaskRepositoryPort for PostgresAdapter {
         let request_row = if let Some(row) = request_row {
             row
         } else {
-            sqlx::query(
+            let existing = sqlx::query(
                 r#"
-                select id, instance_id, token_id, node_id, status, current_step_order
+                select id, instance_id, token_id, node_id, status, current_step_order, payload_hash
                 from v2_approval_requests
                 where token_id = $1
+                   or (source_provider = $2 and external_request_id = $3 and external_revision = $4)
                 "#,
             )
             .bind(token_id)
+            .bind(&definition.source_provider)
+            .bind(&definition.external_request_id)
+            .bind(definition.external_revision)
             .fetch_one(&mut **sqlx_tx)
-            .await?
+            .await?;
+            let existing_token_id: Uuid = existing.get("token_id");
+            let existing_payload_hash: Option<String> = existing.get("payload_hash");
+            if existing_token_id != token_id {
+                anyhow::bail!(
+                    "external approval request already belongs to instance {}; replay the original workflow start",
+                    existing.get::<Uuid, _>("instance_id")
+                );
+            }
+            if existing_payload_hash != definition.payload_hash {
+                anyhow::bail!("approval request payload changed for an existing token");
+            }
+            existing
         };
         let persisted_request_id: Uuid = request_row.get("id");
 

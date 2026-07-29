@@ -25,9 +25,28 @@ async function main() {
   await db.collection('v2_schedule_runs').createIndex({ definition_id: 1, created_at: -1 });
   await db.collection('v2_schedule_runs').createIndex({ schedule_job_id: 1, created_at: -1 });
   await db.collection('v2_approval_requests').createIndex({ token_id: 1 }, { unique: true, name: 'ux_v2_approval_requests_token' });
+  await db.collection('v2_approval_requests').createIndex(
+    { source_provider: 1, external_request_id: 1, external_revision: 1 },
+    {
+      unique: true,
+      name: 'ux_v2_approval_requests_external_key',
+      partialFilterExpression: {
+        source_provider: { $type: 'string' },
+        external_request_id: { $type: 'string' },
+      },
+    },
+  );
   await db.collection('v2_approval_requests').createIndex({ instance_id: 1, created_at: 1 }, { name: 'idx_v2_approval_requests_instance' });
   await db.collection('v2_approval_requests').createIndex({ status: 1, updated_at: 1 }, { name: 'idx_v2_approval_requests_status' });
   await db.collection('v2_approval_steps').createIndex({ request_id: 1, step_order: 1 }, { unique: true, name: 'ux_v2_approval_steps_request_order' });
+  await db.collection('v2_external_principal_mappings').createIndex(
+    { provider: 1, subject: 1 },
+    { unique: true, name: 'ux_v2_external_principal_mapping' },
+  );
+  await db.collection('v2_external_principal_mappings').createIndex(
+    { pxm_user_id: 1 },
+    { name: 'idx_v2_external_principal_mapping_pxm_user' },
+  );
   await db.collection('v2_tasks').createIndex({ assignee: 1, status: 1, created_at: -1 });
   await db.collection('v2_tasks').createIndex({ status: 1, created_at: -1, _id: -1 }, { name: 'idx_v2_tasks_history' });
   await db.collection('v2_tasks').createIndex(
@@ -120,6 +139,10 @@ async function ensureValidators(db) {
       _id: { bsonType: 'string' },
       instance_id: { bsonType: 'string' },
       node_id: { bsonType: 'string' },
+      source_provider: { bsonType: ['string', 'null'] },
+      external_request_id: { bsonType: ['string', 'null'] },
+      external_revision: { bsonType: ['int', 'long', 'double'] },
+      payload_hash: { bsonType: ['string', 'null'] },
       status: { enum: ['ACTIVE', 'WAITING', 'COMPLETED', 'CONSUMED', 'FAILED'] },
       parent_token_id: { bsonType: ['string', 'null'] },
       scope_key: { bsonType: ['string', 'null'] },
@@ -254,6 +277,20 @@ async function ensureValidators(db) {
       version: { bsonType: ['int', 'long', 'double'] },
       result: { bsonType: ['object', 'null'] },
       completed_at: { bsonType: ['string', 'null'] },
+      created_at: { bsonType: 'string' },
+      updated_at: { bsonType: 'string' },
+    },
+  });
+
+  await upsertValidator(db, 'v2_external_principal_mappings', {
+    bsonType: 'object',
+    required: ['provider', 'subject', 'pxm_user_id', 'display_snapshot', 'version', 'created_at', 'updated_at'],
+    properties: {
+      provider: { bsonType: 'string' },
+      subject: { bsonType: 'string' },
+      pxm_user_id: { bsonType: 'string' },
+      display_snapshot: { bsonType: 'object' },
+      version: { bsonType: ['int', 'long', 'double'] },
       created_at: { bsonType: 'string' },
       updated_at: { bsonType: 'string' },
     },

@@ -8,6 +8,7 @@ use mongodb::{
 };
 use rand::Rng;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -1247,7 +1248,10 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
             .to_string();
         return Ok(V2ApprovalDefinition {
             source: json!({"type": "workflow_node"}),
+            source_provider: None,
             external_request_id: None,
+            external_revision: 1,
+            payload_hash: None,
             content_snapshot: json!({}),
             approval_line_snapshot: json!({
                 "mode": "fixed",
@@ -1277,10 +1281,39 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
     let request = context_value_at_path(form_data, path)
         .and_then(Value::as_object)
         .ok_or_else(|| anyhow::anyhow!("dynamic approval request '{}' must be an object", path))?;
-    let source = request
+    let raw_source = request
         .get("source")
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("dynamic approval source is required"))?;
+    let source_provider = match &raw_source {
+        Value::String(value) => value.trim(),
+        Value::Object(value) => value
+            .get("provider")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or(""),
+        _ => "",
+    };
+    if source_provider.is_empty()
+        || source_provider.len() > 100
+        || !source_provider
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric())
+        || !source_provider
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
+        anyhow::bail!("dynamic approval source.provider is invalid");
+    }
+    let source_provider = source_provider.to_string();
+    let source = match raw_source {
+        Value::Object(mut value) => {
+            value.insert("provider".to_string(), Value::String(source_provider.clone()));
+            Value::Object(value)
+        }
+        _ => json!({"provider": source_provider}),
+    };
     let external_request_id = request
         .get("request_id")
         .and_then(Value::as_str)
@@ -1288,6 +1321,11 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
         .filter(|value| !value.is_empty())
         .ok_or_else(|| anyhow::anyhow!("dynamic approval request_id is required"))?
         .to_string();
+    let external_revision = request.get("revision").and_then(Value::as_i64).unwrap_or(1);
+    if !(1..=i32::MAX as i64).contains(&external_revision) {
+        anyhow::bail!("dynamic approval revision must be a positive integer");
+    }
+    let external_revision = external_revision as i32;
     let content = request
         .get("content")
         .and_then(Value::as_object)
@@ -1368,13 +1406,6 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
             let approver = raw_approver
                 .as_object()
                 .ok_or_else(|| anyhow::anyhow!("approval step {} approver must be an object", order))?;
-            let assignee = approver
-                .get("assignee")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .ok_or_else(|| anyhow::anyhow!("approval step {} assignee is required", order))?
-                .to_string();
             let approver_channel = approver
                 .get("approver_channel")
                 .and_then(Value::as_str)
@@ -1383,13 +1414,73 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
             if approver_channel != "pxm_user" && approver_channel != "external_email" {
                 anyhow::bail!("approval step {} has unsupported approver_channel", order);
             }
+            let principal = approver.get("principal").and_then(Value::as_object);
+            let legacy_assignee = approver
+                .get("assignee")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let principal_provider = principal
+                .and_then(|value| value.get("provider"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(if approver_channel == "pxm_user" { "pxm" } else { "email" })
+                .to_string();
+            let principal_subject = principal
+                .and_then(|value| value.get("subject"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .or(legacy_assignee)
+                .ok_or_else(|| anyhow::anyhow!("approval step {} principal.subject is required", order))?
+                .to_string();
+            if principal_provider.len() > 100 || principal_subject.len() > 200 {
+                anyhow::bail!("approval step {} principal is too long", order);
+            }
+            let display_snapshot = approver
+                .get("display")
+                .cloned()
+                .unwrap_or_else(|| json!({
+                    "name": approver.get("name").cloned().unwrap_or(Value::Null),
+                    "email": approver.get("email").cloned().unwrap_or(Value::Null),
+                    "department": approver.get("department").cloned().unwrap_or(Value::Null)
+                }));
+            let pxm_user_id = approver
+                .get("pxm_user_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let assignee = if approver_channel == "pxm_user" {
+                pxm_user_id
+                    .or_else(|| (principal_provider == "pxm").then_some(principal_subject.as_str()))
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "approval step {} external principal requires pxm_user_id mapping for pxm_user channel",
+                            order
+                        )
+                    })?
+                    .to_string()
+            } else {
+                approver
+                    .get("delivery")
+                    .and_then(Value::as_object)
+                    .and_then(|value| value.get("email"))
+                    .or_else(|| display_snapshot.get("email"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or(&principal_subject)
+                    .to_string()
+            };
             if approver_channel == "external_email"
                 && (!assignee.contains('@') || assignee.starts_with('@') || assignee.ends_with('@'))
             {
                 anyhow::bail!("approval step {} has invalid external email", order);
             }
-            if !seen.insert(assignee.clone()) {
-                anyhow::bail!("approval step {} has duplicate assignee {}", order, assignee);
+            let principal_key = format!("{}:{}", principal_provider, principal_subject);
+            if !seen.insert(principal_key.clone()) {
+                anyhow::bail!("approval step {} has duplicate principal {}", order, principal_key);
             }
             let payload = json!({
                 "approval_model": "dynamic",
@@ -1398,13 +1489,25 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
                 "step_label": label,
                 "assignee": assignee,
                 "approver_channel": approver_channel,
+                "principal": {
+                    "provider": principal_provider,
+                    "subject": principal_subject
+                },
+                "display_snapshot": display_snapshot,
+                "pxm_user_id": pxm_user_id,
                 "content": content_snapshot,
                 "external_require_otp": external_require_otp,
                 "external_expires_in_hours": external_expires_in_hours
             });
             normalized_approvers.push(json!({
                 "assignee": assignee,
-                "approver_channel": approver_channel
+                "approver_channel": approver_channel,
+                "principal": {
+                    "provider": principal_provider,
+                    "subject": principal_subject
+                },
+                "display_snapshot": display_snapshot,
+                "pxm_user_id": pxm_user_id
             }));
             tasks.push(V2ApprovalTaskInput {
                 assignee,
@@ -1425,11 +1528,27 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
         });
     }
 
+    let approval_line_snapshot = json!({"mode": "sequential", "steps": normalized_steps});
+    let payload_hash = format!(
+        "{:x}",
+        Sha256::digest(
+            serde_json::to_vec(&json!({
+                "source": source,
+                "request_id": external_request_id,
+                "revision": external_revision,
+                "content": content_snapshot,
+                "approval_line": approval_line_snapshot
+            }))?
+        )
+    );
     Ok(V2ApprovalDefinition {
         source,
+        source_provider: Some(source_provider),
         external_request_id: Some(external_request_id),
+        external_revision,
+        payload_hash: Some(payload_hash),
         content_snapshot,
-        approval_line_snapshot: json!({"mode": "sequential", "steps": normalized_steps}),
+        approval_line_snapshot,
         steps,
     })
 }
@@ -1533,6 +1652,60 @@ mod tests {
             "approval_line":{"steps":[{"order":1,"mode":"ALL","approvers":[
                 {"assignee":"lead"},{"assignee":"lead"}
             ]}]}
+        }}}});
+
+        assert!(resolve_approval_definition(&node, &context).is_err());
+    }
+
+    #[test]
+    fn normalizes_external_principal_and_keeps_display_as_snapshot() {
+        let node = NodeDef {
+            node_id: "approval".to_string(),
+            node_type: "approval".to_string(),
+            config: json!({"approvalType": "dynamic"}),
+        };
+        let context = json!({"data":{"formData":{"approval_request":{
+            "source":{"provider":"acrapoint"},
+            "request_id":"AP-45",
+            "revision":3,
+            "content":{"title":"구매 결재"},
+            "approval_line":{"steps":[{"approvers":[{
+                "principal":{"provider":"acrapoint","subject":"EMP-100"},
+                "pxm_user_id":"pxm-user-7",
+                "display":{"name":"김승인","email":"kim@example.com","department":"재무팀"},
+                "approver_channel":"pxm_user"
+            }]}]}
+        }}}});
+
+        let definition = resolve_approval_definition(&node, &context).unwrap();
+        assert_eq!(definition.source_provider.as_deref(), Some("acrapoint"));
+        assert_eq!(definition.external_revision, 3);
+        assert!(definition.payload_hash.is_some());
+        assert_eq!(definition.steps[0].tasks[0].assignee, "pxm-user-7");
+        assert_eq!(
+            definition.steps[0].tasks[0].payload["principal"]["subject"],
+            "EMP-100"
+        );
+        assert_eq!(
+            definition.approval_line_snapshot["steps"][0]["approvers"][0]
+                ["display_snapshot"]["department"],
+            "재무팀"
+        );
+    }
+
+    #[test]
+    fn requires_mapping_when_external_principal_uses_pxm_channel() {
+        let node = NodeDef {
+            node_id: "approval".to_string(),
+            node_type: "approval".to_string(),
+            config: json!({"approvalType": "dynamic"}),
+        };
+        let context = json!({"data":{"formData":{"approval_request":{
+            "source":{"provider":"acrapoint"},"request_id":"AP-46","content":{},
+            "approval_line":{"steps":[{"approvers":[{
+                "principal":{"provider":"acrapoint","subject":"EMP-100"},
+                "approver_channel":"pxm_user"
+            }]}]}
         }}}});
 
         assert!(resolve_approval_definition(&node, &context).is_err());

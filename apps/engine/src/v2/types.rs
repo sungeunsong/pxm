@@ -181,7 +181,10 @@ pub struct V2ApprovalStepInput {
 #[derive(Debug, Clone)]
 pub struct V2ApprovalDefinition {
     pub source: Value,
+    pub source_provider: Option<String>,
     pub external_request_id: Option<String>,
+    pub external_revision: i32,
+    pub payload_hash: Option<String>,
     pub content_snapshot: Value,
     pub approval_line_snapshot: Value,
     pub steps: Vec<V2ApprovalStepInput>,

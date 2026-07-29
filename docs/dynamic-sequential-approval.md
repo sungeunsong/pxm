@@ -24,8 +24,9 @@ Flow Designer에서 Approval 노드의 `결재라인 입력 방식`을 `실행 �
 {
   "formData": {
     "approval_request": {
-      "source": "acrapoint",
+      "source": { "provider": "acrapoint" },
       "request_id": "ACRA-2026-0042",
+      "revision": 1,
       "content": {
         "title": "노트북 구매",
         "summary": "개발 장비 구매 요청",
@@ -39,8 +40,12 @@ Flow Designer에서 Approval 노드의 `결재라인 입력 방식`을 `실행 �
             "label": "팀장 전원",
             "mode": "ALL",
             "approvers": [
-              { "assignee": "lead-a", "approver_channel": "pxm_user" },
-              { "assignee": "lead-b", "approver_channel": "pxm_user" }
+              {
+                "principal": { "provider": "acrapoint", "subject": "EMP-100" },
+                "pxm_user_id": "pxm-user-lead-a",
+                "display": { "name": "김팀장", "email": "lead-a@example.com", "department": "개발팀" },
+                "approver_channel": "pxm_user"
+              }
             ]
           },
           {
@@ -48,8 +53,12 @@ Flow Designer에서 Approval 노드의 `결재라인 입력 방식`을 `실행 �
             "label": "임원 중 한 명",
             "mode": "ANY",
             "approvers": [
-              { "assignee": "director-a@example.com", "approver_channel": "external_email" },
-              { "assignee": "director-b@example.com", "approver_channel": "external_email" }
+              {
+                "principal": { "provider": "acrapoint", "subject": "EMP-200" },
+                "display": { "name": "박임원", "email": "director-a@example.com", "department": "경영진" },
+                "delivery": { "email": "director-a@example.com" },
+                "approver_channel": "external_email"
+              }
             ]
           }
         ]
@@ -59,11 +68,19 @@ Flow Designer에서 Approval 노드의 `결재라인 입력 방식`을 `실행 �
 }
 ```
 
-- `source`, `request_id`, `content`, `approval_line.steps`는 필수다.
+- `source.provider`, `request_id`, `content`, `approval_line.steps`는 필수다.
+- `revision`은 같은 외부 결재 건의 개정 번호이며 양의 정수다. 생략하면 `1`이다.
+- 승인자 식별자는 `principal.provider + principal.subject`다. 이름, 이메일, 부서는
+  권한 판정에 쓰지 않고 실행 시점 `display_snapshot`으로만 저장한다.
+- 외부 principal을 PXM 로그인 사용자에게 배정하려면 `pxm_user_id` 매핑을 전달한다.
+  영구 매핑 저장 구조는 `v2_external_principal_mappings(provider, subject)`이며, 원본
+  시스템의 동일 subject라도 provider가 다르면 다른 사용자로 취급한다.
+- `external_email` 채널의 발송 주소는 `delivery.email`, `display.email`, subject 순으로
+  결정한다.
 - `content`에서 저장하는 필드는 `title`, `summary`, `requester`, `source_url`뿐이다.
 - 단계는 1부터 시작해 빈 번호 없이 연속이어야 한다.
 - `mode`는 `ALL` 또는 `ANY`이며 생략하면 `ALL`이다.
-- 각 단계의 `approvers`에는 한 명 이상의 승인자가 필요하고 동일 `assignee`를 중복해
+- 각 단계의 `approvers`에는 한 명 이상의 승인자가 필요하고 동일 principal을 중복해
   넣을 수 없다.
 - 기존의 단계별 `assignee` 단일 형식도 하위 호환을 위해 지원한다.
 - `approver_channel`은 `pxm_user` 또는 `external_email`이며 생략하면 노드의 채널
@@ -91,7 +108,30 @@ Task 완료, 단계 전이, 다음 Task 생성 또는 최종 `RESUME` 등록은 
 트랜잭션에서 처리한다. Task는 `(approval_step_id, assignee)`별로 하나만 존재할 수 있어
 동일 승인자의 중복 Task와 다음 단계의 중복 개방을 막는다.
 
-## 이번 차수에서 제외된 범위
+## 외부 요청 멱등성과 재상신
 
-QUORUM(n명 중 k명), 외부 요청 중복 방지와 실행 중 결재라인 변경/개정 정책은 PXM-11,
-반려 전용 워크플로우 분기는 PXM-12에서 다룬다.
+`provider + request_id + revision`은 전역 외부 결재 요청 키다. `/templates/:id/start`,
+`/templates/:id/execute`, `/instances`는 이 키를 자동으로 감지하고 인스턴스, 시작
+토큰, `START` job을 원자적으로 한 번만 생성한다.
+
+- 같은 키와 같은 payload를 재전송하면 최초 `instance_id`를 반환하며
+  `idempotent_replay`가 `true`다.
+- 같은 키의 payload가 달라지면 `409 Conflict`다.
+- 결재 내용이나 결재라인을 바꿔 다시 올릴 때는 기존 실행을 수정하지 않고 `revision`을
+  증가시켜 새 인스턴스를 만든다.
+- 외부 결재 키 보존 기간의 기본값은 3650일이며
+  `EXTERNAL_APPROVAL_IDEMPOTENCY_TTL_DAYS`로 조정할 수 있다.
+
+## 승인 주체 검증
+
+`principal.subject`는 요청 데이터이므로 그 값만으로 승인 권한을 부여하지 않는다.
+`pxm_user` 채널은 인증된 PXM actor와 Task의 `assignee`가 일치해야 한다.
+`external_email` 채널은 서버가 발급한 단일 사용 delivery token과, 노드 설정에 따라
+OTP 검증까지 통과해야 한다. 외부 SSO를 붙일 때도 인증된 issuer/provider와 subject를
+Task의 principal snapshot에 대조해야 하며, 클라이언트가 보낸 subject를 신뢰해서는 안
+된다.
+
+## 이후 차수 범위
+
+QUORUM(n명 중 k명)과 반려 전용 워크플로우 분기는 PXM-12에서 다룬다. 외부 SSO,
+조직도 동기화, 자동 프로비저닝은 현재 범위가 아니다.

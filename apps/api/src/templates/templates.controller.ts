@@ -9,6 +9,14 @@ import { createHash, randomUUID } from 'crypto';
 import { assertCanManageGroup, isAdmin } from '../authz/management-auth';
 import { ManagementAuditService } from '../audit/management-audit.service';
 import { AuthzService } from '../authz/authz.service';
+import {
+  externalApprovalIdempotencyTtlMs,
+  externalApprovalKeyHash,
+  externalApprovalRequestHash,
+  dynamicApprovalRequestPath,
+  normalizeExternalApprovalRequest,
+  stableStringify,
+} from '../instances/external-approval-start';
 
 @Controller('templates')
 export class TemplatesController {
@@ -548,6 +556,8 @@ export class TemplatesController {
       ...(inputPreset?.values || {}),
       ...inputOverrides,
     };
+    const approvalRequestPath = dynamicApprovalRequestPath(template.nodes);
+    const externalApproval = normalizeExternalApprovalRequest(formData, approvalRequestPath);
     const requestAccess = instanceAccessFromRequest(req, formData);
     const access = {
       ...requestAccess,
@@ -604,20 +614,24 @@ export class TemplatesController {
     const startTokenId = randomUUID();
     let resolvedInstanceId: string = instanceId;
     let idempotentReplay = false;
-    if (normalizedIdempotencyKey) {
+    if (normalizedIdempotencyKey || externalApproval) {
       const principal = actor.api_key_id ? `api_key:${actor.api_key_id}` : `${actor.actor_type}:${actor.actor_id || 'anonymous'}`;
-      const keyHash = sha256(`workflow-start:v1:${principal}:${template.id}:${normalizedIdempotencyKey}`);
-      const requestHash = sha256(
-        stableStringify({
-          workflow_id: template.id,
-          preset_id: inputPreset?.id || null,
-          input: formData,
-        }),
-      );
+      const keyHash = externalApproval
+        ? externalApprovalKeyHash(externalApproval)
+        : sha256(`workflow-start:v1:${principal}:${template.id}:${normalizedIdempotencyKey}`);
+      const requestHash = externalApproval
+        ? externalApprovalRequestHash(template.id, formData, approvalRequestPath)
+        : sha256(
+            stableStringify({
+              workflow_id: template.id,
+              preset_id: inputPreset?.id || null,
+              input: formData,
+            }),
+          );
       const result = await this.instanceRepo.createIdempotentStart({
         key_hash: keyHash,
         request_hash: requestHash,
-        expires_at: new Date(Date.now() + startIdempotencyTtlMs()),
+        expires_at: new Date(Date.now() + (externalApproval ? externalApprovalIdempotencyTtlMs() : startIdempotencyTtlMs())),
         instance: {
           id: instanceId,
           definition_id: template.id,
@@ -640,11 +654,18 @@ export class TemplatesController {
         },
       });
       if (result.outcome === 'conflict') {
-        throw new ConflictException('Idempotency-Key was already used with different workflow input');
+        throw new ConflictException(
+          externalApproval
+            ? 'External approval request key was already used with different workflow input; increment revision to resubmit'
+            : 'Idempotency-Key was already used with different workflow input',
+        );
       }
       resolvedInstanceId = result.instance_id;
       idempotentReplay = result.outcome === 'replayed';
-      if (idempotentReplay) res?.setHeader('Idempotency-Replayed', 'true');
+      if (idempotentReplay) {
+        res?.setHeader('Idempotency-Replayed', 'true');
+        if (externalApproval) res?.setHeader('External-Approval-Replayed', 'true');
+      }
     } else {
       await this.instanceRepo.executeInstanceMutation({
         create_instances: [{ id: instanceId, definition_id: template.id, status: 'CREATED', context: ctx, access }],
@@ -667,6 +688,13 @@ export class TemplatesController {
       status: 'CREATED',
       mode,
       idempotent_replay: idempotentReplay,
+      external_approval_key: externalApproval
+        ? {
+            provider: externalApproval.provider,
+            request_id: externalApproval.requestId,
+            revision: externalApproval.revision,
+          }
+        : null,
       result_url: `/api/instances/${resolvedInstanceId}/result`,
       trace_url: `/api/instances/${resolvedInstanceId}/trace`,
       stream_url: `/api/instances/${resolvedInstanceId}/stream`,
@@ -798,17 +826,6 @@ function startIdempotencyTtlMs(): number {
 
 function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
-}
-
-function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
-  if (value && typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter(([, item]) => item !== undefined)
-      .sort(([left], [right]) => left.localeCompare(right));
-    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(',')}}`;
-  }
-  return JSON.stringify(value) ?? 'null';
 }
 
 function sleep(ms: number): Promise<void> {

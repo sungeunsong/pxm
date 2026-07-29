@@ -2,6 +2,13 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { CreateInstanceDto } from './dto/create-instance.dto';
 import { createHash, randomUUID } from 'crypto';
 import { OutboxRepositoryPort, WorkflowHistoryActor, WorkflowInstanceAccess, WorkflowInstanceRepositoryPort, WorkflowRepositoryPort } from '../db/ports/db.ports';
+import {
+  externalApprovalIdempotencyTtlMs,
+  externalApprovalKeyHash,
+  externalApprovalRequestHash,
+  dynamicApprovalRequestPath,
+  normalizeExternalApprovalRequest,
+} from './external-approval-start';
 
 @Injectable()
 export class InstancesService {
@@ -25,6 +32,12 @@ export class InstancesService {
       workflow_version_id: `${definition.id}:${definition.version || 1}`,
     };
     const input = dto.ctx ?? {};
+    const formData = input.data?.formData || input.formData;
+    const approvalRequestPath = dynamicApprovalRequestPath(definition.nodes || []);
+    const externalApproval =
+      formData && typeof formData === 'object' && !Array.isArray(formData)
+        ? normalizeExternalApprovalRequest(formData, approvalRequestPath)
+        : null;
     const ctx = withAccess(
       {
         ...input,
@@ -49,6 +62,33 @@ export class InstancesService {
     );
 
     const tokenId = randomUUID();
+    if (externalApproval) {
+      const keyHash = externalApprovalKeyHash(externalApproval);
+      const requestHash = externalApprovalRequestHash(definitionId, formData, approvalRequestPath);
+      const result = await this.instanceRepo.createIdempotentStart({
+        key_hash: keyHash,
+        request_hash: requestHash,
+        expires_at: new Date(Date.now() + externalApprovalIdempotencyTtlMs()),
+        instance: { id: instanceId, definition_id: definitionId, status: 'CREATED', context: ctx, access: versionAccess },
+        token: { id: tokenId, node_id: startNode.id, status: 'ACTIVE' },
+        job: { type: 'START', run_at: new Date(), payload: { node_id: startNode.id, reason: 'api_create' } },
+      });
+      if (result.outcome === 'conflict') {
+        throw new ConflictException(
+          'External approval request key was already used with different workflow input; increment revision to resubmit',
+        );
+      }
+      return {
+        instance_id: result.instance_id,
+        idempotent_replay: result.outcome === 'replayed',
+        external_approval_key: {
+          provider: externalApproval.provider,
+          request_id: externalApproval.requestId,
+          revision: externalApproval.revision,
+        },
+      };
+    }
+
     await this.instanceRepo.executeInstanceMutation({
       create_instances: [{ id: instanceId, definition_id: definitionId, status: 'CREATED', context: ctx, access: versionAccess }],
       tokens: [{ id: tokenId, instance_id: instanceId, node_id: startNode.id, status: 'ACTIVE' }],

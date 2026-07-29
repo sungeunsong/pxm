@@ -139,3 +139,81 @@ describe('InstancesService pause control', () => {
     }));
   });
 });
+
+describe('InstancesService external approval start', () => {
+  const definition = {
+    id: 'workflow-1',
+    name: 'External approval',
+    version: 1,
+    nodes: [
+      { id: 'start', data: { nodeType: 'start' } },
+      {
+        id: 'approval',
+        data: {
+          nodeType: 'approval',
+          approvalLineSource: 'dynamic',
+          approvalRequestPath: 'approval_request',
+        },
+      },
+    ],
+    edges: [],
+  };
+  const dto = {
+    template_id: definition.id,
+    ctx: {
+      data: {
+        formData: {
+          approval_request: {
+            source: { provider: 'acrapoint' },
+            request_id: 'AP-100',
+            revision: 1,
+          },
+        },
+      },
+    },
+  };
+
+  it('uses atomic start idempotency and returns the persisted instance on replay', async () => {
+    const instanceRepo = {
+      createIdempotentStart: jest
+        .fn()
+        .mockResolvedValueOnce({ outcome: 'created', instance_id: 'instance-original' })
+        .mockResolvedValueOnce({ outcome: 'replayed', instance_id: 'instance-original' }),
+      executeInstanceMutation: jest.fn(),
+    };
+    const workflowRepo = { getPublishedDefinition: jest.fn().mockResolvedValue(definition) };
+    const service = new InstancesService(instanceRepo as any, workflowRepo as any, {} as any);
+
+    await expect(service.createInstance(structuredClone(dto))).resolves.toMatchObject({
+      instance_id: 'instance-original',
+      idempotent_replay: false,
+    });
+    await expect(service.createInstance(structuredClone(dto))).resolves.toMatchObject({
+      instance_id: 'instance-original',
+      idempotent_replay: true,
+    });
+    expect(instanceRepo.createIdempotentStart).toHaveBeenCalledTimes(2);
+    expect(instanceRepo.executeInstanceMutation).not.toHaveBeenCalled();
+    expect(instanceRepo.createIdempotentStart.mock.calls[0][0].key_hash).toBe(
+      instanceRepo.createIdempotentStart.mock.calls[1][0].key_hash,
+    );
+    expect(instanceRepo.createIdempotentStart.mock.calls[0][0].request_hash).toBe(
+      instanceRepo.createIdempotentStart.mock.calls[1][0].request_hash,
+    );
+  });
+
+  it('returns a conflict when a claimed external request key has another payload', async () => {
+    const instanceRepo = {
+      createIdempotentStart: jest.fn().mockResolvedValue({
+        outcome: 'conflict',
+        instance_id: 'instance-original',
+      }),
+      executeInstanceMutation: jest.fn(),
+    };
+    const workflowRepo = { getPublishedDefinition: jest.fn().mockResolvedValue(definition) };
+    const service = new InstancesService(instanceRepo as any, workflowRepo as any, {} as any);
+
+    await expect(service.createInstance(structuredClone(dto))).rejects.toBeInstanceOf(ConflictException);
+    expect(instanceRepo.executeInstanceMutation).not.toHaveBeenCalled();
+  });
+});
