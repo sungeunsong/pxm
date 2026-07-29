@@ -14,6 +14,17 @@ interface Instance {
   retry_mode?: string | null;
   workflow_call_parent_instance_id?: string | null;
   workflow_call_child_instance_ids?: string[];
+  approval_summary?: {
+    request_id: string;
+    status: string;
+    current_step_order: number;
+    total_steps: number;
+    source_provider?: string | null;
+    external_request_id?: string | null;
+    external_revision?: number | null;
+    title?: string | null;
+    open_task_count: number;
+  } | null;
 }
 
 interface InstanceTrackerProps {
@@ -93,6 +104,7 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
             row.ctx?.runtime?.parent_instance_id ||
             null,
           workflow_call_child_instance_ids: extractWorkflowCallChildInstanceIds(row.context || row.ctx || {}),
+          approval_summary: row.approval_summary || null,
         })),
       );
     } catch (error) {
@@ -308,6 +320,14 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
                       {(workflowChildrenByParent[inst.id]?.length > 0 || (inst.workflow_call_child_instance_ids || []).length > 0) && (
                         <div className="retry-lineage retry-lineage-parent">
                           호출 자식 {Math.max(workflowChildrenByParent[inst.id]?.length || 0, inst.workflow_call_child_instance_ids?.length || 0)}건
+                        </div>
+                      )}
+                      {inst.approval_summary && (
+                        <div className="retry-lineage approval-progress-line">
+                          결재 {inst.approval_summary.current_step_order}/{inst.approval_summary.total_steps}단계
+                          {' · '}{inst.approval_summary.status}
+                          {' · '}대기 {inst.approval_summary.open_task_count}명
+                          {inst.approval_summary.title ? ` · ${inst.approval_summary.title}` : ''}
                         </div>
                       )}
                     </td>

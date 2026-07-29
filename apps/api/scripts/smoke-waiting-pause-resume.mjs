@@ -70,6 +70,8 @@ async function seedApprovalFixture(db) {
   const definitionId = randomUUID();
   const instanceId = randomUUID();
   const tokenId = randomUUID();
+  const requestId = randomUUID();
+  const stepId = randomUUID();
   const taskId = randomUUID();
   const jobId = 1;
   const now = new Date().toISOString();
@@ -83,10 +85,38 @@ async function seedApprovalFixture(db) {
     instanceDoc(instanceId, definitionId, 'RUNNING', now),
   );
   await db.collection('v2_tokens').insertOne(tokenDoc(tokenId, instanceId, 'approval', 'WAITING', now));
+  await db.collection('v2_approval_requests').insertOne({
+    _id: requestId,
+    instance_id: instanceId,
+    token_id: tokenId,
+    node_id: 'approval',
+    status: 'APPROVED',
+    current_step_order: 1,
+    total_steps: 1,
+    version: 1,
+    result: { outcome: 'approved' },
+    created_at: now,
+    updated_at: now,
+    completed_at: now,
+  });
+  await db.collection('v2_approval_steps').insertOne({
+    _id: stepId,
+    request_id: requestId,
+    step_order: 1,
+    mode: 'ALL',
+    required_count: 1,
+    status: 'APPROVED',
+    version: 1,
+    created_at: now,
+    updated_at: now,
+    completed_at: now,
+  });
   await db.collection('v2_tasks').insertOne({
     _id: taskId,
     instance_id: instanceId,
     token_id: tokenId,
+    approval_request_id: requestId,
+    approval_step_id: stepId,
     node_id: 'approval',
     assignee: 'admin',
     status: 'APPROVED',

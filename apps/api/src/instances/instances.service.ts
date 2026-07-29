@@ -236,6 +236,7 @@ export class InstancesService {
           id: target.id,
           status: target.shouldTerminate ? 'TERMINATED' : undefined,
           complete_jobs: true,
+          cancel_approvals: target.shouldTerminate,
         })),
         events: terminated.map((instanceId) => ({
           instance_id: instanceId,
@@ -253,6 +254,7 @@ export class InstancesService {
         id: target.id,
         status: target.shouldTerminate ? 'TERMINATED' : undefined,
         complete_jobs: true,
+        cancel_approvals: target.shouldTerminate,
       })),
       events: terminated.map((instanceId) => ({
         instance_id: instanceId,

@@ -71,10 +71,16 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
       await client.query(`DELETE FROM v2_definition_edges WHERE definition_id = $1::uuid`, [id]);
       for (let i = 0; i < edges.length; i++) {
         const edge = edges[i];
+        const sourceNode = nodes.find((node) => node.id === edge.source);
+        const approvalOutcome =
+          sourceNode?.data?.nodeType === 'approval' &&
+          (edge.sourceHandle === 'approved' || edge.sourceHandle === 'rejected')
+            ? edge.sourceHandle
+            : null;
         await client.query(
           `INSERT INTO v2_definition_edges (definition_id, source_node_id, target_node_id, condition_expr, is_default, eval_order, metadata)
            VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::jsonb)`,
-          [id, edge.source, edge.target, edge.data?.condition || null, edge.data?.isDefault || false, i, JSON.stringify({ ui_edge: edge })],
+          [id, edge.source, edge.target, edge.data?.condition || approvalOutcome, edge.data?.isDefault || false, i, JSON.stringify({ ui_edge: edge })],
         );
       }
 
@@ -397,6 +403,9 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
             [update.id],
           );
         }
+        if (update.cancel_approvals) {
+          await this.cancelApprovalsForInstance(update.id, client);
+        }
       }
       for (const token of input.tokens || []) {
         await client.query(
@@ -493,6 +502,9 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
           [update.id],
         );
       }
+      if (update.cancel_approvals) {
+        await this.cancelApprovalsForInstance(update.id, client);
+      }
     }
     for (const token of input.tokens || []) {
       await client.query(
@@ -513,6 +525,55 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
         `INSERT INTO v2_event_outbox (instance_id, event_type, payload)
          VALUES ($1::uuid, $2, $3::jsonb)`,
         [event.instance_id, event.event_type, JSON.stringify(event.payload)],
+      );
+    }
+  }
+
+  private async cancelApprovalsForInstance(instanceId: string, client: PoolClient): Promise<void> {
+    const canceled = await client.query(
+      `UPDATE v2_approval_requests
+       SET status = 'CANCELED',
+           result = jsonb_build_object('outcome', 'canceled', 'reason', 'instance_terminated'),
+           completed_at = NOW(),
+           version = version + 1,
+           updated_at = NOW()
+       WHERE instance_id = $1::uuid AND status IN ('PENDING', 'IN_PROGRESS')
+       RETURNING id, token_id, node_id, source_provider, external_request_id, external_revision`,
+      [instanceId],
+    );
+    if (canceled.rowCount === 0) return;
+    const requestIds = canceled.rows.map((row) => row.id);
+    await client.query(
+      `UPDATE v2_approval_steps
+       SET status = 'CANCELED', completed_at = NOW(), version = version + 1, updated_at = NOW()
+       WHERE request_id = ANY($1::uuid[]) AND status IN ('LOCKED', 'OPEN')`,
+      [requestIds],
+    );
+    await client.query(
+      `UPDATE v2_tasks SET status = 'CANCELED', updated_at = NOW()
+       WHERE approval_request_id = ANY($1::uuid[]) AND status = 'OPEN'`,
+      [requestIds],
+    );
+    for (const request of canceled.rows) {
+      await client.query(
+        `INSERT INTO v2_event_outbox
+           (instance_id, token_id, node_id, event_type, payload, created_at)
+         VALUES ($1::uuid, $2::uuid, $3, 'APPROVAL_REQUEST_CANCELED', $4::jsonb, NOW())`,
+        [
+          instanceId,
+          request.token_id,
+          request.node_id,
+          JSON.stringify({
+            approval_request_id: request.id,
+            status: 'CANCELED',
+            reason: 'instance_terminated',
+            source: {
+              provider: request.source_provider || null,
+              request_id: request.external_request_id || null,
+              revision: request.external_revision || 1,
+            },
+          }),
+        ],
       );
     }
   }
@@ -545,9 +606,29 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
   async listInstances(actor?: WorkflowHistoryActor): Promise<any[]> {
     const scope = buildPostgresHistoryScope(actor);
     const { rows } = await this.pool.query(
-      `SELECT i.*, d.name as template_name
+      `SELECT i.*, d.name as template_name, approval.summary AS approval_summary
        FROM v2_process_instances i
        LEFT JOIN v2_process_definitions d ON i.process_definition_id = d.id
+       LEFT JOIN LATERAL (
+         SELECT jsonb_build_object(
+           'request_id', ar.id,
+           'status', ar.status,
+           'current_step_order', ar.current_step_order,
+           'total_steps', ar.total_steps,
+           'source_provider', ar.source_provider,
+           'external_request_id', ar.external_request_id,
+           'external_revision', ar.external_revision,
+           'title', ar.content_snapshot->>'title',
+           'open_task_count', (
+             SELECT count(*) FROM v2_tasks t
+             WHERE t.approval_request_id = ar.id AND t.status = 'OPEN'
+           )
+         ) AS summary
+         FROM v2_approval_requests ar
+         WHERE ar.instance_id = i.id
+         ORDER BY ar.created_at DESC
+         LIMIT 1
+       ) approval ON true
        ${scope.where}
        ORDER BY i.created_at DESC LIMIT 50`,
       scope.params,
@@ -949,9 +1030,15 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
               i.process_definition_id,
               i.state as instance_status,
               i.context->>'template_name' as template_name,
-              COALESCE((i.context->'data'->'formData')::jsonb, (i.context->'formData')::jsonb, '{}'::jsonb) as form_data
+              COALESCE((i.context->'data'->'formData')::jsonb, (i.context->'formData')::jsonb, '{}'::jsonb) as form_data,
+              ar.status AS request_status, ar.current_step_order, ar.total_steps,
+              ar.source_provider, ar.external_request_id, ar.external_revision,
+              ar.content_snapshot, ar.approval_line_snapshot,
+              s.step_order, s.mode AS step_mode, s.status AS step_status
        FROM v2_tasks t
        JOIN v2_process_instances i ON t.instance_id = i.id
+       LEFT JOIN v2_approval_requests ar ON ar.id = t.approval_request_id
+       LEFT JOIN v2_approval_steps s ON s.id = t.approval_step_id
        WHERE t.assignee = $1 AND t.status = 'OPEN'
        ORDER BY t.created_at DESC`,
       [assignee],
@@ -993,10 +1080,16 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
               COALESCE(i.context->'runtime'->'access'->>'group_id', i.context->'runtime'->'snapshot'->'group'->>'id') AS group_id,
               i.context->'runtime'->'snapshot'->'workflow'->>'version' AS workflow_version_id,
               i.context,
-              d.name AS workflow_name, d.version AS workflow_version, d.nodes AS definition_nodes
+              d.name AS workflow_name, d.version AS workflow_version, d.nodes AS definition_nodes,
+              ar.status AS request_status, ar.current_step_order, ar.total_steps,
+              ar.source_provider, ar.external_request_id, ar.external_revision,
+              ar.content_snapshot, ar.approval_line_snapshot,
+              s.step_order, s.mode AS step_mode, s.status AS step_status
        FROM v2_tasks t
        JOIN v2_process_instances i ON i.id = t.instance_id
        LEFT JOIN v2_process_definitions d ON d.id = i.process_definition_id
+       LEFT JOIN v2_approval_requests ar ON ar.id = t.approval_request_id
+       LEFT JOIN v2_approval_steps s ON s.id = t.approval_step_id
        ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
        ORDER BY t.created_at DESC, t.id DESC
        LIMIT ${limitParam}`,
@@ -1015,10 +1108,16 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
               COALESCE(i.context->'runtime'->'access'->>'group_id', i.context->'runtime'->'snapshot'->'group'->>'id') AS group_id,
               i.context->'runtime'->'snapshot'->'workflow'->>'version' AS workflow_version_id,
               i.context,
-              d.name AS workflow_name, d.version AS workflow_version, d.nodes AS definition_nodes
+              d.name AS workflow_name, d.version AS workflow_version, d.nodes AS definition_nodes,
+              ar.status AS request_status, ar.current_step_order, ar.total_steps,
+              ar.source_provider, ar.external_request_id, ar.external_revision,
+              ar.content_snapshot, ar.approval_line_snapshot,
+              s.step_order, s.mode AS step_mode, s.status AS step_status
        FROM v2_tasks t
        JOIN v2_process_instances i ON i.id = t.instance_id
        LEFT JOIN v2_process_definitions d ON d.id = i.process_definition_id
+       LEFT JOIN v2_approval_requests ar ON ar.id = t.approval_request_id
+       LEFT JOIN v2_approval_steps s ON s.id = t.approval_step_id
        WHERE t.id = $1::uuid`,
       [id],
     );
@@ -1519,15 +1618,24 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
       if (task.approval_request_id && shouldResume) {
         await client.query(
           `INSERT INTO v2_event_outbox (instance_id, token_id, node_id, event_type, payload, created_at)
-           VALUES ($1::uuid, $2::uuid, $3, 'APPROVAL_REQUEST_COMPLETED', $4::jsonb, NOW())`,
+           VALUES ($1::uuid, $2::uuid, $3, $4, $5::jsonb, NOW())`,
           [
             task.instance_id,
             task.token_id || null,
             task.node_id,
+            command.status === 'APPROVED'
+              ? 'APPROVAL_REQUEST_APPROVED'
+              : 'APPROVAL_REQUEST_REJECTED',
             JSON.stringify({
               approval_request_id: task.approval_request_id,
               task_id: command.task_id,
               status: command.status,
+              outcome: command.action === 'approve' ? 'approved' : 'rejected',
+              source: {
+                provider: lockedRequest?.source_provider || null,
+                request_id: lockedRequest?.external_request_id || null,
+                revision: lockedRequest?.external_revision || 1,
+              },
             }),
           ],
         );
@@ -2539,6 +2647,19 @@ function mapTaskHistoryPostgres(task: any): WorkflowTaskHistoryItem {
     group_id: task.group_id ? String(task.group_id) : null,
     node_id: String(task.node_id),
     node_label: node?.config?.label || node?.config?.ui_node?.data?.label || task.node_id || null,
+    approval_request_id: task.approval_request_id ? String(task.approval_request_id) : null,
+    approval_step_id: task.approval_step_id ? String(task.approval_step_id) : null,
+    request_status: task.request_status || null,
+    current_step_order: task.current_step_order == null ? null : Number(task.current_step_order),
+    total_steps: task.total_steps == null ? null : Number(task.total_steps),
+    step_order: task.step_order == null ? null : Number(task.step_order),
+    step_mode: task.step_mode || null,
+    step_status: task.step_status || null,
+    source_provider: task.source_provider || null,
+    external_request_id: task.external_request_id || null,
+    external_revision: task.external_revision == null ? null : Number(task.external_revision),
+    content_snapshot: task.content_snapshot || null,
+    approval_line_snapshot: task.approval_line_snapshot || null,
     status: task.status,
     approver_channel: task.payload?.approver_channel === 'external_email' ? 'external_email' : 'pxm_user',
     assignee: String(task.assignee),

@@ -114,6 +114,10 @@ export class TasksService {
     if (!task) throw new NotFoundException('Task not found');
     const instance = await this.instances.getInstance(task.instance_id);
     if (!instance) throw new NotFoundException('Task instance not found');
+    const instanceStatus = String(instance.state || instance.status || '').toUpperCase();
+    if (['COMPLETED', 'FAILED', 'TERMINATED'].includes(instanceStatus)) {
+      throw new ConflictException(`Approval is not allowed for a ${instanceStatus.toLowerCase()} instance`);
+    }
     if (!this.canAccessTask(actor, task, instance)) {
       throw new ForbiddenException(
         'Task approval is not allowed for this actor',

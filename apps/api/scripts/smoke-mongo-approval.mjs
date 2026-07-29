@@ -38,15 +38,32 @@ async function main() {
           },
         },
         {
-          id: 'end',
+          id: 'approved-end',
           type: 'custom',
           position: { x: 440, y: 0 },
-          data: { label: 'End', nodeType: 'end' },
+          data: { label: 'Approved End', nodeType: 'end' },
+        },
+        {
+          id: 'rejected-end',
+          type: 'custom',
+          position: { x: 440, y: 180 },
+          data: { label: 'Rejected End', nodeType: 'end' },
         },
       ],
       edges: [
         { id: 'e-start-approval', source: 'start', target: 'approval' },
-        { id: 'e-approval-end', source: 'approval', target: 'end' },
+        {
+          id: 'e-approval-approved',
+          source: 'approval',
+          sourceHandle: 'approved',
+          target: 'approved-end',
+        },
+        {
+          id: 'e-approval-rejected',
+          source: 'approval',
+          sourceHandle: 'rejected',
+          target: 'rejected-end',
+        },
       ],
     },
     session,
@@ -206,7 +223,7 @@ async function main() {
   assert.ok(
     trace.some(
       (item) =>
-        item.event_type === 'APPROVAL_REQUEST_COMPLETED' &&
+        item.event_type === 'APPROVAL_REQUEST_APPROVED' &&
         item.payload?.approval_request_id === task.approval_request_id,
     ),
     'trace should include aggregate approval completion',
@@ -216,8 +233,126 @@ async function main() {
     'trace should include instance completion',
   );
 
+  const rejectedExecution = await postJson(
+    `${apiBaseUrl}/templates/${template.id}/execute`,
+    {
+      formData: {
+        approval_request: {
+          source: { provider: 'smoke' },
+          request_id: `SMOKE-REJECT-${Date.now()}`,
+          revision: 1,
+          content: {
+            title: '반려 분기 검증',
+            summary: '업무 반려는 기술 실패가 아니다.',
+            requester: 'admin',
+          },
+          approval_line: {
+            steps: [{ order: 1, label: '검토자', assignee: 'admin' }],
+          },
+        },
+      },
+    },
+    session,
+  );
+  const rejectedTask = await waitFor(async () => {
+    const tasks = await getJson(`${apiBaseUrl}/tasks`, session);
+    return tasks.find(
+      (item) =>
+        item.instance_id === rejectedExecution.instance_id &&
+        item.node_id === 'approval',
+    );
+  }, `OPEN rejection task for instance ${rejectedExecution.instance_id}`);
+  await postJson(
+    `${apiBaseUrl}/tasks/${rejectedTask.id}/complete`,
+    { action: 'reject', comment: 'smoke rejection' },
+    session,
+  );
+  const rejectedInstance = await waitFor(async () => {
+    const instance = await db
+      .collection('v2_process_instances')
+      .findOne({ _id: rejectedExecution.instance_id });
+    return instance?.state === 'COMPLETED' ? instance : null;
+  }, `rejected-path COMPLETED instance ${rejectedExecution.instance_id}`);
+  assert.equal(
+    rejectedInstance.context?.data?.outputs?.approval?.outcome,
+    'rejected',
+  );
+  const rejectedTrace = await getJson(
+    `${apiBaseUrl}/instances/${rejectedExecution.instance_id}/trace`,
+    session,
+  );
+  assert.ok(
+    rejectedTrace.some(
+      (item) => item.event_type === 'APPROVAL_REQUEST_REJECTED',
+    ),
+    'trace should include aggregate rejection',
+  );
+  assert.equal(
+    rejectedTrace.some((item) => item.event_type === 'INSTANCE_FAILED'),
+    false,
+    'business rejection must not fail the instance',
+  );
+  const rejectedHistory = await getJson(
+    `${apiBaseUrl}/instances/${rejectedExecution.instance_id}/tasks?limit=100`,
+    session,
+  );
+  assert.equal(rejectedHistory.items?.[0]?.request_status, 'REJECTED');
+  assert.equal(rejectedHistory.items?.[0]?.content_snapshot?.title, '반려 분기 검증');
+  assert.equal(
+    rejectedHistory.items?.[0]?.approval_line_snapshot?.steps?.length,
+    1,
+  );
+
+  const canceledExecution = await postJson(
+    `${apiBaseUrl}/templates/${template.id}/execute`,
+    {
+      formData: {
+        approval_request: {
+          source: { provider: 'smoke' },
+          request_id: `SMOKE-CANCEL-${Date.now()}`,
+          revision: 1,
+          content: { title: '종료 취소 검증', summary: '', requester: 'admin' },
+          approval_line: {
+            steps: [{ order: 1, label: '검토자', assignee: 'admin' }],
+          },
+        },
+      },
+    },
+    session,
+  );
+  const canceledTask = await waitFor(async () => {
+    const tasks = await getJson(`${apiBaseUrl}/tasks`, session);
+    return tasks.find(
+      (item) =>
+        item.instance_id === canceledExecution.instance_id &&
+        item.node_id === 'approval',
+    );
+  }, `OPEN cancellation task for instance ${canceledExecution.instance_id}`);
+  await postJson(
+    `${apiBaseUrl}/instances/${canceledExecution.instance_id}/terminate`,
+    {},
+    session,
+  );
+  await waitFor(async () => {
+    const task = await db.collection('v2_tasks').findOne({ _id: canceledTask.id });
+    return task?.status === 'CANCELED' ? task : null;
+  }, `CANCELED task ${canceledTask.id}`);
+  assert.equal(
+    await db.collection('v2_event_outbox').countDocuments({
+      instance_id: canceledExecution.instance_id,
+      event_type: 'APPROVAL_REQUEST_CANCELED',
+    }),
+    1,
+  );
+  const trackedInstances = await getJson(`${apiBaseUrl}/instances`, session);
+  const canceledTrackerItem = trackedInstances.find(
+    (item) => item.id === canceledExecution.instance_id,
+  );
+  assert.equal(canceledTrackerItem?.approval_summary?.status, 'CANCELED');
+  assert.equal(canceledTrackerItem?.approval_summary?.open_task_count, 0);
+
   console.log(
-    `[mongo:smoke:approval] passed instance=${completed._id} task=${task.id} template=${template.id}`,
+    `[mongo:smoke:approval] passed approved=${completed._id} rejected=${rejectedExecution.instance_id} canceled=${canceledExecution.instance_id} template=${template.id}`,
   );
 }
 

@@ -1067,6 +1067,50 @@ fn select_gateway_edges<'a>(
     }
 }
 
+fn select_approval_edges<'a>(
+    outgoing_edges: &'a [&'a EdgeRule],
+    outcome: &str,
+) -> Vec<&'a EdgeRule> {
+    let outcome = outcome.to_ascii_lowercase();
+    let tagged: Vec<&EdgeRule> = outgoing_edges
+        .iter()
+        .copied()
+        .filter(|edge| {
+            edge.condition_expr
+                .as_deref()
+                .map(str::trim)
+                .map(|condition| {
+                    let normalized = condition.to_ascii_lowercase();
+                    normalized == "approved"
+                        || normalized == "rejected"
+                        || normalized.contains("approval_result")
+                })
+                .unwrap_or(false)
+        })
+        .collect();
+    let matched: Vec<&EdgeRule> = tagged
+        .iter()
+        .copied()
+        .filter(|edge| {
+            edge.condition_expr
+                .as_deref()
+                .map(str::to_ascii_lowercase)
+                .map(|condition| condition.contains(&outcome))
+                .unwrap_or(false)
+        })
+        .collect();
+    if !matched.is_empty() {
+        return matched;
+    }
+    if let Some(default_edge) = outgoing_edges.iter().copied().find(|edge| edge.is_default) {
+        return vec![default_edge];
+    }
+    if outcome == "approved" && tagged.is_empty() {
+        return outgoing_edges.to_vec();
+    }
+    Vec::new()
+}
+
 fn fork_scope(parent_token: &V2Token, selected_count: usize) -> Option<String> {
     if selected_count > 1 {
         Some(format!("fork:{}:count:{}", parent_token.id, selected_count))
@@ -1557,9 +1601,9 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
 mod tests {
     use super::{
         execute_command_node, resolve_approval_assignment, resolve_approval_definition,
-        V2RetryPolicy,
+        select_approval_edges, V2RetryPolicy,
     };
-    use crate::v2::types::NodeDef;
+    use crate::v2::types::{EdgeRule, NodeDef};
     use serde_json::json;
 
     #[test]
@@ -1709,6 +1753,36 @@ mod tests {
         }}}});
 
         assert!(resolve_approval_definition(&node, &context).is_err());
+    }
+
+    #[test]
+    fn routes_approval_outcome_to_approved_and_rejected_edges() {
+        let approved = EdgeRule {
+            id: 1,
+            source_node_id: "approval".to_string(),
+            target_node_id: "approved-end".to_string(),
+            condition_expr: Some("approved".to_string()),
+            is_default: false,
+            eval_order: 0,
+        };
+        let rejected = EdgeRule {
+            id: 2,
+            source_node_id: "approval".to_string(),
+            target_node_id: "rejected-end".to_string(),
+            condition_expr: Some("rejected".to_string()),
+            is_default: false,
+            eval_order: 1,
+        };
+        let edges = vec![&approved, &rejected];
+
+        assert_eq!(
+            select_approval_edges(&edges, "approved")[0].target_node_id,
+            "approved-end"
+        );
+        assert_eq!(
+            select_approval_edges(&edges, "rejected")[0].target_node_id,
+            "rejected-end"
+        );
     }
 
     #[test]
@@ -2444,9 +2518,24 @@ async fn execute_token_flow(
                         token.updated_at = Utc::now();
                         ctx.token_repo.update_tokens(&[token.clone()], tx).await?;
 
-                        if request.status == "REJECTED" {
-                            println!("[v2_engine] 🛑 Approval rejected, failing instance.");
-                            instance.state = "FAILED".to_string();
+                        let outcome = request.status.to_ascii_lowercase();
+                        set_context_value_at_path(
+                            &mut instance.context,
+                            &format!("data.outputs.{}", token.node_id),
+                            json!({
+                                "approval_request_id": request.id,
+                                "status": request.status,
+                                "outcome": outcome
+                            }),
+                        );
+                        let next_edges: Vec<&EdgeRule> = edges
+                            .iter()
+                            .filter(|e| e.source_node_id == token.node_id)
+                            .collect();
+                        let selected_edges = select_approval_edges(&next_edges, &outcome);
+
+                        if selected_edges.is_empty() && request.status == "REJECTED" {
+                            instance.state = "COMPLETED".to_string();
                             ctx.instance_repo
                                 .update_instance(
                                     instance.id,
@@ -2455,35 +2544,43 @@ async fn execute_token_flow(
                                     tx,
                                 )
                                 .await?;
-
                             ctx.outbox
                                 .append_event(
                                     instance.id,
                                     Some(token.id),
                                     Some(&token.node_id),
-                                    "INSTANCE_FAILED",
-                                    json!({"reason": "task_rejected"}),
+                                    "INSTANCE_COMPLETED",
+                                    json!({
+                                        "outcome": "rejected",
+                                        "approval_request_id": request.id
+                                    }),
                                     tx,
                                 )
                                 .await?;
                             notify_waiting_parent_workflow_call(
                                 ctx,
                                 instance,
-                                "FAILED",
-                                json!({"reason": "task_rejected"}),
+                                "COMPLETED",
+                                json!({
+                                    "outcome": "rejected",
+                                    "approval_request_id": request.id
+                                }),
                                 tx,
                             )
                             .await?;
                             continue;
                         }
 
-                        // 승인 시 다음 노드 진행
-                        let next_edges: Vec<&EdgeRule> = edges
-                            .iter()
-                            .filter(|e| e.source_node_id == token.node_id)
-                            .collect();
-
-                        for edge in next_edges {
+                        instance.state = "RUNNING".to_string();
+                        ctx.instance_repo
+                            .update_instance(
+                                instance.id,
+                                &instance.state,
+                                instance.context.clone(),
+                                tx,
+                            )
+                            .await?;
+                        for edge in selected_edges {
                             let new_token = V2Token {
                                 id: Uuid::new_v4(),
                                 instance_id: instance.id,

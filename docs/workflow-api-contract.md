@@ -184,7 +184,8 @@ End node의 `resultPath`가 비어 있으면 `context.data`만 result로 저장�
 - 같은 호출자·instance·API에서 같은 key를 다시 보내면 새 작업을 만들지 않고 기존 결과를 반환한다.
 - 재사용 응답에는 `idempotent_replay: true`와 `Idempotency-Replayed: true` 헤더가 포함된다.
 - Retry에서 같은 key를 `full_instance`와 `failed_node`처럼 다른 요청에 재사용하면 HTTP `409 Conflict`를 반환한다.
-- Retry의 instance·token·job·event 저장과 Terminate의 상태·job·event 변경은 각각 한 DB transaction으로 처리한다.
+- Retry의 instance·token·job·event 저장과 Terminate의 상태·job·event 및 활성 결재
+  Request·Step·Task 취소는 각각 한 DB transaction으로 처리한다.
 - key 원문은 저장하지 않으며 기본 보관 시간은 24시간이다. `INSTANCE_COMMAND_IDEMPOTENCY_TTL_HOURS`로 변경할 수 있다.
 - 헤더가 없으면 기존 동작을 유지하며 응답의 `idempotent_replay`는 `false`다.
 
@@ -596,6 +597,25 @@ Authorization: Bearer pxm_live_xxx
       "group_id": "finance",
       "node_id": "manager-approval",
       "node_label": "팀장 승인",
+      "approval_request_id": "request-uuid",
+      "approval_step_id": "step-uuid",
+      "request_status": "APPROVED",
+      "current_step_order": 2,
+      "total_steps": 2,
+      "step_order": 2,
+      "step_mode": "ALL",
+      "step_status": "APPROVED",
+      "source_provider": "acrapoint",
+      "external_request_id": "ACRA-2026-0042",
+      "external_revision": 1,
+      "content_snapshot": {
+        "title": "노트북 구매",
+        "summary": "개발 장비 구매 요청"
+      },
+      "approval_line_snapshot": {
+        "mode": "sequential",
+        "steps": []
+      },
       "status": "APPROVED",
       "approver_channel": "external_email",
       "assignee": "approver@example.com",
@@ -621,7 +641,28 @@ Authorization: Bearer pxm_live_xxx
 - 일반 user는 본인에게 배정된 task만, group manager는 관리 group, admin은 전체 이력을 조회한다.
 - API key와 service account는 `workflow:read` scope, owner group, `allowed_workflow_ids`를 모두 만족해야 한다.
 - 외부 이메일 링크는 해당 OPEN task 상세만 제공하며 이력 API 접근 권한을 부여하지 않는다.
-- 승인/반려 transaction은 `TASK_APPROVED` 또는 `TASK_REJECTED`와 최종 `APPROVAL_REQUEST_COMPLETED` outbox event를 함께 생성한다.
+- 승인/반려 transaction은 `TASK_APPROVED` 또는 `TASK_REJECTED`와 최종
+  `APPROVAL_REQUEST_APPROVED`, `APPROVAL_REQUEST_REJECTED`,
+  `APPROVAL_REQUEST_CANCELED` outbox event를 함께 생성한다.
+- 최종 Request event는 상태 전이 CAS를 획득한 transaction에서 한 번만 생성한다.
+  외부 소비자는 `approval_request_id + event_type`을 소비 멱등 키로 사용한다.
+
+```json
+{
+  "event_type": "APPROVAL_REQUEST_REJECTED",
+  "payload": {
+    "approval_request_id": "request-uuid",
+    "task_id": "task-uuid",
+    "status": "REJECTED",
+    "outcome": "rejected",
+    "source": {
+      "provider": "acrapoint",
+      "request_id": "ACRA-2026-0042",
+      "revision": 1
+    }
+  }
+}
+```
 
 ## History API Permission Model
 

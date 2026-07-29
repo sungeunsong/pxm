@@ -25,6 +25,7 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({ data, selected
   };
 
   const isGateway = data.nodeType === 'gateway';
+  const isApproval = data.nodeType === 'approval';
 
   return (
     <div 
@@ -77,6 +78,25 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({ data, selected
             type="source"
             position={Position.Right}
             id="false"
+            className="custom-handle custom-handle-false"
+            style={{ top: '70%' }}
+          />
+        </>
+      ) : isApproval ? (
+        <>
+          <div className="gateway-handle-label true-label">승인</div>
+          <Handle
+            type="source"
+            position={Position.Right}
+            id="approved"
+            className="custom-handle custom-handle-true"
+            style={{ top: '30%' }}
+          />
+          <div className="gateway-handle-label false-label">반려</div>
+          <Handle
+            type="source"
+            position={Position.Right}
+            id="rejected"
             className="custom-handle custom-handle-false"
             style={{ top: '70%' }}
           />

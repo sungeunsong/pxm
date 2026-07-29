@@ -35,15 +35,23 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
       },
     }));
 
-    const formattedEdges = edges.map((e, idx) => ({
+    const formattedEdges = edges.map((e, idx) => {
+      const sourceNode = nodes.find((node) => node.id === e.source);
+      const approvalOutcome =
+        sourceNode?.data?.nodeType === 'approval' &&
+        (e.sourceHandle === 'approved' || e.sourceHandle === 'rejected')
+          ? e.sourceHandle
+          : null;
+      return {
       id: e.id || crypto.randomUUID(),
       source_node_id: e.source,
       target_node_id: e.target,
-      condition_expr: e.data?.condition || null,
+      condition_expr: e.data?.condition || approvalOutcome,
       is_default: e.data?.isDefault || false,
       eval_order: idx,
       ui_edge: e,
-    }));
+      };
+    });
 
     const now = new Date().toISOString();
     const existing = await this.db.collection<any>('v2_process_definitions').findOne({ _id: id }, { projection: { version: 1, created_by: 1 } });
@@ -499,6 +507,9 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
               { session },
             );
           }
+          if (update.cancel_approvals) {
+            await this.cancelApprovalsForInstance(update.id, now, session);
+          }
         }
         for (const token of input.tokens || []) {
           await this.db.collection<any>('v2_tokens').insertOne(
@@ -626,6 +637,9 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
           { session },
         );
       }
+      if (update.cancel_approvals) {
+        await this.cancelApprovalsForInstance(update.id, now, session);
+      }
     }
     for (const token of input.tokens || []) {
       await this.db.collection<any>('v2_tokens').insertOne(
@@ -680,6 +694,70 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
     }
   }
 
+  private async cancelApprovalsForInstance(
+    instanceId: string,
+    now: string,
+    session: ClientSession,
+  ): Promise<void> {
+    const requests = await this.db
+      .collection<any>('v2_approval_requests')
+      .find(
+        { instance_id: instanceId, status: { $in: ['PENDING', 'IN_PROGRESS'] } },
+        { session },
+      )
+      .toArray();
+    if (requests.length === 0) return;
+    const requestIds = requests.map((request) => request._id);
+    await this.db.collection<any>('v2_approval_requests').updateMany(
+      { _id: { $in: requestIds }, status: { $in: ['PENDING', 'IN_PROGRESS'] } },
+      {
+        $set: {
+          status: 'CANCELED',
+          result: { outcome: 'canceled', reason: 'instance_terminated' },
+          completed_at: now,
+          updated_at: now,
+        },
+        $inc: { version: 1 },
+      },
+      { session },
+    );
+    await this.db.collection<any>('v2_approval_steps').updateMany(
+      { request_id: { $in: requestIds }, status: { $in: ['LOCKED', 'OPEN'] } },
+      {
+        $set: { status: 'CANCELED', completed_at: now, updated_at: now },
+        $inc: { version: 1 },
+      },
+      { session },
+    );
+    await this.db.collection<any>('v2_tasks').updateMany(
+      { approval_request_id: { $in: requestIds }, status: 'OPEN' },
+      { $set: { status: 'CANCELED', updated_at: now } },
+      { session },
+    );
+    for (const request of requests) {
+      await this.db.collection<any>('v2_event_outbox').insertOne(
+        {
+          instance_id: instanceId,
+          token_id: request.token_id || null,
+          node_id: request.node_id || null,
+          event_type: 'APPROVAL_REQUEST_CANCELED',
+          payload: {
+            approval_request_id: request._id,
+            status: 'CANCELED',
+            reason: 'instance_terminated',
+            source: {
+              provider: request.source_provider || null,
+              request_id: request.external_request_id || null,
+              revision: request.external_revision || 1,
+            },
+          },
+          created_at: now,
+        },
+        { session },
+      );
+    }
+  }
+
   private async ensureInstanceCommandIdempotencyIndexes(): Promise<void> {
     if (this.instanceCommandIdempotencyIndexesReady) return;
     await this.db.collection('v2_instance_command_idempotency').createIndex({ expires_at: 1 }, { expireAfterSeconds: 0 });
@@ -723,6 +801,15 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
           templateName = def.name;
         }
       }
+      const approval = await this.db
+        .collection<any>('v2_approval_requests')
+        .findOne({ instance_id: inst._id }, { sort: { created_at: -1 } });
+      const openTaskCount = approval
+        ? await this.db.collection<any>('v2_tasks').countDocuments({
+            approval_request_id: approval._id,
+            status: 'OPEN',
+          })
+        : 0;
 
       result.push({
         id: inst._id,
@@ -745,6 +832,19 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
         created_at: inst.created_at,
         updated_at: inst.updated_at,
         template_name: templateName,
+        approval_summary: approval
+          ? {
+              request_id: approval._id,
+              status: approval.status,
+              current_step_order: approval.current_step_order,
+              total_steps: approval.total_steps,
+              source_provider: approval.source_provider || null,
+              external_request_id: approval.external_request_id || null,
+              external_revision: approval.external_revision || 1,
+              title: approval.content_snapshot?.title || null,
+              open_task_count: openTaskCount,
+            }
+          : null,
         template_id: inst.process_definition_id,
         ctx: inst.context,
       });
@@ -1183,6 +1283,12 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
     const result: any[] = [];
     for (const t of tasks) {
       const inst = await this.db.collection<any>('v2_process_instances').findOne({ _id: t.instance_id });
+      const request = t.approval_request_id
+        ? await this.db.collection<any>('v2_approval_requests').findOne({ _id: t.approval_request_id })
+        : null;
+      const step = t.approval_step_id
+        ? await this.db.collection<any>('v2_approval_steps').findOne({ _id: t.approval_step_id })
+        : null;
 
       result.push({
         id: t._id,
@@ -1198,6 +1304,17 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
         group_id: inst?.group_id || inst?.context?.runtime?.access?.group_id || null,
         template_name: inst?.context?.template_name || null,
         instance_status: inst?.status || null,
+        request_status: request?.status || null,
+        current_step_order: request?.current_step_order || null,
+        total_steps: request?.total_steps || null,
+        source_provider: request?.source_provider || null,
+        external_request_id: request?.external_request_id || null,
+        external_revision: request?.external_revision || null,
+        content_snapshot: request?.content_snapshot || null,
+        approval_line_snapshot: request?.approval_line_snapshot || null,
+        step_order: step?.step_order || null,
+        step_mode: step?.mode || null,
+        step_status: step?.status || null,
         created_at: t.created_at,
         updated_at: t.updated_at,
         form_data: inst?.context?.data?.formData || inst?.context?.formData || {},
@@ -1280,6 +1397,24 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
           },
         },
         { $unwind: { path: '$definition', preserveNullAndEmptyArrays: true } },
+        {
+          $lookup: {
+            from: 'v2_approval_requests',
+            localField: 'approval_request_id',
+            foreignField: '_id',
+            as: 'approval_request',
+          },
+        },
+        { $unwind: { path: '$approval_request', preserveNullAndEmptyArrays: true } },
+        {
+          $lookup: {
+            from: 'v2_approval_steps',
+            localField: 'approval_step_id',
+            foreignField: '_id',
+            as: 'approval_step',
+          },
+        },
+        { $unwind: { path: '$approval_step', preserveNullAndEmptyArrays: true } },
         { $limit: query.limit + 1 },
       ])
       .toArray();
@@ -1322,6 +1457,24 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
           },
         },
         { $unwind: { path: '$definition', preserveNullAndEmptyArrays: true } },
+        {
+          $lookup: {
+            from: 'v2_approval_requests',
+            localField: 'approval_request_id',
+            foreignField: '_id',
+            as: 'approval_request',
+          },
+        },
+        { $unwind: { path: '$approval_request', preserveNullAndEmptyArrays: true } },
+        {
+          $lookup: {
+            from: 'v2_approval_steps',
+            localField: 'approval_step_id',
+            foreignField: '_id',
+            as: 'approval_step',
+          },
+        },
+        { $unwind: { path: '$approval_step', preserveNullAndEmptyArrays: true } },
         { $limit: 1 },
       ])
       .toArray();
@@ -1835,11 +1988,20 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
               instance_id: task.instance_id,
               token_id: task.token_id || null,
               node_id: task.node_id,
-              event_type: 'APPROVAL_REQUEST_COMPLETED',
+              event_type:
+                command.status === 'APPROVED'
+                  ? 'APPROVAL_REQUEST_APPROVED'
+                  : 'APPROVAL_REQUEST_REJECTED',
               payload: {
                 approval_request_id: task.approval_request_id,
                 task_id: command.task_id,
                 status: command.status,
+                outcome: command.action === 'approve' ? 'approved' : 'rejected',
+                source: {
+                  provider: lockedRequest?.source_provider || null,
+                  request_id: lockedRequest?.external_request_id || null,
+                  revision: lockedRequest?.external_revision || 1,
+                },
               },
               created_at: now,
             },
@@ -2703,6 +2865,31 @@ function mapTaskHistoryMongo(task: any): WorkflowTaskHistoryItem {
     group_id: task.effective_group_id ? String(task.effective_group_id) : null,
     node_id: String(task.node_id),
     node_label: node?.config?.label || node?.config?.ui_node?.data?.label || task.node_id || null,
+    approval_request_id: task.approval_request_id ? String(task.approval_request_id) : null,
+    approval_step_id: task.approval_step_id ? String(task.approval_step_id) : null,
+    request_status: task.approval_request?.status || null,
+    current_step_order:
+      task.approval_request?.current_step_order == null
+        ? null
+        : Number(task.approval_request.current_step_order),
+    total_steps:
+      task.approval_request?.total_steps == null
+        ? null
+        : Number(task.approval_request.total_steps),
+    step_order:
+      task.approval_step?.step_order == null
+        ? null
+        : Number(task.approval_step.step_order),
+    step_mode: task.approval_step?.mode || null,
+    step_status: task.approval_step?.status || null,
+    source_provider: task.approval_request?.source_provider || null,
+    external_request_id: task.approval_request?.external_request_id || null,
+    external_revision:
+      task.approval_request?.external_revision == null
+        ? null
+        : Number(task.approval_request.external_revision),
+    content_snapshot: task.approval_request?.content_snapshot || null,
+    approval_line_snapshot: task.approval_request?.approval_line_snapshot || null,
     status: task.status,
     approver_channel: task.payload?.approver_channel === 'external_email' ? 'external_email' : 'pxm_user',
     assignee: String(task.assignee),

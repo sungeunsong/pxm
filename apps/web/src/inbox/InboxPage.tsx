@@ -22,7 +22,42 @@ interface Task {
   status: string;
   assignee?: string;
   form_data?: Record<string, any>;
+  approval_request_id?: string | null;
+  approval_step_id?: string | null;
+  request_status?: string | null;
+  current_step_order?: number | null;
+  total_steps?: number | null;
+  step_order?: number | null;
+  step_mode?: 'ALL' | 'ANY' | null;
+  step_status?: string | null;
+  source_provider?: string | null;
+  external_request_id?: string | null;
+  external_revision?: number | null;
+  content_snapshot?: Record<string, any> | null;
+  approval_line_snapshot?: {
+    steps?: Array<{
+      order: number;
+      label?: string | null;
+      mode?: string;
+      approvers?: Array<{
+        assignee?: string;
+        display_snapshot?: { name?: string | null };
+      }>;
+    }>;
+  } | null;
+  comment?: string | null;
+  completed_at?: string | null;
   created_at: string;
+}
+
+function normalizeHistoryTask(item: any): Task {
+  return {
+    ...item,
+    id: item.task_id,
+    process_definition_id: item.workflow_id,
+    template_name: item.workflow_name,
+    form_data: item.content_snapshot || {},
+  };
 }
 
 export interface InboxPageProps {
@@ -39,6 +74,7 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
   const [decision, setDecision] = useState<'approve' | 'reject' | 'hold'>('approve');
   const [comment, setComment] = useState('요청 내용을 확인하였습니다. 승인합니다.');
   const [rejectReasonChecked, setRejectReasonChecked] = useState(false);
+  const [instanceHistory, setInstanceHistory] = useState<Task[]>([]);
 
   const formatDate = (value?: string) => {
     if (!value) return '-';
@@ -65,7 +101,10 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
 
   const getTaskTitle = (task: Task | null) => {
     if (!task) return '승인 요청';
+    const approvalContent =
+      task.content_snapshot || task.form_data?.approval_request?.content || {};
     return (
+      approvalContent.title ||
       task.template_name ||
       readField(task, ['요청 프로세스', 'processName', 'title', 'requestTitle'], '') ||
       task.node_id ||
@@ -74,7 +113,11 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
   };
 
   const getRequester = (task: Task | null) =>
-    readField(task, ['신청자', 'requester', 'requesterName', 'applicant'], task?.assignee || '-');
+    String(
+      task?.content_snapshot?.requester ||
+        task?.form_data?.approval_request?.content?.requester ||
+        readField(task, ['신청자', 'requester', 'requesterName', 'applicant'], task?.assignee || '-'),
+    );
 
   const getProcessLabel = (task: Task | null) =>
     task?.template_name || readField(task, ['요청 프로세스', 'processName'], task?.process_definition_id || '-');
@@ -82,9 +125,24 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
   const fetchTasks = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/tasks');
-      if (!res.ok) throw new Error('Failed to fetch tasks');
-      setTasks(await res.json());
+      const [openResponse, completedResponse, rejectedResponse] = await Promise.all([
+        fetch('/api/tasks'),
+        fetch('/api/tasks/history?status=APPROVED,CANCELED&limit=100'),
+        fetch('/api/tasks/history?status=REJECTED&limit=100'),
+      ]);
+      if (!openResponse.ok || !completedResponse.ok || !rejectedResponse.ok) {
+        throw new Error('Failed to fetch tasks');
+      }
+      const [openRows, completedPage, rejectedPage] = await Promise.all([
+        openResponse.json(),
+        completedResponse.json(),
+        rejectedResponse.json(),
+      ]);
+      setTasks([
+        ...(Array.isArray(openRows) ? openRows : []),
+        ...((completedPage?.items || []).map(normalizeHistoryTask)),
+        ...((rejectedPage?.items || []).map(normalizeHistoryTask)),
+      ]);
     } catch (error) {
       console.error('Failed to fetch tasks:', error);
     } finally {
@@ -99,16 +157,28 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
   }, []);
 
   const visibleTasks = useMemo(() => {
-    if (activeSubTab !== 'pending') return [];
+    const byTab = tasks.filter((task) => {
+      if (activeSubTab === 'pending') return task.status === 'OPEN';
+      if (activeSubTab === 'rejected') return task.status === 'REJECTED';
+      return task.status === 'APPROVED' || task.status === 'CANCELED';
+    });
     const q = searchTerm.trim().toLowerCase();
-    if (!q) return tasks;
-    return tasks.filter((task) =>
+    if (!q) return byTab;
+    return byTab.filter((task) =>
       [getTaskTitle(task), getRequester(task), task.instance_id, task.node_id]
         .join(' ')
         .toLowerCase()
         .includes(q),
     );
   }, [activeSubTab, searchTerm, tasks]);
+  const taskCounts = useMemo(
+    () => ({
+      pending: tasks.filter((task) => task.status === 'OPEN').length,
+      completed: tasks.filter((task) => task.status === 'APPROVED' || task.status === 'CANCELED').length,
+      rejected: tasks.filter((task) => task.status === 'REJECTED').length,
+    }),
+    [tasks],
+  );
 
   useEffect(() => {
     if (!selectedTask) return;
@@ -121,12 +191,21 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
     setScreen('list');
   }, [tasks]);
 
-  const openTask = (task: Task) => {
+  const openTask = async (task: Task) => {
     setSelectedTask(task);
     setDecision('approve');
     setComment('요청 내용을 확인하였습니다. 승인합니다.');
     setRejectReasonChecked(false);
     setScreen('detail');
+    try {
+      const response = await fetch(`/api/instances/${task.instance_id}/tasks?limit=100`);
+      const page = await response.json().catch(() => null);
+      setInstanceHistory(
+        response.ok ? (page?.items || []).map(normalizeHistoryTask) : [],
+      );
+    } catch {
+      setInstanceHistory([]);
+    }
   };
 
   const handleProcessDecision = async () => {
@@ -173,19 +252,19 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
           className={`sub-tab-btn ${activeSubTab === 'pending' ? 'active' : ''}`}
           onClick={() => setActiveSubTab('pending')}
         >
-          승인 대기 <span className="tab-count badge-pending">{tasks.length}</span>
+          승인 대기 <span className="tab-count badge-pending">{taskCounts.pending}</span>
         </button>
         <button
           className={`sub-tab-btn ${activeSubTab === 'completed' ? 'active' : ''}`}
           onClick={() => setActiveSubTab('completed')}
         >
-          처리 완료 <span className="tab-count badge-completed">0</span>
+          처리 완료 <span className="tab-count badge-completed">{taskCounts.completed}</span>
         </button>
         <button
           className={`sub-tab-btn ${activeSubTab === 'rejected' ? 'active' : ''}`}
           onClick={() => setActiveSubTab('rejected')}
         >
-          반려함 <span className="tab-count badge-rejected">0</span>
+          반려함 <span className="tab-count badge-rejected">{taskCounts.rejected}</span>
         </button>
       </div>
 
@@ -233,7 +312,17 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
                 <td>{getRequester(task)}</td>
                 <td>{formatDate(task.created_at)}</td>
                 <td>{task.node_id}</td>
-                <td><span className="status-badge-outline pending">승인 대기</span></td>
+                <td>
+                  <span className={`status-badge-outline ${task.status.toLowerCase()}`}>
+                    {task.status === 'OPEN'
+                      ? '승인 대기'
+                      : task.status === 'APPROVED'
+                        ? '승인 완료'
+                        : task.status === 'REJECTED'
+                          ? '반려'
+                          : '취소'}
+                  </span>
+                </td>
               </tr>
             ))}
 
@@ -242,7 +331,7 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
                 <td colSpan={5} className="table-empty-cell">
                   {activeSubTab === 'pending'
                     ? '승인 대기 작업이 없습니다.'
-                    : '이 탭은 아직 실제 이력 API가 연결되지 않았습니다.'}
+                    : '처리 이력이 없습니다.'}
                 </td>
               </tr>
             )}
@@ -285,7 +374,9 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
             <h2>{getTaskTitle(selectedTask)}</h2>
             <p>{selectedTask.instance_id}</p>
           </div>
-          <span className="status-badge-full orange">승인 대기</span>
+          <span className={`status-badge-full ${selectedTask.status === 'OPEN' ? 'orange' : ''}`}>
+            {selectedTask.status}
+          </span>
         </div>
 
         <div className="detail-action-card">
@@ -330,43 +421,54 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
                 <h5>요청 내용</h5>
                 <div className="vertical-info-list">
                   <div className="info-cell">
-                    <span className="info-label">요청 시스템</span>
-                    <span className="info-val">{readField(selectedTask, ['요청 시스템', 'system', 'targetSystem'])}</span>
-                  </div>
-                  <div className="info-cell">
-                    <span className="info-label">요청 권한</span>
-                    <span className="info-val highlighting-blue">
-                      {readField(selectedTask, ['요청 권한', 'permission', 'permissionScope'])}
+                    <span className="info-label">외부 요청 키</span>
+                    <span className="info-val font-mono-style">
+                      {selectedTask.source_provider && selectedTask.external_request_id
+                        ? `${selectedTask.source_provider}:${selectedTask.external_request_id}:r${selectedTask.external_revision || 1}`
+                        : '-'}
                     </span>
                   </div>
                   <div className="info-cell">
-                    <span className="info-label">요청 사유</span>
+                    <span className="info-label">현재 결재 단계</span>
+                    <span className="info-val highlighting-blue">
+                      {selectedTask.current_step_order && selectedTask.total_steps
+                        ? `${selectedTask.current_step_order} / ${selectedTask.total_steps}단계 · ${selectedTask.step_mode || 'ALL'}`
+                        : '-'}
+                    </span>
+                  </div>
+                  <div className="info-cell">
+                    <span className="info-label">결재 내용</span>
                     <span className="info-val text-box-reason">
-                      {readField(selectedTask, ['요청 사유', 'purpose', 'reason', 'message'])}
+                      {String(
+                        selectedTask.content_snapshot?.summary ||
+                          selectedTask.form_data?.approval_request?.content?.summary ||
+                          readField(selectedTask, ['요청 사유', 'purpose', 'reason', 'message']),
+                      )}
                     </span>
                   </div>
                 </div>
               </div>
 
               <div className="info-block">
-                <h5>대상 시스템</h5>
-                <div className="grid-info-2col">
-                  <div className="info-cell">
-                    <span className="info-label">시스템명</span>
-                    <span className="info-val">{readField(selectedTask, ['시스템명', 'systemName', 'targetSystem'])}</span>
-                  </div>
-                  <div className="info-cell">
-                    <span className="info-label">접속 정보</span>
-                    <span className="info-val font-mono-style">{readField(selectedTask, ['접속 정보', 'connectionInfo'])}</span>
-                  </div>
-                  <div className="info-cell">
-                    <span className="info-label">시스템 구분</span>
-                    <span className="info-val">{readField(selectedTask, ['시스템 구분', 'systemType'])}</span>
-                  </div>
-                  <div className="info-cell">
-                    <span className="info-label">운영 환경</span>
-                    <span className="info-val highlighting-green">{readField(selectedTask, ['운영 환경', 'environment'])}</span>
-                  </div>
+                <h5>전체 결재라인</h5>
+                <div className="vertical-info-list">
+                  {(selectedTask.approval_line_snapshot?.steps || []).map((step) => (
+                    <div className="info-cell" key={step.order}>
+                      <span className="info-label">
+                        {step.order}단계 · {step.label || '결재'} · {step.mode || 'ALL'}
+                      </span>
+                      <span className="info-val">
+                        {(step.approvers || [])
+                          .map((approver) => approver.display_snapshot?.name || approver.assignee || '-')
+                          .join(', ')}
+                      </span>
+                    </div>
+                  ))}
+                  {!selectedTask.approval_line_snapshot?.steps?.length && (
+                    <div className="info-cell">
+                      <span className="info-val">저장된 동적 결재라인이 없습니다.</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -382,6 +484,7 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
             </div>
           </div>
 
+          {selectedTask.status === 'OPEN' && (
           <div className="inbox-section-compact detail-action-section">
             <div className="section-title-wrap">
               <h3>승인 의사결정</h3>
@@ -470,6 +573,7 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
               </div>
             </div>
           </div>
+          )}
         </div>
 
         <div className="inbox-section timeline-history-section">
@@ -485,7 +589,7 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
                 <span className="t-node-name">인스턴스 시작</span>
               </div>
               <div className="t-line active" />
-              <div className="t-node processing">
+              <div className={`t-node ${selectedTask.status === 'OPEN' ? 'processing' : 'active'}`}>
                 <div className="t-node-dot">2</div>
                 <span className="t-node-name">승인 대기</span>
               </div>
@@ -497,18 +601,28 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
             </div>
 
             <div className="timeline-vertical-logs">
-              <div className="v-log-item blue">
-                <div className="v-log-time">{formatDateTime(selectedTask.created_at)} (현재)</div>
-                <div className="v-log-content">
-                  <div className="v-log-header">
-                    <span className="v-log-actor">{getRequester(selectedTask)}</span>
-                    <span className="v-log-badge blue">진행 중</span>
+              {(instanceHistory.length ? instanceHistory : [selectedTask]).map((history) => (
+                <div className="v-log-item blue" key={history.id}>
+                  <div className="v-log-time">
+                    {formatDateTime(history.completed_at || history.created_at)}
                   </div>
-                  <p className="v-log-comment">
-                    {selectedTask.node_id} 노드에서 승인 처리를 기다리고 있습니다.
-                  </p>
+                  <div className="v-log-content">
+                    <div className="v-log-header">
+                      <span className="v-log-actor">{history.assignee || getRequester(selectedTask)}</span>
+                      <span className="v-log-badge blue">
+                        {history.step_order ? `${history.step_order}단계 · ` : ''}
+                        {history.status}
+                      </span>
+                    </div>
+                    <p className="v-log-comment">
+                      {history.comment ||
+                        (history.status === 'OPEN'
+                          ? `${history.node_id} 노드에서 승인을 기다리고 있습니다.`
+                          : `${history.node_id} 노드에서 ${history.status} 처리되었습니다.`)}
+                    </p>
+                  </div>
                 </div>
-              </div>
+              ))}
             </div>
           </div>
         </div>

@@ -112,7 +112,7 @@ describePostgres('Postgres approval task transaction', () => {
     expect(
       (
         await pool.query(
-          `SELECT count(*)::int AS count FROM v2_event_outbox WHERE instance_id = $1::uuid AND event_type = 'APPROVAL_REQUEST_COMPLETED'`,
+          `SELECT count(*)::int AS count FROM v2_event_outbox WHERE instance_id = $1::uuid AND event_type = 'APPROVAL_REQUEST_APPROVED'`,
           [instanceId],
         )
       ).rows[0].count,
@@ -175,6 +175,40 @@ describePostgres('Postgres approval task transaction', () => {
     ).toEqual(expect.objectContaining({ status: 'APPROVED', version: 1 }));
   });
 
+  it('cancels request, step, and open task in the terminate transaction', async () => {
+    await adapter.executeInstanceMutation({
+      update_instances: [{
+        id: instanceId,
+        status: 'TERMINATED',
+        complete_jobs: true,
+        cancel_approvals: true,
+      }],
+    });
+
+    expect((
+      await pool.query(
+        `SELECT status, version FROM v2_approval_requests WHERE id = $1::uuid`,
+        [requestId],
+      )
+    ).rows[0]).toEqual(expect.objectContaining({ status: 'CANCELED', version: 1 }));
+    expect((
+      await pool.query(
+        `SELECT status, version FROM v2_approval_steps WHERE id = $1::uuid`,
+        [stepId],
+      )
+    ).rows[0]).toEqual(expect.objectContaining({ status: 'CANCELED', version: 1 }));
+    expect((
+      await pool.query(`SELECT status FROM v2_tasks WHERE id = $1::uuid`, [taskId])
+    ).rows[0]).toEqual(expect.objectContaining({ status: 'CANCELED' }));
+    expect((
+      await pool.query(
+        `SELECT count(*)::int AS count FROM v2_event_outbox
+         WHERE instance_id = $1::uuid AND event_type = 'APPROVAL_REQUEST_CANCELED'`,
+        [instanceId],
+      )
+    ).rows[0].count).toBe(1);
+  });
+
   it('rejects the aggregate and still resumes the Engine exactly once', async () => {
     const result = await adapter.completeTask({
       task_id: taskId,
@@ -219,6 +253,38 @@ describePostgres('Postgres approval task transaction', () => {
         )
       ).rows[0].count,
     ).toBe(1);
+  });
+
+  it('records final approval but leaves RESUME queued while the instance is paused', async () => {
+    await pool.query(
+      `UPDATE v2_process_instances SET is_paused = true, paused_at = NOW() WHERE id = $1::uuid`,
+      [instanceId],
+    );
+
+    await adapter.completeTask({
+      task_id: taskId,
+      action: 'approve',
+      status: 'APPROVED',
+      actor_id: 'alice',
+      idempotency_key: 'paused-final-approval',
+    });
+
+    expect((
+      await pool.query(`SELECT status FROM v2_approval_requests WHERE id = $1::uuid`, [requestId])
+    ).rows[0]).toEqual(expect.objectContaining({ status: 'APPROVED' }));
+    expect((
+      await pool.query(
+        `SELECT status FROM v2_engine_jobs
+         WHERE instance_id = $1::uuid AND type = 'RESUME'`,
+        [instanceId],
+      )
+    ).rows[0]).toEqual(expect.objectContaining({ status: 'QUEUED' }));
+    expect((
+      await pool.query(
+        `SELECT state, is_paused FROM v2_process_instances WHERE id = $1::uuid`,
+        [instanceId],
+      )
+    ).rows[0]).toEqual(expect.objectContaining({ state: 'RUNNING', is_paused: true }));
   });
 
   it('completes an ALL step once after concurrent approvals', async () => {

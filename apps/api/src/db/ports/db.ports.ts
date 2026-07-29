@@ -127,6 +127,7 @@ export type IdempotentInstanceCommand = {
     status?: string;
     context?: any;
     complete_jobs?: boolean;
+    cancel_approvals?: boolean;
     paused?: boolean;
     paused_by?: string | null;
     pause_origin_instance_id?: string | null;
@@ -231,6 +232,19 @@ export type WorkflowTaskHistoryItem = {
   group_id: string | null;
   node_id: string;
   node_label: string | null;
+  approval_request_id: string | null;
+  approval_step_id: string | null;
+  request_status: 'PENDING' | 'IN_PROGRESS' | 'APPROVED' | 'REJECTED' | 'CANCELED' | null;
+  current_step_order: number | null;
+  total_steps: number | null;
+  step_order: number | null;
+  step_mode: 'ALL' | 'ANY' | null;
+  step_status: 'LOCKED' | 'OPEN' | 'APPROVED' | 'REJECTED' | 'CANCELED' | null;
+  source_provider: string | null;
+  external_request_id: string | null;
+  external_revision: number | null;
+  content_snapshot: Record<string, unknown> | null;
+  approval_line_snapshot: Record<string, unknown> | null;
   status: 'OPEN' | 'APPROVED' | 'REJECTED' | 'CANCELED';
   approver_channel: 'pxm_user' | 'external_email';
   assignee: string;

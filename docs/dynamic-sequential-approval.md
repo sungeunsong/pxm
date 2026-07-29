@@ -131,7 +131,52 @@ OTP 검증까지 통과해야 한다. 외부 SSO를 붙일 때도 인증된 issu
 Task의 principal snapshot에 대조해야 하며, 클라이언트가 보낸 subject를 신뢰해서는 안
 된다.
 
-## 이후 차수 범위
+## 승인·반려 결과 경로
 
-QUORUM(n명 중 k명)과 반려 전용 워크플로우 분기는 PXM-12에서 다룬다. 외부 SSO,
-조직도 동기화, 자동 프로비저닝은 현재 범위가 아니다.
+Flow Designer의 Approval 노드는 `승인`과 `반려` 두 출력 핸들을 제공한다. 최종
+`ApprovalRequest`가 `APPROVED`이면 승인 핸들, `REJECTED`이면 반려 핸들에 연결된
+후속 노드로 진행한다. 업무 반려는 정상적인 결재 결과이므로 Instance를 `FAILED`로
+바꾸지 않는다. 반려 경로가 연결되지 않았다면 Instance는 `COMPLETED`와
+`outcome=rejected`로 종료된다.
+
+Engine context에는 다음 결과가 남는다.
+
+```json
+{
+  "data": {
+    "outputs": {
+      "approval-node-id": {
+        "approval_request_id": "request-uuid",
+        "status": "REJECTED",
+        "outcome": "rejected"
+      }
+    }
+  }
+}
+```
+
+## 종료·일시중지 연계
+
+- Instance 종료는 Instance 상태, 활성 Engine job, `ApprovalRequest`,
+  `ApprovalStep`, OPEN `ApprovalTask`를 한 DB transaction에서 종료·취소한다.
+- 취소된 Task의 추가 승인·반려 요청은 `409 Conflict`다.
+- 일시중지 상태에서도 현재 승인 transaction은 완료할 수 있다. 마지막 승인이면
+  Request 결과와 `RESUME` job을 기록하지만 job은 `QUEUED`로 남는다.
+- Instance를 재개한 후에만 Engine이 해당 `RESUME`을 claim하며 후속 경로는 한 번만
+  실행된다.
+
+## 이력 UI와 결과 이벤트
+
+- Instance Tracker는 현재 단계/전체 단계, Request 상태, 대기 승인자 수를 표시한다.
+- Inbox의 승인 대기, 처리 완료, 반려 탭은 실제 Task history API를 사용한다.
+- 상세 화면은 외부 요청 키, 결재 내용 snapshot, 전체 결재라인, 단계별 개인 Task와
+  의견 이력을 표시한다.
+- 최종 이벤트는 `APPROVAL_REQUEST_APPROVED`, `APPROVAL_REQUEST_REJECTED`,
+  `APPROVAL_REQUEST_CANCELED`다. payload의 `source`에는 provider, request_id,
+  revision이 포함되며 Request 최종 전이를 획득한 transaction에서 한 번만 생성된다.
+
+## 이후 범위
+
+QUORUM(n명 중 k명), 위임·대결, 자동 재촉·에스컬레이션, SLA, 실행 중 결재라인
+직접 편집은 별도 로드맵 범위다. 외부 SSO, 조직도 동기화, 자동 프로비저닝도 현재
+범위가 아니다.

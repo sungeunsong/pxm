@@ -415,10 +415,29 @@
   border: 1px solid transparent;
 }
 
-.status-badge-outline.pending {
+.status-badge-outline.pending,
+.status-badge-outline.open {
   border-color: #fed7aa;
   color: #c2410c;
   background-color: #fff7ed;
+}
+
+.status-badge-outline.approved {
+  border-color: #bbf7d0;
+  color: #15803d;
+  background-color: #f0fdf4;
+}
+
+.status-badge-outline.rejected {
+  border-color: #fecaca;
+  color: #b91c1c;
+  background-color: #fef2f2;
+}
+
+.status-badge-outline.canceled {
+  border-color: #cbd5e1;
+  color: #475569;
+  background-color: #f8fafc;
 }
 
 .pagination-bar {

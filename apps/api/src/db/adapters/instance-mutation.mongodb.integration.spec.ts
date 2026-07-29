@@ -10,6 +10,7 @@ describeMongo('Mongo workflow instance mutation transaction', () => {
   let adapter: MongodbAdapter;
   const definitionId = randomUUID();
   const instanceIds: string[] = [];
+  const approvalStepIds: string[] = [];
 
   beforeAll(async () => {
     client = new MongoClient(process.env.MONGODB_URL || 'mongodb://127.0.0.1:27017');
@@ -24,6 +25,9 @@ describeMongo('Mongo workflow instance mutation transaction', () => {
       db.collection('v2_engine_jobs').deleteMany({ instance_id: { $in: instanceIds } }),
       db.collection('v2_tokens').deleteMany({ instance_id: { $in: instanceIds } }),
       db.collection('v2_event_outbox').deleteMany({ instance_id: { $in: instanceIds } }),
+      db.collection('v2_approval_requests').deleteMany({ instance_id: { $in: instanceIds } }),
+      db.collection('v2_tasks').deleteMany({ instance_id: { $in: instanceIds } }),
+      db.collection('v2_approval_steps').deleteMany({ _id: { $in: approvalStepIds } }),
     ]);
     await client.close();
   });
@@ -121,5 +125,83 @@ describeMongo('Mongo workflow instance mutation transaction', () => {
     expect(await db.collection('v2_process_instances').findOne({ _id: instanceId })).toEqual(expect.objectContaining({ state: 'TERMINATED' }));
     expect(await db.collection('v2_engine_jobs').countDocuments({ instance_id: instanceId, status: 'COMPLETED' })).toBe(1);
     expect(await db.collection('v2_event_outbox').countDocuments({ instance_id: instanceId, event_type: 'INSTANCE_TERMINATED' })).toBe(1);
+  });
+
+  it('cancels the active approval aggregate when an instance is terminated', async () => {
+    const instanceId = randomUUID();
+    const tokenId = randomUUID();
+    const requestId = randomUUID();
+    const stepId = randomUUID();
+    const taskId = randomUUID();
+    approvalStepIds.push(stepId);
+    instanceIds.push(instanceId);
+    const now = new Date().toISOString();
+    await db.collection('v2_process_instances').insertOne({
+      _id: instanceId,
+      process_definition_id: definitionId,
+      state: 'WAITING',
+      status: 'WAITING',
+      context: {},
+      created_at: now,
+      updated_at: now,
+    });
+    await db.collection('v2_approval_requests').insertOne({
+      _id: requestId,
+      instance_id: instanceId,
+      token_id: tokenId,
+      node_id: 'approval',
+      source_provider: 'acrapoint',
+      external_request_id: 'AP-CANCEL',
+      external_revision: 1,
+      status: 'IN_PROGRESS',
+      current_step_order: 1,
+      version: 0,
+      created_at: now,
+      updated_at: now,
+    });
+    await db.collection('v2_approval_steps').insertOne({
+      _id: stepId,
+      request_id: requestId,
+      step_order: 1,
+      mode: 'ALL',
+      required_count: 1,
+      status: 'OPEN',
+      version: 0,
+      created_at: now,
+      updated_at: now,
+    });
+    await db.collection('v2_tasks').insertOne({
+      _id: taskId,
+      instance_id: instanceId,
+      token_id: tokenId,
+      approval_request_id: requestId,
+      approval_step_id: stepId,
+      node_id: 'approval',
+      assignee: 'alice',
+      status: 'OPEN',
+      payload: {},
+      created_at: now,
+      updated_at: now,
+    });
+
+    await adapter.executeInstanceMutation({
+      update_instances: [{
+        id: instanceId,
+        status: 'TERMINATED',
+        complete_jobs: true,
+        cancel_approvals: true,
+      }],
+    });
+
+    expect(await db.collection('v2_approval_requests').findOne({ _id: requestId }))
+      .toEqual(expect.objectContaining({ status: 'CANCELED', version: 1 }));
+    expect(await db.collection('v2_approval_steps').findOne({ _id: stepId }))
+      .toEqual(expect.objectContaining({ status: 'CANCELED', version: 1 }));
+    expect(await db.collection('v2_tasks').findOne({ _id: taskId }))
+      .toEqual(expect.objectContaining({ status: 'CANCELED' }));
+    expect(await db.collection('v2_event_outbox').countDocuments({
+      instance_id: instanceId,
+      event_type: 'APPROVAL_REQUEST_CANCELED',
+    })).toBe(1);
   });
 });

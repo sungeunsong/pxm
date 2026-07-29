@@ -138,7 +138,7 @@ describeMongo('Mongo approval task transaction', () => {
     expect(
       await db.collection('v2_event_outbox').countDocuments({
         instance_id: instanceId,
-        event_type: 'APPROVAL_REQUEST_COMPLETED',
+        event_type: 'APPROVAL_REQUEST_APPROVED',
       }),
     ).toBe(1);
     expect(
@@ -204,6 +204,30 @@ describeMongo('Mongo approval task transaction', () => {
         .collection('v2_engine_jobs')
         .countDocuments({ instance_id: instanceId, job_type: 'RESUME' }),
     ).toBe(1);
+  });
+
+  it('records final approval but leaves RESUME queued while the instance is paused', async () => {
+    await db.collection('v2_process_instances').updateOne(
+      { _id: instanceId },
+      { $set: { is_paused: true, paused_at: new Date().toISOString() } },
+    );
+
+    await adapter.completeTask({
+      task_id: taskId,
+      action: 'approve',
+      status: 'APPROVED',
+      actor_id: 'alice',
+      idempotency_key: 'paused-final-approval',
+    });
+
+    expect(await db.collection('v2_approval_requests').findOne({ _id: requestId }))
+      .toEqual(expect.objectContaining({ status: 'APPROVED' }));
+    expect(await db.collection('v2_engine_jobs').findOne({
+      instance_id: instanceId,
+      job_type: 'RESUME',
+    })).toEqual(expect.objectContaining({ status: 'QUEUED' }));
+    expect(await db.collection('v2_process_instances').findOne({ _id: instanceId }))
+      .toEqual(expect.objectContaining({ state: 'RUNNING', is_paused: true }));
   });
 
   it('opens sequential tasks one at a time and resumes only after the final approval', async () => {
