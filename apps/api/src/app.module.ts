@@ -18,6 +18,7 @@ import { HealthModule } from './health/health.module';
 import { RuntimeIntegrityModule } from './runtime-integrity/runtime-integrity.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { OperationsModule } from './operations/operations.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { OperationsModule } from './operations/operations.module';
     RuntimeIntegrityModule,
     WebhooksModule,
     OperationsModule,
+    NotificationsModule,
   ],
   providers: [
     {

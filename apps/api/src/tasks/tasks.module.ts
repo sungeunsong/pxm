@@ -12,5 +12,6 @@ import { ExternalApprovalService } from './external-approval.service';
   imports: [DbModule, ManagementAuditModule],
   controllers: [TasksController, InstanceTasksController, ExternalApprovalController],
   providers: [TasksService, ExternalApprovalService, ExternalApprovalMailer, ExternalApprovalDispatcher],
+  exports: [ExternalApprovalMailer],
 })
 export class TasksModule {}

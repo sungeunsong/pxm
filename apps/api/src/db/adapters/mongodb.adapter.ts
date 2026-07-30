@@ -1411,6 +1411,28 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
     return result;
   }
 
+  async fetchApprovalNotificationTasks(after: { created_at: string; id: string }, limit: number) {
+    const tasks = await this.db.collection<any>('v2_tasks').find({
+      status: 'OPEN',
+      'payload.approver_channel': 'pxm_user',
+      $or: [
+        { created_at: { $gt: after.created_at } },
+        { created_at: after.created_at, _id: { $gt: after.id } },
+      ],
+    }).sort({ created_at: 1, _id: 1 }).limit(limit).toArray();
+    return Promise.all(tasks.map(async (task) => {
+      const instance = await this.db.collection<any>('v2_process_instances').findOne(
+        { _id: task.instance_id }, { projection: { process_definition_id: 1 } },
+      );
+      const definition = instance?.process_definition_id
+        ? await this.db.collection<any>('v2_process_definitions').findOne(
+          { _id: instance.process_definition_id }, { projection: { name: 1 } },
+        )
+        : null;
+      return mapApprovalNotificationTask(task, definition?.name || null);
+    }));
+  }
+
   async getTask(id: string): Promise<any> {
     const t = await this.db.collection<any>('v2_tasks').findOne({ _id: id });
     if (!t) return null;
@@ -2969,6 +2991,26 @@ function mapTaskDoc(task: any) {
     completion: task.completion || null,
     created_at: task.created_at,
     updated_at: task.updated_at,
+  };
+}
+
+function mapApprovalNotificationTask(task: any, workflowName: string | null) {
+  const content = task.payload?.content || {};
+  return {
+    id: String(task._id),
+    instance_id: String(task.instance_id),
+    assignee: String(task.assignee),
+    status: String(task.status),
+    created_at: String(task.created_at),
+    workflow_name: workflowName,
+    step_order: task.payload?.step_order == null ? null : Number(task.payload.step_order),
+    step_label: task.payload?.step_label ? String(task.payload.step_label) : null,
+    title: String(content.title || workflowName || '승인 요청'),
+    requester: content.requester ? String(content.requester) : null,
+    source_url: content.source_url ? String(content.source_url) : null,
+    email_hint: task.payload?.display_snapshot?.email
+      ? String(task.payload.display_snapshot.email)
+      : null,
   };
 }
 

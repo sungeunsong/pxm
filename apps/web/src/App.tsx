@@ -20,6 +20,7 @@ import {
   Stethoscope,
   Send,
   Activity,
+  MailCheck,
 } from 'lucide-react';
 import { DashboardPage } from './dashboard/DashboardPage';
 import { FlowDesigner } from './flow-designer/FlowDesigner';
@@ -43,6 +44,7 @@ import { approvalSampleUiEnabled } from './config/features';
 import { RuntimeIntegrityPage } from './runtime-integrity/RuntimeIntegrityPage';
 import { WebhookManagementPage } from './webhooks/WebhookManagementPage';
 import { OperationsPage } from './operations/OperationsPage';
+import { NotificationManagementPage } from './notifications/NotificationManagementPage';
 import './App.css';
 
 type ActiveTab =
@@ -60,7 +62,8 @@ type ActiveTab =
   | 'security'
   | 'integrity'
   | 'webhooks'
-  | 'operations';
+  | 'operations'
+  | 'notifications';
 
 const DEFAULT_TAB: ActiveTab = 'dashboard';
 
@@ -80,6 +83,7 @@ const ROUTE_TO_TAB: Record<string, ActiveTab> = {
   integrity: 'integrity',
   webhooks: 'webhooks',
   operations: 'operations',
+  notifications: 'notifications',
 };
 
 const TAB_TO_ROUTE: Record<ActiveTab, string> = {
@@ -98,6 +102,7 @@ const TAB_TO_ROUTE: Record<ActiveTab, string> = {
   integrity: 'integrity',
   webhooks: 'webhooks',
   operations: 'operations',
+  notifications: 'notifications',
 };
 
 const readTabFromHash = (): ActiveTab | null => {
@@ -278,6 +283,15 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
           </button>}
 
           {user.role === 'admin' && <button
+            title="승인자 알림"
+            className={`sidebar-menu-item ${activeTab === 'notifications' ? 'active' : ''}`}
+            onClick={() => setActiveTab('notifications')}
+          >
+            <MailCheck size={16} />
+            <span>승인자 알림</span>
+          </button>}
+
+          {user.role === 'admin' && <button
             title="외부 결과 Webhook"
             className={`sidebar-menu-item ${activeTab === 'webhooks' ? 'active' : ''}`}
             onClick={() => setActiveTab('webhooks')}
@@ -363,6 +377,7 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
               {activeTab === 'integrity' && "워크플로우 실행 이상 점검"}
               {activeTab === 'webhooks' && "외부 결과 Webhook"}
               {activeTab === 'operations' && "실행·Outbox 운영 상태"}
+              {activeTab === 'notifications' && "승인자 알림 발송 이력"}
             </h1>
             <p className="header-subtitle">
               {activeTab === 'dashboard' && "전체 워크플로우 실시간 상태 모니터링 및 주요 KPI 요약"}
@@ -380,6 +395,7 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
               {activeTab === 'integrity' && "연결이 끊겼거나 처리 작업 없이 멈춘 실행 데이터를 진단하고 안전하게 복구합니다"}
               {activeTab === 'webhooks' && "최종 승인·반려·취소 결과의 외부 전달, 실패 이력과 재전송을 관리합니다"}
               {activeTab === 'operations' && "Engine Job, 장기 대기, 만료 잠금과 외부 전송 적체를 진단하고 안전하게 복구합니다"}
+              {activeTab === 'notifications' && "PXM 승인자 이메일의 발송 상태, 실패 원인과 재발송을 관리합니다"}
             </p>
           </div>
 
@@ -501,6 +517,8 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
           {activeTab === 'webhooks' && <WebhookManagementPage />}
 
           {activeTab === 'operations' && <OperationsPage />}
+
+          {activeTab === 'notifications' && <NotificationManagementPage />}
         </main>
       </div>
       {accountOpen && <AccountDialog user={user} onChange={onUserChange} onClose={() => setAccountOpen(false)} />}

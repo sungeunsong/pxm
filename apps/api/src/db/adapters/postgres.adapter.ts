@@ -1137,6 +1137,42 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
     return rows;
   }
 
+  async fetchApprovalNotificationTasks(after: { created_at: string; id: string }, limit: number) {
+    await this.ensureTaskRuntimeColumns();
+    const { rows } = await this.pool.query(
+      `SELECT t.id::text, t.instance_id::text, t.assignee, t.status,
+              date_trunc('milliseconds', t.created_at) AS created_at,
+              t.payload, d.name AS workflow_name
+       FROM v2_tasks t
+       JOIN v2_process_instances i ON i.id = t.instance_id
+       LEFT JOIN v2_process_definitions d ON d.id = i.process_definition_id
+       WHERE t.status = 'OPEN'
+         AND COALESCE(t.payload->>'approver_channel', 'pxm_user') = 'pxm_user'
+         AND (date_trunc('milliseconds', t.created_at) > $1::timestamptz
+           OR (date_trunc('milliseconds', t.created_at) = $1::timestamptz AND t.id::text > $2))
+       ORDER BY date_trunc('milliseconds', t.created_at) ASC, t.id::text ASC
+       LIMIT $3`,
+      [after.created_at, after.id, limit],
+    );
+    return rows.map((row) => {
+      const content = row.payload?.content || {};
+      return {
+        id: row.id,
+        instance_id: row.instance_id,
+        assignee: row.assignee,
+        status: row.status,
+        created_at: new Date(row.created_at).toISOString(),
+        workflow_name: row.workflow_name || null,
+        step_order: row.payload?.step_order == null ? null : Number(row.payload.step_order),
+        step_label: row.payload?.step_label || null,
+        title: String(content.title || row.workflow_name || '승인 요청'),
+        requester: content.requester ? String(content.requester) : null,
+        source_url: content.source_url ? String(content.source_url) : null,
+        email_hint: row.payload?.display_snapshot?.email || null,
+      };
+    });
+  }
+
   async getTask(id: string): Promise<any> {
     await this.ensureTaskRuntimeColumns();
     const { rows } = await this.pool.query(`SELECT * FROM v2_tasks WHERE id = $1`, [id]);

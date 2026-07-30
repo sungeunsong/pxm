@@ -207,7 +207,26 @@ export abstract class WorkflowTaskRepositoryPort {
   abstract clearExternalApprovalOtp(taskId: string, tokenHash: string, otpHash: string): Promise<void>;
   abstract listTaskHistory(query: WorkflowTaskHistoryQuery): Promise<WorkflowTaskHistoryPage>;
   abstract getTaskHistoryItem(id: string): Promise<WorkflowTaskHistoryItem | null>;
+  abstract fetchApprovalNotificationTasks(
+    after: { created_at: string; id: string },
+    limit: number,
+  ): Promise<ApprovalNotificationTask[]>;
 }
+
+export type ApprovalNotificationTask = {
+  id: string;
+  instance_id: string;
+  assignee: string;
+  status: string;
+  created_at: string;
+  workflow_name: string | null;
+  step_order: number | null;
+  step_label: string | null;
+  title: string;
+  requester: string | null;
+  source_url: string | null;
+  email_hint: string | null;
+};
 
 export type WorkflowTaskHistoryQuery = {
   statuses?: Array<'OPEN' | 'APPROVED' | 'REJECTED' | 'CANCELED'>;

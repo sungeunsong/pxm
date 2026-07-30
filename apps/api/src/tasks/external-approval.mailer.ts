@@ -54,6 +54,35 @@ export class ExternalApprovalMailer {
     });
   }
 
+  async sendUserApprovalNotification(input: {
+    to: string;
+    title: string;
+    requester: string | null;
+    stepLabel: string | null;
+    inboxUrl: string;
+    sourceUrl: string | null;
+  }): Promise<void> {
+    const lines = [
+      `결재 제목: ${input.title}`,
+      input.requester ? `요청자: ${input.requester}` : '',
+      input.stepLabel ? `결재 단계: ${input.stepLabel}` : '',
+      `PXM 결재함: ${input.inboxUrl}`,
+      input.sourceUrl ? `원문: ${input.sourceUrl}` : '',
+    ].filter(Boolean);
+    await this.transport().sendMail({
+      from: process.env.PXM_SMTP_FROM || 'PXM <no-reply@localhost>',
+      to: input.to,
+      subject: `[PXM] 결재 요청: ${input.title}`.slice(0, 180),
+      text: ['새 결재 요청이 도착했습니다.', '', ...lines].join('\n'),
+      html: `<p>새 결재 요청이 도착했습니다.</p>
+        <p><strong>${escapeHtml(input.title)}</strong></p>
+        ${input.requester ? `<p>요청자: ${escapeHtml(input.requester)}</p>` : ''}
+        ${input.stepLabel ? `<p>결재 단계: ${escapeHtml(input.stepLabel)}</p>` : ''}
+        <p><a href="${escapeHtml(input.inboxUrl)}">PXM 결재함에서 확인</a></p>
+        ${input.sourceUrl ? `<p><a href="${escapeHtml(input.sourceUrl)}">원문 확인</a></p>` : ''}`,
+    });
+  }
+
   private transport(): Transporter {
     if (this.transporter) return this.transporter;
     const smtpUrl = process.env.PXM_SMTP_URL;
