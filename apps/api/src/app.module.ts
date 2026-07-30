@@ -17,6 +17,7 @@ import { AuthenticatedGuard } from './authz/authenticated.guard';
 import { HealthModule } from './health/health.module';
 import { RuntimeIntegrityModule } from './runtime-integrity/runtime-integrity.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
+import { OperationsModule } from './operations/operations.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     HealthModule,
     RuntimeIntegrityModule,
     WebhooksModule,
+    OperationsModule,
   ],
   providers: [
     {

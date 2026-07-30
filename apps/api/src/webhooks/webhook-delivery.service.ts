@@ -245,7 +245,7 @@ export class WebhookDeliveryService implements OnModuleInit {
     return { ...mapDelivery(delivery), attempts: attempts.map(mapAttempt) };
   }
 
-  async retryDelivery(id: string, actor: WorkflowHistoryActor) {
+  async retryDelivery(id: string, actor: WorkflowHistoryActor, reason?: string) {
     assertWebhookAdmin(actor);
     const delivery = await this.deliveries.findOne(
       { _id: id },
@@ -290,9 +290,32 @@ export class WebhookDeliveryService implements OnModuleInit {
       resource_type: 'webhook_delivery',
       resource_id: id,
       actor_id: actor.actor_id,
-      details: { endpoint_id: endpoint._id },
+      details: { endpoint_id: endpoint._id, reason: reason || null },
     });
     return mapDelivery((await this.deliveries.findOne({ _id: id }))!);
+  }
+
+  async getOperationalSnapshot(actor: WorkflowHistoryActor, limit = 100) {
+    assertWebhookAdmin(actor);
+    const [statusRows, deliveries] = await Promise.all([
+      this.deliveries.aggregate<{ _id: string; count: number }>([
+        { $group: { _id: '$status', count: { $sum: 1 } } },
+      ]).toArray(),
+      this.deliveries.find({
+        status: { $in: ['PENDING', 'RUNNING', 'FAILED', 'DEAD_LETTER'] },
+      }).sort({ updated_at: 1 }).limit(limit).toArray(),
+    ]);
+    const byStatus = Object.fromEntries(statusRows.map((row) => [row._id, row.count]));
+    const pending = deliveries.filter((item) => item.status === 'PENDING');
+    return {
+      by_status: byStatus,
+      pending: byStatus.PENDING || 0,
+      running: byStatus.RUNNING || 0,
+      failed: byStatus.FAILED || 0,
+      dead_letter: byStatus.DEAD_LETTER || 0,
+      oldest_pending_at: pending[0]?.created_at || null,
+      deliveries: deliveries.map(mapDelivery),
+    };
   }
 
   async discoverEvents(limit = 200): Promise<number> {

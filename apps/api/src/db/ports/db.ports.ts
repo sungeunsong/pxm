@@ -380,6 +380,41 @@ export abstract class EngineQueueRepositoryPort {
     }>;
     max_attempt: number;
   }>;
+
+  abstract getOperationsSnapshot(waitingThresholdMinutes: number, limit?: number): Promise<{
+    jobs: Array<{
+      id: string;
+      instance_id: string;
+      token_id: string | null;
+      type: string;
+      status: string;
+      attempt: number;
+      run_at: string;
+      lock_owner: string | null;
+      updated_at: string;
+    }>;
+    waiting_instances: Array<{
+      id: string;
+      state: string;
+      updated_at: string;
+      waiting_age_ms: number;
+      classification: 'EXPECTED' | 'SUSPICIOUS';
+      waiting_reason: 'OPEN_TASK' | 'SCHEDULED_JOB' | 'ACTIVE_CHILD' | 'NO_RESUME_SOURCE';
+      open_task_count: number;
+      scheduled_job_count: number;
+      active_child_count: number;
+    }>;
+    expired_locks: Array<{
+      instance_id: string;
+      lock_owner: string;
+      lock_until: string;
+      heartbeat_at: string | null;
+    }>;
+  }>;
+
+  abstract retryFailedJob(jobId: string): Promise<boolean>;
+
+  abstract reclaimExpiredInstanceLock(instanceId: string): Promise<boolean>;
 }
 
 export type WorkflowScheduleJob = {

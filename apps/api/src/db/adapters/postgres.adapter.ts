@@ -790,6 +790,97 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
     };
   }
 
+  async getOperationsSnapshot(waitingThresholdMinutes: number, limit = 100) {
+    const [jobs, waiting, locks] = await Promise.all([
+      this.pool.query(
+        `SELECT id::text, instance_id::text, token_id::text, type, status, attempt,
+                run_at, lock_owner, updated_at
+         FROM v2_engine_jobs
+         WHERE status IN ('QUEUED', 'RUNNING', 'FAILED')
+         ORDER BY CASE status WHEN 'FAILED' THEN 0 WHEN 'RUNNING' THEN 1 ELSE 2 END,
+                  updated_at ASC
+         LIMIT $1`,
+        [limit],
+      ),
+      this.pool.query(
+        `SELECT i.id::text, i.state, i.updated_at,
+                EXTRACT(EPOCH FROM (NOW() - i.updated_at)) * 1000 AS waiting_age_ms,
+                (SELECT count(*)::int FROM v2_tasks t
+                  WHERE t.instance_id = i.id AND t.status = 'OPEN') AS open_task_count,
+                (SELECT count(*)::int FROM v2_engine_jobs j
+                  WHERE j.instance_id = i.id AND j.status IN ('QUEUED', 'RUNNING')) AS scheduled_job_count,
+                (SELECT count(*)::int FROM v2_process_instances child
+                  WHERE child.context->'runtime'->>'parent_instance_id' = i.id::text
+                    AND child.state NOT IN ('COMPLETED', 'FAILED', 'CANCELED', 'TERMINATED')) AS active_child_count
+         FROM v2_process_instances i
+         WHERE i.state = 'WAITING'
+           AND i.updated_at <= NOW() - ($1::double precision * interval '1 minute')
+         ORDER BY i.updated_at ASC LIMIT $2`,
+        [waitingThresholdMinutes, limit],
+      ),
+      this.pool.query(
+        `SELECT id::text AS instance_id, lock_owner, lock_until, heartbeat_at
+         FROM v2_process_instances
+         WHERE lock_owner IS NOT NULL AND lock_until < NOW()
+         ORDER BY lock_until ASC LIMIT $1`,
+        [limit],
+      ),
+    ]);
+    return {
+      jobs: jobs.rows.map((row) => ({
+        ...row,
+        run_at: new Date(row.run_at).toISOString(),
+        updated_at: new Date(row.updated_at).toISOString(),
+      })),
+      waiting_instances: waiting.rows.map((row) => {
+        const openTasks = Number(row.open_task_count || 0);
+        const scheduledJobs = Number(row.scheduled_job_count || 0);
+        const activeChildren = Number(row.active_child_count || 0);
+        const reason: 'OPEN_TASK' | 'SCHEDULED_JOB' | 'ACTIVE_CHILD' | 'NO_RESUME_SOURCE' =
+          openTasks > 0 ? 'OPEN_TASK' : scheduledJobs > 0 ? 'SCHEDULED_JOB' :
+          activeChildren > 0 ? 'ACTIVE_CHILD' : 'NO_RESUME_SOURCE';
+        return {
+          id: row.id,
+          state: row.state,
+          updated_at: new Date(row.updated_at).toISOString(),
+          waiting_age_ms: Number(row.waiting_age_ms),
+          classification: reason === 'NO_RESUME_SOURCE' ? 'SUSPICIOUS' as const : 'EXPECTED' as const,
+          waiting_reason: reason,
+          open_task_count: openTasks,
+          scheduled_job_count: scheduledJobs,
+          active_child_count: activeChildren,
+        };
+      }),
+      expired_locks: locks.rows.map((row) => ({
+        instance_id: row.instance_id,
+        lock_owner: row.lock_owner,
+        lock_until: new Date(row.lock_until).toISOString(),
+        heartbeat_at: row.heartbeat_at ? new Date(row.heartbeat_at).toISOString() : null,
+      })),
+    };
+  }
+
+  async retryFailedJob(jobId: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE v2_engine_jobs
+       SET status = 'QUEUED', run_at = NOW(), attempt = attempt + 1,
+           lock_owner = NULL, updated_at = NOW()
+       WHERE id::text = $1 AND status = 'FAILED'`,
+      [jobId],
+    );
+    return Boolean(result.rowCount);
+  }
+
+  async reclaimExpiredInstanceLock(instanceId: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE v2_process_instances
+       SET lock_owner = NULL, lock_until = NULL, updated_at = NOW()
+       WHERE id::text = $1 AND lock_owner IS NOT NULL AND lock_until < NOW()`,
+      [instanceId],
+    );
+    return Boolean(result.rowCount);
+  }
+
   async replaceDefinitionSchedules(definitionId: string, jobs: WorkflowScheduleJob[]): Promise<void> {
     await this.ensureScheduleTable();
     const client = await this.pool.connect();

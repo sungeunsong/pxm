@@ -19,6 +19,7 @@ import {
   LockKeyhole,
   Stethoscope,
   Send,
+  Activity,
 } from 'lucide-react';
 import { DashboardPage } from './dashboard/DashboardPage';
 import { FlowDesigner } from './flow-designer/FlowDesigner';
@@ -41,6 +42,7 @@ import { AUTH_REQUIRED_EVENT } from './api/fetch-security';
 import { approvalSampleUiEnabled } from './config/features';
 import { RuntimeIntegrityPage } from './runtime-integrity/RuntimeIntegrityPage';
 import { WebhookManagementPage } from './webhooks/WebhookManagementPage';
+import { OperationsPage } from './operations/OperationsPage';
 import './App.css';
 
 type ActiveTab =
@@ -57,7 +59,8 @@ type ActiveTab =
   | 'access'
   | 'security'
   | 'integrity'
-  | 'webhooks';
+  | 'webhooks'
+  | 'operations';
 
 const DEFAULT_TAB: ActiveTab = 'dashboard';
 
@@ -76,6 +79,7 @@ const ROUTE_TO_TAB: Record<string, ActiveTab> = {
   security: 'security',
   integrity: 'integrity',
   webhooks: 'webhooks',
+  operations: 'operations',
 };
 
 const TAB_TO_ROUTE: Record<ActiveTab, string> = {
@@ -93,6 +97,7 @@ const TAB_TO_ROUTE: Record<ActiveTab, string> = {
   security: 'security',
   integrity: 'integrity',
   webhooks: 'webhooks',
+  operations: 'operations',
 };
 
 const readTabFromHash = (): ActiveTab | null => {
@@ -264,6 +269,15 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
           </button>}
 
           {user.role === 'admin' && <button
+            title="운영 상태"
+            className={`sidebar-menu-item ${activeTab === 'operations' ? 'active' : ''}`}
+            onClick={() => setActiveTab('operations')}
+          >
+            <Activity size={16} />
+            <span>운영 상태</span>
+          </button>}
+
+          {user.role === 'admin' && <button
             title="외부 결과 Webhook"
             className={`sidebar-menu-item ${activeTab === 'webhooks' ? 'active' : ''}`}
             onClick={() => setActiveTab('webhooks')}
@@ -348,6 +362,7 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
               {activeTab === 'pluginRegistry' && "Plugin Registry 관리"}
               {activeTab === 'integrity' && "워크플로우 실행 이상 점검"}
               {activeTab === 'webhooks' && "외부 결과 Webhook"}
+              {activeTab === 'operations' && "실행·Outbox 운영 상태"}
             </h1>
             <p className="header-subtitle">
               {activeTab === 'dashboard' && "전체 워크플로우 실시간 상태 모니터링 및 주요 KPI 요약"}
@@ -364,6 +379,7 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
               {activeTab === 'pluginRegistry' && "플러그인 manifest를 등록, 검증, hot reload합니다"}
               {activeTab === 'integrity' && "연결이 끊겼거나 처리 작업 없이 멈춘 실행 데이터를 진단하고 안전하게 복구합니다"}
               {activeTab === 'webhooks' && "최종 승인·반려·취소 결과의 외부 전달, 실패 이력과 재전송을 관리합니다"}
+              {activeTab === 'operations' && "Engine Job, 장기 대기, 만료 잠금과 외부 전송 적체를 진단하고 안전하게 복구합니다"}
             </p>
           </div>
 
@@ -483,6 +499,8 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
           {activeTab === 'integrity' && <RuntimeIntegrityPage />}
 
           {activeTab === 'webhooks' && <WebhookManagementPage />}
+
+          {activeTab === 'operations' && <OperationsPage />}
         </main>
       </div>
       {accountOpen && <AccountDialog user={user} onChange={onUserChange} onClose={() => setAccountOpen(false)} />}

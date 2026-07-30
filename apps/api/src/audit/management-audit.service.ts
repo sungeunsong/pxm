@@ -8,7 +8,7 @@ import type { WorkflowHistoryActor } from '../db/ports/db.ports';
 export type ManagementAuditEvent = {
   event_id?: string;
   action: string;
-  resource_type: 'workflow' | 'task' | 'group' | 'user' | 'service_account' | 'api_key' | 'credential' | 'security_policy' | 'runtime_integrity' | 'webhook_endpoint' | 'webhook_delivery';
+  resource_type: 'workflow' | 'task' | 'group' | 'user' | 'service_account' | 'api_key' | 'credential' | 'security_policy' | 'runtime_integrity' | 'webhook_endpoint' | 'webhook_delivery' | 'runtime_operation';
   resource_id: string;
   group_id?: string | null;
   actor_id?: string | null;

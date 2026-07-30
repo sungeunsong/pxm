@@ -1093,6 +1093,93 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
     };
   }
 
+  async getOperationsSnapshot(waitingThresholdMinutes: number, limit = 100) {
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const waitingBefore = new Date(now.getTime() - waitingThresholdMinutes * 60_000).toISOString();
+    const [jobs, waiting, locks] = await Promise.all([
+      this.db.collection<any>('v2_engine_jobs')
+        .find({ status: { $in: ['QUEUED', 'RUNNING', 'FAILED'] } })
+        .sort({ status: 1, updated_at: 1 }).limit(limit).toArray(),
+      this.db.collection<any>('v2_process_instances')
+        .find({ state: 'WAITING', updated_at: { $lte: waitingBefore } })
+        .sort({ updated_at: 1 }).limit(limit).toArray(),
+      this.db.collection<any>('v2_process_instances')
+        .find({ lock_owner: { $nin: [null, ''] }, lock_until: { $lt: nowIso } })
+        .sort({ lock_until: 1 }).limit(limit).toArray(),
+    ]);
+    return {
+      jobs: jobs.map((job) => ({
+        id: String(job._id),
+        instance_id: job.instance_id,
+        token_id: job.token_id || null,
+        type: job.job_type || job.type,
+        status: job.status,
+        attempt: Number(job.attempt || 0),
+        run_at: job.run_at,
+        lock_owner: job.lock_owner || null,
+        updated_at: job.updated_at,
+      })),
+      waiting_instances: await Promise.all(waiting.map(async (instance) => {
+        const [openTasks, scheduledJobs, activeChildren] = await Promise.all([
+          this.db.collection<any>('v2_tasks').countDocuments({
+            instance_id: String(instance._id), status: 'OPEN',
+          }),
+          this.db.collection<any>('v2_engine_jobs').countDocuments({
+            instance_id: String(instance._id), status: { $in: ['QUEUED', 'RUNNING'] },
+          }),
+          this.db.collection<any>('v2_process_instances').countDocuments({
+            'context.runtime.parent_instance_id': String(instance._id),
+            state: { $nin: ['COMPLETED', 'FAILED', 'CANCELED', 'TERMINATED'] },
+          }),
+        ]);
+        const reason: 'OPEN_TASK' | 'SCHEDULED_JOB' | 'ACTIVE_CHILD' | 'NO_RESUME_SOURCE' =
+          openTasks > 0 ? 'OPEN_TASK' : scheduledJobs > 0 ? 'SCHEDULED_JOB' :
+          activeChildren > 0 ? 'ACTIVE_CHILD' : 'NO_RESUME_SOURCE';
+        return {
+          id: String(instance._id),
+          state: instance.state,
+          updated_at: instance.updated_at,
+          waiting_age_ms: Math.max(0, now.getTime() - Date.parse(instance.updated_at)),
+          classification: reason === 'NO_RESUME_SOURCE' ? 'SUSPICIOUS' as const : 'EXPECTED' as const,
+          waiting_reason: reason,
+          open_task_count: openTasks,
+          scheduled_job_count: scheduledJobs,
+          active_child_count: activeChildren,
+        };
+      })),
+      expired_locks: locks.map((instance) => ({
+        instance_id: String(instance._id),
+        lock_owner: instance.lock_owner,
+        lock_until: instance.lock_until,
+        heartbeat_at: instance.heartbeat_at || null,
+      })),
+    };
+  }
+
+  async retryFailedJob(jobId: string): Promise<boolean> {
+    const numericId = Number(jobId);
+    if (!Number.isSafeInteger(numericId)) return false;
+    const now = new Date().toISOString();
+    const result = await this.db.collection<any>('v2_engine_jobs').updateOne(
+      { _id: numericId, status: 'FAILED' },
+      {
+        $set: { status: 'QUEUED', run_at: now, lock_owner: null, updated_at: now },
+        $inc: { attempt: 1 },
+      },
+    );
+    return result.modifiedCount === 1;
+  }
+
+  async reclaimExpiredInstanceLock(instanceId: string): Promise<boolean> {
+    const now = new Date().toISOString();
+    const result = await this.db.collection<any>('v2_process_instances').updateOne(
+      { _id: instanceId, lock_owner: { $nin: [null, ''] }, lock_until: { $lt: now } },
+      { $set: { lock_owner: null, lock_until: null, updated_at: now } },
+    );
+    return result.modifiedCount === 1;
+  }
+
   async replaceDefinitionSchedules(definitionId: string, jobs: WorkflowScheduleJob[]): Promise<void> {
     const now = new Date().toISOString();
     const collection = this.db.collection<any>('v2_schedule_jobs');
