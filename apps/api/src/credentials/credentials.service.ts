@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
-import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'crypto';
+import { randomUUID } from 'crypto';
 import { Db } from 'mongodb';
 import { MONGO_DB } from '../db/mongo.provider';
 import type { WorkflowHistoryActor } from '../db/ports/db.ports';
@@ -11,6 +11,12 @@ import {
   CredentialType,
   UpdateCredentialDto,
 } from './dto/credential.dto';
+import {
+  assertConfiguredSecretKey,
+  decryptSecret,
+  encryptSecret,
+  type EncryptedSecret,
+} from '../security/encrypted-secret';
 
 type CredentialDocument = {
   _id: string;
@@ -30,13 +36,6 @@ type CredentialDocument = {
   updated_by?: string | null;
 };
 
-type EncryptedSecret = {
-  algorithm: 'aes-256-gcm';
-  iv: string;
-  tag: string;
-  ciphertext: string;
-};
-
 type AuditDocument = {
   _id: string;
   credential_id: string;
@@ -54,7 +53,7 @@ export class CredentialsService implements OnModuleInit {
   constructor(@Inject(MONGO_DB) private readonly db: Db) {}
 
   async onModuleInit() {
-    getCredentialKey();
+    assertConfiguredSecretKey();
     await Promise.all([
       this.credentials.createIndex({ group_id: 1, active: 1, updated_at: -1 }),
       this.credentials.createIndex({ shared_group_ids: 1, active: 1, updated_at: -1 }),
@@ -438,39 +437,6 @@ function mapCredential(doc: CredentialDocument, actor?: WorkflowHistoryActor): C
     created_by: doc.created_by || null,
     updated_by: doc.updated_by || null,
   };
-}
-
-function encryptSecret(secret: string): EncryptedSecret {
-  const key = getCredentialKey();
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
-  const ciphertext = Buffer.concat([cipher.update(secret, 'utf8'), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return {
-    algorithm: 'aes-256-gcm',
-    iv: iv.toString('base64'),
-    tag: tag.toString('base64'),
-    ciphertext: ciphertext.toString('base64'),
-  };
-}
-
-function decryptSecret(secret: EncryptedSecret): string {
-  const key = getCredentialKey();
-  const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(secret.iv, 'base64'));
-  decipher.setAuthTag(Buffer.from(secret.tag, 'base64'));
-  return Buffer.concat([
-    decipher.update(Buffer.from(secret.ciphertext, 'base64')),
-    decipher.final(),
-  ]).toString('utf8');
-}
-
-function getCredentialKey(): Buffer {
-  const configured = process.env.CREDENTIAL_SECRET_KEY;
-  if (process.env.NODE_ENV === 'production' && (!configured || configured.length < 32)) {
-    throw new Error('CREDENTIAL_SECRET_KEY must be configured with at least 32 characters in production');
-  }
-  const source = configured || 'pxm-local-development-credential-key';
-  return createHash('sha256').update(source).digest();
 }
 
 function credentialListFilter(

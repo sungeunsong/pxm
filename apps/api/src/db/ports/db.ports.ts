@@ -333,12 +333,30 @@ export type CompleteWorkflowTaskResult = {
   task: any | null;
 };
 
+export type WebhookOutboxEvent = {
+  id: string;
+  instance_id: string;
+  token_id: string | null;
+  node_id: string | null;
+  event_type:
+    | 'APPROVAL_REQUEST_APPROVED'
+    | 'APPROVAL_REQUEST_REJECTED'
+    | 'APPROVAL_REQUEST_CANCELED';
+  payload: Record<string, any>;
+  created_at: string;
+};
+
 export abstract class OutboxRepositoryPort {
   abstract fetchAfter(instanceId: string, afterId: number, limit?: number): Promise<any[]>;
 
   abstract appendEvent(instanceId: string, eventType: string, payload: any): Promise<any>;
 
   abstract fetchTrace(instanceId: string, limit?: number): Promise<any[]>;
+
+  abstract fetchWebhookEvents(
+    afterId: string | null,
+    limit?: number,
+  ): Promise<WebhookOutboxEvent[]>;
 }
 
 export abstract class EngineQueueRepositoryPort {

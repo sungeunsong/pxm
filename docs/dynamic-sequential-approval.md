@@ -174,6 +174,11 @@ Engine context에는 다음 결과가 남는다.
 - 최종 이벤트는 `APPROVAL_REQUEST_APPROVED`, `APPROVAL_REQUEST_REJECTED`,
   `APPROVAL_REQUEST_CANCELED`다. payload의 `source`에는 provider, request_id,
   revision이 포함되며 Request 최종 전이를 획득한 transaction에서 한 번만 생성된다.
+- 등록된 결과 Webhook의 `source_provider`가 일치하면 Dispatcher가 최종 이벤트를
+  HMAC 서명과 event 멱등 키를 포함해 외부 시스템으로 전달한다. 외부 장애는 결재
+  transaction을 되돌리지 않으며 timeout·5xx는 재시도하고 영구 실패는
+  `DEAD_LETTER` 이력으로 보관한다. 상세 계약은 `docs/webhook-delivery.md`를
+  따른다.
 
 ## 이후 범위
 

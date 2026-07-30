@@ -645,7 +645,8 @@ Authorization: Bearer pxm_live_xxx
   `APPROVAL_REQUEST_APPROVED`, `APPROVAL_REQUEST_REJECTED`,
   `APPROVAL_REQUEST_CANCELED` outbox event를 함께 생성한다.
 - 최종 Request event는 상태 전이 CAS를 획득한 transaction에서 한 번만 생성한다.
-  외부 소비자는 `approval_request_id + event_type`을 소비 멱등 키로 사용한다.
+  Webhook Dispatcher는 이 이벤트에 저장소별 고유 ID를 부여해
+  `Idempotency-Key`와 `X-PXM-Event-Id`로 전달한다.
 
 ```json
 {
@@ -663,6 +664,24 @@ Authorization: Bearer pxm_live_xxx
   }
 }
 ```
+
+### Final Approval Webhook
+
+최고관리자는 `POST /api/webhooks/endpoints`로 `source_provider`별 결과 수신
+Endpoint를 등록한다. Dispatcher는 최종 결재 Outbox event만 읽어 다음 헤더와
+함께 at-least-once 방식으로 전달한다.
+
+```text
+X-PXM-Event-Id: <database>:<outbox-event-id>
+X-PXM-Timestamp: <unix-seconds>
+X-PXM-Signature: v1=<HMAC-SHA256(timestamp.raw-body)>
+Idempotency-Key: <database>:<outbox-event-id>
+```
+
+`2xx`와 `409`는 완료, timeout·`408`·`425`·`429`·`5xx`는 지수 백오프
+재시도, 나머지 `4xx`는 `DEAD_LETTER`로 처리한다. 운영자는
+`POST /api/webhooks/deliveries/:id/retry`로 실패 건을 재전송할 수 있다. 전체
+payload, 서명 검증과 운영 설정은 `docs/webhook-delivery.md`를 따른다.
 
 ## History API Permission Model
 

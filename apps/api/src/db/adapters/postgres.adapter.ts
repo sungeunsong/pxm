@@ -1787,6 +1787,33 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
     return { ok: true, id: rows[0].id };
   }
 
+  async fetchWebhookEvents(afterId: string | null, limit = 100): Promise<any[]> {
+    const { rows } = await this.pool.query(
+      `
+      SELECT id::text, instance_id::text, token_id::text, node_id,
+             event_type, payload, created_at
+      FROM v2_event_outbox
+      WHERE event_type = ANY($1::text[])
+        AND ($2::bigint IS NULL OR id > $2::bigint)
+      ORDER BY id ASC
+      LIMIT $3
+      `,
+      [
+        [
+          'APPROVAL_REQUEST_APPROVED',
+          'APPROVAL_REQUEST_REJECTED',
+          'APPROVAL_REQUEST_CANCELED',
+        ],
+        afterId,
+        Math.min(Math.max(limit, 1), 500),
+      ],
+    );
+    return rows.map((row) => ({
+      ...row,
+      created_at: new Date(row.created_at).toISOString(),
+    }));
+  }
+
   async listInputPresets(workflowId: string): Promise<WorkflowInputPreset[]> {
     await this.ensureInputPresetTable();
     const { rows } = await this.pool.query(

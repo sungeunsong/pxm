@@ -16,6 +16,7 @@ import { ManagementAuditModule } from './audit/management-audit.module';
 import { AuthenticatedGuard } from './authz/authenticated.guard';
 import { HealthModule } from './health/health.module';
 import { RuntimeIntegrityModule } from './runtime-integrity/runtime-integrity.module';
+import { WebhooksModule } from './webhooks/webhooks.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { RuntimeIntegrityModule } from './runtime-integrity/runtime-integrity.mo
     ManagementAuditModule,
     HealthModule,
     RuntimeIntegrityModule,
+    WebhooksModule,
   ],
   providers: [
     {

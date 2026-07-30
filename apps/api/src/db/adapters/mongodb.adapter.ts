@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { ClientSession, Db } from 'mongodb';
+import { ClientSession, Db, ObjectId } from 'mongodb';
 import { MONGO_DB } from '../mongo.provider';
 import { WorkflowDefinitionMetadata, WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleJob, WorkflowScheduleRepositoryPort, WorkflowScheduleStatus, WorkflowHistoryActor, WorkflowInstanceAccess, WorkflowDefinitionVersion, WorkflowInputPreset, WorkflowInputPresetRepositoryPort, UpsertWorkflowInputPreset, AppendPxmApiKeyUsageLog, AuthzRepositoryPort, CreatePxmApiKey, CreatePxmSession, PxmApiKey, PxmApiKeyUsageLog, PxmGroup, PxmServiceAccount, PxmUser, PxmSession, PxmSessionSecurityPolicy, UpsertPxmGroup, UpsertPxmServiceAccount, UpsertPxmUser, UpsertPxmSessionSecurityPolicy, CompleteWorkflowTaskCommand, CompleteWorkflowTaskResult, ExternalApprovalClaim, ExternalApprovalDeliveryToken, ExternalApprovalOtp, ExternalApprovalTask, WorkflowTaskHistoryItem, WorkflowTaskHistoryPage, WorkflowTaskHistoryQuery, IdempotentWorkflowStart, IdempotentWorkflowStartResult, IdempotentInstanceCommand, IdempotentInstanceCommandResult, ExistingIdempotentInstanceCommandResult, WorkflowInstanceMutation } from '../ports/db.ports';
 
@@ -2084,6 +2084,39 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
       created_at: now,
     });
     return { ok: true, id: result.insertedId.toString() };
+  }
+
+  async fetchWebhookEvents(afterId: string | null, limit = 100): Promise<any[]> {
+    const filter: Record<string, any> = {
+      event_type: {
+        $in: [
+          'APPROVAL_REQUEST_APPROVED',
+          'APPROVAL_REQUEST_REJECTED',
+          'APPROVAL_REQUEST_CANCELED',
+        ],
+      },
+    };
+    if (afterId) {
+      if (!ObjectId.isValid(afterId)) {
+        throw new Error('Mongo webhook outbox cursor is invalid');
+      }
+      filter._id = { $gt: new ObjectId(afterId) };
+    }
+    const docs = await this.db
+      .collection<any>('v2_event_outbox')
+      .find(filter)
+      .sort({ _id: 1 })
+      .limit(Math.min(Math.max(limit, 1), 500))
+      .toArray();
+    return docs.map((doc) => ({
+      id: doc._id.toString(),
+      instance_id: doc.instance_id,
+      token_id: doc.token_id || null,
+      node_id: doc.node_id || null,
+      event_type: doc.event_type,
+      payload: doc.payload || {},
+      created_at: doc.created_at,
+    }));
   }
 
   async listInputPresets(workflowId: string): Promise<WorkflowInputPreset[]> {

@@ -1,6 +1,7 @@
 import { ValidationPipe } from '@nestjs/common';
 import { CreateApiKeyDto } from '../authz/dto/authz.dto';
 import { LoginDto } from '../authz/dto/session-auth.dto';
+import { CreateWebhookEndpointDto } from '../webhooks/dto/webhook.dto';
 
 const pipe = new ValidationPipe({
   transform: true,
@@ -41,5 +42,26 @@ describe('security-sensitive DTO validation', () => {
       ip_allowlist: ['10.0.0.0/8'],
       rate_limit_per_minute: 60,
     }, bodyMetadata(CreateApiKeyDto))).resolves.toBeInstanceOf(CreateApiKeyDto);
+  });
+
+  it('rejects short webhook secrets and unknown security fields', async () => {
+    await expect(pipe.transform({
+      name: 'AcraPoint',
+      source_provider: 'acrapoint',
+      url: 'https://example.test/webhook',
+      secret: 'short',
+      authorization: 'do-not-accept',
+    }, bodyMetadata(CreateWebhookEndpointDto))).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('accepts a signed webhook endpoint policy', async () => {
+    await expect(pipe.transform({
+      name: 'AcraPoint',
+      source_provider: 'acrapoint',
+      url: 'https://example.test/webhook',
+      secret: 'a'.repeat(32),
+      timeout_ms: 5000,
+      max_attempts: 8,
+    }, bodyMetadata(CreateWebhookEndpointDto))).resolves.toBeInstanceOf(CreateWebhookEndpointDto);
   });
 });
