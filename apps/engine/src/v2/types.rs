@@ -168,6 +168,7 @@ pub struct V2ApprovalRequest {
 pub struct V2ApprovalTaskInput {
     pub assignee: String,
     pub approver_channel: String,
+    pub approval_channels: Vec<String>,
     pub payload: Value,
 }
 

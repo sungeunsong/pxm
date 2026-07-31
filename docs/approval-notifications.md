@@ -1,8 +1,12 @@
 # PXM 승인자 알림
 
-PXM 사용자 채널(`approver_channel: pxm_user`)의 승인 Task가 `OPEN`으로 생성되면
+PXM 사용자 전용 채널(`approval_channels: [pxm_user]`)의 승인 Task가 `OPEN`으로 생성되면
 Notification Dispatcher가 이메일 알림을 발송한다. API 시작 전에 이미 존재하던
 Task는 소급 발송하지 않으며, 시작 이후 새로 열린 순차 단계부터 처리한다.
+
+`approval_channels: [pxm_user, external_email]`인 Hybrid Task는 별도의 PXM 알림
+메일을 만들지 않는다. External Approval Dispatcher가 보내는 한 통의 메일에
+이메일 승인 링크와 PXM 결재함 링크를 함께 넣어 중복 발송을 막는다.
 
 ## 전달 내용
 
@@ -21,7 +25,7 @@ Task는 소급 발송하지 않으며, 시작 이후 새로 열린 순차 단계
 
 `task_id + email`은 발송 레코드의 유일키다. 같은 Task를 Dispatcher가 다시
 발견해도 발송 레코드는 하나만 생성된다. 발송 직전에 Task가 여전히 `OPEN`이고
-PXM 사용자 채널인지 다시 확인한다. 따라서 ANY 단계에서 다른 승인자가 먼저
+PXM 사용자 전용 채널인지 다시 확인한다. 따라서 ANY 단계에서 다른 승인자가 먼저
 처리해 `CANCELED`된 Task나 이미 완료된 Task에는 메일을 보내지 않는다.
 
 다음 순차 단계가 열리면 그때 생성된 새 Task ID로 해당 단계 승인자에게만 새

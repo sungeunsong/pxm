@@ -266,11 +266,13 @@ export type WorkflowTaskHistoryItem = {
   approval_line_snapshot: Record<string, unknown> | null;
   status: 'OPEN' | 'APPROVED' | 'REJECTED' | 'CANCELED';
   approver_channel: 'pxm_user' | 'external_email';
+  approval_channels: Array<'pxm_user' | 'external_email'>;
   assignee: string;
   action: 'approve' | 'reject' | null;
   comment: string | null;
   result: Record<string, unknown> | null;
   authentication_method: 'pxm_session' | 'api_key' | 'email_link' | 'email_otp' | null;
+  completed_via: 'pxm_user' | 'external_email' | null;
   delivery_status: 'PENDING' | 'CLAIMED' | 'SENT' | 'FAILED' | null;
   delivery_attempt_count: number;
   delivery_last_error: string | null;
@@ -292,6 +294,11 @@ export type ExternalApprovalClaim = {
   require_otp: boolean;
   expires_in_hours: number;
   attempt_count: number;
+  allows_pxm_user: boolean;
+  title: string;
+  requester: string | null;
+  step_label: string | null;
+  source_url: string | null;
 };
 
 export type ExternalApprovalDeliveryToken = {
@@ -340,6 +347,11 @@ export type CompleteWorkflowTaskCommand = {
   comment?: string | null;
   result?: Record<string, any> | null;
   idempotency_key?: string | null;
+  authentication_method?:
+    | 'pxm_session'
+    | 'api_key'
+    | 'email_link'
+    | 'email_otp';
   external_approval?: {
     token_hash: string;
     email: string;

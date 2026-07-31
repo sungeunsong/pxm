@@ -11,6 +11,11 @@ describe('ExternalApprovalDispatcher', () => {
           require_otp: true,
           expires_in_hours: 24,
           attempt_count: 1,
+          allows_pxm_user: true,
+          title: 'Purchase approval',
+          requester: 'kim',
+          step_label: '1단계',
+          source_url: 'https://source.example/request',
         },
       ]),
       setExternalApprovalDeliveryToken: jest.fn().mockResolvedValue(true),
@@ -33,6 +38,12 @@ describe('ExternalApprovalDispatcher', () => {
     expect(rawToken).toMatch(/^[A-Za-z0-9_-]{40,}$/);
     expect(stored.token_hash).toMatch(/^[a-f0-9]{64}$/);
     expect(JSON.stringify(stored)).not.toContain(rawToken);
+    expect(mailer.sendApprovalLink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Purchase approval',
+        inboxUrl: expect.stringContaining('/#/inbox?task=task-1'),
+      }),
+    );
     expect(tasks.markExternalApprovalDelivery).toHaveBeenCalledWith(
       'task-1',
       expect.any(String),

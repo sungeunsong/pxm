@@ -89,4 +89,30 @@ describeMongo('Approval notification MongoDB integration', () => {
       .toEqual(expect.objectContaining({ status: 'SENT', attempt_count: 2 }));
     expect(await db.collection('approval_notification_attempts').countDocuments({ delivery_id: failed!._id })).toBe(2);
   });
+
+  it('does not enqueue the separate PXM notification email for a hybrid task', async () => {
+    const createdAt = new Date(Date.now() + 70).toISOString();
+    await db.collection('v2_tasks').insertOne({
+      _id: 'task-hybrid',
+      instance_id: 'instance-1',
+      node_id: 'approval',
+      assignee: 'approver-a',
+      status: 'OPEN',
+      payload: {
+        approver_channel: 'pxm_user',
+        approval_channels: ['pxm_user', 'external_email'],
+        external_email: 'a@example.test',
+        content: { title: '하이브리드 결재' },
+      },
+      created_at: createdAt,
+      updated_at: createdAt,
+    });
+
+    await dispatcher.tick();
+    expect(
+      await db
+        .collection('approval_notification_deliveries')
+        .countDocuments({ task_id: 'task-hybrid' }),
+    ).toBe(0);
+  });
 });

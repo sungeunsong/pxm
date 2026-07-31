@@ -44,7 +44,7 @@ Flow Designer에서 Approval 노드의 `결재라인 입력 방식`을 `실행 �
                 "principal": { "provider": "acrapoint", "subject": "EMP-100" },
                 "pxm_user_id": "pxm-user-lead-a",
                 "display": { "name": "김팀장", "email": "lead-a@example.com", "department": "개발팀" },
-                "approver_channel": "pxm_user"
+                "approval_channels": ["pxm_user", "external_email"]
               }
             ]
           },
@@ -57,7 +57,7 @@ Flow Designer에서 Approval 노드의 `결재라인 입력 방식`을 `실행 �
                 "principal": { "provider": "acrapoint", "subject": "EMP-200" },
                 "display": { "name": "박임원", "email": "director-a@example.com", "department": "경영진" },
                 "delivery": { "email": "director-a@example.com" },
-                "approver_channel": "external_email"
+                "approval_channels": ["external_email"]
               }
             ]
           }
@@ -83,8 +83,14 @@ Flow Designer에서 Approval 노드의 `결재라인 입력 방식`을 `실행 �
 - 각 단계의 `approvers`에는 한 명 이상의 승인자가 필요하고 동일 principal을 중복해
   넣을 수 없다.
 - 기존의 단계별 `assignee` 단일 형식도 하위 호환을 위해 지원한다.
-- `approver_channel`은 `pxm_user` 또는 `external_email`이며 생략하면 노드의 채널
-  설정 또는 `pxm_user`를 사용한다.
+- `approval_channels`는 `pxm_user`, `external_email` 중 하나 이상을 담는다.
+  두 값을 모두 보내도 승인자별 `ApprovalTask`는 하나만 생성된다.
+- 기존 단일 `approver_channel` 입력은 하위 호환된다. 두 필드를 함께 보낸 경우
+  `approval_channels`를 기준으로 처리하며, 지원하지 않는 값이나 빈 배열은 요청을
+  거부한다.
+- `pxm_user`를 포함하면 `pxm_user_id` 매핑(또는 PXM provider subject)이 필요하고,
+  `external_email`을 포함하면 유효한 이메일 주소가 필요하다. 사용자 매핑 여부가
+  채널을 자동으로 추가하거나 변경하지 않는다.
 - 최대 단계 수는 100개다.
 
 ## 실행 시점 스냅샷
@@ -107,6 +113,11 @@ Approval 노드에 처음 진입할 때 PXM은 외부 요청 ID, 결재 내용, 
 Task 완료, 단계 전이, 다음 Task 생성 또는 최종 `RESUME` 등록은 하나의 DB
 트랜잭션에서 처리한다. Task는 `(approval_step_id, assignee)`별로 하나만 존재할 수 있어
 동일 승인자의 중복 Task와 다음 단계의 중복 개방을 막는다.
+
+`pxm_user + external_email` Hybrid Task는 PXM 세션과 이메일 링크가 같은 Task를
+완료하려고 경쟁한다. 먼저 획득한 원자적 상태 전이만 성공하고 다른 채널은 즉시
+사용 불가가 된다. 완료 이력에는 허용 채널 `approval_channels`, 실제 처리 채널
+`completed_via`, 인증 방식 `authentication_method`를 각각 저장한다.
 
 ## 외부 요청 멱등성과 재상신
 

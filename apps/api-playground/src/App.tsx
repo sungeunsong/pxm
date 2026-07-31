@@ -27,7 +27,7 @@ import type { RequestLog } from './api.ts';
 type Tab = 'workflows' | 'instances' | 'approvals' | 'console';
 type WorkflowItem = { id: string; name: string; description?: string; version?: number; group?: string; group_id?: string; tags?: string[]; nodes?: Array<{ data?: { nodeType?: string; formSchema?: { fields?: Array<{ id: string; label?: string; type?: string }> } } }> };
 type InstanceItem = { id?: string; _id?: string; state?: string; status?: string; process_definition_id?: string; definition_id?: string; created_at?: string; updated_at?: string; context?: Record<string, unknown> };
-type ApprovalItem = { task_id: string; instance_id: string; workflow_id: string | null; workflow_name: string | null; node_label: string | null; status: string; approver_channel: string; assignee: string; action: string | null; authentication_method: string | null; created_at: string; completed_at: string | null; comment?: string | null; result?: Record<string, unknown> | null };
+type ApprovalItem = { task_id: string; instance_id: string; workflow_id: string | null; workflow_name: string | null; node_label: string | null; status: string; approver_channel: string; approval_channels?: string[]; completed_via?: string | null; assignee: string; action: string | null; authentication_method: string | null; created_at: string; completed_at: string | null; comment?: string | null; result?: Record<string, unknown> | null };
 type ApprovalPage = { items: ApprovalItem[]; next_cursor: string | null };
 type TraceItem = { id: number; event_type?: string; type?: string; node_label?: string; created_at?: string; payload?: unknown };
 
@@ -178,7 +178,7 @@ function InstancesView({ items, busy, onRefresh, onInspect }: { items: InstanceI
 }
 
 function ApprovalsView(props: { items: ApprovalItem[]; busy: string; status: string; channel: string; onStatus: (v: string) => void; onChannel: (v: string) => void; onSearch: () => void; onInspect: (item: ApprovalItem) => void }) {
-  return <section><SectionHeader title="Approval task history" description="결재 대기부터 승인·반려 완료 이력까지 API로 조회합니다." /><div className="filters"><label><span>Status</span><input value={props.status} onChange={(e) => props.onStatus(e.target.value)} /></label><label><span>Channel</span><select value={props.channel} onChange={(e) => props.onChannel(e.target.value)}><option value="">All channels</option><option value="pxm_user">PXM user</option><option value="external_email">External email</option></select></label><button onClick={props.onSearch} disabled={props.busy === 'approvals'}><Search /> 조회</button></div><div className="data-table approvals"><div className="table-head"><span>Workflow / Task</span><span>Assignee</span><span>Channel</span><span>Status</span><span>Completed</span><span /></div>{props.items.map((item) => <button className="table-row" key={item.task_id} onClick={() => props.onInspect(item)}><span><strong>{item.workflow_name || 'Unknown workflow'}</strong><code>{shortId(item.task_id)}</code></span><span className="truncate">{item.assignee}</span><span>{item.approver_channel === 'external_email' ? 'Email + OTP' : 'PXM user'}</span><Status value={item.status} /><span>{formatDate(item.completed_at || item.created_at)}</span><ChevronRight /></button>)}</div>{!props.items.length && <Empty icon={<ListChecks />} title="조건에 맞는 결재 이력이 없습니다" text="status 또는 channel 필터를 변경해 보세요." />}</section>;
+  return <section><SectionHeader title="Approval task history" description="결재 대기부터 승인·반려 완료 이력까지 API로 조회합니다." /><div className="filters"><label><span>Status</span><input value={props.status} onChange={(e) => props.onStatus(e.target.value)} /></label><label><span>Channel</span><select value={props.channel} onChange={(e) => props.onChannel(e.target.value)}><option value="">All channels</option><option value="pxm_user">PXM user</option><option value="external_email">External email</option></select></label><button onClick={props.onSearch} disabled={props.busy === 'approvals'}><Search /> 조회</button></div><div className="data-table approvals"><div className="table-head"><span>Workflow / Task</span><span>Assignee</span><span>Channel</span><span>Status</span><span>Completed</span><span /></div>{props.items.map((item) => <button className="table-row" key={item.task_id} onClick={() => props.onInspect(item)}><span><strong>{item.workflow_name || 'Unknown workflow'}</strong><code>{shortId(item.task_id)}</code></span><span className="truncate">{item.assignee}</span><span>{formatApprovalChannels(item)}{item.completed_via ? ` · ${item.completed_via}` : ''}</span><Status value={item.status} /><span>{formatDate(item.completed_at || item.created_at)}</span><ChevronRight /></button>)}</div>{!props.items.length && <Empty icon={<ListChecks />} title="조건에 맞는 결재 이력이 없습니다" text="status 또는 channel 필터를 변경해 보세요." />}</section>;
 }
 
 function ConsoleView({ logs, onClear }: { logs: RequestLog[]; onClear: () => void }) {
@@ -209,6 +209,14 @@ function tabTitle(tab: Tab) { return ({ workflows: 'Workflows', instances: 'Runt
 function instanceId(item: InstanceItem) { return String(item.id || item._id || ''); }
 function shortId(value: string) { return value.length > 18 ? `${value.slice(0, 8)}…${value.slice(-5)}` : value; }
 function formatDate(value?: string | null) { return value ? new Date(value).toLocaleString() : '-'; }
+function formatApprovalChannels(item: ApprovalItem) {
+  const channels = item.approval_channels?.length
+    ? item.approval_channels
+    : [item.approver_channel];
+  return channels
+    .map((channel) => channel === 'external_email' ? 'Email' : 'PXM Web')
+    .join(' + ');
+}
 function parseObject(value: string): Record<string, unknown> | null { try { const parsed: unknown = JSON.parse(value); return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null; } catch { return null; } }
 function apiError(cause: unknown) { if (cause instanceof ApiError) return `HTTP ${cause.status} · ${cause.message}`; return cause instanceof Error ? cause.message : String(cause); }
 function defaultInput(workflow: WorkflowItem) { const fields = workflow.nodes?.find((node) => node.data?.nodeType === 'start')?.data?.formSchema?.fields || []; if (!fields.length) return '{\n  \n}'; return JSON.stringify(Object.fromEntries(fields.map((field) => [field.id, field.type === 'number' ? 0 : `${field.label || field.id} 입력`])), null, 2); }

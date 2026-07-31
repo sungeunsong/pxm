@@ -391,4 +391,93 @@ describePostgres('Postgres approval task transaction', () => {
       [instanceId],
     )).rows[0].count).toBe(1);
   });
+
+  it('keeps one hybrid task and accepts only the first completion channel', async () => {
+    await pool.query(
+      `UPDATE v2_tasks
+       SET assignee = 'alice',
+           payload = $2::jsonb
+       WHERE id = $1::uuid`,
+      [
+        taskId,
+        JSON.stringify({
+          approver_channel: 'pxm_user',
+          approval_channels: ['pxm_user', 'external_email'],
+          external_email: 'alice@example.com',
+          external_require_otp: false,
+          content: { title: 'Hybrid approval' },
+        }),
+      ],
+    );
+    const [claim] = await adapter.claimExternalApprovalTasks(
+      'postgres-hybrid-mailer',
+      new Date(),
+      new Date(Date.now() + 60_000),
+      1,
+    );
+    expect(claim).toEqual(
+      expect.objectContaining({
+        task_id: taskId,
+        email: 'alice@example.com',
+        allows_pxm_user: true,
+      }),
+    );
+    await adapter.setExternalApprovalDeliveryToken(
+      taskId,
+      'postgres-hybrid-mailer',
+      {
+        email: claim.email,
+        token_hash: 'd'.repeat(64),
+        token_expires_at: new Date(Date.now() + 60_000).toISOString(),
+        require_otp: false,
+        attempt_count: 1,
+      },
+    );
+
+    expect(
+      (
+        await adapter.completeTask({
+          task_id: taskId,
+          action: 'approve',
+          status: 'APPROVED',
+          actor_id: 'alice',
+          idempotency_key: 'postgres-hybrid-web',
+          authentication_method: 'pxm_session',
+        })
+      ).outcome,
+    ).toBe('completed');
+    expect(
+      (
+        await adapter.completeTask({
+          task_id: taskId,
+          action: 'approve',
+          status: 'APPROVED',
+          actor_id: 'external-email:test',
+          idempotency_key: 'postgres-hybrid-email',
+          authentication_method: 'email_link',
+          external_approval: {
+            token_hash: 'd'.repeat(64),
+            email: 'alice@example.com',
+            auth_method: 'email_link',
+          },
+        })
+      ).outcome,
+    ).toBe('already_completed');
+    expect(await adapter.getTaskHistoryItem(taskId)).toEqual(
+      expect.objectContaining({
+        approval_channels: ['pxm_user', 'external_email'],
+        completed_via: 'pxm_user',
+        authentication_method: 'pxm_session',
+      }),
+    );
+    expect(
+      (
+        await pool.query(
+          `SELECT count(*)::int AS count FROM v2_engine_jobs
+           WHERE instance_id = $1::uuid AND type = 'RESUME'`,
+          [instanceId],
+        )
+      ).rows[0].count,
+    ).toBe(1);
+  });
 });

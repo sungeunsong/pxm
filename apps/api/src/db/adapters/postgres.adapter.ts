@@ -2,6 +2,11 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Pool, PoolClient } from 'pg';
 import { PG_POOL } from '../pg.provider';
 import { WorkflowDefinitionMetadata, WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleJob, WorkflowScheduleRepositoryPort, WorkflowScheduleStatus, WorkflowHistoryActor, WorkflowInstanceAccess, WorkflowDefinitionVersion, WorkflowInputPreset, WorkflowInputPresetRepositoryPort, UpsertWorkflowInputPreset, AppendPxmApiKeyUsageLog, AuthzRepositoryPort, CreatePxmApiKey, CreatePxmSession, PxmApiKey, PxmApiKeyUsageLog, PxmGroup, PxmServiceAccount, PxmUser, PxmSession, PxmSessionSecurityPolicy, UpsertPxmGroup, UpsertPxmServiceAccount, UpsertPxmUser, UpsertPxmSessionSecurityPolicy, CompleteWorkflowTaskCommand, CompleteWorkflowTaskResult, ExternalApprovalClaim, ExternalApprovalDeliveryToken, ExternalApprovalOtp, ExternalApprovalTask, WorkflowTaskHistoryItem, WorkflowTaskHistoryPage, WorkflowTaskHistoryQuery, IdempotentWorkflowStart, IdempotentWorkflowStartResult, IdempotentInstanceCommand, IdempotentInstanceCommandResult, ExistingIdempotentInstanceCommandResult, WorkflowInstanceMutation } from '../ports/db.ports';
+import {
+  allowsApprovalChannel,
+  approvalChannels,
+  primaryApprovalChannel,
+} from '../approval-channels';
 
 @Injectable()
 export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleRepositoryPort, WorkflowInputPresetRepositoryPort, AuthzRepositoryPort {
@@ -1147,7 +1152,8 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
        JOIN v2_process_instances i ON i.id = t.instance_id
        LEFT JOIN v2_process_definitions d ON d.id = i.process_definition_id
        WHERE t.status = 'OPEN'
-         AND COALESCE(t.payload->>'approver_channel', 'pxm_user') = 'pxm_user'
+         AND ${postgresAllowsApprovalChannel('t.payload', 'pxm_user')}
+         AND NOT (${postgresAllowsApprovalChannel('t.payload', 'external_email')})
          AND (date_trunc('milliseconds', t.created_at) > $1::timestamptz
            OR (date_trunc('milliseconds', t.created_at) = $1::timestamptz AND t.id::text > $2))
        ORDER BY date_trunc('milliseconds', t.created_at) ASC, t.id::text ASC
@@ -1191,7 +1197,16 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
     if (query.workflow_id) where.push(`i.process_definition_id = ${bind(query.workflow_id)}::uuid`);
     if (query.instance_id) where.push(`t.instance_id = ${bind(query.instance_id)}::uuid`);
     if (query.assignee) where.push(`t.assignee = ${bind(query.assignee)}`);
-    if (query.approver_channel) where.push(`COALESCE(t.payload->>'approver_channel', 'pxm_user') = ${bind(query.approver_channel)}`);
+    if (query.approver_channel) {
+      const channelParam = bind(query.approver_channel);
+      where.push(
+        `(CASE
+          WHEN jsonb_typeof(t.payload->'approval_channels') = 'array'
+            THEN t.payload->'approval_channels' ? ${channelParam}
+          ELSE COALESCE(t.payload->>'approver_channel', 'pxm_user') = ${channelParam}
+        END)`,
+      );
+    }
     if (query.from) where.push(`t.created_at >= ${bind(query.from)}::timestamptz`);
     if (query.to) where.push(`t.created_at <= ${bind(query.to)}::timestamptz`);
     if (query.group_ids) where.push(`COALESCE(i.context->'runtime'->'access'->>'group_id', i.context->'runtime'->'snapshot'->'group'->>'id') = ANY(${bind(query.group_ids)}::text[])`);
@@ -1207,7 +1222,16 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
               COALESCE(i.context->'runtime'->'access'->>'group_id', i.context->'runtime'->'snapshot'->'group'->>'id') AS group_id,
               i.context->'runtime'->'snapshot'->'workflow'->>'version' AS workflow_version_id,
               i.context,
-              d.name AS workflow_name, d.version AS workflow_version, d.nodes AS definition_nodes,
+              d.name AS workflow_name, d.version AS workflow_version,
+              COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                  'node_id', n.node_id,
+                  'label', n.label,
+                  'config', n.config
+                ))
+                FROM v2_definition_nodes n
+                WHERE n.definition_id = i.process_definition_id
+              ), '[]'::jsonb) AS definition_nodes,
               ar.status AS request_status, ar.current_step_order, ar.total_steps,
               ar.source_provider, ar.external_request_id, ar.external_revision,
               ar.content_snapshot, ar.approval_line_snapshot,
@@ -1235,7 +1259,16 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
               COALESCE(i.context->'runtime'->'access'->>'group_id', i.context->'runtime'->'snapshot'->'group'->>'id') AS group_id,
               i.context->'runtime'->'snapshot'->'workflow'->>'version' AS workflow_version_id,
               i.context,
-              d.name AS workflow_name, d.version AS workflow_version, d.nodes AS definition_nodes,
+              d.name AS workflow_name, d.version AS workflow_version,
+              COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                  'node_id', n.node_id,
+                  'label', n.label,
+                  'config', n.config
+                ))
+                FROM v2_definition_nodes n
+                WHERE n.definition_id = i.process_definition_id
+              ), '[]'::jsonb) AS definition_nodes,
               ar.status AS request_status, ar.current_step_order, ar.total_steps,
               ar.source_provider, ar.external_request_id, ar.external_revision,
               ar.content_snapshot, ar.approval_line_snapshot,
@@ -1259,7 +1292,7 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
       const { rows } = await client.query(
         `SELECT * FROM v2_tasks
          WHERE status = 'OPEN'
-           AND payload->>'approver_channel' = 'external_email'
+           AND ${postgresAllowsApprovalChannel('payload', 'external_email')}
            AND COALESCE((payload->'external_approval'->>'attempt_count')::int, 0) < 10
            AND (
              payload->'external_approval'->>'delivery_status' IS NULL
@@ -1296,10 +1329,21 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
         claims.push({
           task_id: String(task.id),
           instance_id: String(task.instance_id),
-          email: String(task.assignee),
+          email: externalApprovalEmail(task),
           require_otp: task.payload?.external_require_otp !== false,
           expires_in_hours: Math.min(168, Math.max(1, Number(task.payload?.external_expires_in_hours) || 24)),
           attempt_count: attemptCount,
+          allows_pxm_user: approvalChannels(task.payload).includes('pxm_user'),
+          title: String(task.payload?.content?.title || '승인 요청'),
+          requester: task.payload?.content?.requester
+            ? String(task.payload.content.requester)
+            : null,
+          step_label: task.payload?.step_label
+            ? String(task.payload.step_label)
+            : null,
+          source_url: task.payload?.content?.source_url
+            ? String(task.payload.content.source_url)
+            : null,
         });
       }
       await client.query('COMMIT');
@@ -1380,7 +1424,12 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
 
   async requeueExternalApproval(taskId: string): Promise<boolean> {
     const task = await this.getTask(taskId);
-    if (!task || task.status !== 'OPEN' || task.payload?.approver_channel !== 'external_email') return false;
+    if (
+      !task ||
+      task.status !== 'OPEN' ||
+      !allowsApprovalChannel(task.payload, 'external_email')
+    )
+      return false;
     const now = new Date().toISOString();
     const externalApproval = {
       ...(task.payload?.external_approval || {}),
@@ -1405,7 +1454,7 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
     const result = await this.pool.query(
       `UPDATE v2_tasks SET payload = $1::jsonb, updated_at = NOW()
        WHERE id = $2::uuid AND status = 'OPEN'
-         AND payload->>'approver_channel' = 'external_email'`,
+         AND ${postgresAllowsApprovalChannel('payload', 'external_email')}`,
       [
         JSON.stringify({
           ...(task.payload || {}),
@@ -1582,6 +1631,8 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
           task_id: command.task_id,
           comment: command.comment || null,
           result: command.result || null,
+          completed_via: completedVia(command),
+          authentication_method: completion.authentication_method,
         });
         if (command.status === 'REJECTED') {
           await client.query(
@@ -1703,6 +1754,8 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
               task_id: command.task_id,
               result: command.result || null,
               comment: command.comment || null,
+              completed_via: completedVia(command),
+              authentication_method: completion.authentication_method,
             }),
           ],
         );
@@ -1721,7 +1774,10 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
             action: command.action,
             status: command.status,
             actor_id: command.actor_id,
-            approval_channel: command.external_approval ? 'external_email' : 'pxm_user',
+            approval_channel: completedVia(command),
+            approval_channels: approvalChannels(task.payload),
+            completed_via: completedVia(command),
+            authentication_method: completion.authentication_method,
           }),
         ],
       );
@@ -1758,6 +1814,9 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
               task_id: command.task_id,
               status: command.status,
               outcome: command.action === 'approve' ? 'approved' : 'rejected',
+              approval_channels: approvalChannels(task.payload),
+              completed_via: completedVia(command),
+              authentication_method: completion.authentication_method,
               source: {
                 provider: lockedRequest?.source_provider || null,
                 request_id: lockedRequest?.external_request_id || null,
@@ -1787,6 +1846,7 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
     await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_v2_tasks_history ON v2_tasks (status, created_at DESC, id DESC)`);
     await this.pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS ux_v2_tasks_external_approval_token_hash ON v2_tasks ((payload->'external_approval'->>'token_hash')) WHERE payload->'external_approval'->>'token_hash' IS NOT NULL`);
     await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_v2_tasks_external_approval_dispatch ON v2_tasks (status, (payload->>'approver_channel'), (payload->'external_approval'->>'delivery_status'), created_at)`);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_v2_tasks_approval_channels_gin ON v2_tasks USING GIN ((payload->'approval_channels')) WHERE jsonb_typeof(payload->'approval_channels') = 'array'`);
     this.taskRuntimeColumnsReady = true;
   }
 
@@ -2772,6 +2832,10 @@ function actorManagerGroupIds(actor: WorkflowHistoryActor): string[] {
 }
 
 function taskCompletion(command: CompleteWorkflowTaskCommand, completedAt: string) {
+  const authenticationMethod =
+    command.authentication_method ||
+    command.external_approval?.auth_method ||
+    (command.api_key_id ? 'api_key' : 'pxm_session');
   return {
     action: command.action,
     actor_id: command.actor_id,
@@ -2780,6 +2844,8 @@ function taskCompletion(command: CompleteWorkflowTaskCommand, completedAt: strin
     comment: command.comment || null,
     result: command.result || null,
     idempotency_key: command.idempotency_key || null,
+    authentication_method: authenticationMethod,
+    completed_via: completedVia(command),
     completed_at: completedAt,
   };
 }
@@ -2815,12 +2881,23 @@ function mapTaskHistoryPostgres(task: any): WorkflowTaskHistoryItem {
     content_snapshot: task.content_snapshot || null,
     approval_line_snapshot: task.approval_line_snapshot || null,
     status: task.status,
-    approver_channel: task.payload?.approver_channel === 'external_email' ? 'external_email' : 'pxm_user',
+    approver_channel: primaryApprovalChannel(task.payload),
+    approval_channels: approvalChannels(task.payload),
     assignee: String(task.assignee),
     action: completion?.action === 'approve' || completion?.action === 'reject' ? completion.action : null,
     comment: typeof completion?.comment === 'string' ? completion.comment : null,
     result: completion?.result && typeof completion.result === 'object' ? completion.result : null,
-    authentication_method: external?.auth_method || (completion?.api_key_id ? 'api_key' : completion ? 'pxm_session' : null),
+    authentication_method:
+      completion?.authentication_method ||
+      external?.auth_method ||
+      (completion?.api_key_id ? 'api_key' : completion ? 'pxm_session' : null),
+    completed_via:
+      completion?.completed_via ||
+      (external?.auth_method
+        ? 'external_email'
+        : completion
+          ? 'pxm_user'
+          : null),
     delivery_status: external?.delivery_status || null,
     delivery_attempt_count: Number(external?.attempt_count || 0),
     delivery_last_error: typeof external?.last_error === 'string' ? external.last_error : null,
@@ -2829,4 +2906,34 @@ function mapTaskHistoryPostgres(task: any): WorkflowTaskHistoryItem {
     updated_at: new Date(task.updated_at || task.created_at).toISOString(),
     completed_at: completion?.completed_at ? new Date(completion.completed_at).toISOString() : null,
   };
+}
+
+function completedVia(
+  command: CompleteWorkflowTaskCommand,
+): 'pxm_user' | 'external_email' {
+  return command.external_approval ? 'external_email' : 'pxm_user';
+}
+
+function postgresAllowsApprovalChannel(
+  payloadExpression: string,
+  channel: 'pxm_user' | 'external_email',
+): string {
+  const fallback =
+    channel === 'pxm_user'
+      ? `COALESCE(${payloadExpression}->>'approver_channel', 'pxm_user') = 'pxm_user'`
+      : `${payloadExpression}->>'approver_channel' = 'external_email'`;
+  return `(CASE
+    WHEN jsonb_typeof(${payloadExpression}->'approval_channels') = 'array'
+      THEN ${payloadExpression}->'approval_channels' ? '${channel}'
+    ELSE ${fallback}
+  END)`;
+}
+
+function externalApprovalEmail(task: any): string {
+  const email =
+    task.payload?.external_email ||
+    task.payload?.delivery?.email ||
+    task.payload?.display_snapshot?.email ||
+    task.assignee;
+  return String(email);
 }

@@ -52,6 +52,18 @@ describePostgres('Approval notification PostgreSQL task discovery', () => {
         [id, instanceId, input.assignee, input.status, input.channel],
       );
     }
+    const hybridId = randomUUID();
+    taskIds.push(hybridId);
+    await pool.query(
+      `INSERT INTO v2_tasks (id, instance_id, node_id, assignee, status, payload)
+       VALUES ($1::uuid, $2::uuid, 'approval', 'approver-a', 'OPEN',
+         jsonb_build_object(
+           'approver_channel', 'pxm_user',
+           'approval_channels', jsonb_build_array('pxm_user', 'external_email'),
+           'external_email', 'approver-a@example.test'
+         ))`,
+      [hybridId, instanceId],
+    );
     const candidates = await adapter.fetchApprovalNotificationTasks({ created_at: cursor, id: '' }, 20);
     expect(candidates).toEqual([
       expect.objectContaining({

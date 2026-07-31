@@ -1129,11 +1129,17 @@ fn expected_join_count(scope_key: Option<&str>, fallback: usize) -> usize {
 
 fn resolve_approval_assignment(node: &NodeDef, context: &Value) -> (String, Value) {
     let approval_line = node.config.get("approvalLine").unwrap_or(&Value::Null);
-    let approver_channel = node
+    let legacy_approver_channel = node
         .config
         .get("approverChannel")
         .and_then(|value| value.as_str())
         .unwrap_or("pxm_user");
+    let approval_channels = normalized_approval_channels(
+        node.config.get("approvalChannels"),
+        Some(legacy_approver_channel),
+    )
+    .unwrap_or_else(|_| vec!["pxm_user".to_string()]);
+    let approver_channel = primary_approval_channel(&approval_channels);
     let external_require_otp = node
         .config
         .get("externalApprovalRequireOtp")
@@ -1173,6 +1179,7 @@ fn resolve_approval_assignment(node: &NodeDef, context: &Value) -> (String, Valu
                                     "matched_condition": condition,
                                     "assignee": assignee,
                                     "approver_channel": approver_channel,
+                                    "approval_channels": approval_channels,
                                     "external_require_otp": external_require_otp,
                                     "external_expires_in_hours": external_expires_in_hours
                                 }),
@@ -1195,6 +1202,7 @@ fn resolve_approval_assignment(node: &NodeDef, context: &Value) -> (String, Valu
                     "matched_condition": null,
                     "assignee": assignee,
                     "approver_channel": approver_channel,
+                    "approval_channels": approval_channels,
                     "external_require_otp": external_require_otp,
                     "external_expires_in_hours": external_expires_in_hours
                 }),
@@ -1241,6 +1249,7 @@ fn resolve_approval_assignment(node: &NodeDef, context: &Value) -> (String, Valu
                     "candidates": candidates,
                     "assignee": assignee,
                     "approver_channel": approver_channel,
+                    "approval_channels": approval_channels,
                     "external_require_otp": external_require_otp,
                     "external_expires_in_hours": external_expires_in_hours
                 }),
@@ -1258,11 +1267,58 @@ fn resolve_approval_assignment(node: &NodeDef, context: &Value) -> (String, Valu
                     "approval_model": "fixed",
                     "assignee": assignee,
                     "approver_channel": approver_channel,
+                    "approval_channels": approval_channels,
                     "external_require_otp": external_require_otp,
                     "external_expires_in_hours": external_expires_in_hours
                 }),
             )
         }
+    }
+}
+
+fn normalized_approval_channels(
+    raw_channels: Option<&Value>,
+    legacy_channel: Option<&str>,
+) -> Result<Vec<String>> {
+    let mut channels = Vec::new();
+    if let Some(raw_channels) = raw_channels {
+        let values = raw_channels
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("approval_channels must be an array"))?;
+        if values.is_empty() {
+            anyhow::bail!("approval_channels must not be empty");
+        }
+        for value in values {
+            let channel = value
+                .as_str()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("approval_channels must contain strings"))?;
+            if channel != "pxm_user" && channel != "external_email" {
+                anyhow::bail!("unsupported approval channel '{}'", channel);
+            }
+            if !channels.iter().any(|item| item == channel) {
+                channels.push(channel.to_string());
+            }
+        }
+    } else {
+        let channel = legacy_channel.unwrap_or("pxm_user").trim();
+        if channel != "pxm_user" && channel != "external_email" {
+            anyhow::bail!("unsupported approval channel '{}'", channel);
+        }
+        channels.push(channel.to_string());
+    }
+    Ok(channels)
+}
+
+fn primary_approval_channel(channels: &[String]) -> String {
+    if channels.iter().any(|channel| channel == "pxm_user") {
+        "pxm_user".to_string()
+    } else {
+        channels
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "pxm_user".to_string())
     }
 }
 
@@ -1284,12 +1340,53 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
         .to_ascii_lowercase();
 
     if model != "dynamic" {
-        let (assignee, payload) = resolve_approval_assignment(node, context);
-        let approver_channel = payload
-            .get("approver_channel")
-            .and_then(Value::as_str)
-            .unwrap_or("pxm_user")
-            .to_string();
+        let (assignee, mut payload) = resolve_approval_assignment(node, context);
+        let approval_channels = normalized_approval_channels(
+            node.config.get("approvalChannels"),
+            node.config
+                .get("approverChannel")
+                .and_then(Value::as_str)
+                .or(Some("pxm_user")),
+        )?;
+        let approver_channel = primary_approval_channel(&approval_channels);
+        if let Some(payload) = payload.as_object_mut() {
+            payload.insert(
+                "approver_channel".to_string(),
+                Value::String(approver_channel.clone()),
+            );
+            payload.insert(
+                "approval_channels".to_string(),
+                serde_json::to_value(&approval_channels)?,
+            );
+        }
+        if approval_channels
+            .iter()
+            .any(|channel| channel == "external_email")
+        {
+            let external_email = node
+                .config
+                .get("externalApprovalEmail")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .or_else(|| {
+                    (!approval_channels.iter().any(|channel| channel == "pxm_user"))
+                        .then_some(assignee.as_str())
+                })
+                .ok_or_else(|| anyhow::anyhow!("external approval email is required"))?;
+            if !external_email.contains('@')
+                || external_email.starts_with('@')
+                || external_email.ends_with('@')
+            {
+                anyhow::bail!("external approval email is invalid");
+            }
+            if let Some(payload) = payload.as_object_mut() {
+                payload.insert(
+                    "external_email".to_string(),
+                    Value::String(external_email.to_string()),
+                );
+            }
+        }
         return Ok(V2ApprovalDefinition {
             source: json!({"type": "workflow_node"}),
             source_provider: None,
@@ -1300,7 +1397,9 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
             approval_line_snapshot: json!({
                 "mode": "fixed",
                 "steps": [{"order": 1, "mode": "ALL", "approvers": [{
-                    "assignee": assignee, "approver_channel": approver_channel
+                    "assignee": assignee,
+                    "approver_channel": approver_channel,
+                    "approval_channels": approval_channels
                 }]}]
             }),
             steps: vec![V2ApprovalStepInput {
@@ -1309,6 +1408,7 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
                 tasks: vec![V2ApprovalTaskInput {
                     assignee,
                     approver_channel,
+                    approval_channels,
                     payload,
                 }],
             }],
@@ -1398,6 +1498,10 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
         .get("approverChannel")
         .and_then(Value::as_str)
         .unwrap_or("pxm_user");
+    let default_channels = normalized_approval_channels(
+        node.config.get("approvalChannels"),
+        Some(default_channel),
+    )?;
     let external_require_otp = node
         .config
         .get("externalApprovalRequireOtp")
@@ -1450,14 +1554,22 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
             let approver = raw_approver
                 .as_object()
                 .ok_or_else(|| anyhow::anyhow!("approval step {} approver must be an object", order))?;
-            let approver_channel = approver
-                .get("approver_channel")
-                .and_then(Value::as_str)
-                .unwrap_or(default_channel)
-                .to_string();
-            if approver_channel != "pxm_user" && approver_channel != "external_email" {
-                anyhow::bail!("approval step {} has unsupported approver_channel", order);
-            }
+            let approval_channels =
+                if let Some(raw_channels) = approver.get("approval_channels") {
+                    normalized_approval_channels(Some(raw_channels), None)
+                } else if let Some(legacy_channel) =
+                    approver.get("approver_channel").and_then(Value::as_str)
+                {
+                    normalized_approval_channels(None, Some(legacy_channel))
+                } else {
+                    Ok(default_channels.clone())
+                }
+                .map_err(|error| anyhow::anyhow!("approval step {}: {}", order, error))?;
+            let approver_channel = primary_approval_channel(&approval_channels);
+            let allows_pxm = approval_channels.iter().any(|channel| channel == "pxm_user");
+            let allows_external = approval_channels
+                .iter()
+                .any(|channel| channel == "external_email");
             let principal = approver.get("principal").and_then(Value::as_object);
             let legacy_assignee = approver
                 .get("assignee")
@@ -1469,7 +1581,7 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
                 .and_then(Value::as_str)
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
-                .unwrap_or(if approver_channel == "pxm_user" { "pxm" } else { "email" })
+                .unwrap_or(if allows_pxm { "pxm" } else { "email" })
                 .to_string();
             let principal_subject = principal
                 .and_then(|value| value.get("subject"))
@@ -1495,33 +1607,39 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
                 .and_then(Value::as_str)
                 .map(str::trim)
                 .filter(|value| !value.is_empty());
-            let assignee = if approver_channel == "pxm_user" {
-                pxm_user_id
-                    .or_else(|| (principal_provider == "pxm").then_some(principal_subject.as_str()))
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "approval step {} external principal requires pxm_user_id mapping for pxm_user channel",
-                            order
-                        )
-                    })?
-                    .to_string()
-            } else {
-                approver
-                    .get("delivery")
-                    .and_then(Value::as_object)
-                    .and_then(|value| value.get("email"))
-                    .or_else(|| display_snapshot.get("email"))
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .unwrap_or(&principal_subject)
-                    .to_string()
-            };
-            if approver_channel == "external_email"
-                && (!assignee.contains('@') || assignee.starts_with('@') || assignee.ends_with('@'))
+            let pxm_assignee = pxm_user_id
+                .or_else(|| (principal_provider == "pxm").then_some(principal_subject.as_str()));
+            if allows_pxm && pxm_assignee.is_none() {
+                anyhow::bail!(
+                    "approval step {} external principal requires pxm_user_id mapping for pxm_user channel",
+                    order
+                );
+            }
+            let external_email = approver
+                .get("delivery")
+                .and_then(Value::as_object)
+                .and_then(|value| value.get("email"))
+                .or_else(|| display_snapshot.get("email"))
+                .or_else(|| approver.get("email"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .or_else(|| {
+                    (principal_provider == "email" || principal_subject.contains('@'))
+                        .then_some(principal_subject.as_str())
+                });
+            if allows_external
+                && external_email.is_none_or(|email| {
+                    !email.contains('@') || email.starts_with('@') || email.ends_with('@')
+                })
             {
                 anyhow::bail!("approval step {} has invalid external email", order);
             }
+            let assignee = if allows_pxm {
+                pxm_assignee.unwrap().to_string()
+            } else {
+                external_email.unwrap().to_string()
+            };
             let principal_key = format!("{}:{}", principal_provider, principal_subject);
             if !seen.insert(principal_key.clone()) {
                 anyhow::bail!("approval step {} has duplicate principal {}", order, principal_key);
@@ -1533,12 +1651,14 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
                 "step_label": label,
                 "assignee": assignee,
                 "approver_channel": approver_channel,
+                "approval_channels": approval_channels,
                 "principal": {
                     "provider": principal_provider,
                     "subject": principal_subject
                 },
                 "display_snapshot": display_snapshot,
                 "pxm_user_id": pxm_user_id,
+                "external_email": external_email,
                 "content": content_snapshot,
                 "external_require_otp": external_require_otp,
                 "external_expires_in_hours": external_expires_in_hours
@@ -1546,16 +1666,19 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
             normalized_approvers.push(json!({
                 "assignee": assignee,
                 "approver_channel": approver_channel,
+                "approval_channels": approval_channels,
                 "principal": {
                     "provider": principal_provider,
                     "subject": principal_subject
                 },
                 "display_snapshot": display_snapshot,
-                "pxm_user_id": pxm_user_id
+                "pxm_user_id": pxm_user_id,
+                "external_email": external_email
             }));
             tasks.push(V2ApprovalTaskInput {
                 assignee,
                 approver_channel,
+                approval_channels,
                 payload,
             });
         }
@@ -1617,6 +1740,30 @@ mod tests {
         let (assignee, payload) = resolve_approval_assignment(&node, &json!({}));
         assert_eq!(assignee, "manager");
         assert_eq!(payload["approval_model"], "fixed");
+    }
+
+    #[test]
+    fn resolves_fixed_hybrid_approval_as_one_task() {
+        let node = NodeDef {
+            node_id: "approval".to_string(),
+            node_type: "approval".to_string(),
+            config: json!({
+                "approvalLine": {"mode": "fixed", "assignee": "manager"},
+                "approvalChannels": ["pxm_user", "external_email"],
+                "externalApprovalEmail": "manager@example.com"
+            }),
+        };
+
+        let definition = resolve_approval_definition(&node, &json!({})).unwrap();
+        assert_eq!(definition.steps[0].tasks.len(), 1);
+        assert_eq!(
+            definition.steps[0].tasks[0].approval_channels,
+            vec!["pxm_user".to_string(), "external_email".to_string()]
+        );
+        assert_eq!(
+            definition.steps[0].tasks[0].payload["external_email"],
+            "manager@example.com"
+        );
     }
 
     #[test]
@@ -1735,6 +1882,85 @@ mod tests {
                 ["display_snapshot"]["department"],
             "재무팀"
         );
+    }
+
+    #[test]
+    fn resolves_one_hybrid_task_with_pxm_assignee_and_external_email() {
+        let node = NodeDef {
+            node_id: "approval".to_string(),
+            node_type: "approval".to_string(),
+            config: json!({"approvalType": "dynamic"}),
+        };
+        let context = json!({"data":{"formData":{"approval_request":{
+            "source":{"provider":"acrapoint"},
+            "request_id":"AP-HYBRID-1",
+            "content":{"title":"하이브리드 결재"},
+            "approval_line":{"steps":[{"approvers":[{
+                "principal":{"provider":"acrapoint","subject":"EMP-100"},
+                "pxm_user_id":"pxm-user-7",
+                "display":{"name":"김승인","email":"kim@example.com"},
+                "approval_channels":["pxm_user","external_email"]
+            }]}]}
+        }}}});
+
+        let definition = resolve_approval_definition(&node, &context).unwrap();
+        assert_eq!(definition.steps[0].tasks.len(), 1);
+        let task = &definition.steps[0].tasks[0];
+        assert_eq!(task.assignee, "pxm-user-7");
+        assert_eq!(
+            task.approval_channels,
+            vec!["pxm_user".to_string(), "external_email".to_string()]
+        );
+        assert_eq!(task.payload["external_email"], "kim@example.com");
+        assert_eq!(task.payload["approver_channel"], "pxm_user");
+    }
+
+    #[test]
+    fn allows_a_known_pxm_principal_to_use_email_only() {
+        let node = NodeDef {
+            node_id: "approval".to_string(),
+            node_type: "approval".to_string(),
+            config: json!({"approvalType": "dynamic"}),
+        };
+        let context = json!({"data":{"formData":{"approval_request":{
+            "source":{"provider":"pxm"},
+            "request_id":"AP-EMAIL-ONLY-1",
+            "content":{},
+            "approval_line":{"steps":[{"approvers":[{
+                "principal":{"provider":"pxm","subject":"pxm-user-7"},
+                "display":{"email":"kim@example.com"},
+                "approval_channels":["external_email"]
+            }]}]}
+        }}}});
+
+        let definition = resolve_approval_definition(&node, &context).unwrap();
+        let task = &definition.steps[0].tasks[0];
+        assert_eq!(task.assignee, "kim@example.com");
+        assert_eq!(
+            task.approval_channels,
+            vec!["external_email".to_string()]
+        );
+    }
+
+    #[test]
+    fn rejects_hybrid_task_without_an_external_email() {
+        let node = NodeDef {
+            node_id: "approval".to_string(),
+            node_type: "approval".to_string(),
+            config: json!({"approvalType": "dynamic"}),
+        };
+        let context = json!({"data":{"formData":{"approval_request":{
+            "source":{"provider":"acrapoint"},
+            "request_id":"AP-HYBRID-BAD",
+            "content":{},
+            "approval_line":{"steps":[{"approvers":[{
+                "principal":{"provider":"acrapoint","subject":"EMP-100"},
+                "pxm_user_id":"pxm-user-7",
+                "approval_channels":["pxm_user","external_email"]
+            }]}]}
+        }}}});
+
+        assert!(resolve_approval_definition(&node, &context).is_err());
     }
 
     #[test]

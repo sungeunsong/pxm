@@ -379,28 +379,52 @@ export class TemplatesService {
       }
       // Legacy workflows used an untyped assignee string. They remain loadable until
       // an administrator explicitly chooses one of the new identity channels.
-      const channel = data.approverChannel;
-      if (!channel) continue;
+      const configuredChannels = Array.isArray(data.approvalChannels)
+        ? [...new Set(data.approvalChannels)]
+        : data.approverChannel
+          ? [data.approverChannel]
+          : [];
+      if (
+        Array.isArray(data.approvalChannels) &&
+        configuredChannels.length === 0
+      ) {
+        throw new BadRequestException(
+          `Approval node ${node.id || ''} requires at least one approver channel`,
+        );
+      }
+      if (configuredChannels.length === 0) continue;
+      if (
+        configuredChannels.some(
+          (channel) =>
+            channel !== 'pxm_user' && channel !== 'external_email',
+        )
+      ) {
+        throw new BadRequestException(
+          `Approval node ${node.id || ''} has an unsupported approver channel`,
+        );
+      }
+      const allowsPxm = configuredChannels.includes('pxm_user');
+      const allowsExternal = configuredChannels.includes('external_email');
 
       const assignee = typeof data.assignee === 'string' ? data.assignee.trim() : '';
       if (!assignee) {
         throw new BadRequestException(`Approval node ${node.id || ''} requires an assignee`);
       }
 
-      if (channel === 'external_email') {
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(assignee)) {
+      if (allowsExternal) {
+        const externalEmail = allowsPxm
+          ? String(data.externalApprovalEmail || '').trim()
+          : assignee;
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(externalEmail)) {
           throw new BadRequestException(`Approval node ${node.id || ''} has an invalid external email`);
         }
         const expiresInHours = Number(data.externalApprovalExpiresInHours ?? 24);
         if (!Number.isInteger(expiresInHours) || expiresInHours < 1 || expiresInHours > 168) {
           throw new BadRequestException(`Approval node ${node.id || ''} external link expiry must be between 1 and 168 hours`);
         }
-        continue;
       }
 
-      if (channel !== 'pxm_user') {
-        throw new BadRequestException(`Approval node ${node.id || ''} has an unsupported approver channel`);
-      }
+      if (!allowsPxm) continue;
       if (!groupId) {
         throw new BadRequestException('Workflow group_id is required when assigning a PXM approver');
       }

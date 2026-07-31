@@ -2,6 +2,10 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { randomUUID } from 'crypto';
 import { ApprovalNotificationChannel } from './notification-channel';
 import { NotificationService, type NotificationDelivery } from './notification.service';
+import {
+  allowsApprovalChannel,
+  approvalChannels,
+} from '../db/approval-channels';
 
 @Injectable()
 export class NotificationDispatcher implements OnModuleInit, OnModuleDestroy {
@@ -46,7 +50,13 @@ export class NotificationDispatcher implements OnModuleInit, OnModuleDestroy {
     const started = Date.now();
     try {
       const task = await this.notifications.currentTask(delivery);
-      if (!task || task.status !== 'OPEN' || task.payload?.approver_channel !== 'pxm_user') {
+      const channels = approvalChannels(task?.payload);
+      if (
+        !task ||
+        task.status !== 'OPEN' ||
+        !allowsApprovalChannel(task.payload, 'pxm_user') ||
+        channels.includes('external_email')
+      ) {
         await this.notifications.markCanceled(delivery, 'approval task is no longer OPEN');
         return;
       }

@@ -21,6 +21,11 @@ interface Task {
   node_id: string;
   status: string;
   assignee?: string;
+  payload?: Record<string, any>;
+  approver_channel?: 'pxm_user' | 'external_email';
+  approval_channels?: Array<'pxm_user' | 'external_email'>;
+  completed_via?: 'pxm_user' | 'external_email' | null;
+  authentication_method?: string | null;
   form_data?: Record<string, any>;
   approval_request_id?: string | null;
   approval_step_id?: string | null;
@@ -118,6 +123,18 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
         task?.form_data?.approval_request?.content?.requester ||
         readField(task, ['신청자', 'requester', 'requesterName', 'applicant'], task?.assignee || '-'),
     );
+
+  const getApprovalChannels = (task: Task | null) => {
+    const channels: Array<'pxm_user' | 'external_email'> =
+      task?.approval_channels ||
+      task?.payload?.approval_channels ||
+      [task?.approver_channel || task?.payload?.approver_channel || 'pxm_user'];
+    return channels
+      .map((channel) =>
+        channel === 'external_email' ? '이메일 링크' : 'PXM 웹',
+      )
+      .join(' + ');
+  };
 
   const getProcessLabel = (task: Task | null) =>
     task?.template_name || readField(task, ['요청 프로세스', 'processName'], task?.process_definition_id || '-');
@@ -436,6 +453,25 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
                         : '-'}
                     </span>
                   </div>
+                  <div className="info-cell">
+                    <span className="info-label">허용 결재 채널</span>
+                    <span className="info-val">
+                      {getApprovalChannels(selectedTask)}
+                    </span>
+                  </div>
+                  {selectedTask.completed_via && (
+                    <div className="info-cell">
+                      <span className="info-label">실제 처리 채널</span>
+                      <span className="info-val">
+                        {selectedTask.completed_via === 'external_email'
+                          ? '이메일 링크'
+                          : 'PXM 웹'}
+                        {selectedTask.authentication_method
+                          ? ` · ${selectedTask.authentication_method}`
+                          : ''}
+                      </span>
+                    </div>
+                  )}
                   <div className="info-cell">
                     <span className="info-label">결재 내용</span>
                     <span className="info-val text-box-reason">

@@ -82,6 +82,55 @@ describe('TasksService', () => {
     expect(taskRepo.completeTask).not.toHaveBeenCalled();
   });
 
+  it('allows a hybrid task in the PXM inbox but rejects an email-only task', async () => {
+    instanceRepo.getInstance.mockResolvedValue({
+      definition_id: 'workflow-1',
+      group_id: 'group-1',
+    });
+    taskRepo.completeTask.mockResolvedValue({
+      outcome: 'completed',
+      task: { id: 'task-1' },
+    });
+    taskRepo.getTask.mockResolvedValueOnce({
+      id: 'task-1',
+      instance_id: 'instance-1',
+      node_id: 'approval',
+      assignee: 'alice',
+      status: 'OPEN',
+      payload: {
+        approval_channels: ['pxm_user', 'external_email'],
+      },
+    });
+
+    await service.completeTask(
+      'task-1',
+      { action: 'approve' },
+      actor({ actor_id: 'alice', group_ids: ['group-1'] }),
+      'hybrid-web',
+    );
+    expect(taskRepo.completeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authentication_method: 'pxm_session',
+      }),
+    );
+
+    taskRepo.getTask.mockResolvedValueOnce({
+      id: 'task-2',
+      instance_id: 'instance-1',
+      assignee: 'alice',
+      status: 'OPEN',
+      payload: { approval_channels: ['external_email'] },
+    });
+    await expect(
+      service.completeTask(
+        'task-2',
+        { action: 'approve' },
+        actor({ actor_id: 'alice', group_ids: ['group-1'] }),
+        'email-only-web',
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
   it('applies API key workflow/group scope and records an idempotent audit event', async () => {
     taskRepo.getTask.mockResolvedValue({
       id: 'task-1',

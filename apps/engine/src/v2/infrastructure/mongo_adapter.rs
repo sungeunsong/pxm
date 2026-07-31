@@ -804,6 +804,7 @@ impl TaskRepositoryPort for MongoAdapter {
                         serde_json::json!({
                             "assignee": task.assignee,
                             "approver_channel": task.approver_channel,
+                            "approval_channels": task.approval_channels,
                             "payload": task.payload
                         })
                     })

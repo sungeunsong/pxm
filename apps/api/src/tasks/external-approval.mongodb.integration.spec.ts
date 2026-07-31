@@ -213,4 +213,156 @@ describeMongo('Mongo external email approval transaction', () => {
       ),
     ).toEqual([expect.objectContaining({ task_id: taskId, attempt_count: 1 })]);
   });
+
+  it('uses one hybrid task and lets the PXM completion win over its email link', async () => {
+    await db.collection('v2_tasks').updateOne(
+      { _id: taskId },
+      {
+        $set: {
+          assignee: 'pxm-user-7',
+          payload: {
+            approver_channel: 'pxm_user',
+            approval_channels: ['pxm_user', 'external_email'],
+            external_email: 'hybrid@example.com',
+            external_require_otp: false,
+            content: { title: 'Hybrid approval', requester: 'kim' },
+          },
+        },
+      },
+    );
+    const [claim] = await adapter.claimExternalApprovalTasks(
+      'hybrid-mailer',
+      new Date(),
+      new Date(Date.now() + 60_000),
+      1,
+    );
+    expect(claim).toEqual(
+      expect.objectContaining({
+        task_id: taskId,
+        email: 'hybrid@example.com',
+        allows_pxm_user: true,
+        title: 'Hybrid approval',
+      }),
+    );
+    expect(
+      await adapter.setExternalApprovalDeliveryToken(
+        taskId,
+        'hybrid-mailer',
+        {
+          email: claim.email,
+          token_hash: 'c'.repeat(64),
+          token_expires_at: new Date(Date.now() + 60_000).toISOString(),
+          require_otp: false,
+          attempt_count: 1,
+        },
+      ),
+    ).toBe(true);
+
+    const webResult = await adapter.completeTask({
+      task_id: taskId,
+      action: 'approve',
+      status: 'APPROVED',
+      actor_id: 'pxm-user-7',
+      idempotency_key: 'hybrid-web',
+      authentication_method: 'pxm_session',
+    });
+    expect(webResult.outcome).toBe('completed');
+
+    const emailResult = await adapter.completeTask({
+      task_id: taskId,
+      action: 'approve',
+      status: 'APPROVED',
+      actor_id: 'external-email:test',
+      idempotency_key: 'hybrid-email',
+      authentication_method: 'email_link',
+      external_approval: {
+        token_hash: 'c'.repeat(64),
+        email: 'hybrid@example.com',
+        auth_method: 'email_link',
+      },
+    });
+    expect(emailResult.outcome).toBe('already_completed');
+    expect(await adapter.getTaskHistoryItem(taskId)).toEqual(
+      expect.objectContaining({
+        approval_channels: ['pxm_user', 'external_email'],
+        completed_via: 'pxm_user',
+        authentication_method: 'pxm_session',
+      }),
+    );
+    expect(
+      await db
+        .collection('v2_engine_jobs')
+        .countDocuments({ instance_id: instanceId, job_type: 'RESUME' }),
+    ).toBe(1);
+  });
+
+  it('makes the PXM action unavailable after email completes a hybrid task', async () => {
+    await db.collection('v2_tasks').updateOne(
+      { _id: taskId },
+      {
+        $set: {
+          assignee: 'pxm-user-7',
+          payload: {
+            approver_channel: 'pxm_user',
+            approval_channels: ['pxm_user', 'external_email'],
+            external_email: 'hybrid@example.com',
+            external_require_otp: false,
+          },
+        },
+      },
+    );
+    const [claim] = await adapter.claimExternalApprovalTasks(
+      'hybrid-email-first',
+      new Date(),
+      new Date(Date.now() + 60_000),
+      1,
+    );
+    await adapter.setExternalApprovalDeliveryToken(
+      taskId,
+      'hybrid-email-first',
+      {
+        email: claim.email,
+        token_hash: 'e'.repeat(64),
+        token_expires_at: new Date(Date.now() + 60_000).toISOString(),
+        require_otp: false,
+        attempt_count: 1,
+      },
+    );
+
+    expect(
+      (
+        await adapter.completeTask({
+          task_id: taskId,
+          action: 'approve',
+          status: 'APPROVED',
+          actor_id: 'external-email:test',
+          idempotency_key: 'hybrid-email-first',
+          authentication_method: 'email_link',
+          external_approval: {
+            token_hash: 'e'.repeat(64),
+            email: 'hybrid@example.com',
+            auth_method: 'email_link',
+          },
+        })
+      ).outcome,
+    ).toBe('completed');
+    expect(
+      (
+        await adapter.completeTask({
+          task_id: taskId,
+          action: 'approve',
+          status: 'APPROVED',
+          actor_id: 'pxm-user-7',
+          idempotency_key: 'hybrid-web-late',
+          authentication_method: 'pxm_session',
+        })
+      ).outcome,
+    ).toBe('already_completed');
+    expect(await adapter.getTaskHistoryItem(taskId)).toEqual(
+      expect.objectContaining({
+        completed_via: 'external_email',
+        authentication_method: 'email_link',
+      }),
+    );
+  });
 });

@@ -1071,10 +1071,22 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
   const renderApprovalProperties = () => {
     const data = node.data as any;
     const approvalLineSource = data.approvalLineSource || (data.approvalType === 'dynamic' ? 'dynamic' : 'fixed');
-    const approverChannel = data.approverChannel || 'pxm_user';
-    const externalEmail = String(data.assignee || '').trim();
+    const approvalChannels: Array<'pxm_user' | 'external_email'> =
+      Array.isArray(data.approvalChannels) && data.approvalChannels.length
+        ? data.approvalChannels
+        : [data.approverChannel || 'pxm_user'];
+    const allowsPxm = approvalChannels.includes('pxm_user');
+    const allowsExternal = approvalChannels.includes('external_email');
+    const approvalChannelMode = allowsPxm && allowsExternal
+      ? 'hybrid'
+      : allowsExternal
+        ? 'external_email'
+        : 'pxm_user';
+    const externalEmail = String(
+      allowsPxm ? data.externalApprovalEmail || '' : data.assignee || '',
+    ).trim();
     const externalEmailInvalid =
-      approverChannel === 'external_email' &&
+      allowsExternal &&
       externalEmail.length > 0 &&
       !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(externalEmail);
     const workflowGroup = workflowGroups.find((group) => group.id === credentialGroupId);
@@ -1134,21 +1146,33 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
           />
         )}
         <Select
-          label="승인자 유형"
-          value={approverChannel}
-          onChange={(e) => onUpdate(node.id, {
-            ...data,
-            approverChannel: e.target.value as 'pxm_user' | 'external_email',
-            assignee: '',
-          })}
+          label="승인 채널"
+          value={approvalChannelMode}
+          onChange={(e) => {
+            const mode = e.target.value;
+            const channels: Array<'pxm_user' | 'external_email'> =
+              mode === 'hybrid'
+                ? ['pxm_user', 'external_email']
+                : [mode as 'pxm_user' | 'external_email'];
+            onUpdate(node.id, {
+              ...data,
+              approverChannel: channels.includes('pxm_user')
+                ? 'pxm_user'
+                : 'external_email',
+              approvalChannels: channels,
+              assignee: '',
+              externalApprovalEmail: '',
+            });
+          }}
           options={[
-            { value: 'pxm_user', label: 'PXM 사용자' },
-            { value: 'external_email', label: '외부 이메일' },
+            { value: 'pxm_user', label: 'PXM 웹' },
+            { value: 'external_email', label: '이메일 링크' },
+            { value: 'hybrid', label: 'PXM 웹 + 이메일 링크' },
           ]}
-          helperText="승인자의 신원을 확인할 방식을 선택합니다."
+          helperText="두 채널을 선택해도 결재 Task는 하나이며, 먼저 처리한 채널만 인정됩니다."
           fullWidth
         />
-        {approverChannel === 'pxm_user' ? (
+        {allowsPxm && (
           <Select
             label="PXM 승인자"
             value={data.assignee || ''}
@@ -1164,16 +1188,28 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
             disabled={!credentialGroupId || approvalUsersLoading}
             fullWidth
           />
-        ) : (
+        )}
+        {allowsExternal && (
           <>
             <Input
               type="email"
               label="승인자 이메일"
               placeholder="approver@example.com"
-              value={data.assignee || ''}
-              onChange={(e) => onUpdate(node.id, { ...data, assignee: e.target.value.trim() })}
+              value={externalEmail}
+              onChange={(e) =>
+                onUpdate(node.id, {
+                  ...data,
+                  ...(allowsPxm
+                    ? { externalApprovalEmail: e.target.value.trim() }
+                    : { assignee: e.target.value.trim() }),
+                })
+              }
               error={externalEmailInvalid ? '올바른 이메일 주소를 입력하세요.' : undefined}
-              helperText="일회용 승인 링크가 이 주소로 발송됩니다. PXM 가입은 필요하지 않습니다."
+              helperText={
+                allowsPxm
+                  ? '같은 승인자에게 PXM 결재함과 일회용 이메일 링크를 함께 제공합니다.'
+                  : '일회용 승인 링크가 이 주소로 발송됩니다. PXM 가입은 필요하지 않습니다.'
+              }
               fullWidth
             />
             <Input

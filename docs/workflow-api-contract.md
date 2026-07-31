@@ -617,12 +617,14 @@ Authorization: Bearer pxm_live_xxx
         "steps": []
       },
       "status": "APPROVED",
-      "approver_channel": "external_email",
-      "assignee": "approver@example.com",
+      "approver_channel": "pxm_user",
+      "approval_channels": ["pxm_user", "external_email"],
+      "assignee": "pxm-user-7",
       "action": "approve",
       "comment": "확인했습니다.",
       "result": null,
       "authentication_method": "email_otp",
+      "completed_via": "external_email",
       "delivery_status": "SENT",
       "delivery_attempt_count": 1,
       "delivery_last_error": null,
@@ -637,6 +639,9 @@ Authorization: Bearer pxm_live_xxx
 ```
 
 - 지원 filter: `status`, `workflow_id`, `instance_id`, `assignee`, `approver_channel`, `from`, `to`, `cursor`, `limit`.
+- `approver_channel` filter는 허용 채널 배열에 해당 값이 포함된 Task를 찾는다.
+  `approver_channel` 응답 필드는 기존 클라이언트 호환용 대표값이고, 신규 연동은
+  `approval_channels`와 `completed_via`를 사용한다.
 - `status`는 `OPEN`, `APPROVED`, `REJECTED`, `CANCELED`를 쉼표로 조합한다.
 - 일반 user는 본인에게 배정된 task만, group manager는 관리 group, admin은 전체 이력을 조회한다.
 - API key와 service account는 `workflow:read` scope, owner group, `allowed_workflow_ids`를 모두 만족해야 한다.
@@ -656,6 +661,9 @@ Authorization: Bearer pxm_live_xxx
     "task_id": "task-uuid",
     "status": "REJECTED",
     "outcome": "rejected",
+    "approval_channels": ["pxm_user", "external_email"],
+    "completed_via": "external_email",
+    "authentication_method": "email_otp",
     "source": {
       "provider": "acrapoint",
       "request_id": "ACRA-2026-0042",

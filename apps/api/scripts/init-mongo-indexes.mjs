@@ -90,6 +90,10 @@ async function main() {
     { status: 1, 'payload.approver_channel': 1, 'payload.external_approval.delivery_status': 1, created_at: 1 },
     { name: 'idx_v2_tasks_external_approval_dispatch' },
   );
+  await db.collection('v2_tasks').createIndex(
+    { status: 1, 'payload.approval_channels': 1, 'payload.external_approval.delivery_status': 1, created_at: 1 },
+    { name: 'idx_v2_tasks_approval_channels_dispatch' },
+  );
   await db.collection('v2_event_outbox').createIndex({ instance_id: 1, created_at: 1 });
   await db.collection('v2_execution_logs').createIndex({ instance_id: 1, created_at: 1 });
   await ensureAdvisoryLockIndexes(db);

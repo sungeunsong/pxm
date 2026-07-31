@@ -90,6 +90,13 @@ export class ExternalApprovalDispatcher
         url: `${publicUrl}/external-approval/${rawToken}`,
         expiresAt: expiresAt.toISOString(),
         requireOtp: claim.require_otp,
+        title: claim.title,
+        requester: claim.requester,
+        stepLabel: claim.step_label,
+        sourceUrl: claim.source_url,
+        inboxUrl: claim.allows_pxm_user
+          ? `${publicUrl}/#/inbox?task=${encodeURIComponent(claim.task_id)}`
+          : null,
       });
       await this.tasks.markExternalApprovalDelivery(
         claim.task_id,

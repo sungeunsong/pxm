@@ -119,6 +119,7 @@ export class ExternalApprovalService {
       actor_id: `external-email:${hashToken(email).slice(0, 16)}`,
       comment: dto.comment?.trim() || null,
       idempotency_key: `external:${hashToken(rawToken)}`,
+      authentication_method: authMethod,
       external_approval: {
         token_hash: hashToken(rawToken),
         email,

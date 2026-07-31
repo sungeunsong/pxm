@@ -2,6 +2,10 @@ import { Inject, Injectable } from '@nestjs/common';
 import { ClientSession, Db, ObjectId } from 'mongodb';
 import { MONGO_DB } from '../mongo.provider';
 import { WorkflowDefinitionMetadata, WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleJob, WorkflowScheduleRepositoryPort, WorkflowScheduleStatus, WorkflowHistoryActor, WorkflowInstanceAccess, WorkflowDefinitionVersion, WorkflowInputPreset, WorkflowInputPresetRepositoryPort, UpsertWorkflowInputPreset, AppendPxmApiKeyUsageLog, AuthzRepositoryPort, CreatePxmApiKey, CreatePxmSession, PxmApiKey, PxmApiKeyUsageLog, PxmGroup, PxmServiceAccount, PxmUser, PxmSession, PxmSessionSecurityPolicy, UpsertPxmGroup, UpsertPxmServiceAccount, UpsertPxmUser, UpsertPxmSessionSecurityPolicy, CompleteWorkflowTaskCommand, CompleteWorkflowTaskResult, ExternalApprovalClaim, ExternalApprovalDeliveryToken, ExternalApprovalOtp, ExternalApprovalTask, WorkflowTaskHistoryItem, WorkflowTaskHistoryPage, WorkflowTaskHistoryQuery, IdempotentWorkflowStart, IdempotentWorkflowStartResult, IdempotentInstanceCommand, IdempotentInstanceCommandResult, ExistingIdempotentInstanceCommandResult, WorkflowInstanceMutation } from '../ports/db.ports';
+import {
+  approvalChannels,
+  primaryApprovalChannel,
+} from '../approval-channels';
 
 @Injectable()
 export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleRepositoryPort, WorkflowInputPresetRepositoryPort, AuthzRepositoryPort {
@@ -1414,10 +1418,15 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
   async fetchApprovalNotificationTasks(after: { created_at: string; id: string }, limit: number) {
     const tasks = await this.db.collection<any>('v2_tasks').find({
       status: 'OPEN',
-      'payload.approver_channel': 'pxm_user',
-      $or: [
-        { created_at: { $gt: after.created_at } },
-        { created_at: after.created_at, _id: { $gt: after.id } },
+      $and: [
+        mongoAllowsApprovalChannel('pxm_user'),
+        { 'payload.approval_channels': { $ne: 'external_email' } },
+        {
+          $or: [
+            { created_at: { $gt: after.created_at } },
+            { created_at: after.created_at, _id: { $gt: after.id } },
+          ],
+        },
       ],
     }).sort({ created_at: 1, _id: 1 }).limit(limit).toArray();
     return Promise.all(tasks.map(async (task) => {
@@ -1456,7 +1465,12 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
     if (query.statuses?.length) taskMatch.status = { $in: query.statuses };
     if (query.instance_id) taskMatch.instance_id = query.instance_id;
     if (query.assignee) taskMatch.assignee = query.assignee;
-    if (query.approver_channel) taskMatch['payload.approver_channel'] = query.approver_channel;
+    if (query.approver_channel) {
+      taskMatch.$and = [
+        ...(Array.isArray(taskMatch.$and) ? taskMatch.$and : []),
+        mongoAllowsApprovalChannel(query.approver_channel),
+      ];
+    }
     if (query.from || query.to) {
       taskMatch.created_at = {
         ...(query.from ? { $gte: query.from } : {}),
@@ -1464,7 +1478,12 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
       };
     }
     if (query.cursor) {
-      taskMatch.$or = [{ created_at: { $lt: query.cursor.created_at } }, { created_at: query.cursor.created_at, _id: { $lt: query.cursor.id } }];
+      taskMatch.$and = [
+        ...(Array.isArray(taskMatch.$and) ? taskMatch.$and : []),
+        {
+          $or: [{ created_at: { $lt: query.cursor.created_at } }, { created_at: query.cursor.created_at, _id: { $lt: query.cursor.id } }],
+        },
+      ];
     }
 
     const joinedMatch: Record<string, any> = {};
@@ -1598,8 +1617,8 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
       const task = await collection.findOneAndUpdate(
         {
           status: 'OPEN',
-          'payload.approver_channel': 'external_email',
           $and: [
+            mongoAllowsApprovalChannel('external_email'),
             {
               $or: [
                 {
@@ -1637,10 +1656,21 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
       claims.push({
         task_id: String(task._id),
         instance_id: String(task.instance_id),
-        email: String(task.assignee),
+        email: externalApprovalEmail(task),
         require_otp: task.payload?.external_require_otp !== false,
         expires_in_hours: Math.min(168, Math.max(1, Number(task.payload?.external_expires_in_hours) || 24)),
         attempt_count: Number(task.payload?.external_approval?.attempt_count) || 1,
+        allows_pxm_user: approvalChannels(task.payload).includes('pxm_user'),
+        title: String(task.payload?.content?.title || '승인 요청'),
+        requester: task.payload?.content?.requester
+          ? String(task.payload.content.requester)
+          : null,
+        step_label: task.payload?.step_label
+          ? String(task.payload.step_label)
+          : null,
+        source_url: task.payload?.content?.source_url
+          ? String(task.payload.content.source_url)
+          : null,
       });
     }
     return claims;
@@ -1703,7 +1733,7 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
       {
         _id: taskId,
         status: 'OPEN',
-        'payload.approver_channel': 'external_email',
+        ...mongoAllowsApprovalChannel('external_email'),
       },
       {
         $set: {
@@ -1910,6 +1940,8 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
             task_id: command.task_id,
             comment: command.comment || null,
             result: command.result || null,
+            completed_via: completedVia(command),
+            authentication_method: completion.authentication_method,
           };
           if (command.status === 'REJECTED') {
             await this.db.collection<any>('v2_approval_steps').updateOne(
@@ -2048,6 +2080,8 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
                 task_id: command.task_id,
                 result: command.result || null,
                 comment: command.comment || null,
+                completed_via: completedVia(command),
+                authentication_method: completion.authentication_method,
               },
               created_at: now,
               updated_at: now,
@@ -2067,7 +2101,10 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
               action: command.action,
               status: command.status,
               actor_id: command.actor_id,
-              approval_channel: command.external_approval ? 'external_email' : 'pxm_user',
+              approval_channel: completedVia(command),
+              approval_channels: approvalChannels(task.payload),
+              completed_via: completedVia(command),
+              authentication_method: completion.authentication_method,
             },
             created_at: now,
           },
@@ -2106,6 +2143,9 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
                 task_id: command.task_id,
                 status: command.status,
                 outcome: command.action === 'approve' ? 'approved' : 'rejected',
+                approval_channels: approvalChannels(task.payload),
+                completed_via: completedVia(command),
+                authentication_method: completion.authentication_method,
                 source: {
                   provider: lockedRequest?.source_provider || null,
                   request_id: lockedRequest?.external_request_id || null,
@@ -2961,6 +3001,10 @@ function actorManagerGroupIds(actor: WorkflowHistoryActor): string[] {
 }
 
 function taskCompletion(command: CompleteWorkflowTaskCommand, completedAt: string) {
+  const authenticationMethod =
+    command.authentication_method ||
+    command.external_approval?.auth_method ||
+    (command.api_key_id ? 'api_key' : 'pxm_session');
   return {
     action: command.action,
     actor_id: command.actor_id,
@@ -2969,6 +3013,8 @@ function taskCompletion(command: CompleteWorkflowTaskCommand, completedAt: strin
     comment: command.comment || null,
     result: command.result || null,
     idempotency_key: command.idempotency_key || null,
+    authentication_method: authenticationMethod,
+    completed_via: completedVia(command),
     completed_at: completedAt,
   };
 }
@@ -3053,12 +3099,23 @@ function mapTaskHistoryMongo(task: any): WorkflowTaskHistoryItem {
     content_snapshot: task.approval_request?.content_snapshot || null,
     approval_line_snapshot: task.approval_request?.approval_line_snapshot || null,
     status: task.status,
-    approver_channel: task.payload?.approver_channel === 'external_email' ? 'external_email' : 'pxm_user',
+    approver_channel: primaryApprovalChannel(task.payload),
+    approval_channels: approvalChannels(task.payload),
     assignee: String(task.assignee),
     action: completion?.action === 'approve' || completion?.action === 'reject' ? completion.action : null,
     comment: typeof completion?.comment === 'string' ? completion.comment : null,
     result: completion?.result && typeof completion.result === 'object' ? completion.result : null,
-    authentication_method: external?.auth_method || (completion?.api_key_id ? 'api_key' : completion ? 'pxm_session' : null),
+    authentication_method:
+      completion?.authentication_method ||
+      external?.auth_method ||
+      (completion?.api_key_id ? 'api_key' : completion ? 'pxm_session' : null),
+    completed_via:
+      completion?.completed_via ||
+      (external?.auth_method
+        ? 'external_email'
+        : completion
+          ? 'pxm_user'
+          : null),
     delivery_status: external?.delivery_status || null,
     delivery_attempt_count: Number(external?.attempt_count || 0),
     delivery_last_error: typeof external?.last_error === 'string' ? external.last_error : null,
@@ -3067,4 +3124,40 @@ function mapTaskHistoryMongo(task: any): WorkflowTaskHistoryItem {
     updated_at: String(task.updated_at || task.created_at),
     completed_at: completion?.completed_at ? String(completion.completed_at) : null,
   };
+}
+
+function completedVia(
+  command: CompleteWorkflowTaskCommand,
+): 'pxm_user' | 'external_email' {
+  return command.external_approval ? 'external_email' : 'pxm_user';
+}
+
+function mongoAllowsApprovalChannel(
+  channel: 'pxm_user' | 'external_email',
+): Record<string, any> {
+  return {
+    $or: [
+      { 'payload.approval_channels': channel },
+      {
+        'payload.approval_channels': { $exists: false },
+        ...(channel === 'pxm_user'
+          ? {
+              $or: [
+                { 'payload.approver_channel': 'pxm_user' },
+                { 'payload.approver_channel': { $exists: false } },
+              ],
+            }
+          : { 'payload.approver_channel': 'external_email' }),
+      },
+    ],
+  };
+}
+
+function externalApprovalEmail(task: any): string {
+  const email =
+    task.payload?.external_email ||
+    task.payload?.delivery?.email ||
+    task.payload?.display_snapshot?.email ||
+    task.assignee;
+  return String(email);
 }

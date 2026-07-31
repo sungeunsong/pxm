@@ -19,6 +19,10 @@ import {
   isAdmin,
   managerGroupIds,
 } from '../authz/management-auth';
+import {
+  allowsApprovalChannel,
+  approvalChannels,
+} from '../db/approval-channels';
 
 @Injectable()
 export class TasksService {
@@ -135,6 +139,7 @@ export class TasksService {
       comment: dto.comment?.trim() || null,
       result: dto.result || null,
       idempotency_key: normalizedKey,
+      authentication_method: actor.api_key_id ? 'api_key' : 'pxm_session',
     });
 
     if (result.outcome === 'not_found')
@@ -182,7 +187,12 @@ export class TasksService {
     const item = await this.tasks.getTaskHistoryItem(id);
     if (!item) throw new NotFoundException('Task not found');
     assertCanManageGroup(actor, item.group_id);
-    if (item.approver_channel !== 'external_email')
+    if (
+      !approvalChannels({
+        approval_channels: item.approval_channels,
+        approver_channel: item.approver_channel,
+      }).includes('external_email')
+    )
       throw new BadRequestException('Task is not an external email approval');
     if (item.status !== 'OPEN')
       throw new ConflictException('Only open approval tasks can be reissued');
@@ -215,6 +225,7 @@ export class TasksService {
     task: any,
     instance: any,
   ): boolean {
+    if (!allowsApprovalChannel(task.payload, 'pxm_user')) return false;
     if (String(task.assignee || '') !== actor.actor_id) return false;
     const workflowId = String(
       instance.definition_id || instance.process_definition_id || '',
