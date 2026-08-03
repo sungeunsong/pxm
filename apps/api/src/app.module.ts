@@ -27,7 +27,7 @@ import { NotificationsModule } from './notifications/notifications.module';
       envFilePath: ['.env'], // apps/api/.env
     }),
     InstancesModule,
-    DebugModule,
+    ...(process.env.NODE_ENV === 'production' ? [] : [DebugModule]),
     TemplatesModule,
     TasksModule,
     PluginsModule,

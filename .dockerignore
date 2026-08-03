@@ -1,0 +1,9 @@
+**/node_modules
+**/dist
+**/target
+.git
+.env*
+apps/e2e/test-results
+infra/production/secrets
+logs
+postgres_data

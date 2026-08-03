@@ -1,0 +1,188 @@
+name: pxm-production
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "5"
+
+services:
+  mongodb:
+    build:
+      context: ../..
+      dockerfile: infra/production/mongo.Dockerfile
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:-pxm_root}
+      MONGO_INITDB_ROOT_PASSWORD_FILE: /run/secrets/mongo_root_password
+      MONGO_INITDB_DATABASE: ${MONGO_INITDB_DATABASE:-pxm}
+      PXM_MONGO_APP_USER: ${PXM_MONGO_APP_USER:-pxm_app}
+      PXM_MONGO_APP_PASSWORD_FILE: /run/secrets/mongo_app_password
+      PXM_MONGO_KEY_FILE: /run/secrets/mongo_keyfile
+    secrets:
+      - mongo_root_password
+      - mongo_app_password
+      - mongo_keyfile
+    volumes:
+      - mongo_data:/data/db
+      - mongo_config:/data/configdb
+    networks:
+      - data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mongosh --quiet --host 127.0.0.1 --port 27017
+          --username "$${MONGO_INITDB_ROOT_USERNAME}"
+          --password "$$(cat "$${MONGO_INITDB_ROOT_PASSWORD_FILE}")"
+          --authenticationDatabase admin
+          --eval "try { rs.status().ok } catch (error) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongodb:27017'}]}).ok }" | grep 1
+      interval: 10s
+      timeout: 8s
+      retries: 20
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/production/api.Dockerfile
+    restart: unless-stopped
+    env_file: ${PXM_PRODUCTION_ENV_FILE:-.env.production}
+    environment:
+      MONGODB_URL_FILE: /run/secrets/mongodb_url
+      PXM_PLUGIN_MANIFEST_DIR: /app/plugin-manifests
+      CREDENTIAL_SECRET_KEY_FILE: /run/secrets/credential_secret_key
+      PXM_BOOTSTRAP_ADMIN_PASSWORD_FILE: /run/secrets/bootstrap_admin_password
+      PXM_EXTERNAL_APPROVAL_SECRET_FILE: /run/secrets/external_approval_secret
+      SMTP_PASSWORD_FILE: /run/secrets/smtp_password
+    secrets:
+      - mongodb_url
+      - credential_secret_key
+      - bootstrap_admin_password
+      - external_approval_secret
+      - smtp_password
+    volumes:
+      - pxm_runtime:/var/lib/pxm
+      - pxm_logs:/app/logs
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - edge
+      - data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid,nodev
+    cap_drop: [ALL]
+    cap_add: [SETUID, SETGID]
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
+  engine:
+    build:
+      context: ../..
+      dockerfile: infra/production/engine.Dockerfile
+    restart: unless-stopped
+    env_file: ${PXM_PRODUCTION_ENV_FILE:-.env.production}
+    environment:
+      MONGODB_URL_FILE: /run/secrets/mongodb_url
+      PXM_PLUGIN_MANIFEST_DIR: /app/plugin-manifests
+      ENGINE_WORKER_ID: ${ENGINE_WORKER_ID:-pxm-engine-1}
+    secrets:
+      - mongodb_url
+    volumes:
+      - pxm_logs:/app/logs
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD", "sh", "-c", "test \"$(cat /proc/1/comm)\" = pxm-engine"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid,nodev
+    cap_drop: [ALL]
+    cap_add: [SETUID, SETGID]
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
+  proxy:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:8080"
+      - "443:8443"
+    configs:
+      - source: nginx_config
+        target: /etc/nginx/nginx.conf
+      - source: nginx_proxy_headers
+        target: /etc/nginx/pxm-proxy-headers.conf
+    secrets:
+      - tls_cert
+      - tls_key
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - edge
+    healthcheck:
+      test: ["CMD", "wget", "--no-check-certificate", "--spider", "--quiet", "https://127.0.0.1:8443/api/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=32m,noexec,nosuid,nodev
+      - /var/run:size=4m,noexec,nosuid,nodev
+      - /tmp:size=16m,noexec,nosuid,nodev
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETUID, SETGID]
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
+configs:
+  nginx_config:
+    file: ./nginx.conf
+  nginx_proxy_headers:
+    file: ./nginx-proxy-headers.conf
+
+secrets:
+  mongodb_url: { file: ./secrets/mongodb_url }
+  mongo_root_password: { file: ./secrets/mongo_root_password }
+  mongo_app_password: { file: ./secrets/mongo_app_password }
+  mongo_keyfile: { file: ./secrets/mongo_keyfile }
+  credential_secret_key: { file: ./secrets/credential_secret_key }
+  bootstrap_admin_password: { file: ./secrets/bootstrap_admin_password }
+  external_approval_secret: { file: ./secrets/external_approval_secret }
+  smtp_password: { file: ./secrets/smtp_password }
+  tls_cert: { file: ./secrets/tls_cert.pem }
+  tls_key: { file: ./secrets/tls_key.pem }
+
+volumes:
+  mongo_data:
+  mongo_config:
+  pxm_runtime:
+  pxm_logs:
+
+networks:
+  edge:
+  data:
+    internal: true

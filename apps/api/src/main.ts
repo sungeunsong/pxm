@@ -6,8 +6,10 @@ import helmet from 'helmet';
 import { join, resolve } from 'path';
 import { AppModule } from './app.module';
 import { corsOptions, trustProxySetting } from './security/http-security';
+import { validateProductionConfig } from './security/production-config';
 
 async function bootstrap() {
+  validateProductionConfig();
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
   // Global prefix 설정 (/api/...)

@@ -449,7 +449,9 @@ export class PluginsService implements OnModuleInit {
   }
 
   private async loadManifests() {
-    const manifestDir = resolve(process.cwd(), 'plugin-manifests');
+    const manifestDir = process.env.PXM_PLUGIN_MANIFEST_DIR
+      ? resolve(process.env.PXM_PLUGIN_MANIFEST_DIR)
+      : resolve(process.cwd(), 'plugin-manifests');
     this.controls = this.loadControls(manifestDir);
     this.controlOverrides = await this.loadMongoControlOverrides();
     const files = readdirSync(manifestDir)
