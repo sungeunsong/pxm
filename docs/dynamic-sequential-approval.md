@@ -42,7 +42,6 @@ Flow Designer에서 Approval 노드의 `결재라인 입력 방식`을 `실행 �
             "approvers": [
               {
                 "principal": { "provider": "acrapoint", "subject": "EMP-100" },
-                "pxm_user_id": "pxm-user-lead-a",
                 "display": { "name": "김팀장", "email": "lead-a@example.com", "department": "개발팀" },
                 "approval_channels": ["pxm_user", "external_email"]
               }
@@ -72,11 +71,13 @@ Flow Designer에서 Approval 노드의 `결재라인 입력 방식`을 `실행 �
 - `revision`은 같은 외부 결재 건의 개정 번호이며 양의 정수다. 생략하면 `1`이다.
 - 승인자 식별자는 `principal.provider + principal.subject`다. 이름, 이메일, 부서는
   권한 판정에 쓰지 않고 실행 시점 `display_snapshot`으로만 저장한다.
-- 외부 principal을 PXM 로그인 사용자에게 배정하려면 `pxm_user_id` 매핑을 전달한다.
-  영구 매핑 저장 구조는 `v2_external_principal_mappings(provider, subject)`이며, 원본
+- 외부 principal을 PXM 로그인 사용자에 등록해 두면 `provider + subject`로
+  `pxm_user_id`를 실행 직전에 해석한다. 기존 요청의 명시적 `pxm_user_id`도
+  하위 호환하지만, 등록된 매핑과 다르면 요청을 거부한다.
+- 영구 매핑 저장 구조는 `v2_external_principal_mappings(provider, subject)`이며, 원본
   시스템의 동일 subject라도 provider가 다르면 다른 사용자로 취급한다.
-- `external_email` 채널의 발송 주소는 `delivery.email`, `display.email`, subject 순으로
-  결정한다.
+- `external_email` 채널의 발송 주소는 `delivery.email`, `display.email`, 등록된
+  매핑 이메일, PXM 사용자 이메일, 이메일 형식 subject 순으로 결정한다.
 - `content`에서 저장하는 필드는 `title`, `summary`, `requester`, `source_url`뿐이다.
 - 단계는 1부터 시작해 빈 번호 없이 연속이어야 한다.
 - `mode`는 `ALL` 또는 `ANY`이며 생략하면 `ALL`이다.
@@ -92,6 +93,21 @@ Flow Designer에서 Approval 노드의 `결재라인 입력 방식`을 `실행 �
   `external_email`을 포함하면 유효한 이메일 주소가 필요하다. 사용자 매핑 여부가
   채널을 자동으로 추가하거나 변경하지 않는다.
 - 최대 단계 수는 100개다.
+
+## 외부 승인자 매핑 관리
+
+웹 `접근 권한 관리` 화면의 `외부 승인자 매핑` 탭에서 현재 그룹의
+매핑을 등록·수정·비활성화하고 사용 가능 채널과 상태 이슈를 확인한다.
+
+- 관리 API는 `GET/POST /api/authz/external-principal-mappings`,
+  `PUT /api/authz/external-principal-mappings/:id`,
+  `PUT /api/authz/external-principal-mappings/:id/status`다.
+- 최고 관리자는 전체 그룹, 그룹 관리자는 자신이 관리하는 그룹의
+  매핑만 변경할 수 있다.
+- 실행 시작 전에 PXM 사용자 활성 상태, 그룹 소속, 이메일을 요청
+  채널별로 검증한다. 요청한 채널을 다른 채널로 자동 fallback하지 않는다.
+- 해석된 매핑 ID·version·PXM 사용자·이메일은 실행 context와 Task에
+  스냅샷으로 저장되므로, 이후 매핑을 변경해도 진행 중인 결재는 바뀌지 않는다.
 
 ## 실행 시점 스냅샷
 

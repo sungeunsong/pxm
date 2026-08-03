@@ -7,6 +7,12 @@ import {
   approvalChannels,
   primaryApprovalChannel,
 } from '../approval-channels';
+import type {
+  CreateExternalPrincipalMapping,
+  ExternalPrincipalMapping,
+  ExternalPrincipalMappingStatus,
+  UpdateExternalPrincipalMapping,
+} from '../ports/db.ports';
 
 @Injectable()
 export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleRepositoryPort, WorkflowInputPresetRepositoryPort, AuthzRepositoryPort {
@@ -2234,6 +2240,133 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
     return rows[0] ? mapUserRow(rows[0]) : null;
   }
 
+  async listExternalPrincipalMappings(query: {
+    provider?: string;
+    subject?: string;
+    group_id?: string;
+    status?: ExternalPrincipalMappingStatus;
+  } = {}): Promise<ExternalPrincipalMapping[]> {
+    await this.ensureAuthzTables();
+    const params: unknown[] = [];
+    const where: string[] = [];
+    const bind = (value: unknown) => {
+      params.push(value);
+      return `$${params.length}`;
+    };
+    if (query.provider) where.push(`provider = ${bind(query.provider)}`);
+    if (query.subject) where.push(`subject ILIKE ${bind(`%${query.subject}%`)}`);
+    if (query.group_id) where.push(`group_id = ${bind(query.group_id)}`);
+    if (query.status) where.push(`status = ${bind(query.status)}`);
+    const { rows } = await this.pool.query(
+      `SELECT * FROM v2_external_principal_mappings
+       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+       ORDER BY updated_at DESC, id ASC`,
+      params,
+    );
+    return rows.map(mapExternalPrincipalMappingRow);
+  }
+
+  async getExternalPrincipalMapping(
+    id: string,
+  ): Promise<ExternalPrincipalMapping | null> {
+    await this.ensureAuthzTables();
+    const { rows } = await this.pool.query(
+      `SELECT * FROM v2_external_principal_mappings WHERE id = $1`,
+      [id],
+    );
+    return rows[0] ? mapExternalPrincipalMappingRow(rows[0]) : null;
+  }
+
+  async findExternalPrincipalMapping(
+    provider: string,
+    subject: string,
+  ): Promise<ExternalPrincipalMapping | null> {
+    await this.ensureAuthzTables();
+    const { rows } = await this.pool.query(
+      `SELECT * FROM v2_external_principal_mappings
+       WHERE provider = $1 AND subject = $2`,
+      [provider, subject],
+    );
+    return rows[0] ? mapExternalPrincipalMappingRow(rows[0]) : null;
+  }
+
+  async createExternalPrincipalMapping(
+    mapping: CreateExternalPrincipalMapping,
+  ): Promise<ExternalPrincipalMapping> {
+    await this.ensureAuthzTables();
+    const { rows } = await this.pool.query(
+      `INSERT INTO v2_external_principal_mappings
+         (id, provider, subject, group_id, pxm_user_id, display_name, email,
+          department, display_snapshot, status, version, created_by, updated_by, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$10::jsonb,'active',1,$9,$9,NOW(),NOW())
+       RETURNING *`,
+      [
+        mapping.id || crypto.randomUUID(),
+        mapping.provider,
+        mapping.subject,
+        mapping.group_id,
+        mapping.pxm_user_id,
+        mapping.display_name || null,
+        mapping.email || null,
+        mapping.department || null,
+        mapping.actor || null,
+        JSON.stringify({
+          name: mapping.display_name || null,
+          email: mapping.email || null,
+          department: mapping.department || null,
+        }),
+      ],
+    );
+    return mapExternalPrincipalMappingRow(rows[0]);
+  }
+
+  async updateExternalPrincipalMapping(
+    id: string,
+    mapping: UpdateExternalPrincipalMapping,
+  ): Promise<ExternalPrincipalMapping | null> {
+    await this.ensureAuthzTables();
+    const { rows } = await this.pool.query(
+      `UPDATE v2_external_principal_mappings
+       SET group_id=$2, pxm_user_id=$3, display_name=$4, email=$5,
+           department=$6, display_snapshot=$8::jsonb, version=version+1,
+           updated_by=$7, updated_at=NOW()
+       WHERE id=$1
+       RETURNING *`,
+      [
+        id,
+        mapping.group_id,
+        mapping.pxm_user_id,
+        mapping.display_name || null,
+        mapping.email || null,
+        mapping.department || null,
+        mapping.actor || null,
+        JSON.stringify({
+          name: mapping.display_name || null,
+          email: mapping.email || null,
+          department: mapping.department || null,
+        }),
+      ],
+    );
+    return rows[0] ? mapExternalPrincipalMappingRow(rows[0]) : null;
+  }
+
+  async setExternalPrincipalMappingStatus(
+    id: string,
+    status: ExternalPrincipalMappingStatus,
+    actor?: string | null,
+  ): Promise<ExternalPrincipalMapping | null> {
+    await this.ensureAuthzTables();
+    const { rows } = await this.pool.query(
+      `UPDATE v2_external_principal_mappings
+       SET status=$2, updated_by=$3, updated_at=NOW()
+           , version=version+1
+       WHERE id=$1
+       RETURNING *`,
+      [id, status, actor || null],
+    );
+    return rows[0] ? mapExternalPrincipalMappingRow(rows[0]) : null;
+  }
+
   async createSession(session: CreatePxmSession): Promise<PxmSession> {
     await this.ensureAuthzTables();
     const { rows } = await this.pool.query(`INSERT INTO pxm_sessions (id, token_hash, csrf_hash, user_id, ip, user_agent, idle_expires_at, absolute_expires_at, idle_timeout_minutes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`, [session.id, session.token_hash, session.csrf_hash, session.user_id, session.ip || null, session.user_agent || null, session.idle_expires_at, session.absolute_expires_at, session.idle_timeout_minutes || null]);
@@ -2466,6 +2599,52 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
     `);
     await this.pool.query(`ALTER TABLE pxm_users ADD COLUMN IF NOT EXISTS password_hash TEXT NULL`);
     await this.pool.query(`ALTER TABLE pxm_users ADD COLUMN IF NOT EXISTS memberships JSONB NOT NULL DEFAULT '[]'::jsonb`);
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS v2_external_principal_mappings (
+        id TEXT NOT NULL UNIQUE,
+        provider TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        group_id TEXT NULL,
+        pxm_user_id TEXT NOT NULL,
+        display_name TEXT NULL,
+        email TEXT NULL,
+        department TEXT NULL,
+        display_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+        status TEXT NOT NULL DEFAULT 'active',
+        version INTEGER NOT NULL DEFAULT 0,
+        created_by TEXT NULL,
+        updated_by TEXT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (provider, subject)
+      )
+    `);
+    await this.pool.query(`ALTER TABLE v2_external_principal_mappings ADD COLUMN IF NOT EXISTS id TEXT NULL`);
+    await this.pool.query(`ALTER TABLE v2_external_principal_mappings ADD COLUMN IF NOT EXISTS group_id TEXT NULL`);
+    await this.pool.query(`ALTER TABLE v2_external_principal_mappings ADD COLUMN IF NOT EXISTS display_name TEXT NULL`);
+    await this.pool.query(`ALTER TABLE v2_external_principal_mappings ADD COLUMN IF NOT EXISTS email TEXT NULL`);
+    await this.pool.query(`ALTER TABLE v2_external_principal_mappings ADD COLUMN IF NOT EXISTS department TEXT NULL`);
+    await this.pool.query(`ALTER TABLE v2_external_principal_mappings ADD COLUMN IF NOT EXISTS display_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb`);
+    await this.pool.query(`ALTER TABLE v2_external_principal_mappings ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'`);
+    await this.pool.query(`ALTER TABLE v2_external_principal_mappings ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0`);
+    await this.pool.query(`ALTER TABLE v2_external_principal_mappings ADD COLUMN IF NOT EXISTS created_by TEXT NULL`);
+    await this.pool.query(`ALTER TABLE v2_external_principal_mappings ADD COLUMN IF NOT EXISTS updated_by TEXT NULL`);
+    await this.pool.query(`UPDATE v2_external_principal_mappings
+      SET id = 'legacy-' || md5(provider || ':' || subject)
+      WHERE id IS NULL`);
+    await this.pool.query(`UPDATE v2_external_principal_mappings
+      SET display_name = COALESCE(display_name, display_snapshot->>'name'),
+          email = COALESCE(email, display_snapshot->>'email'),
+          department = COALESCE(department, display_snapshot->>'department')`);
+    await this.pool.query(`UPDATE v2_external_principal_mappings mapping
+      SET group_id = users.group_ids->>0
+      FROM pxm_users users
+      WHERE mapping.group_id IS NULL
+        AND users.id = mapping.pxm_user_id
+        AND jsonb_array_length(users.group_ids) > 0`);
+    await this.pool.query(`ALTER TABLE v2_external_principal_mappings ALTER COLUMN id SET NOT NULL`);
+    await this.pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS ux_external_principal_mappings_id ON v2_external_principal_mappings (id)`);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_external_principal_mappings_group_status ON v2_external_principal_mappings (group_id, status, updated_at DESC)`);
     await this.pool.query(`CREATE TABLE IF NOT EXISTS pxm_sessions (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, csrf_hash TEXT NOT NULL, user_id TEXT NOT NULL, ip TEXT NULL, user_agent TEXT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), idle_expires_at TIMESTAMPTZ NOT NULL, absolute_expires_at TIMESTAMPTZ NOT NULL, idle_timeout_minutes INTEGER NULL, revoked_at TIMESTAMPTZ NULL, revoke_reason TEXT NULL)`);
     await this.pool.query(`ALTER TABLE pxm_sessions ADD COLUMN IF NOT EXISTS idle_timeout_minutes INTEGER NULL`);
     await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_pxm_sessions_user_created ON pxm_sessions (user_id, created_at DESC)`);
@@ -2584,6 +2763,28 @@ function mapUserRow(row: any): PxmUser {
     group_ids: memberships.map((membership: any) => membership.group_id),
     memberships,
     status: row.status || 'active',
+    created_by: row.created_by || null,
+    updated_by: row.updated_by || null,
+    created_at: row.created_at?.toISOString?.() || row.created_at,
+    updated_at: row.updated_at?.toISOString?.() || row.updated_at,
+  };
+}
+
+function mapExternalPrincipalMappingRow(
+  row: any,
+): ExternalPrincipalMapping {
+  const display = row.display_snapshot || {};
+  return {
+    id: String(row.id),
+    provider: String(row.provider),
+    subject: String(row.subject),
+    group_id: row.group_id ? String(row.group_id) : '',
+    pxm_user_id: String(row.pxm_user_id),
+    display_name: row.display_name || display.name || null,
+    email: row.email || display.email || null,
+    department: row.department || display.department || null,
+    status: row.status === 'disabled' ? 'disabled' : 'active',
+    version: Number(row.version || 0),
     created_by: row.created_by || null,
     updated_by: row.updated_by || null,
     created_at: row.created_at?.toISOString?.() || row.created_at,

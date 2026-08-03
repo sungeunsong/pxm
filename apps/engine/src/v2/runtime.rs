@@ -1602,6 +1602,10 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
                     "email": approver.get("email").cloned().unwrap_or(Value::Null),
                     "department": approver.get("department").cloned().unwrap_or(Value::Null)
                 }));
+            let principal_mapping_snapshot = approver
+                .get("principal_mapping")
+                .cloned()
+                .unwrap_or(Value::Null);
             let pxm_user_id = approver
                 .get("pxm_user_id")
                 .and_then(Value::as_str)
@@ -1656,6 +1660,7 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
                     "provider": principal_provider,
                     "subject": principal_subject
                 },
+                "principal_mapping": principal_mapping_snapshot,
                 "display_snapshot": display_snapshot,
                 "pxm_user_id": pxm_user_id,
                 "external_email": external_email,
@@ -1671,6 +1676,7 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
                     "provider": principal_provider,
                     "subject": principal_subject
                 },
+                "principal_mapping": principal_mapping_snapshot,
                 "display_snapshot": display_snapshot,
                 "pxm_user_id": pxm_user_id,
                 "external_email": external_email
@@ -1863,6 +1869,7 @@ mod tests {
             "approval_line":{"steps":[{"approvers":[{
                 "principal":{"provider":"acrapoint","subject":"EMP-100"},
                 "pxm_user_id":"pxm-user-7",
+                "principal_mapping":{"id":"mapping-7","updated_at":"2026-08-03T00:00:00Z"},
                 "display":{"name":"김승인","email":"kim@example.com","department":"재무팀"},
                 "approver_channel":"pxm_user"
             }]}]}
@@ -1881,6 +1888,15 @@ mod tests {
             definition.approval_line_snapshot["steps"][0]["approvers"][0]
                 ["display_snapshot"]["department"],
             "재무팀"
+        );
+        assert_eq!(
+            definition.approval_line_snapshot["steps"][0]["approvers"][0]
+                ["principal_mapping"]["id"],
+            "mapping-7"
+        );
+        assert_eq!(
+            definition.steps[0].tasks[0].payload["principal_mapping"]["updated_at"],
+            "2026-08-03T00:00:00Z"
         );
     }
 

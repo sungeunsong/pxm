@@ -9,6 +9,7 @@ import {
   dynamicApprovalRequestPath,
   normalizeExternalApprovalRequest,
 } from './external-approval-start';
+import { AuthzService } from '../authz/authz.service';
 
 @Injectable()
 export class InstancesService {
@@ -16,6 +17,7 @@ export class InstancesService {
     private readonly instanceRepo: WorkflowInstanceRepositoryPort,
     private readonly workflowRepo: WorkflowRepositoryPort,
     private readonly outboxRepo: OutboxRepositoryPort,
+    private readonly authzService: AuthzService,
   ) {}
 
   async createInstance(dto: CreateInstanceDto, access?: WorkflowInstanceAccess) {
@@ -38,6 +40,17 @@ export class InstancesService {
       formData && typeof formData === 'object' && !Array.isArray(formData)
         ? normalizeExternalApprovalRequest(formData, approvalRequestPath)
         : null;
+    const externalApprovalRequestDigest = externalApproval
+      ? externalApprovalRequestHash(definitionId, formData, approvalRequestPath)
+      : null;
+    if (externalApproval) {
+      await this.authzService.resolveExternalApprovalPrincipals(
+        formData,
+        approvalRequestPath,
+        versionAccess.group_id,
+        definition.nodes || [],
+      );
+    }
     const ctx = withAccess(
       {
         ...input,
@@ -64,7 +77,7 @@ export class InstancesService {
     const tokenId = randomUUID();
     if (externalApproval) {
       const keyHash = externalApprovalKeyHash(externalApproval);
-      const requestHash = externalApprovalRequestHash(definitionId, formData, approvalRequestPath);
+      const requestHash = externalApprovalRequestDigest!;
       const result = await this.instanceRepo.createIdempotentStart({
         key_hash: keyHash,
         request_hash: requestHash,

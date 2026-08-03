@@ -65,7 +65,7 @@
 
 .access-summary {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 16px;
 }
@@ -239,6 +239,37 @@
   grid-template-columns: minmax(160px, 1fr) minmax(150px, 0.7fr) minmax(170px, 1fr);
 }
 
+.access-form.mapping-form {
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
+}
+
+.mapping-form-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 8px;
+}
+
+.mapping-search {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(180px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.mapping-search input {
+  height: 34px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.mapping-search > span {
+  color: #64748b;
+  font-size: 12px;
+}
+
 .access-form input,
 .access-form select {
   height: 34px;
@@ -271,7 +302,8 @@
 
 .access-list,
 .entity-table,
-.key-table {
+.key-table,
+.mapping-table {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -369,6 +401,67 @@
   align-items: flex-start;
 }
 
+.mapping-row {
+  width: 100%;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 11px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.mapping-identity {
+  min-width: 0;
+}
+
+.mapping-identity strong,
+.mapping-identity small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.mapping-identity strong {
+  margin-bottom: 3px;
+  font-size: 13px;
+}
+
+.mapping-identity small {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.mapping-meta,
+.mapping-channels,
+.mapping-issues,
+.mapping-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mapping-meta {
+  min-width: 260px;
+}
+
+.mapping-issue {
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: #fff7ed;
+  color: #c2410c;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.mapping-actions {
+  width: 100%;
+}
+
 .access-row-actions {
   display: flex;
   gap: 8px;
@@ -398,7 +491,21 @@
 
   .access-form,
   .access-form.compact,
-  .access-form.key-form {
+  .access-form.key-form,
+  .access-form.mapping-form {
     grid-template-columns: 1fr;
+  }
+
+  .mapping-row {
+    flex-direction: column;
+  }
+
+  .mapping-search {
+    grid-template-columns: 1fr;
+  }
+
+  .mapping-meta {
+    min-width: 0;
+    justify-content: flex-start;
   }
 }

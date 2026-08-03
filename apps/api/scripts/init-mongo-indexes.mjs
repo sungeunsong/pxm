@@ -47,6 +47,10 @@ async function main() {
     { pxm_user_id: 1 },
     { name: 'idx_v2_external_principal_mapping_pxm_user' },
   );
+  await db.collection('v2_external_principal_mappings').createIndex(
+    { group_id: 1, status: 1, updated_at: -1 },
+    { name: 'idx_v2_external_principal_mapping_group_status' },
+  );
   await db.collection('v2_tasks').createIndex({ assignee: 1, status: 1, created_at: -1 });
   await db.collection('v2_tasks').createIndex({ status: 1, created_at: -1, _id: -1 }, { name: 'idx_v2_tasks_history' });
   await db.collection('v2_tasks').createIndex(
@@ -293,6 +297,13 @@ async function ensureValidators(db) {
       provider: { bsonType: 'string' },
       subject: { bsonType: 'string' },
       pxm_user_id: { bsonType: 'string' },
+      group_id: { bsonType: ['string', 'null'] },
+      display_name: { bsonType: ['string', 'null'] },
+      email: { bsonType: ['string', 'null'] },
+      department: { bsonType: ['string', 'null'] },
+      status: { enum: ['active', 'disabled'] },
+      created_by: { bsonType: ['string', 'null'] },
+      updated_by: { bsonType: ['string', 'null'] },
       display_snapshot: { bsonType: 'object' },
       version: { bsonType: ['int', 'long', 'double'] },
       created_at: { bsonType: 'string' },

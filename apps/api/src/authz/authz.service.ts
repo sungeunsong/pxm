@@ -1,8 +1,11 @@
-import { BadRequestException, ForbiddenException, HttpException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, HttpException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash, randomBytes } from 'crypto';
 import {
   AppendPxmApiKeyUsageLog,
   AuthzRepositoryPort,
+  ExternalPrincipalMapping,
+  ExternalPrincipalMappingStatus,
+  ExternalPrincipalMappingView,
   PxmApiKey,
   PxmApiKeyScope,
   PxmGroup,
@@ -13,8 +16,10 @@ import {
 } from '../db/ports/db.ports';
 import {
   ApiKeyResponseDto,
+  CreateExternalPrincipalMappingDto,
   CreateApiKeyDto,
   CreatedApiKeyResponseDto,
+  UpdateExternalPrincipalMappingDto,
   UpsertGroupDto,
   UpsertServiceAccountDto,
   UpsertUserDto,
@@ -128,6 +133,211 @@ export class AuthzService {
       throw new NotFoundException('User not found');
     }
     return user;
+  }
+
+  async listExternalPrincipalMappings(query: {
+    provider?: string;
+    subject?: string;
+    group_id?: string;
+    status?: ExternalPrincipalMappingStatus;
+  } = {}): Promise<ExternalPrincipalMappingView[]> {
+    if (query.status && query.status !== 'active' && query.status !== 'disabled') {
+      throw new BadRequestException('status is invalid');
+    }
+    const mappings = await this.authzRepo.listExternalPrincipalMappings({
+      provider: optionalString(query.provider) || undefined,
+      subject: optionalString(query.subject) || undefined,
+      group_id: optionalString(query.group_id) || undefined,
+      status: query.status,
+    });
+    return Promise.all(mappings.map((mapping) => this.externalPrincipalMappingView(mapping)));
+  }
+
+  async getExternalPrincipalMapping(id: string): Promise<ExternalPrincipalMappingView> {
+    const mapping = await this.authzRepo.getExternalPrincipalMapping(id);
+    if (!mapping) throw new NotFoundException('External principal mapping not found');
+    return this.externalPrincipalMappingView(mapping);
+  }
+
+  async createExternalPrincipalMapping(
+    dto: CreateExternalPrincipalMappingDto,
+    actor?: string | null,
+  ): Promise<ExternalPrincipalMappingView> {
+    const provider = normalizeExternalProvider(dto.provider);
+    const subject = normalizeExternalSubject(dto.subject);
+    const groupId = requireString(dto.group_id, 'group_id');
+    const userId = requireString(dto.pxm_user_id, 'pxm_user_id');
+    await this.assertMappingTarget(groupId, userId);
+    if (await this.authzRepo.findExternalPrincipalMapping(provider, subject)) {
+      throw new ConflictException('External principal mapping already exists');
+    }
+    try {
+      const mapping = await this.authzRepo.createExternalPrincipalMapping({
+        provider,
+        subject,
+        group_id: groupId,
+        pxm_user_id: userId,
+        display_name: optionalString(dto.display_name),
+        email: normalizeOptionalEmail(dto.email),
+        department: optionalString(dto.department),
+        actor: optionalString(actor),
+      });
+      return this.externalPrincipalMappingView(mapping);
+    } catch (error: any) {
+      if (isDuplicateKeyError(error)) {
+        throw new ConflictException('External principal mapping already exists');
+      }
+      throw error;
+    }
+  }
+
+  async updateExternalPrincipalMapping(
+    id: string,
+    dto: UpdateExternalPrincipalMappingDto,
+    actor?: string | null,
+  ): Promise<ExternalPrincipalMappingView> {
+    await this.getExternalPrincipalMapping(id);
+    const groupId = requireString(dto.group_id, 'group_id');
+    const userId = requireString(dto.pxm_user_id, 'pxm_user_id');
+    await this.assertMappingTarget(groupId, userId);
+    const mapping = await this.authzRepo.updateExternalPrincipalMapping(id, {
+      group_id: groupId,
+      pxm_user_id: userId,
+      display_name: optionalString(dto.display_name),
+      email: normalizeOptionalEmail(dto.email),
+      department: optionalString(dto.department),
+      actor: optionalString(actor),
+    });
+    if (!mapping) throw new NotFoundException('External principal mapping not found');
+    return this.externalPrincipalMappingView(mapping);
+  }
+
+  async setExternalPrincipalMappingStatus(
+    id: string,
+    status: ExternalPrincipalMappingStatus,
+    actor?: string | null,
+  ): Promise<ExternalPrincipalMappingView> {
+    if (status !== 'active' && status !== 'disabled') {
+      throw new BadRequestException('status is invalid');
+    }
+    const current = await this.getExternalPrincipalMapping(id);
+    if (status === 'active') await this.assertMappingTarget(current.group_id, current.pxm_user_id);
+    const mapping = await this.authzRepo.setExternalPrincipalMappingStatus(id, status, actor);
+    if (!mapping) throw new NotFoundException('External principal mapping not found');
+    return this.externalPrincipalMappingView(mapping);
+  }
+
+  async resolveExternalApprovalPrincipals(
+    formData: Record<string, any>,
+    requestPath: string,
+    groupId?: string | null,
+    nodes: any[] = [],
+  ): Promise<void> {
+    const request = valueAtPath(formData, requestPath);
+    if (!request || typeof request !== 'object' || Array.isArray(request)) return;
+    const steps = request.approval_line?.steps;
+    if (!Array.isArray(steps)) return;
+    const normalizedGroupId = optionalString(groupId);
+    const defaultChannels = defaultApprovalChannels(nodes, requestPath);
+
+    for (let stepIndex = 0; stepIndex < steps.length; stepIndex += 1) {
+      const step = steps[stepIndex];
+      if (!step || typeof step !== 'object' || Array.isArray(step)) continue;
+      const approvers = Array.isArray(step.approvers) ? step.approvers : [step];
+      for (let approverIndex = 0; approverIndex < approvers.length; approverIndex += 1) {
+        const approver = approvers[approverIndex];
+        const location = `approval step ${stepIndex + 1} approver ${approverIndex + 1}`;
+        if (!approver || typeof approver !== 'object' || Array.isArray(approver)) {
+          throw new BadRequestException(`${location} must be an object`);
+        }
+        const channels = normalizeApprovalChannels(approver, defaultChannels, location);
+        const allowsPxm = channels.includes('pxm_user');
+        const allowsEmail = channels.includes('external_email');
+        const rawProvider = optionalString(approver.principal?.provider)
+          || (allowsPxm ? 'pxm' : 'email');
+        const provider = normalizeExternalProvider(rawProvider);
+        const subject = normalizeExternalSubject(
+          optionalString(approver.principal?.subject) || optionalString(approver.assignee),
+          `${location} principal.subject`,
+        );
+        const mapping = provider === 'pxm'
+          ? null
+          : await this.authzRepo.findExternalPrincipalMapping(provider, subject);
+        const explicitUserId = optionalString(approver.pxm_user_id);
+        let targetUser: PxmUser | null = null;
+        let pxmUserId = explicitUserId || (provider === 'pxm' ? subject : null);
+
+        if (allowsPxm) {
+          if (!normalizedGroupId) {
+            throw new BadRequestException(`${location} cannot use pxm_user without a workflow group`);
+          }
+          if (mapping) {
+            if (mapping.status !== 'active') {
+              throw new BadRequestException(`${location} external principal mapping is disabled`);
+            }
+            if (mapping.group_id !== normalizedGroupId) {
+              throw new BadRequestException(`${location} external principal mapping belongs to another group`);
+            }
+            if (explicitUserId && explicitUserId !== mapping.pxm_user_id) {
+              throw new BadRequestException(`${location} pxm_user_id conflicts with the registered mapping`);
+            }
+            pxmUserId = mapping.pxm_user_id;
+          }
+          if (!pxmUserId) {
+            throw new BadRequestException(`${location} requires an active external principal mapping for pxm_user`);
+          }
+          targetUser = await this.authzRepo.getUser(pxmUserId);
+          assertActiveGroupUser(targetUser, normalizedGroupId, location);
+          approver.pxm_user_id = pxmUserId;
+        } else if (pxmUserId) {
+          targetUser = await this.authzRepo.getUser(pxmUserId);
+        } else if (mapping?.status === 'active' && mapping.group_id === normalizedGroupId) {
+          targetUser = await this.authzRepo.getUser(mapping.pxm_user_id);
+        }
+        const usableTargetUser = Boolean(
+          targetUser?.status === 'active'
+          && normalizedGroupId
+          && (targetUser.role === 'admin' || targetUser.group_ids.includes(normalizedGroupId)),
+        );
+
+        const email = resolveDeliveryEmail([
+          approver.delivery?.email,
+          approver.display?.email,
+          approver.email,
+          mapping?.status === 'active' && mapping.group_id === normalizedGroupId ? mapping.email : null,
+          usableTargetUser ? targetUser?.email : null,
+          provider === 'email' || subject.includes('@') ? subject : null,
+        ], location);
+        if (allowsEmail && !email) {
+          throw new BadRequestException(`${location} requires a valid external email`);
+        }
+        if (allowsEmail) approver.delivery = { ...(approver.delivery || {}), email };
+
+        approver.principal = { ...(approver.principal || {}), provider, subject };
+        approver.approval_channels = channels;
+        if (mapping && mapping.status === 'active' && mapping.group_id === normalizedGroupId) {
+          approver.principal_mapping = {
+            id: mapping.id,
+            provider: mapping.provider,
+            subject: mapping.subject,
+            group_id: mapping.group_id,
+            pxm_user_id: mapping.pxm_user_id,
+            status: mapping.status,
+            version: mapping.version,
+            updated_at: mapping.updated_at,
+          };
+        }
+        const currentDisplay = approver.display && typeof approver.display === 'object'
+          ? approver.display
+          : {};
+        approver.display = {
+          ...currentDisplay,
+          name: optionalString(currentDisplay.name) || mapping?.display_name || targetUser?.display_name || null,
+          email: optionalString(currentDisplay.email) || email || null,
+          department: optionalString(currentDisplay.department) || mapping?.department || null,
+        };
+      }
+    }
   }
 
   async upsertServiceAccount(dto: UpsertServiceAccountDto): Promise<PxmServiceAccount> {
@@ -312,6 +522,39 @@ export class AuthzService {
     }
   }
 
+  private async assertMappingTarget(groupId: string, userId: string): Promise<void> {
+    await this.assertGroupsExist([groupId]);
+    const user = await this.authzRepo.getUser(userId);
+    assertActiveGroupUser(user, groupId, 'mapping target');
+  }
+
+  private async externalPrincipalMappingView(
+    mapping: ExternalPrincipalMapping,
+  ): Promise<ExternalPrincipalMappingView> {
+    const user = await this.authzRepo.getUser(mapping.pxm_user_id);
+    const issues: ExternalPrincipalMappingView['issues'] = [];
+    if (mapping.status !== 'active') issues.push('mapping_disabled');
+    if (!user) issues.push('user_missing');
+    else {
+      if (user.status !== 'active') issues.push('user_disabled');
+      if (user.role !== 'admin' && !user.group_ids.includes(mapping.group_id)) issues.push('group_mismatch');
+    }
+    const pxmUsable = mapping.status === 'active' && user?.status === 'active'
+      && (user.role === 'admin' || user.group_ids.includes(mapping.group_id));
+    if (!firstValidEmail([mapping.email, pxmUsable ? user?.email : null])) issues.push('email_missing');
+    const emailUsable = mapping.status === 'active'
+      && Boolean(firstValidEmail([mapping.email, pxmUsable ? user?.email : null]));
+    return {
+      ...mapping,
+      pxm_user: user,
+      available_channels: [
+        ...(pxmUsable ? ['pxm_user' as const] : []),
+        ...(emailUsable ? ['external_email' as const] : []),
+      ],
+      issues,
+    };
+  }
+
   private async assertOwnerCanReceiveKey(
     ownerType: CreateApiKeyDto['owner_type'],
     ownerId: string,
@@ -480,6 +723,114 @@ function optionalString(value: unknown): string | null {
 
 function optionalId(value: unknown): string | undefined {
   return optionalString(value) || undefined;
+}
+
+function requireString(value: unknown, field: string): string {
+  const normalized = optionalString(value);
+  if (!normalized) throw new BadRequestException(`${field} is required`);
+  return normalized;
+}
+
+function normalizeExternalProvider(value: unknown): string {
+  const provider = requireString(value, 'provider');
+  if (provider.length > 100 || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(provider)) {
+    throw new BadRequestException('provider is invalid');
+  }
+  return provider;
+}
+
+function normalizeExternalSubject(value: unknown, field = 'subject'): string {
+  const subject = requireString(value, field);
+  if (subject.length > 200 || /[\u0000-\u001f\u007f]/.test(subject)) {
+    throw new BadRequestException(`${field} is invalid`);
+  }
+  return subject;
+}
+
+function normalizeOptionalEmail(value: unknown): string | null {
+  const email = optionalString(value);
+  if (!email) return null;
+  if (!isValidEmail(email)) throw new BadRequestException('email is invalid');
+  return email.toLowerCase();
+}
+
+function firstValidEmail(values: unknown[]): string | null {
+  for (const value of values) {
+    const email = optionalString(value);
+    if (email && isValidEmail(email)) return email.toLowerCase();
+  }
+  return null;
+}
+
+function resolveDeliveryEmail(values: unknown[], location: string): string | null {
+  for (const value of values) {
+    const email = optionalString(value);
+    if (!email) continue;
+    if (!isValidEmail(email)) throw new BadRequestException(`${location} has an invalid external email`);
+    return email.toLowerCase();
+  }
+  return null;
+}
+
+function isValidEmail(value: string): boolean {
+  return value.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function valueAtPath(value: Record<string, any>, path: string): any {
+  return path.split('.').filter(Boolean).reduce<any>((current, part) => current?.[part], value);
+}
+
+function defaultApprovalChannels(nodes: any[], requestPath: string): Array<'pxm_user' | 'external_email'> {
+  const node = (nodes || []).find((candidate) => {
+    const data = candidate?.data || candidate?.config || candidate || {};
+    const type = data.nodeType || candidate?.node_type || candidate?.type;
+    const dynamic = data.approvalLineSource === 'dynamic' || data.approvalType === 'dynamic';
+    const path = optionalString(data.approvalRequestPath) || 'approval_request';
+    return type === 'approval' && dynamic && path === requestPath;
+  });
+  const data = node?.data || node?.config || node || {};
+  const raw = Array.isArray(data.approvalChannels)
+    ? data.approvalChannels
+    : [optionalString(data.approverChannel) || 'pxm_user'];
+  return normalizeChannelValues(raw, 'approval node');
+}
+
+function normalizeApprovalChannels(
+  approver: Record<string, any>,
+  defaults: Array<'pxm_user' | 'external_email'>,
+  location: string,
+): Array<'pxm_user' | 'external_email'> {
+  const raw = approver.approval_channels !== undefined
+    ? approver.approval_channels
+    : approver.approver_channel
+      ? [approver.approver_channel]
+      : defaults;
+  if (!Array.isArray(raw)) throw new BadRequestException(`${location} approval_channels must be an array`);
+  return normalizeChannelValues(raw, location);
+}
+
+function normalizeChannelValues(
+  values: unknown[],
+  location: string,
+): Array<'pxm_user' | 'external_email'> {
+  const channels = Array.from(new Set(values.map((value) => optionalString(value)).filter(Boolean)));
+  if (channels.length === 0) throw new BadRequestException(`${location} approval_channels must not be empty`);
+  const invalid = channels.find((channel) => channel !== 'pxm_user' && channel !== 'external_email');
+  if (invalid) throw new BadRequestException(`${location} approval channel is invalid: ${invalid}`);
+  return channels as Array<'pxm_user' | 'external_email'>;
+}
+
+function assertActiveGroupUser(user: PxmUser | null, groupId: string, location: string): asserts user is PxmUser {
+  if (!user || user.status !== 'active') {
+    throw new BadRequestException(`${location} PXM user not found or inactive`);
+  }
+  if (user.role !== 'admin' && !user.group_ids.includes(groupId)) {
+    throw new BadRequestException(`${location} PXM user is not a member of the workflow group`);
+  }
+}
+
+function isDuplicateKeyError(error: any): boolean {
+  return error?.code === 11000 || error?.code === '23505';
 }
 
 function hashApiKey(value: string): string {

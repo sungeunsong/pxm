@@ -4,6 +4,9 @@ import { actorFromRequest } from '../instances/history-auth';
 import { AuthzService } from './authz.service';
 import {
   CreateApiKeyDto,
+  CreateExternalPrincipalMappingDto,
+  SetExternalPrincipalMappingStatusDto,
+  UpdateExternalPrincipalMappingDto,
   UpsertGroupDto,
   UpsertServiceAccountDto,
   UpsertUserDto,
@@ -121,6 +124,86 @@ export class AuthzController {
     return user;
   }
 
+  @Get('external-principal-mappings')
+  async listExternalPrincipalMappings(
+    @Query('groupId') groupId: string | undefined,
+    @Query('provider') provider: string | undefined,
+    @Query('subject') subject: string | undefined,
+    @Query('status') status: 'active' | 'disabled' | undefined,
+    @Req() req: Request,
+  ) {
+    return this.authzService.listExternalPrincipalMappings({
+      group_id: manageableGroupId(actorFromRequest(req), groupId),
+      provider,
+      subject,
+      status,
+    });
+  }
+
+  @Post('external-principal-mappings')
+  async createExternalPrincipalMapping(
+    @Body() dto: CreateExternalPrincipalMappingDto,
+    @Req() req: Request,
+  ) {
+    const actor = actorFromRequest(req);
+    assertCanManageGroup(actor, dto.group_id);
+    const mapping = await this.authzService.createExternalPrincipalMapping(dto, actor.actor_id);
+    await this.audit.append({
+      action: 'external_principal_mapping.created',
+      resource_type: 'external_principal_mapping',
+      resource_id: mapping.id,
+      group_id: mapping.group_id,
+      actor_id: actor.actor_id,
+      details: { after: mappingAuditSnapshot(mapping) },
+    });
+    return mapping;
+  }
+
+  @Put('external-principal-mappings/:id')
+  async updateExternalPrincipalMapping(
+    @Param('id') id: string,
+    @Body() dto: UpdateExternalPrincipalMappingDto,
+    @Req() req: Request,
+  ) {
+    const actor = actorFromRequest(req);
+    const before = await this.authzService.getExternalPrincipalMapping(id);
+    assertCanManageGroup(actor, before.group_id);
+    assertCanManageGroup(actor, dto.group_id);
+    const mapping = await this.authzService.updateExternalPrincipalMapping(id, dto, actor.actor_id);
+    await this.audit.append({
+      action: 'external_principal_mapping.updated',
+      resource_type: 'external_principal_mapping',
+      resource_id: mapping.id,
+      group_id: mapping.group_id,
+      actor_id: actor.actor_id,
+      details: { before: mappingAuditSnapshot(before), after: mappingAuditSnapshot(mapping) },
+    });
+    return mapping;
+  }
+
+  @Put('external-principal-mappings/:id/status')
+  async setExternalPrincipalMappingStatus(
+    @Param('id') id: string,
+    @Body() dto: SetExternalPrincipalMappingStatusDto,
+    @Req() req: Request,
+  ) {
+    const actor = actorFromRequest(req);
+    const before = await this.authzService.getExternalPrincipalMapping(id);
+    assertCanManageGroup(actor, before.group_id);
+    const mapping = await this.authzService.setExternalPrincipalMappingStatus(id, dto.status, actor.actor_id);
+    await this.audit.append({
+      action: dto.status === 'active'
+        ? 'external_principal_mapping.activated'
+        : 'external_principal_mapping.disabled',
+      resource_type: 'external_principal_mapping',
+      resource_id: mapping.id,
+      group_id: mapping.group_id,
+      actor_id: actor.actor_id,
+      details: { before: mappingAuditSnapshot(before), after: mappingAuditSnapshot(mapping) },
+    });
+    return mapping;
+  }
+
   @Post('service-accounts')
   async upsertServiceAccount(@Body() dto: UpsertServiceAccountDto, @Req() req: Request) {
     const actor = actorFromRequest(req); assertCanManageGroup(actor, dto.group_id);
@@ -180,4 +263,28 @@ export class AuthzController {
     });
     return replacement;
   }
+}
+
+function mappingAuditSnapshot(mapping: {
+  provider: string;
+  subject: string;
+  group_id: string;
+  pxm_user_id: string;
+  display_name?: string | null;
+  email?: string | null;
+  department?: string | null;
+  status: string;
+  version: number;
+}) {
+  return {
+    provider: mapping.provider,
+    subject: mapping.subject,
+    group_id: mapping.group_id,
+    pxm_user_id: mapping.pxm_user_id,
+    display_name: mapping.display_name || null,
+    email: mapping.email || null,
+    department: mapping.department || null,
+    status: mapping.status,
+    version: mapping.version,
+  };
 }

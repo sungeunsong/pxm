@@ -539,6 +539,7 @@ export type PxmRole = 'admin' | 'group_manager' | 'user';
 export type PxmGroupRole = Exclude<PxmRole, 'admin'>;
 export type PxmGroupStatus = 'active' | 'deleted';
 export type PxmPrincipalStatus = 'active' | 'disabled' | 'deleted';
+export type ExternalPrincipalMappingStatus = 'active' | 'disabled';
 export type PxmApiKeyOwnerType = 'USER' | 'SERVICE_ACCOUNT';
 export type PxmApiKeyStatus = 'active' | 'disabled' | 'expired';
 export type PxmApiKeyScope = 'workflow:read' | 'workflow:execute' | 'task:approve';
@@ -567,6 +568,35 @@ export type PxmUser = {
   updated_by?: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type ExternalPrincipalMapping = {
+  id: string;
+  provider: string;
+  subject: string;
+  group_id: string;
+  pxm_user_id: string;
+  display_name?: string | null;
+  email?: string | null;
+  department?: string | null;
+  status: ExternalPrincipalMappingStatus;
+  version: number;
+  created_by?: string | null;
+  updated_by?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ExternalPrincipalMappingView = ExternalPrincipalMapping & {
+  pxm_user: PxmUser | null;
+  available_channels: Array<'pxm_user' | 'external_email'>;
+  issues: Array<
+    | 'mapping_disabled'
+    | 'user_missing'
+    | 'user_disabled'
+    | 'group_mismatch'
+    | 'email_missing'
+  >;
 };
 
 export type PxmGroupMembership = {
@@ -642,6 +672,23 @@ export type UpsertPxmUser = {
   password_hash?: string;
 };
 
+export type CreateExternalPrincipalMapping = {
+  id?: string;
+  provider: string;
+  subject: string;
+  group_id: string;
+  pxm_user_id: string;
+  display_name?: string | null;
+  email?: string | null;
+  department?: string | null;
+  actor?: string | null;
+};
+
+export type UpdateExternalPrincipalMapping = Omit<
+  CreateExternalPrincipalMapping,
+  'id' | 'provider' | 'subject'
+>;
+
 export type UpsertPxmServiceAccount = {
   id?: string;
   name: string;
@@ -713,6 +760,22 @@ export abstract class AuthzRepositoryPort {
   abstract getUserPasswordHash(id: string): Promise<string | null>;
   abstract updateUserPasswordHash(id: string, passwordHash: string, actor?: string | null): Promise<boolean>;
   abstract updateUserProfile(id: string, displayName: string, email?: string | null): Promise<PxmUser | null>;
+
+  abstract listExternalPrincipalMappings(query?: {
+    provider?: string;
+    subject?: string;
+    group_id?: string;
+    status?: ExternalPrincipalMappingStatus;
+  }): Promise<ExternalPrincipalMapping[]>;
+  abstract getExternalPrincipalMapping(id: string): Promise<ExternalPrincipalMapping | null>;
+  abstract findExternalPrincipalMapping(provider: string, subject: string): Promise<ExternalPrincipalMapping | null>;
+  abstract createExternalPrincipalMapping(mapping: CreateExternalPrincipalMapping): Promise<ExternalPrincipalMapping>;
+  abstract updateExternalPrincipalMapping(id: string, mapping: UpdateExternalPrincipalMapping): Promise<ExternalPrincipalMapping | null>;
+  abstract setExternalPrincipalMappingStatus(
+    id: string,
+    status: ExternalPrincipalMappingStatus,
+    actor?: string | null,
+  ): Promise<ExternalPrincipalMapping | null>;
 
   abstract upsertServiceAccount(account: UpsertPxmServiceAccount): Promise<PxmServiceAccount>;
   abstract listServiceAccounts(groupId?: string): Promise<PxmServiceAccount[]>;

@@ -558,12 +558,23 @@ export class TemplatesController {
     };
     const approvalRequestPath = dynamicApprovalRequestPath(template.nodes);
     const externalApproval = normalizeExternalApprovalRequest(formData, approvalRequestPath);
+    const externalApprovalRequestDigest = externalApproval
+      ? externalApprovalRequestHash(template.id, formData, approvalRequestPath)
+      : null;
     const requestAccess = instanceAccessFromRequest(req, formData);
     const access = {
       ...requestAccess,
       group_id: template.group_id || requestAccess.group_id,
       workflow_version_id: template.version ? `${template.id}:${template.version}` : null,
     };
+    if (externalApproval) {
+      await this.authzService.resolveExternalApprovalPrincipals(
+        formData,
+        approvalRequestPath,
+        access.group_id,
+        template.nodes,
+      );
+    }
     const groupSnapshot = template.group_id ? await this.authzService.getGroup(template.group_id).catch(() => null) : null;
     const apiKeySnapshot = actor.api_key_id ? await this.authzService.getApiKey(actor.api_key_id).catch(() => null) : null;
     const ctx = {
@@ -620,7 +631,7 @@ export class TemplatesController {
         ? externalApprovalKeyHash(externalApproval)
         : sha256(`workflow-start:v1:${principal}:${template.id}:${normalizedIdempotencyKey}`);
       const requestHash = externalApproval
-        ? externalApprovalRequestHash(template.id, formData, approvalRequestPath)
+        ? externalApprovalRequestDigest!
         : sha256(
             stableStringify({
               workflow_id: template.id,

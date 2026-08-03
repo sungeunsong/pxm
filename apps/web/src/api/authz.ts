@@ -59,6 +59,41 @@ export type CreatedApiKey = PxmApiKey & {
   api_key: string;
 };
 
+export type ExternalPrincipalMappingIssue =
+  | 'mapping_disabled'
+  | 'user_missing'
+  | 'user_disabled'
+  | 'group_mismatch'
+  | 'email_missing';
+
+export type ExternalPrincipalMapping = {
+  id: string;
+  provider: string;
+  subject: string;
+  group_id: string;
+  pxm_user_id: string;
+  display_name?: string | null;
+  email?: string | null;
+  department?: string | null;
+  status: 'active' | 'disabled';
+  version: number;
+  pxm_user: PxmUser | null;
+  available_channels: Array<'pxm_user' | 'external_email'>;
+  issues: ExternalPrincipalMappingIssue[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type SaveExternalPrincipalMapping = {
+  provider: string;
+  subject: string;
+  group_id: string;
+  pxm_user_id: string;
+  display_name?: string;
+  email?: string;
+  department?: string;
+};
+
 const API_BASE_URL = '/api/authz';
 
 const jsonHeaders = { 'Content-Type': 'application/json' };
@@ -123,6 +158,45 @@ export const authzApi = {
     const params = groupId ? `?groupId=${encodeURIComponent(groupId)}` : '';
     const response = await fetch(`${API_BASE_URL}/service-accounts${params}`, { credentials: 'include' });
     return readJson(response, 'service account list failed');
+  },
+
+  async listExternalPrincipalMappings(groupId?: string): Promise<ExternalPrincipalMapping[]> {
+    const params = groupId ? `?groupId=${encodeURIComponent(groupId)}` : '';
+    const response = await fetch(`${API_BASE_URL}/external-principal-mappings${params}`, { credentials: 'include' });
+    return readJson(response, 'external principal mapping list failed');
+  },
+
+  async createExternalPrincipalMapping(payload: SaveExternalPrincipalMapping): Promise<ExternalPrincipalMapping> {
+    const response = await fetch(`${API_BASE_URL}/external-principal-mappings`, {
+      method: 'POST',
+      headers: jsonHeaders, credentials: 'include',
+      body: JSON.stringify(payload),
+    });
+    return readJson(response, 'external principal mapping create failed');
+  },
+
+  async updateExternalPrincipalMapping(
+    id: string,
+    payload: Omit<SaveExternalPrincipalMapping, 'provider' | 'subject'>,
+  ): Promise<ExternalPrincipalMapping> {
+    const response = await fetch(`${API_BASE_URL}/external-principal-mappings/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: jsonHeaders, credentials: 'include',
+      body: JSON.stringify(payload),
+    });
+    return readJson(response, 'external principal mapping update failed');
+  },
+
+  async setExternalPrincipalMappingStatus(
+    id: string,
+    status: 'active' | 'disabled',
+  ): Promise<ExternalPrincipalMapping> {
+    const response = await fetch(`${API_BASE_URL}/external-principal-mappings/${encodeURIComponent(id)}/status`, {
+      method: 'PUT',
+      headers: jsonHeaders, credentials: 'include',
+      body: JSON.stringify({ status }),
+    });
+    return readJson(response, 'external principal mapping status update failed');
   },
 
   async saveServiceAccount(payload: {

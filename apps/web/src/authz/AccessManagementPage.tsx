@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { KeyRound, RefreshCw, RotateCcw, Save, Shield, Trash2, UserRound, UsersRound } from 'lucide-react';
+import { KeyRound, Link2, RefreshCw, RotateCcw, Save, Shield, Trash2, UserRound, UsersRound } from 'lucide-react';
 import { Button } from '../components';
 import {
   authzApi,
   type ApiKeyOwnerType,
   type ApiKeyScope,
   type CreatedApiKey,
+  type ExternalPrincipalMapping,
   type PxmApiKey,
   type PxmGroup,
   type PxmGroupRole,
@@ -29,13 +30,14 @@ const roleLabels: Record<PxmRole, string> = {
   group_manager: '그룹 관리자',
   user: '일반 사용자',
 };
-type AccessDetailTab = 'users' | 'serviceAccounts' | 'apiKeys';
+type AccessDetailTab = 'users' | 'serviceAccounts' | 'apiKeys' | 'externalMappings';
 
 export function AccessManagementPage({ currentUser }: { currentUser: SessionUser }) {
   const [groups, setGroups] = useState<PxmGroup[]>([]);
   const [users, setUsers] = useState<PxmUser[]>([]);
   const [serviceAccounts, setServiceAccounts] = useState<PxmServiceAccount[]>([]);
   const [apiKeys, setApiKeys] = useState<PxmApiKey[]>([]);
+  const [externalMappings, setExternalMappings] = useState<ExternalPrincipalMapping[]>([]);
   const [workflows, setWorkflows] = useState<WorkflowTemplate[]>([]);
   const [selectedGroupId, setSelectedGroupId] = useState('');
   const [loading, setLoading] = useState(false);
@@ -65,6 +67,10 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
     () => workflows.filter((workflow) => workflow.group_id === selectedGroupFilterId),
     [workflows, selectedGroupFilterId],
   );
+  const groupExternalMappings = useMemo(
+    () => externalMappings.filter((mapping) => selectedGroupFilterId && mapping.group_id === selectedGroupFilterId),
+    [externalMappings, selectedGroupFilterId],
+  );
 
   const loadData = async (requestedGroupId = selectedGroupId) => {
     setLoading(true);
@@ -78,17 +84,19 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
       const targetGroupId = requestedGroupId && nextGroups.some((group) => group.id === requestedGroupId)
         ? requestedGroupId
         : firstActive?.id || '';
-      const [nextUsers, nextAccounts, nextKeys] = targetGroupId
+      const [nextUsers, nextAccounts, nextKeys, nextMappings] = targetGroupId
         ? await Promise.all([
             authzApi.listUsers(targetGroupId),
             authzApi.listServiceAccounts(targetGroupId),
             authzApi.listApiKeys(targetGroupId),
+            authzApi.listExternalPrincipalMappings(targetGroupId),
           ])
-        : [[], [], []];
+        : [[], [], [], []];
       setGroups(nextGroups);
       setUsers(nextUsers);
       setServiceAccounts(nextAccounts);
       setApiKeys(nextKeys);
+      setExternalMappings(nextMappings);
       setWorkflows(nextWorkflows);
       setSelectedGroupId(targetGroupId);
     } catch (err) {
@@ -108,8 +116,10 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
     try {
       await operation();
       await loadData(selectedGroupId);
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Operation failed');
+      return false;
     } finally {
       setSaving(false);
     }
@@ -144,6 +154,7 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
         <SummaryCard label="선택 그룹 사용자" value={users.length} />
         <SummaryCard label="선택 그룹 서비스 계정" value={serviceAccounts.length} />
         <SummaryCard label="선택 그룹 API Key" value={apiKeys.length} />
+        <SummaryCard label="외부 승인자 매핑" value={externalMappings.length} />
       </div>
 
       <div className="access-layout">
@@ -218,6 +229,14 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
               <KeyRound size={15} />
               API Key
               <span>{groupKeys.length}</span>
+            </button>
+            <button
+              className={activeTab === 'externalMappings' ? 'active' : ''}
+              onClick={() => setActiveTab('externalMappings')}
+            >
+              <Link2 size={15} />
+              외부 승인자 매핑
+              <span>{groupExternalMappings.length}</span>
             </button>
           </div>
 
@@ -341,6 +360,32 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
                 ))}
                 {groupKeys.length === 0 && <div className="access-empty">발급된 API Key가 없습니다.</div>}
               </div>
+            </>
+          )}
+
+          {activeTab === 'externalMappings' && (
+            <>
+              <PanelHeader icon={<Link2 size={16} />} title="외부 승인자 매핑" />
+              <ContextNotice
+                group={selectedGroup}
+                text={
+                  selectedGroup?.status === 'deleted'
+                    ? '삭제된 그룹에는 외부 승인자 매핑을 추가할 수 없습니다.'
+                    : '외부 시스템의 provider/subject를 PXM 사용자와 연결합니다. 실제 전달 채널은 실행 요청의 approval_channels가 결정합니다.'
+                }
+              />
+              <ExternalPrincipalMappingPanel
+                groupId={currentGroupId}
+                users={groupUsers}
+                mappings={groupExternalMappings}
+                disabled={saving || !currentGroupId}
+                onSave={(id, payload) => run(() => {
+                  if (!id) return authzApi.createExternalPrincipalMapping(payload);
+                  const { provider: _provider, subject: _subject, ...update } = payload;
+                  return authzApi.updateExternalPrincipalMapping(id, update);
+                })}
+                onStatus={(id, status) => run(() => authzApi.setExternalPrincipalMappingStatus(id, status))}
+              />
             </>
           )}
         </section>
@@ -601,6 +646,214 @@ function ApiKeyForm({
         발급
       </Button>
     </form>
+  );
+}
+
+const mappingIssueLabels: Record<ExternalPrincipalMapping['issues'][number], string> = {
+  mapping_disabled: '매핑 비활성',
+  user_missing: '사용자 없음',
+  user_disabled: '사용자 비활성',
+  group_mismatch: '그룹 불일치',
+  email_missing: '이메일 없음',
+};
+
+function ExternalPrincipalMappingPanel({
+  groupId,
+  users,
+  mappings,
+  disabled,
+  onSave,
+  onStatus,
+}: {
+  groupId: string;
+  users: PxmUser[];
+  mappings: ExternalPrincipalMapping[];
+  disabled?: boolean;
+  onSave: (
+    id: string | null,
+    payload: {
+      provider: string;
+      subject: string;
+      group_id: string;
+      pxm_user_id: string;
+      display_name?: string;
+      email?: string;
+      department?: string;
+    },
+  ) => Promise<boolean>;
+  onStatus: (id: string, status: 'active' | 'disabled') => Promise<boolean>;
+}) {
+  const activeUsers = users.filter((user) => user.status === 'active');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [provider, setProvider] = useState('');
+  const [subject, setSubject] = useState('');
+  const [userId, setUserId] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [email, setEmail] = useState('');
+  const [department, setDepartment] = useState('');
+  const [providerFilter, setProviderFilter] = useState('');
+  const [subjectFilter, setSubjectFilter] = useState('');
+  const filteredMappings = useMemo(() => {
+    const normalizedProvider = providerFilter.trim().toLowerCase();
+    const normalizedSubject = subjectFilter.trim().toLowerCase();
+    return mappings.filter((mapping) => (
+      (!normalizedProvider || mapping.provider.toLowerCase() === normalizedProvider)
+      && (!normalizedSubject || mapping.subject.toLowerCase().includes(normalizedSubject))
+    ));
+  }, [mappings, providerFilter, subjectFilter]);
+
+  useEffect(() => {
+    setEditingId(null);
+    setProvider('');
+    setSubject('');
+    setUserId(activeUsers[0]?.id || '');
+    setDisplayName('');
+    setEmail('');
+    setDepartment('');
+    setProviderFilter('');
+    setSubjectFilter('');
+  }, [groupId]);
+
+  useEffect(() => {
+    if (!userId && activeUsers[0]) setUserId(activeUsers[0].id);
+  }, [activeUsers.length, userId]);
+
+  const reset = () => {
+    setEditingId(null);
+    setProvider('');
+    setSubject('');
+    setUserId(activeUsers[0]?.id || '');
+    setDisplayName('');
+    setEmail('');
+    setDepartment('');
+  };
+
+  const startEdit = (mapping: ExternalPrincipalMapping) => {
+    setEditingId(mapping.id);
+    setProvider(mapping.provider);
+    setSubject(mapping.subject);
+    setUserId(mapping.pxm_user_id);
+    setDisplayName(mapping.display_name || '');
+    setEmail(mapping.email || '');
+    setDepartment(mapping.department || '');
+  };
+
+  return (
+    <>
+      <form className="access-form mapping-form" onSubmit={async (event) => {
+        event.preventDefault();
+        if (!provider.trim() || !subject.trim() || !userId || !groupId) return;
+        const saved = await onSave(editingId, {
+          provider: provider.trim(),
+          subject: subject.trim(),
+          group_id: groupId,
+          pxm_user_id: userId,
+          display_name: displayName.trim(),
+          email: email.trim(),
+          department: department.trim(),
+        });
+        if (saved) reset();
+      }}>
+        <input
+          value={provider}
+          onChange={(event) => setProvider(event.target.value)}
+          placeholder="provider (예: acrapoint)"
+          disabled={Boolean(editingId)}
+        />
+        <input
+          value={subject}
+          onChange={(event) => setSubject(event.target.value)}
+          placeholder="외부 사용자 subject"
+          disabled={Boolean(editingId)}
+        />
+        <select value={userId} onChange={(event) => setUserId(event.target.value)}>
+          <option value="">PXM 사용자 선택</option>
+          {activeUsers.map((user) => (
+            <option key={user.id} value={user.id}>{user.display_name} ({user.id})</option>
+          ))}
+        </select>
+        <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="표시 이름 (선택)" />
+        <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="전달 이메일 (선택)" />
+        <input value={department} onChange={(event) => setDepartment(event.target.value)} placeholder="부서 (선택)" />
+        <div className="mapping-form-actions">
+          <Button
+            type="submit"
+            variant="primary"
+            size="sm"
+            icon={<Save size={14} />}
+            disabled={disabled || !provider.trim() || !subject.trim() || !userId}
+          >
+            {editingId ? '변경 저장' : '매핑 등록'}
+          </Button>
+          {editingId && <Button type="button" variant="ghost" size="sm" onClick={reset}>취소</Button>}
+        </div>
+      </form>
+
+      <div className="mapping-search">
+        <input
+          value={providerFilter}
+          onChange={(event) => setProviderFilter(event.target.value)}
+          placeholder="provider 검색"
+        />
+        <input
+          value={subjectFilter}
+          onChange={(event) => setSubjectFilter(event.target.value)}
+          placeholder="subject 검색"
+        />
+        <span>{filteredMappings.length}건</span>
+      </div>
+
+      <div className="mapping-table">
+        {filteredMappings.map((mapping) => (
+          <div key={mapping.id} className="mapping-row">
+            <div className="mapping-identity">
+              <strong>{mapping.provider}:{mapping.subject}</strong>
+              <small>
+                {mapping.display_name || mapping.pxm_user?.display_name || mapping.pxm_user_id}
+                {mapping.department ? ` · ${mapping.department}` : ''}
+              </small>
+              <small>PXM 사용자: {mapping.pxm_user_id}</small>
+              <small>이메일: {mapping.email || mapping.pxm_user?.email || '없음'}</small>
+            </div>
+            <div className="mapping-meta">
+              <span className={`status-badge ${mapping.status}`}>{mapping.status}</span>
+              <span className="mapping-channels">
+                {mapping.available_channels.length > 0
+                  ? mapping.available_channels.map((channel) => (
+                      <span key={channel} className="type-badge">{channel}</span>
+                    ))
+                  : <span className="mapping-issue">사용 가능한 채널 없음</span>}
+              </span>
+              {mapping.issues.length > 0 && (
+                <span className="mapping-issues">
+                  {mapping.issues.map((issue) => (
+                    <span key={issue} className="mapping-issue">{mappingIssueLabels[issue]}</span>
+                  ))}
+                </span>
+              )}
+              <span className="mapping-actions">
+                <Button variant="ghost" size="sm" onClick={() => startEdit(mapping)} disabled={disabled}>수정</Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onStatus(mapping.id, mapping.status === 'active' ? 'disabled' : 'active')}
+                  disabled={disabled}
+                >
+                  {mapping.status === 'active' ? '비활성화' : '활성화'}
+                </Button>
+              </span>
+            </div>
+          </div>
+        ))}
+        {filteredMappings.length === 0 && (
+          <div className="access-empty">
+            {providerFilter.trim() || subjectFilter.trim()
+              ? '검색한 외부 승인자는 미매핑 상태입니다.'
+              : '등록된 외부 승인자 매핑이 없습니다.'}
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 

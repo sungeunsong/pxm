@@ -19,6 +19,7 @@ describe('InstancesService pause control', () => {
       instanceRepo as any,
       {} as any,
       {} as any,
+      {} as any,
     );
     return { service, instanceRepo };
   };
@@ -182,7 +183,13 @@ describe('InstancesService external approval start', () => {
       executeInstanceMutation: jest.fn(),
     };
     const workflowRepo = { getPublishedDefinition: jest.fn().mockResolvedValue(definition) };
-    const service = new InstancesService(instanceRepo as any, workflowRepo as any, {} as any);
+    let mappingVersion = 0;
+    const service = new InstancesService(instanceRepo as any, workflowRepo as any, {} as any, {
+      resolveExternalApprovalPrincipals: jest.fn((formData) => {
+        mappingVersion += 1;
+        formData.approval_request.principal_mapping = { version: mappingVersion };
+      }),
+    } as any);
 
     await expect(service.createInstance(structuredClone(dto))).resolves.toMatchObject({
       instance_id: 'instance-original',
@@ -200,6 +207,8 @@ describe('InstancesService external approval start', () => {
     expect(instanceRepo.createIdempotentStart.mock.calls[0][0].request_hash).toBe(
       instanceRepo.createIdempotentStart.mock.calls[1][0].request_hash,
     );
+    expect(instanceRepo.createIdempotentStart.mock.calls[0][0].instance.context)
+      .toMatchObject({ data: { formData: { approval_request: { principal_mapping: { version: 1 } } } } });
   });
 
   it('returns a conflict when a claimed external request key has another payload', async () => {
@@ -211,7 +220,9 @@ describe('InstancesService external approval start', () => {
       executeInstanceMutation: jest.fn(),
     };
     const workflowRepo = { getPublishedDefinition: jest.fn().mockResolvedValue(definition) };
-    const service = new InstancesService(instanceRepo as any, workflowRepo as any, {} as any);
+    const service = new InstancesService(instanceRepo as any, workflowRepo as any, {} as any, {
+      resolveExternalApprovalPrincipals: jest.fn(),
+    } as any);
 
     await expect(service.createInstance(structuredClone(dto))).rejects.toBeInstanceOf(ConflictException);
     expect(instanceRepo.executeInstanceMutation).not.toHaveBeenCalled();

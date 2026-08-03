@@ -17,10 +17,46 @@ import {
   IsString,
   Max,
   MaxLength,
+  Matches,
   Min,
   MinLength,
   ValidateNested,
 } from 'class-validator';
+
+export class CreateExternalPrincipalMappingDto {
+  @IsString() @MinLength(1) @MaxLength(100) @Matches(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
+  provider: string;
+  @IsString() @MinLength(1) @MaxLength(200) @Matches(/^[^\u0000-\u001f\u007f]+$/)
+  subject: string;
+  @IsString() @MinLength(1) @MaxLength(128)
+  group_id: string;
+  @IsString() @MinLength(1) @MaxLength(128)
+  pxm_user_id: string;
+  @IsOptional() @IsString() @MaxLength(100)
+  display_name?: string | null;
+  @IsOptional() @IsEmail() @MaxLength(254)
+  email?: string | null;
+  @IsOptional() @IsString() @MaxLength(100)
+  department?: string | null;
+}
+
+export class UpdateExternalPrincipalMappingDto {
+  @IsString() @MinLength(1) @MaxLength(128)
+  group_id: string;
+  @IsString() @MinLength(1) @MaxLength(128)
+  pxm_user_id: string;
+  @IsOptional() @IsString() @MaxLength(100)
+  display_name?: string | null;
+  @IsOptional() @IsEmail() @MaxLength(254)
+  email?: string | null;
+  @IsOptional() @IsString() @MaxLength(100)
+  department?: string | null;
+}
+
+export class SetExternalPrincipalMappingStatusDto {
+  @IsIn(['active', 'disabled'])
+  status: 'active' | 'disabled';
+}
 
 class GroupMembershipDto {
   @IsString() @MinLength(1) @MaxLength(128)

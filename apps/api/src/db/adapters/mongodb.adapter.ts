@@ -6,6 +6,12 @@ import {
   approvalChannels,
   primaryApprovalChannel,
 } from '../approval-channels';
+import type {
+  CreateExternalPrincipalMapping,
+  ExternalPrincipalMapping,
+  ExternalPrincipalMappingStatus,
+  UpdateExternalPrincipalMapping,
+} from '../ports/db.ports';
 
 @Injectable()
 export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleRepositoryPort, WorkflowInputPresetRepositoryPort, AuthzRepositoryPort {
@@ -2509,6 +2515,135 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
     return result ? mapUserDoc(result) : null;
   }
 
+  async listExternalPrincipalMappings(query: {
+    provider?: string;
+    subject?: string;
+    group_id?: string;
+    status?: ExternalPrincipalMappingStatus;
+  } = {}): Promise<ExternalPrincipalMapping[]> {
+    await this.ensureAuthzIndexes();
+    const filter: Record<string, unknown> = {};
+    if (query.provider) filter.provider = query.provider;
+    if (query.subject) {
+      filter.subject = { $regex: escapeRegex(query.subject), $options: 'i' };
+    }
+    if (query.group_id) filter.group_id = query.group_id;
+    if (query.status) filter.status = query.status;
+    const docs = await this.db
+      .collection<any>('v2_external_principal_mappings')
+      .find(filter)
+      .sort({ updated_at: -1, _id: 1 })
+      .toArray();
+    return docs.map(mapExternalPrincipalMappingDoc);
+  }
+
+  async getExternalPrincipalMapping(
+    id: string,
+  ): Promise<ExternalPrincipalMapping | null> {
+    await this.ensureAuthzIndexes();
+    const doc = await this.db
+      .collection<any>('v2_external_principal_mappings')
+      .findOne(mongoDocumentIdFilter(id));
+    return doc ? mapExternalPrincipalMappingDoc(doc) : null;
+  }
+
+  async findExternalPrincipalMapping(
+    provider: string,
+    subject: string,
+  ): Promise<ExternalPrincipalMapping | null> {
+    await this.ensureAuthzIndexes();
+    const doc = await this.db
+      .collection<any>('v2_external_principal_mappings')
+      .findOne({ provider, subject });
+    return doc ? mapExternalPrincipalMappingDoc(doc) : null;
+  }
+
+  async createExternalPrincipalMapping(
+    mapping: CreateExternalPrincipalMapping,
+  ): Promise<ExternalPrincipalMapping> {
+    await this.ensureAuthzIndexes();
+    const now = new Date().toISOString();
+    const doc = {
+      _id: mapping.id || crypto.randomUUID(),
+      provider: mapping.provider,
+      subject: mapping.subject,
+      group_id: mapping.group_id,
+      pxm_user_id: mapping.pxm_user_id,
+      display_name: mapping.display_name || null,
+      email: mapping.email || null,
+      department: mapping.department || null,
+      display_snapshot: {
+        name: mapping.display_name || null,
+        email: mapping.email || null,
+        department: mapping.department || null,
+      },
+      status: 'active',
+      version: 1,
+      created_by: mapping.actor || null,
+      updated_by: mapping.actor || null,
+      created_at: now,
+      updated_at: now,
+    };
+    await this.db
+      .collection<any>('v2_external_principal_mappings')
+      .insertOne(doc);
+    return mapExternalPrincipalMappingDoc(doc);
+  }
+
+  async updateExternalPrincipalMapping(
+    id: string,
+    mapping: UpdateExternalPrincipalMapping,
+  ): Promise<ExternalPrincipalMapping | null> {
+    await this.ensureAuthzIndexes();
+    const doc = await this.db
+      .collection<any>('v2_external_principal_mappings')
+      .findOneAndUpdate(
+        mongoDocumentIdFilter(id),
+        {
+          $set: {
+            group_id: mapping.group_id,
+            pxm_user_id: mapping.pxm_user_id,
+            display_name: mapping.display_name || null,
+            email: mapping.email || null,
+            department: mapping.department || null,
+            display_snapshot: {
+              name: mapping.display_name || null,
+              email: mapping.email || null,
+              department: mapping.department || null,
+            },
+            updated_by: mapping.actor || null,
+            updated_at: new Date().toISOString(),
+          },
+          $inc: { version: 1 },
+        },
+        { returnDocument: 'after' },
+      );
+    return doc ? mapExternalPrincipalMappingDoc(doc) : null;
+  }
+
+  async setExternalPrincipalMappingStatus(
+    id: string,
+    status: ExternalPrincipalMappingStatus,
+    actor?: string | null,
+  ): Promise<ExternalPrincipalMapping | null> {
+    await this.ensureAuthzIndexes();
+    const doc = await this.db
+      .collection<any>('v2_external_principal_mappings')
+      .findOneAndUpdate(
+        mongoDocumentIdFilter(id),
+        {
+          $set: {
+            status,
+            updated_by: actor || null,
+            updated_at: new Date().toISOString(),
+          },
+          $inc: { version: 1 },
+        },
+        { returnDocument: 'after' },
+      );
+    return doc ? mapExternalPrincipalMappingDoc(doc) : null;
+  }
+
   async createSession(session: CreatePxmSession): Promise<PxmSession> {
     await this.ensureAuthzIndexes();
     const now = new Date().toISOString();
@@ -2719,6 +2854,12 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
     if (this.authzIndexesReady) return;
     await this.db.collection<any>('pxm_groups').createIndex({ name: 1 }, { unique: true });
     await this.db.collection<any>('pxm_users').createIndex({ group_ids: 1 });
+    await this.db
+      .collection<any>('v2_external_principal_mappings')
+      .createIndex({ provider: 1, subject: 1 }, { unique: true });
+    await this.db
+      .collection<any>('v2_external_principal_mappings')
+      .createIndex({ group_id: 1, status: 1, updated_at: -1 });
     await this.db.collection<any>('pxm_service_accounts').createIndex({ group_id: 1 });
     await this.db.collection<any>('pxm_api_keys').createIndex({ key_hash: 1 }, { unique: true });
     await this.db.collection<any>('pxm_api_keys').createIndex({ group_id: 1, status: 1 });
@@ -2785,6 +2926,38 @@ function mapUserDoc(doc: any): PxmUser {
     created_at: doc.created_at,
     updated_at: doc.updated_at,
   };
+}
+
+function mapExternalPrincipalMappingDoc(
+  doc: any,
+): ExternalPrincipalMapping {
+  const display = doc.display_snapshot || {};
+  return {
+    id: String(doc._id),
+    provider: String(doc.provider),
+    subject: String(doc.subject),
+    group_id: doc.group_id ? String(doc.group_id) : '',
+    pxm_user_id: String(doc.pxm_user_id),
+    display_name: doc.display_name || display.name || null,
+    email: doc.email || display.email || null,
+    department: doc.department || display.department || null,
+    status: doc.status === 'disabled' ? 'disabled' : 'active',
+    version: Number(doc.version || 0),
+    created_by: doc.created_by || null,
+    updated_by: doc.updated_by || null,
+    created_at: String(doc.created_at),
+    updated_at: String(doc.updated_at),
+  };
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function mongoDocumentIdFilter(id: string): Record<string, any> {
+  return ObjectId.isValid(id)
+    ? { _id: { $in: [id, new ObjectId(id)] } }
+    : { _id: id };
 }
 
 function mapSessionDoc(doc: any): PxmSession {
