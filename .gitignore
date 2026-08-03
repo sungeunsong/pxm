@@ -1,5 +1,6 @@
 # Node / pnpm
 node_modules/
+apps/e2e/test-results/
 .pnpm-store/
 .pnpm-debug.log*
 

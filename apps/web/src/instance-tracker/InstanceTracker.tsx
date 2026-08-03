@@ -296,7 +296,12 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
               </thead>
               <tbody>
                 {filteredInstances.map(inst => (
-                  <tr key={inst.id} className="premium-row">
+                  <tr
+                    key={inst.id}
+                    className="premium-row"
+                    data-testid="tracker-instance-row"
+                    data-instance-id={inst.id}
+                  >
                     <td className="inst-id-cell" title={inst.id}>
                       <code>{inst.id.slice(0, 18)}...</code>
                     </td>
@@ -358,6 +363,7 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
                       )}
                       {['CREATED', 'RUNNING', 'WAITING'].includes(inst.state.toUpperCase()) && (
                         <button
+                          data-testid="tracker-pause-toggle"
                           className="btn-pause-instance"
                           onClick={() => setInstancePaused(inst.id, !inst.is_paused)}
                           disabled={controllingId === inst.id}
@@ -368,6 +374,7 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
                       )}
                       {['CREATED', 'RUNNING', 'WAITING'].includes(inst.state.toUpperCase()) && (
                         <button
+                          data-testid="tracker-terminate"
                           className="btn-lineage-instance"
                           onClick={() => terminateInstance(inst.id)}
                           disabled={terminatingId === inst.id}

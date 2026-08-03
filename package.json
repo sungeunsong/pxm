@@ -19,6 +19,8 @@
     "e2e:instance-pause-resume": "cargo build --manifest-path apps/engine/Cargo.toml && cd apps/api && node scripts/smoke-instance-pause-resume.mjs",
     "e2e:waiting-pause-resume": "cargo build --manifest-path apps/engine/Cargo.toml && cd apps/api && node scripts/smoke-waiting-pause-resume.mjs",
     "e2e:process-restart-recovery": "pnpm --dir apps/api build && cargo build --manifest-path apps/engine/Cargo.toml && cd apps/api && node scripts/smoke-process-restart-recovery.mjs",
+    "e2e:browser": "pnpm --filter @pxm/e2e test",
+    "gate:beta": "pnpm --filter api build && pnpm --filter web build && cargo test --manifest-path apps/engine/Cargo.toml && pnpm e2e:browser",
     "smoke:mongo:approval": "cd apps/api && API_BASE_URL=${API_BASE_URL:-http://localhost:3011/api} MONGODB_URL=${MONGODB_URL:-mongodb://127.0.0.1:27017/?replicaSet=rs0} MONGO_DB_NAME=${MONGO_DB_NAME:-pxm_db} node scripts/smoke-mongo-approval.mjs",
     "smoke:mongo:gateway": "cd apps/api && API_BASE_URL=${API_BASE_URL:-http://localhost:3011/api} MONGODB_URL=${MONGODB_URL:-mongodb://127.0.0.1:27017/?replicaSet=rs0} MONGO_DB_NAME=${MONGO_DB_NAME:-pxm_db} node scripts/smoke-mongo-gateway.mjs",
     "benchmark:immediate": "cd apps/api && node scripts/benchmark-immediate-nodes.mjs",

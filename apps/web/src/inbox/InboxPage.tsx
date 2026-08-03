@@ -319,7 +319,14 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
           </thead>
           <tbody>
             {visibleTasks.map((task) => (
-              <tr key={task.id} className="task-row-item" onClick={() => openTask(task)}>
+              <tr
+                key={task.id}
+                className="task-row-item"
+                data-testid="inbox-task-row"
+                data-task-id={task.id}
+                data-instance-id={task.instance_id}
+                onClick={() => openTask(task)}
+              >
                 <td>
                   <div className="req-name-cell">
                     <span className="req-tag">{task.node_id}</span>
@@ -530,6 +537,7 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
             <div className="action-card-body">
               <div className="decision-btn-group">
                 <button
+                  data-testid="decision-approve"
                   className={`decision-btn btn-approve ${decision === 'approve' ? 'selected' : ''}`}
                   onClick={() => {
                     setDecision('approve');
@@ -540,6 +548,7 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
                   <span>승인</span>
                 </button>
                 <button
+                  data-testid="decision-reject"
                   className={`decision-btn btn-reject ${decision === 'reject' ? 'selected' : ''}`}
                   onClick={() => {
                     setDecision('reject');

@@ -1,0 +1,20 @@
+{
+  "name": "@pxm/e2e",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "pretest": "pnpm --filter api build",
+    "test": "node --env-file-if-exists=../../.env run.mjs",
+    "test:headed": "PXM_E2E_HEADED=true node --env-file-if-exists=../../.env run.mjs",
+    "install:browser": "playwright install chromium"
+  },
+  "dependencies": {
+    "mongodb": "^6.21.0",
+    "pg": "^8.17.2"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "@types/node": "^24.10.1"
+  }
+}

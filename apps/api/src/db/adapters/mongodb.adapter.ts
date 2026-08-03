@@ -2856,10 +2856,16 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
     await this.db.collection<any>('pxm_users').createIndex({ group_ids: 1 });
     await this.db
       .collection<any>('v2_external_principal_mappings')
-      .createIndex({ provider: 1, subject: 1 }, { unique: true });
+      .createIndex(
+        { provider: 1, subject: 1 },
+        { unique: true, name: 'ux_v2_external_principal_mapping' },
+      );
     await this.db
       .collection<any>('v2_external_principal_mappings')
-      .createIndex({ group_id: 1, status: 1, updated_at: -1 });
+      .createIndex(
+        { group_id: 1, status: 1, updated_at: -1 },
+        { name: 'idx_v2_external_principal_mapping_group_status' },
+      );
     await this.db.collection<any>('pxm_service_accounts').createIndex({ group_id: 1 });
     await this.db.collection<any>('pxm_api_keys').createIndex({ key_hash: 1 }, { unique: true });
     await this.db.collection<any>('pxm_api_keys').createIndex({ group_id: 1, status: 1 });

@@ -199,6 +199,7 @@ export function ExternalApprovalPage({ token }: { token: string }) {
         {error && <div className="external-error">{error}</div>}
         <footer>
           <button
+            data-testid="external-reject"
             type="button"
             className="reject"
             disabled={busy || (details.requires_otp && otp.length !== 6)}
@@ -207,6 +208,7 @@ export function ExternalApprovalPage({ token }: { token: string }) {
             <XCircle size={17} /> 반려
           </button>
           <button
+            data-testid="external-approve"
             type="submit"
             className="approve"
             disabled={busy || (details.requires_otp && otp.length !== 6)}
