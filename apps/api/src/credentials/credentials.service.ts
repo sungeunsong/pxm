@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { Db } from 'mongodb';
+import { Client } from 'ssh2';
 import { MONGO_DB } from '../db/mongo.provider';
 import type { WorkflowHistoryActor } from '../db/ports/db.ports';
 import { assertCanManageGroup, isAdmin, managerGroupIds } from '../authz/management-auth';
@@ -9,6 +10,7 @@ import {
   CredentialAuditResponseDto,
   CredentialResponseDto,
   CredentialType,
+  LookupSshHostKeyDto,
   UpdateCredentialDto,
 } from './dto/credential.dto';
 import {
@@ -64,6 +66,7 @@ export class CredentialsService implements OnModuleInit {
 
   async create(dto: CreateCredentialDto, actor: WorkflowHistoryActor): Promise<CredentialResponseDto> {
     const normalized = normalizeCreateDto(dto);
+    validateCredentialSecret(normalized.type, normalized.secret_value);
     assertCanManageGroup(actor, normalized.group_id);
     await this.assertShareTargetsManageable(actor, normalized.shared_group_ids);
     const now = new Date().toISOString();
@@ -95,6 +98,20 @@ export class CredentialsService implements OnModuleInit {
       });
     }
     return mapCredential(doc, actor);
+  }
+
+  async lookupSshHostKey(
+    dto: LookupSshHostKeyDto,
+    actor: WorkflowHistoryActor,
+  ): Promise<{ host: string; port: number; fingerprint: string }> {
+    const groupId = dto.group_id.trim();
+    assertCanManageGroup(actor, groupId);
+    const host = dto.host.trim();
+    if (!/^[A-Za-z0-9._:-]+$/.test(host)) {
+      throw new BadRequestException('SSH host must be a hostname or IP address');
+    }
+    const port = dto.port ?? 22;
+    return fetchSshHostKey(host, port, 10_000);
   }
 
   async list(
@@ -131,6 +148,9 @@ export class CredentialsService implements OnModuleInit {
     const current = await this.findDocument(id);
     assertCredentialOwnerAccess(actor, current);
     const patch = normalizeUpdateDto(dto);
+    if (patch.profile.type && patch.profile.type !== current.type && patch.secret_value === undefined) {
+      throw new BadRequestException('secret_value is required when changing credential type');
+    }
     const targetGroupId = patch.profile.group_id !== undefined ? patch.profile.group_id : current.group_id;
     assertCanManageGroup(actor, targetGroupId);
     if (patch.profile.shared_group_ids) {
@@ -147,6 +167,7 @@ export class CredentialsService implements OnModuleInit {
     };
 
     if (patch.secret_value !== undefined) {
+      validateCredentialSecret(patch.profile.type || current.type, patch.secret_value);
       next.secret = encryptSecret(patch.secret_value);
     }
 
@@ -404,7 +425,81 @@ function normalizeUpdateDto(dto: UpdateCredentialDto): {
 }
 
 function isCredentialType(value: unknown): value is CredentialType {
-  return ['api_key', 'basic_auth', 'bearer_token', 'connection_string', 'custom'].includes(String(value));
+  return ['api_key', 'basic_auth', 'bearer_token', 'connection_string', 'ssh', 'custom'].includes(String(value));
+}
+
+function validateCredentialSecret(type: CredentialType, secretValue: string): void {
+  if (type !== 'ssh') return;
+
+  let secret: Record<string, unknown>;
+  try {
+    secret = JSON.parse(secretValue) as Record<string, unknown>;
+  } catch {
+    throw new BadRequestException('SSH secret must be a JSON object');
+  }
+  if (!secret || typeof secret !== 'object' || Array.isArray(secret)) {
+    throw new BadRequestException('SSH secret must be a JSON object');
+  }
+  if (!stringValue(secret.host)) throw new BadRequestException('SSH secret host is required');
+  if (!stringValue(secret.username)) throw new BadRequestException('SSH secret username is required');
+  const port = secret.port === undefined ? 22 : Number(secret.port);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new BadRequestException('SSH secret port must be between 1 and 65535');
+  }
+  if (!/^SHA256:[A-Za-z0-9+/]+={0,2}$/.test(stringValue(secret.host_key_fingerprint))) {
+    throw new BadRequestException('SSH secret host_key_fingerprint must use SHA256:... format');
+  }
+  const hasPassword = typeof secret.password === 'string' && secret.password.length > 0;
+  const hasPrivateKey = typeof secret.private_key === 'string' && secret.private_key.trim().length > 0;
+  if (hasPassword === hasPrivateKey) {
+    throw new BadRequestException('SSH secret must contain exactly one of password or private_key');
+  }
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function fetchSshHostKey(
+  host: string,
+  port: number,
+  timeoutMs: number,
+): Promise<{ host: string; port: number; fingerprint: string }> {
+  return new Promise((resolve, reject) => {
+    const client = new Client();
+    let settled = false;
+    const finish = (error?: Error, fingerprint?: string) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      client.end();
+      if (error) reject(error);
+      else resolve({ host, port, fingerprint: fingerprint || '' });
+    };
+    const timer = setTimeout(() => {
+      finish(new BadRequestException(`SSH server key lookup timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    client
+      .on('error', (error) => {
+        finish(new BadRequestException(`SSH server key lookup failed: ${error.message}`));
+      })
+      .connect({
+        host,
+        port,
+        username: 'pxm-host-key-lookup',
+        readyTimeout: timeoutMs,
+        hostVerifier: (key) => {
+          const bytes = Buffer.isBuffer(key) ? key : Buffer.from(key, 'hex');
+          const fingerprint = `SHA256:${createHash('sha256')
+            .update(bytes)
+            .digest('base64')
+            .replace(/=+$/, '')}`;
+          finish(undefined, fingerprint);
+          return false;
+        },
+      });
+  });
 }
 
 function normalizeScopes(scopes: unknown): string[] {

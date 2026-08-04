@@ -3,6 +3,7 @@ export type CredentialType =
   | 'basic_auth'
   | 'bearer_token'
   | 'connection_string'
+  | 'ssh'
   | 'custom';
 
 export interface CredentialProfile {
@@ -51,6 +52,22 @@ export interface SaveCredentialRequest {
 const API_BASE_URL = '/api';
 
 export const credentialsApi = {
+  async lookupSshHostKey(
+    groupId: string,
+    host: string,
+    port: number,
+  ): Promise<{ host: string; port: number; fingerprint: string }> {
+    const response = await fetch(`${API_BASE_URL}/credentials/ssh/host-key`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ group_id: groupId, host, port }),
+    });
+    if (!response.ok) {
+      throw new Error(await responseError(response, 'Failed to read SSH server key'));
+    }
+    return response.json();
+  },
+
   async list(activeOnly = false, groupId?: string): Promise<CredentialProfile[]> {
     const params = new URLSearchParams();
     params.set('activeOnly', String(activeOnly));
@@ -69,7 +86,7 @@ export const credentialsApi = {
       body: JSON.stringify(data),
     });
     if (!response.ok) {
-      throw new Error(`Failed to create credential: ${response.statusText}`);
+      throw new Error(await responseError(response, 'Failed to create credential'));
     }
     return response.json();
   },
@@ -81,7 +98,7 @@ export const credentialsApi = {
       body: JSON.stringify(data),
     });
     if (!response.ok) {
-      throw new Error(`Failed to update credential: ${response.statusText}`);
+      throw new Error(await responseError(response, 'Failed to update credential'));
     }
     return response.json();
   },
@@ -106,3 +123,11 @@ export const credentialsApi = {
     return response.json();
   },
 };
+
+async function responseError(response: Response, fallback: string) {
+  const payload = await response.json().catch(() => null);
+  const message = payload?.message || payload?.error;
+  return Array.isArray(message)
+    ? message.join(', ')
+    : message || `${fallback}: ${response.statusText}`;
+}

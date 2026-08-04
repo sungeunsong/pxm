@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { TemplatesService } from './templates.service';
 
 describe('Workflow deployment lifecycle', () => {
@@ -50,6 +51,33 @@ describe('Workflow deployment lifecycle', () => {
     expect(created.lifecycle_status).toBe('DRAFT');
     expect(schedules.syncDefinitionSchedules).not.toHaveBeenCalled();
     expect(dbWatch.syncDefinitionWatchJobs).not.toHaveBeenCalled();
+  });
+
+  it('rejects an SSH node without a credential', async () => {
+    await expect(service.create({
+      name: 'SSH workflow',
+      group_id: 'group-1',
+      nodes: [{ id: 'ssh', data: { nodeType: 'service', plugin_id: 'builtin.ssh', command: 'hostname' } }],
+      edges: [],
+    })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects a non-SSH credential on an SSH node', async () => {
+    credentials.getForRuntime.mockResolvedValue({ type: 'api_key' });
+    await expect(service.create({
+      name: 'SSH workflow',
+      group_id: 'group-1',
+      nodes: [{
+        id: 'ssh',
+        data: {
+          nodeType: 'service',
+          plugin_id: 'builtin.ssh',
+          command: 'hostname',
+          credential_id: 'credential-1',
+        },
+      }],
+      edges: [],
+    })).rejects.toThrow('SSH node requires a credential with type ssh');
   });
 
   it('publishes the current immutable version and activates its triggers', async () => {

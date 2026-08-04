@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, Param, Post, Put, Query, Req } from '@ne
 import type { Request } from 'express';
 import { actorFromRequest } from '../instances/history-auth';
 import { CredentialsService } from './credentials.service';
-import { CreateCredentialDto, UpdateCredentialDto } from './dto/credential.dto';
+import { CreateCredentialDto, LookupSshHostKeyDto, UpdateCredentialDto } from './dto/credential.dto';
 
 @Controller('credentials')
 export class CredentialsController {
@@ -11,6 +11,11 @@ export class CredentialsController {
   @Post()
   async create(@Body() dto: CreateCredentialDto, @Req() req: Request) {
     return this.credentialsService.create(dto, actorFromRequest(req));
+  }
+
+  @Post('ssh/host-key')
+  async lookupSshHostKey(@Body() dto: LookupSshHostKeyDto, @Req() req: Request) {
+    return this.credentialsService.lookupSshHostKey(dto, actorFromRequest(req));
   }
 
   @Get()

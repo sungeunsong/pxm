@@ -13,6 +13,7 @@ import './CredentialsPage.css';
 
 type CredentialFormState = {
   id?: string;
+  originalType?: CredentialType;
   groupId: string;
   sharedGroupIds: string[];
   name: string;
@@ -20,6 +21,14 @@ type CredentialFormState = {
   description: string;
   scopesText: string;
   secretValue: string;
+  sshAuthMethod: 'password' | 'private_key';
+  sshHost: string;
+  sshPort: string;
+  sshUsername: string;
+  sshPassword: string;
+  sshPrivateKey: string;
+  sshPassphrase: string;
+  sshHostKeyFingerprint: string;
   metadataText: string;
   active: boolean;
 };
@@ -32,6 +41,14 @@ const emptyForm: CredentialFormState = {
   description: '',
   scopesText: '',
   secretValue: '',
+  sshAuthMethod: 'password',
+  sshHost: '',
+  sshPort: '22',
+  sshUsername: '',
+  sshPassword: '',
+  sshPrivateKey: '',
+  sshPassphrase: '',
+  sshHostKeyFingerprint: '',
   metadataText: '{}',
   active: true,
 };
@@ -88,7 +105,7 @@ export const CredentialsPage: React.FC<{ currentUser: SessionUser }> = ({ curren
     try {
       const payload = buildCredentialPayload(form);
       if (form.id) {
-        await credentialsApi.update(form.id, payload);
+        await credentialsApi.update(form.id, { ...payload, active: form.active });
       } else {
         if (!payload.secret_value) {
           throw new Error('신규 credential은 secret value가 필요합니다.');
@@ -107,6 +124,7 @@ export const CredentialsPage: React.FC<{ currentUser: SessionUser }> = ({ curren
   const handleEdit = (credential: CredentialProfile) => {
     setForm({
       id: credential.id,
+      originalType: credential.type,
       groupId: credential.group_id || '',
       sharedGroupIds: credential.shared_group_ids || [],
       name: credential.name,
@@ -114,6 +132,14 @@ export const CredentialsPage: React.FC<{ currentUser: SessionUser }> = ({ curren
       description: credential.description,
       scopesText: credential.scopes.join(', '),
       secretValue: '',
+      sshAuthMethod: 'password',
+      sshHost: '',
+      sshPort: '22',
+      sshUsername: '',
+      sshPassword: '',
+      sshPrivateKey: '',
+      sshPassphrase: '',
+      sshHostKeyFingerprint: '',
       metadataText: JSON.stringify(credential.metadata || {}, null, 2),
       active: credential.active,
     });
@@ -250,14 +276,20 @@ export const CredentialsPage: React.FC<{ currentUser: SessionUser }> = ({ curren
             <Select
               label="Type"
               value={form.type}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, type: event.target.value as CredentialType }))
-              }
+              onChange={(event) => setForm((prev) => {
+                const type = event.target.value as CredentialType;
+                return {
+                  ...prev,
+                  type,
+                  scopesText: type === 'ssh' && !prev.scopesText.trim() ? 'ssh' : prev.scopesText,
+                };
+              })}
               options={[
                 { value: 'api_key', label: 'API Key' },
                 { value: 'basic_auth', label: 'Basic Auth' },
                 { value: 'bearer_token', label: 'Bearer Token' },
                 { value: 'connection_string', label: 'Connection String' },
+                { value: 'ssh', label: 'SSH' },
                 { value: 'custom', label: 'Custom' },
               ]}
               fullWidth
@@ -291,17 +323,25 @@ export const CredentialsPage: React.FC<{ currentUser: SessionUser }> = ({ curren
               selectedGroupIds={form.sharedGroupIds}
               onChange={(sharedGroupIds) => setForm((prev) => ({ ...prev, sharedGroupIds }))}
             />
-            <Input
-              label={form.id ? 'Secret Value 변경' : 'Secret Value'}
-              type="password"
-              value={form.secretValue}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, secretValue: event.target.value }))
-              }
-              helperText={form.id ? '비워두면 기존 secret을 유지합니다.' : '저장 후에는 화면/API에서 다시 노출하지 않습니다.'}
-              required={!form.id}
-              fullWidth
-            />
+            {form.type === 'ssh' ? (
+              <SshCredentialFields form={form} onChange={(patch) => setForm((prev) => ({ ...prev, ...patch }))} />
+            ) : (
+              <Input
+                label={form.id ? 'Secret Value 변경' : 'Secret Value'}
+                type="password"
+                value={form.secretValue}
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, secretValue: event.target.value }))
+                }
+                helperText={form.id
+                  ? form.type === form.originalType
+                    ? '비워두면 기존 secret을 유지합니다.'
+                    : 'Credential 유형을 변경할 때는 새 secret이 필요합니다.'
+                  : '저장 후에는 화면/API에서 다시 노출하지 않습니다.'}
+                required={!form.id || form.type !== form.originalType}
+                fullWidth
+              />
+            )}
             <div className="credential-form-group">
               <label>Metadata JSON</label>
               <textarea
@@ -312,11 +352,13 @@ export const CredentialsPage: React.FC<{ currentUser: SessionUser }> = ({ curren
                 spellCheck={false}
               />
             </div>
-            <Checkbox
-              label="Active"
-              checked={form.active}
-              onChange={(event) => setForm((prev) => ({ ...prev, active: event.target.checked }))}
-            />
+            {form.id && (
+              <Checkbox
+                label="Active"
+                checked={form.active}
+                onChange={(event) => setForm((prev) => ({ ...prev, active: event.target.checked }))}
+              />
+            )}
             <div className="credential-form-actions">
               <Button type="submit" disabled={saving} icon={<ShieldCheck size={14} />}>
                 {saving ? '저장 중...' : '저장'}
@@ -467,6 +509,7 @@ function CredentialSharePicker({
 }
 
 function buildCredentialPayload(form: CredentialFormState) {
+  const secretValue = buildSecretValue(form);
   const payload = {
     group_id: form.groupId,
     shared_group_ids: form.sharedGroupIds,
@@ -478,8 +521,7 @@ function buildCredentialPayload(form: CredentialFormState) {
       .map((scope) => scope.trim())
       .filter(Boolean),
     metadata: parseMetadata(form.metadataText),
-    active: form.active,
-    ...(form.secretValue ? { secret_value: form.secretValue } : {}),
+    ...(secretValue ? { secret_value: secretValue } : {}),
   };
   if (!payload.name) {
     throw new Error('name이 필요합니다.');
@@ -488,6 +530,203 @@ function buildCredentialPayload(form: CredentialFormState) {
     throw new Error('관리 group을 선택해야 합니다.');
   }
   return payload;
+}
+
+function buildSecretValue(form: CredentialFormState) {
+  if (form.type !== 'ssh') return form.secretValue;
+
+  const hasSshInput = [
+    form.sshHost,
+    form.sshUsername,
+    form.sshPassword,
+    form.sshPrivateKey,
+    form.sshPassphrase,
+    form.sshHostKeyFingerprint,
+  ].some((value) => value.trim());
+  if (form.id && form.originalType === 'ssh' && !hasSshInput) return '';
+
+  const host = form.sshHost.trim();
+  const username = form.sshUsername.trim();
+  const hostKeyFingerprint = form.sshHostKeyFingerprint.trim();
+  const port = Number.parseInt(form.sshPort, 10);
+  if (!host) throw new Error('SSH host가 필요합니다.');
+  if (!username) throw new Error('SSH username이 필요합니다.');
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error('SSH port는 1~65535 사이여야 합니다.');
+  }
+  if (!/^SHA256:[A-Za-z0-9+/]+={0,2}$/.test(hostKeyFingerprint)) {
+    throw new Error('SSH host key fingerprint는 SHA256:... 형식이어야 합니다.');
+  }
+
+  if (form.sshAuthMethod === 'private_key' && !form.sshPrivateKey.trim()) {
+    throw new Error('SSH private key가 필요합니다.');
+  }
+  if (form.sshAuthMethod === 'password' && !form.sshPassword) {
+    throw new Error('SSH password가 필요합니다.');
+  }
+  const auth = form.sshAuthMethod === 'private_key'
+    ? {
+        private_key: form.sshPrivateKey.trim(),
+        ...(form.sshPassphrase ? { passphrase: form.sshPassphrase } : {}),
+      }
+    : { password: form.sshPassword };
+
+  return JSON.stringify({
+    host,
+    port,
+    username,
+    host_key_fingerprint: hostKeyFingerprint,
+    ...auth,
+  });
+}
+
+function SshCredentialFields({
+  form,
+  onChange,
+}: {
+  form: CredentialFormState;
+  onChange: (patch: Partial<CredentialFormState>) => void;
+}) {
+  const replacingExisting = Boolean(form.id && form.originalType === 'ssh');
+  const [hostKeyLoading, setHostKeyLoading] = useState(false);
+  const [hostKeyError, setHostKeyError] = useState<string | null>(null);
+
+  const lookupHostKey = async () => {
+    const port = Number.parseInt(form.sshPort, 10);
+    if (!form.groupId) {
+      setHostKeyError('먼저 관리 Group을 선택하세요.');
+      return;
+    }
+    if (!form.sshHost.trim()) {
+      setHostKeyError('먼저 SSH Host를 입력하세요.');
+      return;
+    }
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      setHostKeyError('Port는 1~65535 사이여야 합니다.');
+      return;
+    }
+    setHostKeyLoading(true);
+    setHostKeyError(null);
+    try {
+      const result = await credentialsApi.lookupSshHostKey(
+        form.groupId,
+        form.sshHost.trim(),
+        port,
+      );
+      onChange({ sshHostKeyFingerprint: result.fingerprint });
+    } catch (error) {
+      setHostKeyError(error instanceof Error ? error.message : 'SSH 서버 키를 가져오지 못했습니다.');
+    } finally {
+      setHostKeyLoading(false);
+    }
+  };
+
+  return (
+    <div className="ssh-credential-fields">
+      <div className="ssh-credential-heading">
+        <strong>SSH Connection</strong>
+        <span>{replacingExisting ? '입력하면 기존 연결 정보를 전체 교체합니다.' : '암호화되어 저장됩니다.'}</span>
+      </div>
+      <div className="ssh-credential-subheading">1. 서버 확인</div>
+      <Input
+        label="Host"
+        placeholder="server.example.com"
+        value={form.sshHost}
+        onChange={(event) => onChange({
+          sshHost: event.target.value,
+          sshHostKeyFingerprint: '',
+        })}
+        required={!replacingExisting}
+        fullWidth
+      />
+      <Input
+        label="Port"
+        type="number"
+        value={form.sshPort}
+        onChange={(event) => onChange({
+          sshPort: event.target.value,
+          sshHostKeyFingerprint: '',
+        })}
+        required={!replacingExisting}
+        fullWidth
+      />
+      <Input
+        label="Host Key Fingerprint"
+        placeholder="SHA256:..."
+        value={form.sshHostKeyFingerprint}
+        onChange={(event) => onChange({ sshHostKeyFingerprint: event.target.value })}
+        helperText="Host와 Port를 입력한 다음 아래 버튼으로 서버 신분 키를 가져오세요. 이후 연결부터 서버가 바뀌지 않았는지 자동 확인합니다."
+        required={!replacingExisting}
+        fullWidth
+      />
+      <div className="ssh-host-key-actions">
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          onClick={() => void lookupHostKey()}
+          disabled={hostKeyLoading}
+        >
+          {hostKeyLoading ? '서버 키 확인 중...' : '서버 키 가져오기'}
+        </Button>
+        {form.sshHostKeyFingerprint && (
+          <span className="ssh-host-key-success">서버 키를 가져왔습니다. 표시된 값을 확인한 뒤 저장하세요.</span>
+        )}
+      </div>
+      {hostKeyError && <div className="ssh-host-key-error">{hostKeyError}</div>}
+      <div className="ssh-credential-subheading">2. 로그인 정보</div>
+      <Input
+        label="Username"
+        value={form.sshUsername}
+        onChange={(event) => onChange({ sshUsername: event.target.value })}
+        required={!replacingExisting}
+        fullWidth
+      />
+      <Select
+        label="Authentication"
+        value={form.sshAuthMethod}
+        onChange={(event) => onChange({ sshAuthMethod: event.target.value as CredentialFormState['sshAuthMethod'] })}
+        options={[
+          { value: 'password', label: 'Password' },
+          { value: 'private_key', label: 'Private Key' },
+        ]}
+        fullWidth
+      />
+      {form.sshAuthMethod === 'password' ? (
+        <Input
+          label="Password"
+          type="password"
+          value={form.sshPassword}
+          onChange={(event) => onChange({ sshPassword: event.target.value })}
+          required={!replacingExisting}
+          fullWidth
+        />
+      ) : (
+        <>
+          <div className="credential-form-group">
+            <label>Private Key{!replacingExisting && <span className="input-required">*</span>}</label>
+            <textarea
+              className="ssh-private-key"
+              value={form.sshPrivateKey}
+              onChange={(event) => onChange({ sshPrivateKey: event.target.value })}
+              placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+              spellCheck={false}
+            />
+          </div>
+          <Input
+            label="Passphrase"
+            type="password"
+            value={form.sshPassphrase}
+            onChange={(event) => onChange({ sshPassphrase: event.target.value })}
+            fullWidth
+          />
+        </>
+      )}
+      {replacingExisting && (
+        <div className="ssh-credential-note">모든 연결 필드를 비워두면 기존 SSH secret을 유지합니다.</div>
+      )}
+    </div>
+  );
 }
 
 function newCredentialForm(groups: PxmGroup[]): CredentialFormState {
@@ -548,6 +787,9 @@ function getScopeSuggestions(type: CredentialType) {
   }
   if (type === 'api_key' || type === 'bearer_token' || type === 'basic_auth') {
     return ['http', 'api', 'webhook', 'crm', 'production'];
+  }
+  if (type === 'ssh') {
+    return ['ssh', 'remote', 'server', 'deploy', 'production'];
   }
   return ['custom', 'local', 'production'];
 }

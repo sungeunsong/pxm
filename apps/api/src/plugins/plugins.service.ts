@@ -1,7 +1,9 @@
 import { BadRequestException, Inject, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { createHash } from 'crypto';
 import { existsSync, readdirSync, readFileSync } from 'fs';
 import { Db, MongoClient } from 'mongodb';
 import { join, resolve } from 'path';
+import { Client, type ConnectConfig } from 'ssh2';
 import { CredentialsService } from '../credentials/credentials.service';
 import type { WorkflowHistoryActor } from '../db/ports/db.ports';
 import { MONGO_DB } from '../db/mongo.provider';
@@ -280,7 +282,9 @@ export class PluginsService implements OnModuleInit {
           ? await this.testHttpRequest(config)
           : pluginId === 'connector.db.mongodb.query'
             ? await this.testMongoDbQuery(config)
-            : null;
+            : pluginId === 'builtin.ssh'
+              ? await this.testSsh(config)
+              : null;
 
       if (!output) {
         throw new BadRequestException(`Plugin test is not supported yet: ${pluginId}`);
@@ -383,7 +387,35 @@ export class PluginsService implements OnModuleInit {
       return resolved;
     }
 
+    if (target === 'ssh_credential') {
+      resolved.ssh_credential = secret;
+      return resolved;
+    }
+
     throw new BadRequestException(`Unsupported credential binding target: ${target}`);
+  }
+
+  private async testSsh(config: Record<string, unknown>) {
+    const command = stringValue(config.command);
+    if (!command) throw new BadRequestException('SSH test requires command');
+    const secretValue = stringValue(config.ssh_credential);
+    if (!secretValue) throw new BadRequestException('SSH test requires an SSH credential');
+    const credential = parseSshCredential(secretValue);
+    const env = objectValue(config.env) || {};
+    const envPrefix = Object.entries(env).map(([key, value]) => {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+        throw new BadRequestException(`Invalid SSH environment variable name: ${key}`);
+      }
+      return `export ${key}=${shellQuote(String(value ?? ''))}`;
+    });
+    const workingDirectory = stringValue(config.working_directory);
+    const remoteCommand = [
+      ...envPrefix,
+      ...(workingDirectory ? [`cd ${shellQuote(workingDirectory)}`] : []),
+      command,
+    ].join(' && ');
+    const timeoutMs = Math.min(Math.max(numberValue(config.timeout_ms) ?? 30_000, 1), 300_000);
+    return executeSshTest(credential, remoteCommand, timeoutMs);
   }
 
   private async testMongoDbQuery(config: Record<string, unknown>) {
@@ -727,7 +759,125 @@ function inferCredentialTarget(pluginId: string) {
   if (pluginId === 'builtin.http_request') {
     return 'authorization_header';
   }
+  if (pluginId === 'builtin.ssh') {
+    return 'ssh_credential';
+  }
   return '';
+}
+
+type SshTestCredential = {
+  host: string;
+  port: number;
+  username: string;
+  hostKeyFingerprint: string;
+  password?: string;
+  privateKey?: string;
+  passphrase?: string;
+};
+
+function parseSshCredential(value: string): SshTestCredential {
+  let raw: Record<string, unknown>;
+  try {
+    raw = JSON.parse(value) as Record<string, unknown>;
+  } catch {
+    throw new BadRequestException('SSH credential secret is not valid JSON');
+  }
+  if (!isPlainObject(raw)) throw new BadRequestException('SSH credential secret must be an object');
+  const host = stringValue(raw.host);
+  const username = stringValue(raw.username);
+  const hostKeyFingerprint = stringValue(raw.host_key_fingerprint);
+  const port = numberValue(raw.port) ?? 22;
+  if (!host || !username || !hostKeyFingerprint) {
+    throw new BadRequestException('SSH credential requires host, username, and host_key_fingerprint');
+  }
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new BadRequestException('SSH credential port must be between 1 and 65535');
+  }
+  const password = typeof raw.password === 'string' && raw.password ? raw.password : undefined;
+  const privateKey = typeof raw.private_key === 'string' && raw.private_key.trim() ? raw.private_key : undefined;
+  if (Boolean(password) === Boolean(privateKey)) {
+    throw new BadRequestException('SSH credential requires exactly one of password or private_key');
+  }
+  return {
+    host,
+    port,
+    username,
+    hostKeyFingerprint,
+    ...(password ? { password } : {}),
+    ...(privateKey ? { privateKey } : {}),
+    ...(typeof raw.passphrase === 'string' && raw.passphrase ? { passphrase: raw.passphrase } : {}),
+  };
+}
+
+function executeSshTest(credential: SshTestCredential, command: string, timeoutMs: number) {
+  return new Promise<Record<string, unknown>>((resolve, reject) => {
+    const client = new Client();
+    let receivedFingerprint = '';
+    let settled = false;
+    const finish = (error?: Error, output?: Record<string, unknown>) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      client.end();
+      if (error) reject(error);
+      else resolve(output || {});
+    };
+    const timer = setTimeout(
+      () => finish(new Error(`SSH test timed out after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
+    const expectedFingerprint = normalizeSshFingerprint(credential.hostKeyFingerprint);
+    const connectConfig: ConnectConfig = {
+      host: credential.host,
+      port: credential.port,
+      username: credential.username,
+      readyTimeout: timeoutMs,
+      ...(credential.password ? { password: credential.password } : {}),
+      ...(credential.privateKey ? { privateKey: credential.privateKey } : {}),
+      ...(credential.passphrase ? { passphrase: credential.passphrase } : {}),
+      hostVerifier: (key) => {
+        const bytes = Buffer.isBuffer(key) ? key : Buffer.from(key, 'hex');
+        receivedFingerprint = `SHA256:${createHash('sha256').update(bytes).digest('base64').replace(/=+$/, '')}`;
+        return normalizeSshFingerprint(receivedFingerprint) === expectedFingerprint;
+      },
+    };
+
+    client
+      .on('ready', () => {
+        client.exec(command, (error, stream) => {
+          if (error) return finish(error);
+          const stdout: Buffer[] = [];
+          const stderr: Buffer[] = [];
+          stream.on('data', (chunk: Buffer) => stdout.push(Buffer.from(chunk)));
+          stream.stderr.on('data', (chunk: Buffer) => stderr.push(Buffer.from(chunk)));
+          stream.on('close', (exitCode: number | undefined, signal: string | undefined) => {
+            finish(undefined, {
+              exit_code: exitCode ?? -1,
+              signal: signal || null,
+              stdout: Buffer.concat(stdout).toString('utf8'),
+              stderr: Buffer.concat(stderr).toString('utf8'),
+            });
+          });
+        });
+      })
+      .on('error', (error) => {
+        if (receivedFingerprint && normalizeSshFingerprint(receivedFingerprint) !== expectedFingerprint) {
+          return finish(new Error(
+            `SSH host key mismatch: expected ${credential.hostKeyFingerprint}, received ${receivedFingerprint}`,
+          ));
+        }
+        return finish(error);
+      })
+      .connect(connectConfig);
+  });
+}
+
+function normalizeSshFingerprint(value: string) {
+  return value.trim().replace(/=+$/, '');
+}
+
+function shellQuote(value: string) {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
 interface PluginControls {

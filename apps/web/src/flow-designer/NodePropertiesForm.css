@@ -204,6 +204,75 @@
   font-weight: var(--font-weight-semibold);
 }
 
+.ssh-test-terminal {
+  padding: 10px;
+  background: var(--bg-primary);
+}
+
+.ssh-test-terminal-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.ssh-test-terminal-meta span,
+.ssh-test-terminal-meta button {
+  padding: 2px 6px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  font-size: 10px;
+}
+
+.ssh-test-terminal-meta button {
+  margin-left: auto;
+  cursor: pointer;
+}
+
+.ssh-test-terminal-meta button:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.ssh-test-terminal-screen {
+  max-height: 260px;
+  overflow: auto;
+  padding: 10px;
+  color: #d1d5db;
+  background: #111827;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.ssh-test-terminal-prompt {
+  margin-bottom: 6px;
+  color: #93c5fd;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ssh-test-terminal-screen pre {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ssh-test-terminal-screen pre.stderr {
+  margin-top: 8px;
+  padding-top: 8px;
+  color: #fca5a5;
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.ssh-test-terminal-empty {
+  color: #9ca3af;
+}
+
 .json-tree-view {
   max-height: 280px;
   overflow: auto;

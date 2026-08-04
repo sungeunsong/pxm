@@ -15,6 +15,7 @@ import { templatesApi, type TestDbWatchConnectionResponse } from '../api/templat
 import { authzApi, type PxmGroup, type PxmUser } from '../api/authz';
 import { FormSchemaEditor } from './FormSchemaEditor';
 import { PluginIcon } from './plugin-icons';
+import { sanitizeTerminalText } from './terminal-output';
 import './NodePropertiesForm.css';
 
 export interface NodePropertiesFormProps {
@@ -352,6 +353,7 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
     const pluginId = data.plugin_id || 'builtin.http_request';
     const selectedPlugin = findPluginManifest(plugins, pluginId);
     const credentialPolicy = getCredentialPolicy(selectedPlugin);
+    const credentialRequired = isCredentialRequired(selectedPlugin);
     const compatibleCredentials = credentials.filter((credential) =>
       isCredentialCompatible(credential, credentialPolicy),
     );
@@ -384,7 +386,7 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
               variant="primary"
               size="sm"
               onClick={onTestRun}
-              disabled={!onTestRun || testRunning}
+              disabled={!onTestRun || testRunning || (credentialRequired && !selectedCredentialCompatible)}
             >
               {testRunning ? '실행 중...' : '테스트 실행'}
             </Button>
@@ -396,10 +398,18 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
                   ? `${testResult.ok ? '성공' : '실패'} · ${testResult.duration_ms}ms`
                   : '실패'}
               </div>
-              <JsonTreeView
-                value={getTestResultValue(testResult, testError)}
-                onPathClick={handleCopyPath}
-              />
+              {pluginId === 'builtin.ssh' ? (
+                <SshTestTerminal
+                  command={String(data.command || '')}
+                  result={testResult}
+                  error={testError}
+                />
+              ) : (
+                <JsonTreeView
+                  value={getTestResultValue(testResult, testError)}
+                  onPathClick={handleCopyPath}
+                />
+              )}
             </div>
           )}
         </div>
@@ -458,13 +468,14 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
                   : undefined,
               });
             }}
-            options={buildCredentialOptions(compatibleCredentials, credentialPolicy)}
+            options={buildCredentialOptions(compatibleCredentials, credentialPolicy, credentialRequired)}
             helperText={
               credentialsError ||
               (credentialsLoading
                 ? 'Credential 목록을 불러오는 중입니다.'
                 : credentialPolicy.helperText)
             }
+            required={credentialRequired}
             fullWidth
           />
           {selectedCredential && selectedCredentialCompatible && (
@@ -508,20 +519,28 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
             helperText="테스트/실행 결과를 저장할 context path입니다. 예: httpResults.userLookup"
             fullWidth
           />
-          <Input
-            label="Timeout (ms)"
-            type="number"
-            placeholder="5000"
-            value={data.timeout || ''}
-            onChange={(e) => onUpdate(node.id, { ...data, timeout: e.target.value })}
-            fullWidth
-          />
+          {!selectedPlugin?.config_schema.properties?.timeout_ms && (
+            <Input
+              label="Timeout (ms)"
+              type="number"
+              placeholder="5000"
+              value={data.timeout || ''}
+              onChange={(e) => onUpdate(node.id, {
+                ...data,
+                timeout: e.target.value === '' ? '' : Number.parseInt(e.target.value, 10),
+              })}
+              fullWidth
+            />
+          )}
           <Input
             label="Retry Count"
             type="number"
             placeholder="3"
             value={data.retryCount || ''}
-            onChange={(e) => onUpdate(node.id, { ...data, retryCount: e.target.value })}
+            onChange={(e) => onUpdate(node.id, {
+              ...data,
+              retryCount: e.target.value === '' ? '' : Number.parseInt(e.target.value, 10),
+            })}
             fullWidth
           />
           <Checkbox
@@ -1766,7 +1785,7 @@ function CommandArgumentSourceBadge({ source }: { source: CommandArgumentSource 
 }
 
 type CredentialPolicy = {
-  mode: 'none' | 'mongodb_connection' | 'http_auth';
+  mode: 'none' | 'mongodb_connection' | 'http_auth' | 'ssh_connection';
   title: string;
   helperText: string;
   handledFields: string[];
@@ -1774,18 +1793,33 @@ type CredentialPolicy = {
   preferredScopes: string[];
 };
 
-function buildCredentialOptions(credentials: CredentialProfile[], policy: CredentialPolicy) {
+function buildCredentialOptions(
+  credentials: CredentialProfile[],
+  policy: CredentialPolicy,
+  required = false,
+) {
   if (policy.mode === 'none') {
     return [{ value: '', label: '이 노드는 credential을 사용하지 않음' }];
   }
 
   return [
-    { value: '', label: 'Credential 미사용' },
+    ...(required
+      ? [{ value: '', label: credentials.length ? 'Credential을 선택하세요' : '사용 가능한 Credential이 없습니다' }]
+      : [{ value: '', label: 'Credential 미사용' }]),
     ...credentials.map((credential) => ({
       value: credential.id,
       label: `${credential.name} (${credential.type})`,
     })),
   ];
+}
+
+function isCredentialRequired(plugin?: PluginManifest) {
+  const requiredSecrets = plugin?.secrets_policy?.required;
+  return Boolean(
+    requiredSecrets &&
+    typeof requiredSecrets === 'object' &&
+    Object.values(requiredSecrets).some((value) => value === 'ref://credential_id'),
+  );
 }
 
 function getCredentialPolicy(plugin?: PluginManifest): CredentialPolicy {
@@ -1811,6 +1845,17 @@ function getCredentialPolicy(plugin?: PluginManifest): CredentialPolicy {
       handledFields: [],
       allowedTypes: ['api_key', 'bearer_token', 'basic_auth', 'custom'],
       preferredScopes: ['http', 'api', 'webhook'],
+    };
+  }
+
+  if (pluginId === 'builtin.ssh' || tags.includes('ssh')) {
+    return {
+      mode: 'ssh_connection',
+      title: 'SSH connection',
+      helperText: 'SSH Credential은 필수입니다. Credential Store에서 host, username, 인증 정보와 host key fingerprint를 등록하세요.',
+      handledFields: [],
+      allowedTypes: ['ssh'],
+      preferredScopes: ['ssh', 'remote', 'server', 'deploy'],
     };
   }
 
@@ -1862,6 +1907,13 @@ function buildCredentialBinding(credential: CredentialProfile, policy: Credentia
     };
   }
 
+  if (policy.mode === 'ssh_connection') {
+    return {
+      target: 'ssh_credential' as const,
+      field: 'ssh_credential',
+    };
+  }
+
   if (credential.type === 'bearer_token') {
     return {
       target: 'authorization_header' as const,
@@ -1898,6 +1950,8 @@ function CredentialBindingSummary({
   const destination =
     binding.target === 'connection_uri'
       ? 'Connection URI 필드'
+      : binding.target === 'ssh_credential'
+        ? 'SSH 연결 정보'
       : `${binding.headerName}${binding.scheme ? ` (${binding.scheme})` : ''} 헤더`;
 
   return (
@@ -1975,6 +2029,7 @@ function renderPluginConfigFields(
     }
 
     if (property.type === 'object' || property.type === 'array') {
+      const invalidJson = typeof value === 'string' && value.trim() !== '';
       return (
         <div className="property-group" key={key}>
           <label className="property-label">
@@ -1985,8 +2040,14 @@ function renderPluginConfigFields(
             className="property-textarea"
             value={typeof value === 'string' ? value : JSON.stringify(value || {}, null, 2)}
             onChange={(e) => onUpdate({ ...data, [key]: parseJsonLoose(e.target.value) })}
+            aria-invalid={invalidJson}
           />
           {helperText && <div className="property-helper-text">{helperText}</div>}
+          {invalidJson && (
+            <div className="property-helper-text property-error-text">
+              올바른 JSON {property.type === 'array' ? 'array' : 'object'}를 입력하세요.
+            </div>
+          )}
         </div>
       );
     }
@@ -2071,6 +2132,49 @@ function getTestResultValue(result?: PluginTestResponse | null, error?: string |
     return { error };
   }
   return result?.output ?? { error };
+}
+
+function SshTestTerminal({
+  command,
+  result,
+  error,
+}: {
+  command: string;
+  result?: PluginTestResponse | null;
+  error?: string | null;
+}) {
+  const output = isPlainObject(result?.output) ? result.output : {};
+  const stdout = sanitizeTerminalText(typeof output.stdout === 'string' ? output.stdout : '');
+  const stderr = sanitizeTerminalText(
+    typeof output.stderr === 'string' && output.stderr
+      ? output.stderr
+      : error || result?.error || '',
+  );
+  const exitCode = output.exit_code;
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText([
+      `$ ${sanitizeTerminalText(command)}`,
+      stdout,
+      stderr ? `# stderr\n${stderr}` : '',
+    ].filter(Boolean).join('\n'));
+  };
+
+  return (
+    <div className="ssh-test-terminal">
+      <div className="ssh-test-terminal-meta">
+        <span>exit {exitCode ?? (result?.ok ? 0 : '-')}</span>
+        <span>{result?.duration_ms ?? '-'}ms</span>
+        <button type="button" onClick={handleCopy}>출력 복사</button>
+      </div>
+      <div className="ssh-test-terminal-screen">
+        <div className="ssh-test-terminal-prompt">$ {sanitizeTerminalText(command)}</div>
+        {stdout && <pre>{stdout}</pre>}
+        {stderr && <pre className="stderr">{stderr}</pre>}
+        {!stdout && !stderr && <div className="ssh-test-terminal-empty">출력 없음</div>}
+      </div>
+    </div>
+  );
 }
 
 function getPluginConfigDefaults(plugin?: PluginManifest): Partial<CustomNodeData> {

@@ -355,6 +355,40 @@ export class TemplatesService {
   }
 
   private async assertCredentialBindings(nodes: any[], groupId?: string | null): Promise<void> {
+    for (const node of nodes || []) {
+      const config = node?.data || node?.config || node || {};
+      if (config.plugin_id !== 'builtin.ssh') continue;
+      if (typeof config.command !== 'string' || !config.command.trim()) {
+        throw new BadRequestException('SSH node command is required');
+      }
+      if (config.env !== undefined && (!config.env || typeof config.env !== 'object' || Array.isArray(config.env))) {
+        throw new BadRequestException('SSH node env must be a JSON object');
+      }
+      if (config.env && typeof config.env === 'object') {
+        const invalidEnvName = Object.keys(config.env).find((key) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key));
+        if (invalidEnvName) {
+          throw new BadRequestException(`Invalid SSH environment variable name: ${invalidEnvName}`);
+        }
+      }
+      if (
+        config.timeout_ms !== undefined &&
+        (!Number.isInteger(config.timeout_ms) || config.timeout_ms < 1 || config.timeout_ms > 300_000)
+      ) {
+        throw new BadRequestException('SSH node timeout_ms must be between 1 and 300000');
+      }
+      const credentialId = typeof config.credential_id === 'string' ? config.credential_id.trim() : '';
+      if (!credentialId) {
+        throw new BadRequestException('SSH node requires an SSH credential');
+      }
+      if (!groupId) {
+        throw new BadRequestException('Workflow group_id is required when using credentials');
+      }
+      const credential = await this.credentialsService.getForRuntime(credentialId, groupId);
+      if (credential.type !== 'ssh') {
+        throw new BadRequestException('SSH node requires a credential with type ssh');
+      }
+    }
+
     const credentialIds = [...collectCredentialIds(nodes)];
     if (credentialIds.length === 0) return;
     if (!groupId) {

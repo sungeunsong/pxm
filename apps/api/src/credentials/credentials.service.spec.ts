@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import type { WorkflowHistoryActor } from '../db/ports/db.ports';
 import { CredentialsService } from './credentials.service';
 
@@ -63,5 +63,22 @@ describe('CredentialsService group sharing', () => {
     await expect(service.get('credential-1', actor('group-a'))).resolves.toMatchObject({
       access_level: 'owner',
     });
+  });
+
+  it('rejects an SSH secret without a pinned host key fingerprint', async () => {
+    await expect(service.create({
+      group_id: 'group-a',
+      name: 'SSH server',
+      type: 'ssh',
+      secret_value: JSON.stringify({ host: 'server.test', username: 'deploy', password: 'secret' }),
+    }, actor('group-a'))).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects a URL where an SSH hostname is required', async () => {
+    await expect(service.lookupSshHostKey({
+      group_id: 'group-a',
+      host: 'https://server.test',
+      port: 22,
+    }, actor('group-a'))).rejects.toBeInstanceOf(BadRequestException);
   });
 });

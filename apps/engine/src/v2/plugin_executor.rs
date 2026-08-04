@@ -60,6 +60,9 @@ impl PluginExecutorRegistry {
             "builtin" if manifest.plugin_id == "connector.db.mongodb.query" => {
                 ConnectorHandler::MongoDbQuery(MongoDbQueryExecutor { manifest })
             }
+            "builtin" if manifest.plugin_id == "builtin.ssh" => {
+                ConnectorHandler::Ssh(SshExecutor { manifest })
+            }
             "builtin" => {
                 return Err(anyhow!(
                     "builtin plugin '{}' is not supported by pxm-engine",
@@ -337,6 +340,7 @@ impl PluginExecutorPort for PluginExecutorRegistry {
 enum ConnectorHandler {
     HttpRequest(HttpRequestExecutor),
     MongoDbQuery(MongoDbQueryExecutor),
+    Ssh(SshExecutor),
     Hosted(HostedPluginExecutor),
     ExternalHttp(ExternalHttpPluginExecutor),
 }
@@ -346,6 +350,7 @@ impl ConnectorHandler {
         match self {
             Self::HttpRequest(executor) => &executor.manifest,
             Self::MongoDbQuery(executor) => &executor.manifest,
+            Self::Ssh(executor) => &executor.manifest,
             Self::Hosted(executor) => &executor.manifest,
             Self::ExternalHttp(executor) => &executor.manifest,
         }
@@ -363,6 +368,7 @@ impl ConnectorHandler {
         match self {
             Self::HttpRequest(executor) => executor.execute(invocation).await,
             Self::MongoDbQuery(executor) => executor.execute(invocation).await,
+            Self::Ssh(executor) => executor.execute(invocation).await,
             Self::Hosted(executor) => executor.execute(invocation).await,
             Self::ExternalHttp(executor) => executor.execute(invocation).await,
         }
@@ -509,6 +515,273 @@ impl MongoDbQueryExecutor {
             )),
         }
     }
+}
+
+#[derive(Clone)]
+struct SshExecutor {
+    manifest: PluginManifest,
+}
+
+impl SshExecutor {
+    async fn execute(&self, invocation: PluginInvocation) -> Result<PluginExecutionResult> {
+        let start_time = std::time::Instant::now();
+
+        let command = invocation
+            .config
+            .get("command")
+            .and_then(|v| v.as_str())
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| anyhow!("builtin.ssh requires config.command"))?;
+
+        let working_directory = invocation
+            .config
+            .get("working_directory")
+            .and_then(|v| v.as_str())
+            .filter(|v| !v.trim().is_empty());
+
+        let timeout_ms = invocation
+            .config
+            .get("timeout_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(30_000)
+            .clamp(1, 300_000);
+
+        let env_vars = invocation
+            .config
+            .get("env")
+            .and_then(|v| v.as_object())
+            .cloned();
+
+        let ssh_credential = invocation
+            .config
+            .get("secrets")
+            .and_then(|s| s.get("ssh_credential"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("builtin.ssh requires ssh_credential secret"))?;
+
+        let cred: SshCredential = serde_json::from_str(ssh_credential)
+            .map_err(|err| anyhow!("invalid ssh_credential format: {}", err))?;
+
+        let full_command = if let Some(wd) = working_directory {
+            format!("cd {} && {}", shell_escape(wd), command)
+        } else {
+            command.to_string()
+        };
+
+        let full_command = if let Some(env) = env_vars {
+            let env_exports = env
+                .iter()
+                .map(|(k, v)| {
+                    if !is_valid_env_name(k) {
+                        return Err(anyhow!("invalid SSH environment variable name '{}'", k));
+                    }
+                    let value = v
+                        .as_str()
+                        .map(ToString::to_string)
+                        .unwrap_or_else(|| v.to_string());
+                    Ok(format!("export {}={}", k, shell_escape(&value)))
+                })
+                .collect::<Result<Vec<_>>>()?
+                .join(" && ");
+            if env_exports.is_empty() {
+                full_command
+            } else {
+                format!("{} && {}", env_exports, full_command)
+            }
+        } else {
+            full_command
+        };
+
+        let result = tokio::time::timeout(
+            Duration::from_millis(timeout_ms),
+            execute_ssh_command(&cred, &full_command),
+        )
+        .await
+        .map_err(|_| anyhow!("SSH command timed out after {}ms", timeout_ms))??;
+
+        let duration_ms = start_time.elapsed().as_millis() as u64;
+
+        if result.exit_code == 0 {
+            Ok(PluginExecutionResult {
+                status_code: 200,
+                output: json!({
+                    "exit_code": result.exit_code,
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "duration_ms": duration_ms,
+                }),
+            })
+        } else {
+            Err(anyhow!(
+                "SSH command failed with exit code {}: {}",
+                result.exit_code,
+                result.stderr.trim()
+            ))
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct SshCredential {
+    host: String,
+    port: Option<u16>,
+    username: String,
+    host_key_fingerprint: String,
+    #[serde(flatten)]
+    auth: SshAuth,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum SshAuth {
+    PrivateKey {
+        private_key: String,
+        passphrase: Option<String>,
+    },
+    Password {
+        password: String,
+    },
+}
+
+struct SshCommandResult {
+    exit_code: i32,
+    stdout: String,
+    stderr: String,
+}
+
+async fn execute_ssh_command(cred: &SshCredential, command: &str) -> Result<SshCommandResult> {
+    use russh::client;
+    use russh_keys::HashAlg;
+    use std::sync::Arc;
+
+    struct ClientHandler {
+        expected_fingerprint: String,
+    }
+
+    #[async_trait]
+    impl client::Handler for ClientHandler {
+        type Error = anyhow::Error;
+
+        async fn check_server_key(
+            &mut self,
+            server_public_key: &russh_keys::PublicKey,
+        ) -> Result<bool, Self::Error> {
+            let actual = server_public_key.fingerprint(HashAlg::Sha256).to_string();
+            if normalize_ssh_fingerprint(&actual)
+                == normalize_ssh_fingerprint(&self.expected_fingerprint)
+            {
+                return Ok(true);
+            }
+            Err(anyhow!(
+                "SSH host key mismatch: expected {}, received {}",
+                self.expected_fingerprint,
+                actual
+            ))
+        }
+    }
+
+    let config = Arc::new(client::Config::default());
+    if cred.host_key_fingerprint.trim().is_empty() {
+        return Err(anyhow!("SSH host_key_fingerprint is required"));
+    }
+    let handler = ClientHandler {
+        expected_fingerprint: cred.host_key_fingerprint.clone(),
+    };
+    let port = cred.port.unwrap_or(22);
+    let addr = format!("{}:{}", cred.host, port);
+
+    let mut session = client::connect(config, &addr, handler)
+        .await
+        .map_err(|e| anyhow!("SSH connection failed to {}: {}", addr, e))?;
+
+    match &cred.auth {
+        SshAuth::Password { password } => {
+            let auth_result = session
+                .authenticate_password(&cred.username, password)
+                .await
+                .map_err(|e| anyhow!("SSH password authentication failed: {}", e))?;
+            if !auth_result {
+                return Err(anyhow!("SSH password authentication rejected"));
+            }
+        }
+        SshAuth::PrivateKey {
+            private_key,
+            passphrase,
+        } => {
+            let key_pair = if let Some(pass) = passphrase {
+                russh_keys::decode_secret_key(private_key, Some(pass))
+                    .map_err(|e| anyhow!("Failed to decode SSH private key: {}", e))?
+            } else {
+                russh_keys::decode_secret_key(private_key, None)
+                    .map_err(|e| anyhow!("Failed to decode SSH private key: {}", e))?
+            };
+            let auth_result = session
+                .authenticate_publickey(&cred.username, Arc::new(key_pair))
+                .await
+                .map_err(|e| anyhow!("SSH public key authentication failed: {}", e))?;
+            if !auth_result {
+                return Err(anyhow!("SSH public key authentication rejected"));
+            }
+        }
+    }
+
+    let mut channel = session
+        .channel_open_session()
+        .await
+        .map_err(|e| anyhow!("Failed to open SSH channel: {}", e))?;
+
+    channel
+        .exec(true, command)
+        .await
+        .map_err(|e| anyhow!("Failed to execute SSH command: {}", e))?;
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut exit_code: Option<i32> = None;
+
+    loop {
+        tokio::select! {
+            msg = channel.wait() => {
+                match msg {
+                    Some(russh::ChannelMsg::Data { data }) => {
+                        stdout.extend_from_slice(&data);
+                    }
+                    Some(russh::ChannelMsg::ExtendedData { data, ext }) => {
+                        if ext == 1 {
+                            stderr.extend_from_slice(&data);
+                        }
+                    }
+                    Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
+                        exit_code = Some(exit_status as i32);
+                    }
+                    Some(russh::ChannelMsg::Eof) | None => {
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    Ok(SshCommandResult {
+        exit_code: exit_code.unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&stdout).to_string(),
+        stderr: String::from_utf8_lossy(&stderr).to_string(),
+    })
+}
+
+fn shell_escape(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\"'\"'"))
+}
+
+fn is_valid_env_name(value: &str) -> bool {
+    let mut chars = value.chars();
+    matches!(chars.next(), Some(first) if first == '_' || first.is_ascii_alphabetic())
+        && chars.all(|character| character == '_' || character.is_ascii_alphanumeric())
+}
+
+fn normalize_ssh_fingerprint(value: &str) -> &str {
+    value.trim().trim_end_matches('=')
 }
 
 #[derive(Clone)]
@@ -715,7 +988,12 @@ async fn resolve_credential_binding(
         .pointer("/runtime/access/group_id")
         .and_then(|value| value.as_str())
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| anyhow!("workflow group is required to use credential '{}'", credential_id))?;
+        .ok_or_else(|| {
+            anyhow!(
+                "workflow group is required to use credential '{}'",
+                credential_id
+            )
+        })?;
 
     let secret = resolve_credential_secret(
         &credential_id,
@@ -772,6 +1050,15 @@ async fn resolve_credential_binding(
             headers.insert(header_name.to_string(), Value::String(header_value));
             object.insert("headers".to_string(), Value::Object(headers));
         }
+        "ssh_credential" => {
+            let mut secrets = object
+                .get("secrets")
+                .and_then(|v| v.as_object())
+                .cloned()
+                .unwrap_or_default();
+            secrets.insert("ssh_credential".to_string(), Value::String(secret));
+            object.insert("secrets".to_string(), Value::Object(secrets));
+        }
         "" => return Ok(Value::Object(object)),
         other => {
             return Err(anyhow!(
@@ -789,6 +1076,7 @@ fn infer_credential_target(plugin_id: &str) -> &str {
     match plugin_id {
         "connector.db.mongodb.query" => "connection_uri",
         "builtin.http_request" => "authorization_header",
+        "builtin.ssh" => "ssh_credential",
         _ => "",
     }
 }
@@ -820,11 +1108,14 @@ async fn resolve_credential_secret(
         return Err(anyhow!("credential '{}' is inactive", credential_id));
     }
 
-
     let owner_group_id = doc.get_str("group_id").unwrap_or_default();
     let shared_with_group = doc
         .get_array("shared_group_ids")
-        .map(|groups| groups.iter().any(|group| group.as_str() == Some(workflow_group_id)))
+        .map(|groups| {
+            groups
+                .iter()
+                .any(|group| group.as_str() == Some(workflow_group_id))
+        })
         .unwrap_or(false);
     if owner_group_id != workflow_group_id && !shared_with_group {
         return Err(anyhow!(
@@ -869,7 +1160,10 @@ async fn resolve_credential_secret(
 fn decrypt_credential_secret(secret: &Document) -> Result<String> {
     let algorithm = secret.get_str("algorithm").unwrap_or("aes-256-gcm");
     if algorithm != "aes-256-gcm" {
-        return Err(anyhow!("unsupported credential encryption algorithm '{}'", algorithm));
+        return Err(anyhow!(
+            "unsupported credential encryption algorithm '{}'",
+            algorithm
+        ));
     }
 
     let iv = general_purpose::STANDARD.decode(secret.get_str("iv")?)?;
@@ -908,6 +1202,23 @@ fn prepare_config(config: &Value, manifest: &PluginManifest) -> Result<Value> {
     }
 
     for (name, secret_ref) in &manifest.secrets_policy.required {
+        if secret_ref == "ref://credential_id" {
+            let credential_id = config
+                .get("credential_id")
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| {
+                    anyhow!(
+                        "plugin '{}' requires credential_id for secret '{}'",
+                        manifest.plugin_id,
+                        name
+                    )
+                })?;
+            if credential_id.trim().is_empty() {
+                return Err(anyhow!("credential_id must not be empty"));
+            }
+            continue;
+        }
         secrets.insert(name.clone(), Value::String(resolve_secret_ref(secret_ref)?));
     }
 
@@ -1299,6 +1610,34 @@ mod tests {
 
         assert!(plugin_ids.contains(&"builtin.http_request".to_string()));
         assert!(plugin_ids.contains(&"connector.db.mongodb.query".to_string()));
+        assert!(plugin_ids.contains(&"builtin.ssh".to_string()));
+    }
+
+    #[test]
+    fn credential_secret_reference_requires_a_credential_id_without_env_resolution() {
+        let registry =
+            PluginManifestRegistry::load_from_dir(Path::new("../api/plugin-manifests")).unwrap();
+        let ssh_manifest = registry
+            .latest_manifests()
+            .into_iter()
+            .find(|manifest| manifest.plugin_id == "builtin.ssh")
+            .unwrap();
+
+        let prepared = prepare_config(
+            &json!({ "credential_id": "credential-1", "command": "hostname" }),
+            &ssh_manifest,
+        )
+        .unwrap();
+        assert_eq!(
+            prepared
+                .get("credential_id")
+                .and_then(|value| value.as_str()),
+            Some("credential-1")
+        );
+        assert!(prepared.get("secrets").is_none());
+
+        let error = prepare_config(&json!({ "command": "hostname" }), &ssh_manifest).unwrap_err();
+        assert!(error.to_string().contains("requires credential_id"));
     }
 
     #[test]

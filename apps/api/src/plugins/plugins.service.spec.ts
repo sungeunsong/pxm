@@ -22,6 +22,7 @@ describe('PluginsService', () => {
     expect(plugins.map((plugin) => plugin.plugin_id)).toEqual(
       expect.arrayContaining([
         'builtin.http_request',
+        'builtin.ssh',
         'connector.db.mongodb.query',
       ]),
     );

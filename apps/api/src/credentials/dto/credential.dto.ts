@@ -3,18 +3,31 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
+  IsInt,
   IsObject,
   IsOptional,
   IsString,
   MaxLength,
+  Max,
+  Min,
   MinLength,
 } from 'class-validator';
+
+export class LookupSshHostKeyDto {
+  @IsString() @MinLength(1) @MaxLength(128)
+  group_id: string;
+  @IsString() @MinLength(1) @MaxLength(255)
+  host: string;
+  @IsOptional() @IsInt() @Min(1) @Max(65535)
+  port?: number;
+}
 
 export type CredentialType =
   | 'api_key'
   | 'basic_auth'
   | 'bearer_token'
   | 'connection_string'
+  | 'ssh'
   | 'custom';
 
 export class CreateCredentialDto {
@@ -24,7 +37,7 @@ export class CreateCredentialDto {
   shared_group_ids?: string[];
   @IsString() @MinLength(1) @MaxLength(100)
   name: string;
-  @IsIn(['api_key', 'basic_auth', 'bearer_token', 'connection_string', 'custom'])
+  @IsIn(['api_key', 'basic_auth', 'bearer_token', 'connection_string', 'ssh', 'custom'])
   type: CredentialType;
   @IsOptional() @IsString() @MaxLength(1000)
   description?: string;
@@ -43,7 +56,7 @@ export class UpdateCredentialDto {
   shared_group_ids?: string[];
   @IsOptional() @IsString() @MinLength(1) @MaxLength(100)
   name?: string;
-  @IsOptional() @IsIn(['api_key', 'basic_auth', 'bearer_token', 'connection_string', 'custom'])
+  @IsOptional() @IsIn(['api_key', 'basic_auth', 'bearer_token', 'connection_string', 'ssh', 'custom'])
   type?: CredentialType;
   @IsOptional() @IsString() @MaxLength(1000)
   description?: string;

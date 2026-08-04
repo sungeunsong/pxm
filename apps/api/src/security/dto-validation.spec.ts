@@ -1,6 +1,7 @@
 import { ValidationPipe } from '@nestjs/common';
 import { CreateApiKeyDto } from '../authz/dto/authz.dto';
 import { LoginDto } from '../authz/dto/session-auth.dto';
+import { CreateCredentialDto } from '../credentials/dto/credential.dto';
 import { CreateWebhookEndpointDto } from '../webhooks/dto/webhook.dto';
 
 const pipe = new ValidationPipe({
@@ -42,6 +43,16 @@ describe('security-sensitive DTO validation', () => {
       ip_allowlist: ['10.0.0.0/8'],
       rate_limit_per_minute: 60,
     }, bodyMetadata(CreateApiKeyDto))).resolves.toBeInstanceOf(CreateApiKeyDto);
+  });
+
+  it('rejects active in a credential create payload', async () => {
+    await expect(pipe.transform({
+      group_id: 'group-1',
+      name: 'integration',
+      type: 'api_key',
+      secret_value: 'secret',
+      active: true,
+    }, bodyMetadata(CreateCredentialDto))).rejects.toMatchObject({ status: 400 });
   });
 
   it('rejects short webhook secrets and unknown security fields', async () => {

@@ -3,6 +3,7 @@ import { CheckCircle, Circle, AlertCircle, Loader, Clock, X, Copy, Terminal } fr
 import type { FormSchema } from './form-types';
 import { FormRenderer } from './FormRenderer';
 import { RetryScheduledCard, NodeFailedCard } from './RetryCards';
+import { sanitizeTerminalText } from './terminal-output';
 import './ExecutionPanel.css';
 
 export interface ExecutionEvent {
@@ -312,8 +313,8 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
 
   const visibleEvents = events.filter((event) => !internalEventTypes.has(event.type));
   const hiddenInternalCount = events.length - visibleEvents.length;
-  const commandTerminalEntriesByNodeId = useMemo(
-    () => new Map(buildCommandTerminalEntries(instanceDetail, visibleEvents).map((entry) => [entry.nodeId, entry])),
+  const terminalEntriesByNodeId = useMemo(
+    () => new Map(buildTerminalEntries(instanceDetail, visibleEvents).map((entry) => [entry.nodeId, entry])),
     [instanceDetail, visibleEvents],
   );
   const handleCopyInstanceId = async () => {
@@ -398,9 +399,9 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
               ) : (
                 <div className="timeline-events">
                   {visibleEvents.map((event, index) => {
-                    const commandTerminalEntry =
+                    const terminalEntry =
                       event.type === 'NODE_COMPLETED' && event.node_id
-                        ? commandTerminalEntriesByNodeId.get(event.node_id)
+                        ? terminalEntriesByNodeId.get(event.node_id)
                         : undefined;
 
                     // RETRY_SCHEDULED 이벤트 특별 처리
@@ -460,8 +461,8 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
                             {getEventDescription(event)}
                           </div>
                         )}
-                        {commandTerminalEntry && (
-                          <CommandTerminalCard entry={commandTerminalEntry} compact />
+                        {terminalEntry && (
+                          <CommandTerminalCard entry={terminalEntry} compact />
                         )}
                         {isJsNodeEvent(event) && (
                           <JsExecutionBlocks event={event} />
@@ -590,15 +591,17 @@ function isJsNodeEvent(event: ExecutionEvent) {
   );
 }
 
-function buildCommandTerminalEntries(instanceDetail: any, events: ExecutionEvent[]): CommandTerminalEntry[] {
+function buildTerminalEntries(instanceDetail: any, events: ExecutionEvent[]): CommandTerminalEntry[] {
   const context = instanceDetail?.context || instanceDetail?.ctx || {};
   const runtimeNodes = context?.runtime?.nodes || [];
-  const commandNodes = new Map<string, any>();
+  const terminalNodes = new Map<string, any>();
 
   for (const node of runtimeNodes) {
     const nodeType = node?.data?.nodeType || node?.node_type || node?.type;
-    if (nodeType === 'command') {
-      commandNodes.set(String(node.id || node.node_id), node);
+    const data = node?.data || node?.config || {};
+    const pluginId = data.plugin_id || data.pluginId;
+    if (nodeType === 'command' || (nodeType === 'service' && pluginId === 'builtin.ssh')) {
+      terminalNodes.set(String(node.id || node.node_id), node);
     }
   }
 
@@ -606,7 +609,7 @@ function buildCommandTerminalEntries(instanceDetail: any, events: ExecutionEvent
     if (!event.node_id) continue;
     const commandId = event.payload?.command_id;
     if (commandId) {
-      commandNodes.set(event.node_id, commandNodes.get(event.node_id) || {
+      terminalNodes.set(event.node_id, terminalNodes.get(event.node_id) || {
         id: event.node_id,
         data: {
           label: event.node_label || event.node_id,
@@ -618,12 +621,13 @@ function buildCommandTerminalEntries(instanceDetail: any, events: ExecutionEvent
     }
   }
 
-  return [...commandNodes.values()].map((node) => {
+  return [...terminalNodes.values()].map((node) => {
     const nodeId = String(node.id || node.node_id);
     const data = node.data || node.config || {};
+    const isSsh = (data.plugin_id || data.pluginId) === 'builtin.ssh';
     const completedEvent = [...events]
       .reverse()
-      .find((event) => event.node_id === nodeId && event.type === 'NODE_COMPLETED' && event.payload?.command_id);
+      .find((event) => event.node_id === nodeId && event.type === 'NODE_COMPLETED' && (isSsh || event.payload?.command_id));
     const failedEvent = [...events]
       .reverse()
       .find((event) => event.node_id === nodeId && event.type === 'NODE_FAILED');
@@ -631,10 +635,11 @@ function buildCommandTerminalEntries(instanceDetail: any, events: ExecutionEvent
       completedEvent?.payload?.output_path ||
       data.outputPath ||
       data.output_path ||
-      `commandResults.${nodeId}`;
-    const output = getContextValueAtPath(context, outputPath) || getContextValueAtPath(context, `data.outputs.${outputPath}`);
+      `${isSsh ? 'sshResults' : 'commandResults'}.${nodeId}`;
+    const contextOutput = getContextValueAtPath(context, outputPath) || getContextValueAtPath(context, `data.outputs.${outputPath}`);
+    const output = (isSsh ? completedEvent?.payload?.output : undefined) || contextOutput;
     const commandId =
-      String(output?.command_id || completedEvent?.payload?.command_id || failedEvent?.payload?.command_id || data.commandId || data.command_id || 'command');
+      String(output?.command_id || completedEvent?.payload?.command_id || failedEvent?.payload?.command_id || data.command || data.commandId || data.command_id || 'command');
 
     return {
       nodeId,
@@ -668,32 +673,6 @@ function getContextValueAtPath(context: any, path: string) {
 }
 
 const SECRET_FIELD_PATTERN = /(password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|connection[_-]?uri|authorization|credential|passphrase)/i;
-const MONGODB_CREDENTIAL_PATTERN = new RegExp('(mongodb(?:\\\\+srv)?://[^:\\\\s/@]+:)[^@\\\\s]+(@)', 'gi');
-const POSTGRES_CREDENTIAL_PATTERN = new RegExp('(postgres(?:ql)?://[^:\\\\s/@]+:)[^@\\\\s]+(@)', 'gi');
-
-function sanitizeTerminalText(value: string) {
-  return maskTerminalSecrets(stripAnsiControlSequences(String(value || '')));
-}
-
-function stripAnsiControlSequences(value: string) {
-  return value
-    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
-    .replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, '')
-    .replace(/\u001b[PX^_].*?\u001b\\/g, '')
-    .replace(/\u001b[@-_]/g, '')
-    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '');
-}
-
-function maskTerminalSecrets(value: string) {
-  return value
-    .replace(/(authorization\s*[:=]\s*bearer\s+)[^\s"'`]+/gi, '$1***')
-    .replace(/(authorization\s*[:=]\s*basic\s+)[^\s"'`]+/gi, '$1***')
-    .replace(/((?:password|passwd|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|connection[_-]?uri|credential|passphrase)\s*[=:]\s*)[^\s"'`]+/gi, '$1***')
-    .replace(/([?&](?:token|secret|api[_-]?key|access[_-]?key|password|passphrase)=)[^&\s"'`]+/gi, '$1***')
-    .replace(MONGODB_CREDENTIAL_PATTERN, '$1***$2')
-    .replace(POSTGRES_CREDENTIAL_PATTERN, '$1***$2');
-}
-
 function sanitizeLogValue(value: any): any {
   if (value === null || value === undefined) {
     return value;

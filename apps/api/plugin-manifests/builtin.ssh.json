@@ -1,0 +1,45 @@
+{
+  "plugin_id": "builtin.ssh",
+  "version": "1.0.0",
+  "display_name": "SSH Command",
+  "description": "Execute a command on a remote server via SSH.",
+  "category": "Remote",
+  "node_type": "service",
+  "icon": "terminal",
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "command": { "type": "string", "title": "Command", "description": "Command executed by the remote user's shell." },
+      "working_directory": { "type": "string", "title": "Working Directory", "description": "Optional remote directory to enter before running the command." },
+      "timeout_ms": { "type": "integer", "title": "Timeout (ms)", "description": "Connection and command timeout, up to 300000ms.", "default": 30000 },
+      "env": { "type": "object", "title": "Environment Variables", "description": "JSON object. Variable names must use letters, numbers, and underscores." }
+    },
+    "required": ["command"]
+  },
+  "executor_type": "builtin",
+  "executor_ref": "builtin.ssh",
+  "secrets_policy": {
+    "required": {
+      "ssh_credential": "ref://credential_id"
+    }
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {}
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "exit_code": { "type": "integer" },
+      "stdout": { "type": "string" },
+      "stderr": { "type": "string" },
+      "duration_ms": { "type": "integer" }
+    }
+  },
+  "timeout_ms": 30000,
+  "retry_policy": {
+    "max_attempts": 1,
+    "backoff_ms": 1000
+  },
+  "tags": ["ssh", "remote", "command", "builtin"]
+}
