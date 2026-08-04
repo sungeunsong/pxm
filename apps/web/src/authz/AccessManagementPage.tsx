@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { KeyRound, Link2, RefreshCw, RotateCcw, Save, Shield, Trash2, UserRound, UsersRound } from 'lucide-react';
+import { KeyRound, Link2, RefreshCw, RotateCcw, Save, Search, Shield, Trash2, UserPlus, UserRound, UsersRound } from 'lucide-react';
 import { Button } from '../components';
 import {
   authzApi,
@@ -25,31 +25,32 @@ const scopeLabels: Record<ApiKeyScope, string> = {
   'workflow:read': '워크플로우/실행 결과 조회',
   'task:approve': '승인 처리',
 };
-const roleLabels: Record<PxmRole, string> = {
-  admin: '최고 관리자',
-  group_manager: '그룹 관리자',
-  user: '일반 사용자',
-};
 type AccessDetailTab = 'users' | 'serviceAccounts' | 'apiKeys' | 'externalMappings';
+type AccessPageSection = 'groups' | 'users';
 
 export function AccessManagementPage({ currentUser }: { currentUser: SessionUser }) {
   const [groups, setGroups] = useState<PxmGroup[]>([]);
   const [users, setUsers] = useState<PxmUser[]>([]);
+  const [userDirectory, setUserDirectory] = useState<PxmUser[]>([]);
   const [serviceAccounts, setServiceAccounts] = useState<PxmServiceAccount[]>([]);
   const [apiKeys, setApiKeys] = useState<PxmApiKey[]>([]);
   const [externalMappings, setExternalMappings] = useState<ExternalPrincipalMapping[]>([]);
   const [workflows, setWorkflows] = useState<WorkflowTemplate[]>([]);
   const [selectedGroupId, setSelectedGroupId] = useState('');
+  const [selectedUserId, setSelectedUserId] = useState('');
+  const [showCreateUser, setShowCreateUser] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdKey, setCreatedKey] = useState<CreatedApiKey | null>(null);
   const [activeTab, setActiveTab] = useState<AccessDetailTab>('users');
+  const [pageSection, setPageSection] = useState<AccessPageSection>('groups');
 
   const activeGroups = groups.filter((group) => group.status !== 'deleted');
   const selectedGroup = groups.find((group) => group.id === selectedGroupId) || activeGroups[0] || null;
   const selectedGroupFilterId = selectedGroup?.id || '';
   const currentGroupId = selectedGroup?.status === 'active' ? selectedGroup.id : '';
+  const selectedUser = userDirectory.find((user) => user.id === selectedUserId) || userDirectory[0] || null;
 
   const groupUsers = useMemo(
     () => users.filter((user) => selectedGroupFilterId && user.group_ids.includes(selectedGroupFilterId)),
@@ -84,16 +85,18 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
       const targetGroupId = requestedGroupId && nextGroups.some((group) => group.id === requestedGroupId)
         ? requestedGroupId
         : firstActive?.id || '';
-      const [nextUsers, nextAccounts, nextKeys, nextMappings] = targetGroupId
+      const [nextUsers, nextUserDirectory, nextAccounts, nextKeys, nextMappings] = targetGroupId
         ? await Promise.all([
             authzApi.listUsers(targetGroupId),
+            authzApi.listUserDirectory(targetGroupId),
             authzApi.listServiceAccounts(targetGroupId),
             authzApi.listApiKeys(targetGroupId),
             authzApi.listExternalPrincipalMappings(targetGroupId),
           ])
-        : [[], [], [], []];
+        : [[], [], [], [], []];
       setGroups(nextGroups);
       setUsers(nextUsers);
+      setUserDirectory(nextUserDirectory);
       setServiceAccounts(nextAccounts);
       setApiKeys(nextKeys);
       setExternalMappings(nextMappings);
@@ -133,7 +136,7 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
             <Shield size={20} />
             <h2>접근 권한 관리</h2>
           </div>
-          <p>그룹, 실행 주체, API key scope를 한 곳에서 관리합니다.</p>
+          <p>그룹 권한과 사용자 계정을 구분해 관리합니다.</p>
         </div>
         <Button variant="secondary" size="sm" icon={<RefreshCw size={14} />} onClick={() => void loadData()} disabled={loading}>
           새로고침
@@ -149,15 +152,37 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
         </div>
       )}
 
-      <div className="access-summary">
-        <SummaryCard label="활성 그룹" value={activeGroups.length} />
-        <SummaryCard label="선택 그룹 사용자" value={users.length} />
-        <SummaryCard label="선택 그룹 서비스 계정" value={serviceAccounts.length} />
-        <SummaryCard label="선택 그룹 API Key" value={apiKeys.length} />
-        <SummaryCard label="외부 승인자 매핑" value={externalMappings.length} />
+      <div className="access-page-tabs" role="tablist" aria-label="접근 권한 관리 영역">
+        <button className={pageSection === 'groups' ? 'active' : ''} onClick={() => setPageSection('groups')}>
+          <UsersRound size={16} />
+          <span><strong>그룹 관리</strong><small>그룹별 멤버와 실행 권한</small></span>
+        </button>
+        <button className={pageSection === 'users' ? 'active' : ''} onClick={() => setPageSection('users')}>
+          <UserRound size={16} />
+          <span><strong>사용자 관리</strong><small>사용자 계정과 전체 소속</small></span>
+        </button>
       </div>
 
-      <div className="access-layout">
+      <div className={`access-summary ${pageSection === 'users' ? 'user-summary' : ''}`}>
+        {pageSection === 'groups' ? (
+          <>
+            <SummaryCard label="활성 그룹" value={activeGroups.length} />
+            <SummaryCard label="선택 그룹 사용자" value={users.length} />
+            <SummaryCard label="선택 그룹 서비스 계정" value={serviceAccounts.length} />
+            <SummaryCard label="선택 그룹 API Key" value={apiKeys.length} />
+            <SummaryCard label="외부 승인자 매핑" value={externalMappings.length} />
+          </>
+        ) : (
+          <>
+            <SummaryCard label="전체 사용자" value={userDirectory.length} />
+            <SummaryCard label="활성 사용자" value={userDirectory.filter((user) => user.status === 'active').length} />
+            <SummaryCard label="최고 관리자" value={userDirectory.filter((user) => user.role === 'admin').length} />
+            <SummaryCard label="소속 없는 사용자" value={userDirectory.filter((user) => user.group_ids.length === 0).length} />
+          </>
+        )}
+      </div>
+
+      {pageSection === 'groups' ? <div className="access-layout">
         <section className="access-panel group-panel">
           <PanelHeader icon={<UsersRound size={16} />} title="그룹" />
           <GroupForm disabled={saving} onSave={(payload) => run(() => authzApi.saveGroup(payload))} />
@@ -248,27 +273,29 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
                 text={
                   selectedGroup?.status === 'deleted'
                     ? '삭제된 그룹에는 멤버를 추가할 수 없습니다.'
-                    : '이 탭은 현재 선택된 그룹의 멤버만 보여줍니다. 역할이 그룹 관리자이면 이 그룹만 관리할 수 있습니다.'
+                    : '기존 사용자를 현재 그룹에 추가하고 이 그룹에서의 역할을 관리합니다.'
                 }
               />
-              <UserForm
+              <ExistingUserMembershipForm
                 groupId={currentGroupId}
+                users={userDirectory}
+                groupUsers={groupUsers}
+                groups={groups}
                 canAssignManager={currentUser.role === 'admin'}
                 disabled={saving || !currentGroupId}
-                onSave={(payload) => run(() => authzApi.saveUser(payload))}
+                onAdd={(userId, role) => run(() => authzApi.setGroupMembership(currentGroupId, userId, role))}
               />
-              <EntityTable
-                rows={groupUsers.map((user) => ({
-                  id: user.id,
-                  primary: user.display_name,
-                  secondary: user.email || undefined,
-                  meta:
-                    membershipRole(user, selectedGroupFilterId) === 'group_manager'
-                      ? `${selectedGroup?.name || '현재 그룹'} 관리 가능`
-                      : `${selectedGroup?.name || '현재 그룹'} 멤버`,
-                  badge: roleLabels[membershipRole(user, selectedGroupFilterId)] || membershipRole(user, selectedGroupFilterId),
-                  status: user.status,
-                }))}
+              <GroupMemberTable
+                users={groupUsers}
+                groupId={selectedGroupFilterId}
+                groups={groups}
+                canAssignManager={currentUser.role === 'admin'}
+                disabled={saving || !currentGroupId}
+                onRoleChange={(userId, role) => run(() => authzApi.setGroupMembership(currentGroupId, userId, role))}
+                onRemove={(user) => {
+                  if (!window.confirm(`${user.display_name} 사용자를 현재 그룹에서 제외할까요?\n사용자 계정과 다른 그룹 소속은 유지됩니다.`)) return;
+                  void run(() => authzApi.removeGroupMembership(currentGroupId, user.id));
+                }}
               />
             </>
           )}
@@ -389,7 +416,54 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
             </>
           )}
         </section>
-      </div>
+      </div> : (
+        <section className="access-panel user-management-panel">
+          <div className="user-management-intro">
+            <span><UserRound size={18} /></span>
+            <div>
+              <h3>사용자 관리</h3>
+              <p>사용자 계정을 생성하고 전체 그룹 소속을 확인합니다. 그룹별 역할 변경과 제외는 그룹 관리에서 처리합니다.</p>
+            </div>
+            <Button
+              variant="primary"
+              size="sm"
+              icon={<UserPlus size={14} />}
+              disabled={saving || activeGroups.length === 0 || showCreateUser}
+              onClick={() => setShowCreateUser(true)}
+            >
+              새 사용자 추가
+            </Button>
+          </div>
+          {showCreateUser && (
+            <NewUserForm
+              groups={activeGroups}
+              defaultGroupId={currentGroupId}
+              canAssignManager={currentUser.role === 'admin'}
+              disabled={saving || activeGroups.length === 0}
+              onClose={() => setShowCreateUser(false)}
+              onSave={(payload) => run(() => authzApi.createUser(payload))}
+            />
+          )}
+          <div className="user-management-workspace">
+            <UserDirectoryTable
+              users={userDirectory}
+              groups={groups}
+              selectedUserId={selectedUser?.id || ''}
+              onSelect={setSelectedUserId}
+            />
+            <UserDetailPanel
+              key={selectedUser?.id || 'empty'}
+              user={selectedUser}
+              groups={activeGroups}
+              canEditAccount={currentUser.role === 'admin'}
+              disabled={saving}
+              onUpdate={(payload) => run(() => authzApi.saveUser(payload))}
+              onSetMembership={(groupId, role) => run(() => authzApi.setGroupMembership(groupId, selectedUser?.id || '', role))}
+              onRemoveMembership={(groupId) => run(() => authzApi.removeGroupMembership(groupId, selectedUser?.id || ''))}
+            />
+          </div>
+        </section>
+      )}
     </div>
   );
 }
@@ -450,52 +524,351 @@ function GroupForm({ disabled, onSave }: { disabled?: boolean; onSave: (payload:
   );
 }
 
-function UserForm({
+function ExistingUserMembershipForm({
   groupId,
+  users,
+  groupUsers,
+  groups,
   canAssignManager,
   disabled,
-  onSave,
+  onAdd,
 }: {
   groupId: string;
+  users: PxmUser[];
+  groupUsers: PxmUser[];
+  groups: PxmGroup[];
   canAssignManager: boolean;
   disabled?: boolean;
-  onSave: (payload: { id?: string; display_name: string; email?: string; role: PxmRole; group_ids: string[]; memberships: Array<{ group_id: string; role: PxmGroupRole }>; password?: string }) => void;
+  onAdd: (userId: string, role: PxmGroupRole) => Promise<boolean>;
+}) {
+  const [query, setQuery] = useState('');
+  const [role, setRole] = useState<PxmGroupRole>('user');
+  const memberIds = useMemo(() => new Set(groupUsers.map((user) => user.id)), [groupUsers]);
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const candidates = useMemo(() => {
+    if (!normalizedQuery) return [];
+    return users
+      .filter((user) => user.status === 'active' && user.role !== 'admin' && !memberIds.has(user.id))
+      .filter((user) => [user.id, user.display_name, user.email || ''].some((value) => value.toLocaleLowerCase().includes(normalizedQuery)))
+      .slice(0, 8);
+  }, [memberIds, normalizedQuery, users]);
+
+  const groupName = (id: string) => groups.find((group) => group.id === id)?.name || id;
+
+  return (
+    <section className="member-management-card">
+      <div className="member-management-title">
+        <Search size={15} />
+        <div><strong>기존 사용자 추가</strong><small>ID, 이름 또는 이메일로 사용자를 찾습니다.</small></div>
+      </div>
+      <div className="member-search-controls">
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="사용자 검색" disabled={disabled} />
+        <select value={role} onChange={(event) => setRole(event.target.value as PxmGroupRole)} disabled={disabled}>
+          <option value="user">일반 사용자</option>
+          {canAssignManager && <option value="group_manager">그룹 관리자</option>}
+        </select>
+      </div>
+      {normalizedQuery && (
+        <div className="member-search-results">
+          {candidates.map((user) => (
+            <div key={user.id} className="member-search-result">
+              <span>
+                <strong>{user.display_name}</strong>
+                <small>{user.id}{user.email ? ` · ${user.email}` : ''}</small>
+                <small>현재 소속: {user.group_ids.length ? user.group_ids.map(groupName).join(', ') : '없음'}</small>
+              </span>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={disabled || !groupId}
+                onClick={async () => { if (await onAdd(user.id, role)) setQuery(''); }}
+              >
+                그룹에 추가
+              </Button>
+            </div>
+          ))}
+          {candidates.length === 0 && <div className="access-empty">추가할 수 있는 사용자를 찾지 못했습니다.</div>}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function NewUserForm({
+  groups,
+  defaultGroupId,
+  canAssignManager,
+  disabled,
+  onClose,
+  onSave,
+}: {
+  groups: PxmGroup[];
+  defaultGroupId: string;
+  canAssignManager: boolean;
+  disabled?: boolean;
+  onClose: () => void;
+  onSave: (payload: { id?: string; display_name: string; email?: string; role: PxmRole; group_ids: string[]; memberships: Array<{ group_id: string; role: PxmGroupRole }>; password?: string }) => Promise<boolean>;
 }) {
   const [id, setId] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
-  const [role, setRole] = useState<PxmRole>('user');
+  const [role, setRole] = useState<PxmGroupRole>('user');
   const [password, setPassword] = useState('');
+  const [selectedGroupId, setSelectedGroupId] = useState('');
+  const groupId = selectedGroupId || defaultGroupId || groups[0]?.id || '';
   return (
-    <form className="access-form compact" onSubmit={(event) => {
-      event.preventDefault();
-      if (!displayName.trim() || !groupId) return;
-      onSave({
-        id: id.trim() || undefined,
-        display_name: displayName.trim(),
-        email: email.trim(),
-        role,
-        group_ids: [groupId],
-        memberships: [{ group_id: groupId, role: role === 'group_manager' ? 'group_manager' : 'user' }],
-        password: password || undefined,
-      });
-      setId('');
-      setDisplayName('');
-      setEmail('');
-      setRole('user');
-      setPassword('');
-    }}>
-      <input value={id} onChange={(event) => setId(event.target.value)} placeholder="사용자 ID" />
-      <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="멤버 이름" />
-      <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="이메일" />
-      <input type="password" minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="초기 비밀번호 (8자 이상)" />
-      <select value={role} onChange={(event) => setRole(event.target.value as PxmRole)}>
-        <option value="user">일반 사용자</option>
-        {canAssignManager && <option value="group_manager">그룹 관리자</option>}
-        {canAssignManager && <option value="admin">최고 관리자</option>}
-      </select>
-      <Button type="submit" variant="primary" size="sm" disabled={disabled || !displayName.trim()}>멤버 추가</Button>
-    </form>
+    <section className="member-management-card new-user-card">
+      <div className="new-user-form-header">
+        <span><UserPlus size={16} /></span>
+        <div><strong>새 사용자 정보</strong><small>계정을 생성하고 첫 소속 그룹을 지정합니다.</small></div>
+        <Button variant="ghost" size="sm" disabled={disabled} onClick={onClose}>취소</Button>
+      </div>
+      <form className="access-form user-create-form" onSubmit={async (event) => {
+        event.preventDefault();
+        if (!displayName.trim() || !groupId) return;
+        const saved = await onSave({
+          id: id.trim() || undefined,
+          display_name: displayName.trim(),
+          email: email.trim() || undefined,
+          role,
+          group_ids: [groupId],
+          memberships: [{ group_id: groupId, role }],
+          password: password || undefined,
+        });
+        if (!saved) return;
+        setId('');
+        setDisplayName('');
+        setEmail('');
+        setRole('user');
+        setPassword('');
+        onClose();
+      }}>
+        <select value={groupId} onChange={(event) => setSelectedGroupId(event.target.value)} disabled={disabled} aria-label="초기 소속 그룹">
+          {groups.map((group) => <option key={group.id} value={group.id}>초기 소속 · {group.name}</option>)}
+        </select>
+        <input value={id} onChange={(event) => setId(event.target.value)} placeholder="사용자 ID (선택)" disabled={disabled} />
+        <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="사용자 이름" disabled={disabled} />
+        <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="이메일" disabled={disabled} />
+        <input type="password" minLength={12} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="초기 비밀번호 (12자 이상)" disabled={disabled} />
+        <select value={role} onChange={(event) => setRole(event.target.value as PxmGroupRole)} disabled={disabled}>
+          <option value="user">일반 사용자</option>
+          {canAssignManager && <option value="group_manager">그룹 관리자</option>}
+        </select>
+        <Button type="submit" variant="primary" size="sm" disabled={disabled || !displayName.trim()}>사용자 생성</Button>
+      </form>
+    </section>
+  );
+}
+
+function GroupMemberTable({
+  users,
+  groupId,
+  groups,
+  canAssignManager,
+  disabled,
+  onRoleChange,
+  onRemove,
+}: {
+  users: PxmUser[];
+  groupId: string;
+  groups: PxmGroup[];
+  canAssignManager: boolean;
+  disabled?: boolean;
+  onRoleChange: (userId: string, role: PxmGroupRole) => void;
+  onRemove: (user: PxmUser) => void;
+}) {
+  if (users.length === 0) return <div className="access-empty">현재 그룹에 등록된 멤버가 없습니다.</div>;
+  const groupName = (id: string) => groups.find((group) => group.id === id)?.name || id;
+  return (
+    <div className="group-member-table">
+      <div className="group-member-heading"><strong>현재 그룹 멤버</strong><span>{users.length}명</span></div>
+      {users.map((user) => {
+        const role = membershipRole(user, groupId);
+        const managerProtected = role === 'group_manager' && !canAssignManager;
+        return (
+          <div key={user.id} className="group-member-row">
+            <span className="group-member-identity">
+              <strong>{user.display_name}</strong>
+              <small>{user.id}{user.email ? ` · ${user.email}` : ''}</small>
+              <small>전체 소속: {user.group_ids.map(groupName).join(', ') || '없음'}</small>
+            </span>
+            <span className="group-member-actions">
+              <select
+                aria-label={`${user.display_name} 역할`}
+                value={role}
+                disabled={disabled || managerProtected}
+                onChange={(event) => onRoleChange(user.id, event.target.value as PxmGroupRole)}
+              >
+                <option value="user">일반 사용자</option>
+                {canAssignManager && <option value="group_manager">그룹 관리자</option>}
+              </select>
+              <span className={`status-badge ${user.status}`}>{user.status}</span>
+              <Button variant="ghost" size="sm" icon={<Trash2 size={13} />} disabled={disabled || managerProtected} onClick={() => onRemove(user)}>
+                그룹 제외
+              </Button>
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function UserDirectoryTable({
+  users,
+  groups,
+  selectedUserId,
+  onSelect,
+}: {
+  users: PxmUser[];
+  groups: PxmGroup[];
+  selectedUserId: string;
+  onSelect: (userId: string) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const filteredUsers = useMemo(() => users.filter((user) => (
+    !normalizedQuery
+    || [user.id, user.display_name, user.email || ''].some((value) => value.toLocaleLowerCase().includes(normalizedQuery))
+  )), [normalizedQuery, users]);
+  const groupName = (id: string) => groups.find((group) => group.id === id)?.name || id;
+
+  return (
+    <section className="user-directory">
+      <div className="user-directory-header">
+        <div><strong>전체 사용자</strong><small>사용자를 선택해 계정과 그룹 소속을 관리합니다.</small></div>
+        <label><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="사용자 검색" /></label>
+      </div>
+      <div className="entity-table">
+        {filteredUsers.map((user) => (
+          <button key={user.id} className={`entity-row user-directory-row ${selectedUserId === user.id ? 'selected' : ''}`} onClick={() => onSelect(user.id)}>
+            <span>
+              <strong>{user.display_name}</strong>
+              <small>{user.id}{user.email ? ` · ${user.email}` : ''}</small>
+              <small>
+                소속: {(user.memberships || []).length
+                  ? (user.memberships || []).map((membership) => `${groupName(membership.group_id)} (${membership.role === 'group_manager' ? '관리자' : '사용자'})`).join(', ')
+                  : '없음'}
+              </small>
+            </span>
+            <span className="entity-badges">
+              <span className="type-badge">{user.role === 'admin' ? '최고 관리자' : '사용자'}</span>
+              <span className={`status-badge ${user.status}`}>{user.status}</span>
+            </span>
+          </button>
+        ))}
+        {filteredUsers.length === 0 && <div className="access-empty">검색 결과가 없습니다.</div>}
+      </div>
+    </section>
+  );
+}
+
+function UserDetailPanel({
+  user,
+  groups,
+  canEditAccount,
+  disabled,
+  onUpdate,
+  onSetMembership,
+  onRemoveMembership,
+}: {
+  user: PxmUser | null;
+  groups: PxmGroup[];
+  canEditAccount: boolean;
+  disabled?: boolean;
+  onUpdate: (payload: { id?: string; display_name: string; email?: string; role: PxmRole; group_ids: string[]; memberships?: Array<{ group_id: string; role: PxmGroupRole }>; status?: PxmUser['status']; password?: string }) => Promise<boolean>;
+  onSetMembership: (groupId: string, role: PxmGroupRole) => Promise<boolean>;
+  onRemoveMembership: (groupId: string) => Promise<boolean>;
+}) {
+  const [displayName, setDisplayName] = useState(user?.display_name || '');
+  const [email, setEmail] = useState(user?.email || '');
+  const [status, setStatus] = useState<PxmUser['status']>(user?.status || 'active');
+  const [password, setPassword] = useState('');
+  const [membershipGroupId, setMembershipGroupId] = useState('');
+  const [membershipRole, setMembershipRole] = useState<PxmGroupRole>('user');
+
+  if (!user) return <section className="user-detail-panel"><div className="access-empty">관리할 사용자를 선택하세요.</div></section>;
+
+  const manageableGroupIds = new Set(groups.map((group) => group.id));
+  const memberships = user.memberships || [];
+  const availableGroups = groups.filter((group) => !memberships.some((membership) => membership.group_id === group.id));
+  const selectedMembershipGroupId = membershipGroupId && availableGroups.some((group) => group.id === membershipGroupId)
+    ? membershipGroupId
+    : availableGroups[0]?.id || '';
+  const groupName = (groupId: string) => groups.find((group) => group.id === groupId)?.name || groupId;
+
+  return (
+    <section className="user-detail-panel">
+      <div className="user-detail-heading">
+        <div><strong>{user.display_name}</strong><small>{user.id}</small></div>
+        <span className={`status-badge ${user.status}`}>{user.status}</span>
+      </div>
+
+      <form className="user-account-form" onSubmit={async (event) => {
+        event.preventDefault();
+        if (!canEditAccount || !displayName.trim()) return;
+        const saved = await onUpdate({
+          id: user.id,
+          display_name: displayName.trim(),
+          email: email.trim() || undefined,
+          role: user.role,
+          group_ids: user.group_ids,
+          memberships,
+          status,
+          password: password || undefined,
+        });
+        if (saved) setPassword('');
+      }}>
+        <div className="user-detail-section-title"><strong>계정 정보</strong><small>{canEditAccount ? '최고 관리자만 수정할 수 있습니다.' : '계정 정보는 조회만 가능합니다.'}</small></div>
+        <label><span>이름</span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} disabled={disabled || !canEditAccount} /></label>
+        <label><span>이메일</span><input value={email} onChange={(event) => setEmail(event.target.value)} disabled={disabled || !canEditAccount} /></label>
+        <label><span>상태</span><select value={status} onChange={(event) => setStatus(event.target.value as PxmUser['status'])} disabled={disabled || !canEditAccount}>
+          <option value="active">활성</option>
+          <option value="disabled">비활성</option>
+          <option value="deleted">삭제됨</option>
+        </select></label>
+        <label><span>새 비밀번호</span><input type="password" minLength={12} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="변경할 때만 입력" disabled={disabled || !canEditAccount} /></label>
+        {canEditAccount && <Button type="submit" variant="primary" size="sm" disabled={disabled || !displayName.trim()}>계정 정보 저장</Button>}
+      </form>
+
+      <div className="user-membership-manager">
+        <div className="user-detail-section-title"><strong>그룹 소속</strong><small>관리 가능한 그룹의 membership과 역할을 변경합니다.</small></div>
+        {availableGroups.length > 0 && (
+          <div className="user-membership-add">
+            <select value={selectedMembershipGroupId} onChange={(event) => setMembershipGroupId(event.target.value)} disabled={disabled}>
+              {availableGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+            </select>
+            <select value={membershipRole} onChange={(event) => setMembershipRole(event.target.value as PxmGroupRole)} disabled={disabled}>
+              <option value="user">일반 사용자</option>
+              {canEditAccount && <option value="group_manager">그룹 관리자</option>}
+            </select>
+            <Button variant="secondary" size="sm" disabled={disabled || !selectedMembershipGroupId} onClick={() => onSetMembership(selectedMembershipGroupId, membershipRole)}>그룹 추가</Button>
+          </div>
+        )}
+        <div className="user-membership-list">
+          {memberships.map((membership) => {
+            const manageable = manageableGroupIds.has(membership.group_id);
+            const managerProtected = membership.role === 'group_manager' && !canEditAccount;
+            return (
+              <div key={membership.group_id} className="user-membership-row">
+                <span><strong>{groupName(membership.group_id)}</strong><small>{membership.group_id}</small></span>
+                <span>
+                  <select value={membership.role} disabled={disabled || !manageable || managerProtected} onChange={(event) => onSetMembership(membership.group_id, event.target.value as PxmGroupRole)}>
+                    <option value="user">일반 사용자</option>
+                    {canEditAccount && <option value="group_manager">그룹 관리자</option>}
+                  </select>
+                  <Button variant="ghost" size="sm" disabled={disabled || !manageable || managerProtected} onClick={() => {
+                    if (!window.confirm(`${user.display_name} 사용자를 ${groupName(membership.group_id)} 그룹에서 제외할까요?`)) return;
+                    void onRemoveMembership(membership.group_id);
+                  }}>그룹 제외</Button>
+                </span>
+              </div>
+            );
+          })}
+          {memberships.length === 0 && <div className="access-empty">소속된 그룹이 없습니다.</div>}
+        </div>
+      </div>
+    </section>
   );
 }
 

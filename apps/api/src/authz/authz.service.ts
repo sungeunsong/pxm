@@ -123,8 +123,40 @@ export class AuthzService {
     });
   }
 
+  async createUser(dto: UpsertUserDto): Promise<PxmUser> {
+    if (dto.id && await this.authzRepo.getUser(dto.id.trim())) {
+      throw new ConflictException('User ID already exists');
+    }
+    return this.upsertUser(dto);
+  }
+
   async listUsers(groupId?: string): Promise<PxmUser[]> {
     return this.authzRepo.listUsers(optionalString(groupId) || undefined);
+  }
+
+  async setUserMembership(
+    userId: string,
+    groupId: string,
+    role: 'group_manager' | 'user',
+    actor?: string | null,
+  ): Promise<PxmUser> {
+    const user = await this.getUser(userId);
+    await this.assertGroupsExist([groupId]);
+    const memberships = mergeMemberships(user.memberships || [], [{ group_id: groupId, role }]);
+    return this.saveMemberships(user, memberships, actor);
+  }
+
+  async removeUserMembership(
+    userId: string,
+    groupId: string,
+    actor?: string | null,
+  ): Promise<PxmUser> {
+    const user = await this.getUser(userId);
+    const memberships = (user.memberships || []).filter((membership) => membership.group_id !== groupId);
+    if (memberships.length === (user.memberships || []).length) {
+      throw new NotFoundException('User is not a member of the group');
+    }
+    return this.saveMemberships(user, memberships, actor);
   }
 
   async getUser(id: string): Promise<PxmUser> {
@@ -133,6 +165,28 @@ export class AuthzService {
       throw new NotFoundException('User not found');
     }
     return user;
+  }
+
+  private saveMemberships(
+    user: PxmUser,
+    memberships: PxmGroupMembership[],
+    actor?: string | null,
+  ): Promise<PxmUser> {
+    const role = user.role === 'admin'
+      ? 'admin'
+      : memberships.some((membership) => membership.role === 'group_manager')
+        ? 'group_manager'
+        : 'user';
+    return this.authzRepo.upsertUser({
+      id: user.id,
+      display_name: user.display_name,
+      email: user.email,
+      role,
+      group_ids: memberships.map((membership) => membership.group_id),
+      memberships,
+      status: user.status,
+      actor,
+    });
   }
 
   async listExternalPrincipalMappings(query: {

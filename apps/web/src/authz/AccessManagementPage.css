@@ -30,6 +30,55 @@
   font-size: 13px;
 }
 
+.access-page-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 260px));
+  gap: 8px;
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.access-page-tabs button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 13px;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #475569;
+  text-align: left;
+  cursor: pointer;
+}
+
+.access-page-tabs button.active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.08);
+}
+
+.access-page-tabs button > span {
+  display: grid;
+  gap: 2px;
+}
+
+.access-page-tabs strong,
+.access-page-tabs small {
+  display: block;
+}
+
+.access-page-tabs strong {
+  font-size: 13px;
+}
+
+.access-page-tabs small {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 500;
+}
+
 .access-alert {
   display: flex;
   align-items: center;
@@ -68,6 +117,10 @@
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 16px;
+}
+
+.access-summary.user-summary {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .access-summary-card,
@@ -271,7 +324,10 @@
 }
 
 .access-form input,
-.access-form select {
+.access-form select,
+.member-search-controls input,
+.member-search-controls select,
+.group-member-actions select {
   height: 34px;
   border: 1px solid #cbd5e1;
   border-radius: 7px;
@@ -279,6 +335,386 @@
   font-size: 13px;
   min-width: 0;
   background: #ffffff;
+}
+
+.member-management-card {
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.member-management-title,
+.new-user-form-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.member-management-title > div,
+.new-user-form-header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.member-management-title strong,
+.new-user-form-header strong,
+.group-member-heading strong {
+  font-size: 13px;
+}
+
+.member-management-title small,
+.new-user-form-header small {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.member-search-controls {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(140px, 0.3fr);
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.member-search-results {
+  display: grid;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.member-search-result,
+.group-member-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.member-search-result > span,
+.group-member-identity {
+  min-width: 0;
+}
+
+.member-search-result strong,
+.member-search-result small,
+.group-member-identity strong,
+.group-member-identity small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.member-search-result strong,
+.group-member-identity strong {
+  font-size: 13px;
+}
+
+.member-search-result small,
+.group-member-identity small {
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.new-user-card {
+  border-color: #bfdbfe;
+  background: #f8fbff;
+}
+
+.new-user-form-header {
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.new-user-form-header > span {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border-radius: 7px;
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.new-user-form-header > div {
+  flex: 1;
+}
+
+.new-user-card .access-form {
+  margin-bottom: 0;
+}
+
+.access-form.user-create-form {
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
+}
+
+.group-member-table {
+  display: grid;
+  gap: 8px;
+}
+
+.group-member-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #334155;
+}
+
+.group-member-heading span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.group-member-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.group-member-actions select {
+  min-width: 130px;
+}
+
+.user-directory {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.user-management-workspace {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.9fr) minmax(420px, 1.1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.user-directory-row {
+  cursor: pointer;
+}
+
+.user-directory-row.selected {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+.user-management-panel {
+  min-height: 520px;
+}
+
+.user-management-intro {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.user-management-intro > span {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: 8px;
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.user-management-intro > div {
+  flex: 1;
+}
+
+.user-management-intro > button {
+  flex: 0 0 auto;
+}
+
+.user-management-intro h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.user-management-intro p {
+  margin: 4px 0 0;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.user-directory-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.user-directory-header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.user-directory-header strong {
+  font-size: 13px;
+}
+
+.user-directory-header small {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.user-directory-header label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 220px;
+  height: 34px;
+  padding: 0 9px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #64748b;
+}
+
+.user-directory-header input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  font-size: 13px;
+}
+
+.user-detail-panel {
+  display: grid;
+  gap: 16px;
+  padding: 14px;
+  border: 1px solid #dbe3ef;
+  border-radius: 9px;
+  background: #fbfdff;
+}
+
+.user-detail-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.user-detail-heading strong,
+.user-detail-heading small {
+  display: block;
+}
+
+.user-detail-heading strong {
+  font-size: 15px;
+}
+
+.user-detail-heading small {
+  margin-top: 3px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.user-account-form,
+.user-membership-manager {
+  display: grid;
+  gap: 9px;
+}
+
+.user-detail-section-title {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 2px;
+}
+
+.user-detail-section-title strong {
+  font-size: 13px;
+}
+
+.user-detail-section-title small {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.user-account-form label {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.user-account-form label > span {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.user-account-form input,
+.user-account-form select,
+.user-membership-add select,
+.user-membership-row select {
+  height: 34px;
+  min-width: 0;
+  padding: 0 9px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: #ffffff;
+  font-size: 12px;
+}
+
+.user-account-form button {
+  justify-self: end;
+}
+
+.user-membership-add {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(120px, 0.6fr) auto;
+  gap: 7px;
+}
+
+.user-membership-list {
+  display: grid;
+  gap: 7px;
+}
+
+.user-membership-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.user-membership-row > span:first-child strong,
+.user-membership-row > span:first-child small {
+  display: block;
+}
+
+.user-membership-row > span:first-child strong {
+  font-size: 12px;
+}
+
+.user-membership-row > span:first-child small {
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.user-membership-row > span:last-child {
+  display: flex;
+  align-items: center;
+  gap: 7px;
 }
 
 .scope-box {
@@ -482,10 +918,22 @@
   .access-layout {
     grid-template-columns: 1fr;
   }
+
+  .user-management-workspace {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 900px) {
   .access-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .access-summary.user-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .access-page-tabs {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -496,12 +944,55 @@
     grid-template-columns: 1fr;
   }
 
+  .access-form.user-create-form {
+    grid-template-columns: 1fr;
+  }
+
   .mapping-row {
     flex-direction: column;
   }
 
   .mapping-search {
     grid-template-columns: 1fr;
+  }
+
+  .member-search-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .member-search-result,
+  .group-member-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .group-member-actions {
+    justify-content: flex-start;
+  }
+
+  .user-directory-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .user-directory-header label {
+    min-width: 0;
+  }
+
+  .user-account-form label,
+  .user-membership-add {
+    grid-template-columns: 1fr;
+  }
+
+  .user-membership-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .user-membership-row > span:last-child {
+    width: 100%;
+    align-items: flex-start;
+    flex-wrap: wrap;
   }
 
   .mapping-meta {

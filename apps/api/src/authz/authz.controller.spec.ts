@@ -1,6 +1,83 @@
 import { ForbiddenException } from '@nestjs/common';
 import { AuthzController } from './authz.controller';
 
+describe('AuthzController group membership management', () => {
+  const managerRequest = {
+    workflowActor: {
+      actor_type: 'user', actor_id: 'manager-1', roles: ['group_manager'], scopes: [], workspace_ids: ['default'],
+      group_ids: ['group-a'], group_roles: { 'group-a': 'group_manager' }, owned_workflow_ids: [],
+      allowed_workflow_ids: [], allowed_instance_ids: [], api_key_id: null,
+    },
+  } as any;
+
+  it('lets a group manager add an ordinary user to their group', async () => {
+    const existing = { id: 'user-1', role: 'user', memberships: [], group_ids: [] };
+    const saved = { ...existing, memberships: [{ group_id: 'group-a', role: 'user' }], group_ids: ['group-a'] };
+    const authzService = {
+      getUser: jest.fn().mockResolvedValue(existing),
+      setUserMembership: jest.fn().mockResolvedValue(saved),
+    };
+    const audit = { append: jest.fn().mockResolvedValue(undefined) };
+    const controller = new AuthzController(authzService as any, audit as any, {} as any);
+
+    await expect(controller.setGroupMembership('group-a', 'user-1', { role: 'user' }, managerRequest)).resolves.toBe(saved);
+    expect(authzService.setUserMembership).toHaveBeenCalledWith('user-1', 'group-a', 'user', 'manager-1');
+    expect(audit.append).toHaveBeenCalledWith(expect.objectContaining({ action: 'user.membership_added', group_id: 'group-a' }));
+  });
+
+  it('prevents a group manager from changing another group manager membership', async () => {
+    const authzService = {
+      getUser: jest.fn().mockResolvedValue({
+        id: 'manager-2', role: 'group_manager', group_ids: ['group-a'],
+        memberships: [{ group_id: 'group-a', role: 'group_manager' }],
+      }),
+      setUserMembership: jest.fn(),
+    };
+    const controller = new AuthzController(authzService as any, {} as any, {} as any);
+
+    await expect(controller.setGroupMembership('group-a', 'manager-2', { role: 'user' }, managerRequest))
+      .rejects.toBeInstanceOf(ForbiddenException);
+    expect(authzService.setUserMembership).not.toHaveBeenCalled();
+  });
+
+  it('prevents a group manager from changing a global admin membership', async () => {
+    const authzService = {
+      getUser: jest.fn().mockResolvedValue({
+        id: 'admin-1', role: 'admin', group_ids: ['group-a'],
+        memberships: [{ group_id: 'group-a', role: 'user' }],
+      }),
+      setUserMembership: jest.fn(),
+    };
+    const controller = new AuthzController(authzService as any, {} as any, {} as any);
+
+    await expect(controller.setGroupMembership('group-a', 'admin-1', { role: 'user' }, managerRequest))
+      .rejects.toBeInstanceOf(ForbiddenException);
+    expect(authzService.setUserMembership).not.toHaveBeenCalled();
+  });
+
+  it('preserves account fields and status when a group manager submits an existing user', async () => {
+    const existing = {
+      id: 'user-1', display_name: 'Original User', email: 'original@example.com', role: 'user', status: 'active',
+      group_ids: ['group-a'], memberships: [{ group_id: 'group-a', role: 'user' }],
+    };
+    const authzService = {
+      getUser: jest.fn().mockResolvedValue(existing),
+      upsertUser: jest.fn().mockImplementation(async (dto) => ({ ...existing, ...dto })),
+    };
+    const audit = { append: jest.fn().mockResolvedValue(undefined) };
+    const controller = new AuthzController(authzService as any, audit as any, {} as any);
+
+    await controller.upsertUser({
+      id: 'user-1', display_name: 'Changed', email: 'changed@example.com', role: 'user', status: 'disabled',
+      memberships: [{ group_id: 'group-a', role: 'user' }], password: 'long-enough-password',
+    }, managerRequest);
+
+    expect(authzService.upsertUser).toHaveBeenCalledWith(expect.objectContaining({
+      display_name: 'Original User', email: 'original@example.com', status: 'active', password: undefined,
+    }));
+  });
+});
+
 describe('AuthzController external principal mapping management', () => {
   const mapping = {
     id: 'mapping-1',

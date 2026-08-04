@@ -98,6 +98,11 @@ export class UpsertUserDto {
   password?: string;
 }
 
+export class SetGroupMembershipDto {
+  @IsIn(['group_manager', 'user'])
+  role: 'group_manager' | 'user';
+}
+
 export class UpsertServiceAccountDto {
   @IsOptional() @IsString() @MinLength(1) @MaxLength(128)
   id?: string;

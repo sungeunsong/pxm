@@ -137,6 +137,28 @@ export const authzApi = {
     return readJson(response, 'user list failed');
   },
 
+  async listUserDirectory(groupId: string): Promise<PxmUser[]> {
+    const response = await fetch(`${API_BASE_URL}/users/directory?groupId=${encodeURIComponent(groupId)}`, { credentials: 'include' });
+    return readJson(response, 'user directory list failed');
+  },
+
+  async setGroupMembership(groupId: string, userId: string, role: PxmGroupRole): Promise<PxmUser> {
+    const response = await fetch(`${API_BASE_URL}/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(userId)}`, {
+      method: 'PUT',
+      headers: jsonHeaders, credentials: 'include',
+      body: JSON.stringify({ role }),
+    });
+    return readJson(response, 'group membership save failed');
+  },
+
+  async removeGroupMembership(groupId: string, userId: string): Promise<PxmUser> {
+    const response = await fetch(`${API_BASE_URL}/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(userId)}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    });
+    return readJson(response, 'group membership remove failed');
+  },
+
   async saveUser(payload: {
     id?: string;
     display_name: string;
@@ -144,6 +166,7 @@ export const authzApi = {
     role: PxmRole;
     group_ids: string[];
     memberships?: PxmGroupMembership[];
+    status?: PrincipalStatus;
     password?: string;
   }): Promise<PxmUser> {
     const response = await fetch(`${API_BASE_URL}/users`, {
@@ -152,6 +175,23 @@ export const authzApi = {
       body: JSON.stringify(payload),
     });
     return readJson(response, 'user save failed');
+  },
+
+  async createUser(payload: {
+    id?: string;
+    display_name: string;
+    email?: string;
+    role: PxmRole;
+    group_ids: string[];
+    memberships?: PxmGroupMembership[];
+    password?: string;
+  }): Promise<PxmUser> {
+    const response = await fetch(`${API_BASE_URL}/users/new`, {
+      method: 'POST',
+      headers: jsonHeaders, credentials: 'include',
+      body: JSON.stringify(payload),
+    });
+    return readJson(response, 'user create failed');
   },
 
   async listServiceAccounts(groupId?: string): Promise<PxmServiceAccount[]> {

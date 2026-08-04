@@ -5,6 +5,7 @@ import { AuthzService } from './authz.service';
 import {
   CreateApiKeyDto,
   CreateExternalPrincipalMappingDto,
+  SetGroupMembershipDto,
   SetExternalPrincipalMappingStatusDto,
   UpdateExternalPrincipalMappingDto,
   UpsertGroupDto,
@@ -100,6 +101,7 @@ export class AuthzController {
           display_name: existing.display_name,
           email: existing.email,
           role: existing.role,
+          status: existing.status,
           password: undefined,
         };
       }
@@ -112,9 +114,83 @@ export class AuthzController {
     return user;
   }
 
+  @Post('users/new')
+  async createUser(@Body() dto: UpsertUserDto, @Req() req: Request) {
+    const membershipGroupIds = dto.memberships?.map((membership) => membership.group_id) || [];
+    const assignedRole = dto.memberships?.some((membership) => membership.role === 'group_manager')
+      ? 'group_manager'
+      : dto.role;
+    const actor = actorFromRequest(req);
+    assertCanIssueUser(actor, assignedRole, membershipGroupIds.length ? membershipGroupIds : dto.group_ids || []);
+    const user = await this.authzService.createUser({ ...dto, actor: actor.actor_id || undefined });
+    await Promise.all((user.group_ids.length ? user.group_ids : [null]).map((groupId) => this.audit.append({
+      action: 'user.created', resource_type: 'user', resource_id: user.id,
+      group_id: groupId, actor_id: actor.actor_id, details: { role: user.role, group_ids: user.group_ids, memberships: user.memberships },
+    })));
+    return user;
+  }
+
   @Get('users')
   async listUsers(@Query('groupId') groupId: string | undefined, @Req() req: Request) {
     return this.authzService.listUsers(manageableGroupId(actorFromRequest(req), groupId));
+  }
+
+  @Get('users/directory')
+  async listUserDirectory(@Query('groupId') groupId: string, @Req() req: Request) {
+    assertCanManageGroup(actorFromRequest(req), groupId);
+    return this.authzService.listUsers();
+  }
+
+  @Put('groups/:groupId/members/:userId')
+  async setGroupMembership(
+    @Param('groupId') groupId: string,
+    @Param('userId') userId: string,
+    @Body() dto: SetGroupMembershipDto,
+    @Req() req: Request,
+  ) {
+    const actor = actorFromRequest(req);
+    assertCanManageGroup(actor, groupId);
+    const current = await this.authzService.getUser(userId);
+    const currentRole = current.memberships?.find((membership) => membership.group_id === groupId)?.role;
+    const protectedRole = current.role === 'admin'
+      ? 'admin'
+      : currentRole === 'group_manager'
+        ? 'group_manager'
+        : dto.role;
+    assertCanIssueUser(actor, protectedRole, [groupId]);
+    const user = await this.authzService.setUserMembership(userId, groupId, dto.role, actor.actor_id);
+    await this.audit.append({
+      action: currentRole ? 'user.membership_updated' : 'user.membership_added',
+      resource_type: 'user',
+      resource_id: user.id,
+      group_id: groupId,
+      actor_id: actor.actor_id,
+      details: { previous_role: currentRole || null, role: dto.role },
+    });
+    return user;
+  }
+
+  @Delete('groups/:groupId/members/:userId')
+  async removeGroupMembership(
+    @Param('groupId') groupId: string,
+    @Param('userId') userId: string,
+    @Req() req: Request,
+  ) {
+    const actor = actorFromRequest(req);
+    assertCanManageGroup(actor, groupId);
+    const current = await this.authzService.getUser(userId);
+    const currentRole = current.memberships?.find((membership) => membership.group_id === groupId)?.role;
+    assertCanIssueUser(actor, current.role === 'admin' ? 'admin' : currentRole, [groupId]);
+    const user = await this.authzService.removeUserMembership(userId, groupId, actor.actor_id);
+    await this.audit.append({
+      action: 'user.membership_removed',
+      resource_type: 'user',
+      resource_id: user.id,
+      group_id: groupId,
+      actor_id: actor.actor_id,
+      details: { previous_role: currentRole || null },
+    });
+    return user;
   }
 
   @Get('users/:id')
