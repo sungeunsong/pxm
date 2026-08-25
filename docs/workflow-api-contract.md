@@ -2,6 +2,8 @@
 
 Phase 1 기준의 외부 연동용 workflow 실행 계약이다.
 
+외부 소비자는 버전 경로 `/api/v1`을 사용한다. 별도 표기가 없는 `/api` 경로는 관리 콘솔용이며, 공개 엔드포인트 목록은 `docs/public-api-v1.md`를 기준으로 한다.
+
 ## Workflow Deployment Lifecycle
 
 워크플로우 저장과 외부 공개는 분리한다.
@@ -59,7 +61,7 @@ Workflow Call 부모 instance를 대상으로 하면 활성 자식에게도 전�
 
 ## Start Workflow
 
-`POST /api/templates/:template_id/start`
+`POST /api/v1/templates/:template_id/start`
 
 기존 UI 호환 엔드포인트인 `POST /api/templates/:template_id/execute`는 로그인한 관리자에게 Draft 미리보기를 허용한다. API key 요청과 외부 연동은 active published version만 실행하는 `/start`를 표준으로 사용한다.
 
@@ -108,9 +110,9 @@ HTTP `202 Accepted`
   "status": "CREATED",
   "mode": "async",
   "idempotent_replay": false,
-  "result_url": "/api/instances/{instance_id}/result",
-  "trace_url": "/api/instances/{instance_id}/trace",
-  "stream_url": "/api/instances/{instance_id}/stream"
+  "result_url": "/api/v1/instances/{instance_id}/result",
+  "trace_url": "/api/v1/instances/{instance_id}/trace",
+  "stream_url": "/api/v1/instances/{instance_id}/stream"
 }
 ```
 
@@ -131,9 +133,9 @@ HTTP `200 OK`
     "amount": 1000
   },
   "result_path": "formData",
-  "result_url": "/api/instances/{instance_id}/result",
-  "trace_url": "/api/instances/{instance_id}/trace",
-  "stream_url": "/api/instances/{instance_id}/stream",
+  "result_url": "/api/v1/instances/{instance_id}/result",
+  "trace_url": "/api/v1/instances/{instance_id}/trace",
+  "stream_url": "/api/v1/instances/{instance_id}/stream",
   "timed_out": false
 }
 ```
@@ -150,16 +152,16 @@ HTTP `202 Accepted`
   "status": "RUNNING",
   "mode": "sync",
   "idempotent_replay": false,
-  "result_url": "/api/instances/{instance_id}/result",
-  "trace_url": "/api/instances/{instance_id}/trace",
-  "stream_url": "/api/instances/{instance_id}/stream",
+  "result_url": "/api/v1/instances/{instance_id}/result",
+  "trace_url": "/api/v1/instances/{instance_id}/trace",
+  "stream_url": "/api/v1/instances/{instance_id}/stream",
   "timed_out": true
 }
 ```
 
 ## Result
 
-`GET /api/instances/:instance_id/result`
+`GET /api/v1/instances/:instance_id/result`
 
 ```json
 {
@@ -206,8 +208,8 @@ Workflow Call의 자식 instance·token·job 생성은 Engine runtime transactio
 
 ## Trace And Stream
 
-- `GET /api/instances/:instance_id/trace`: 최근 trace/event 목록 조회.
-- `GET /api/instances/:instance_id/stream`: SSE 기반 실행 이벤트 스트림.
+- `GET /api/v1/instances/:instance_id/trace`: 최근 trace/event 목록 조회.
+- `GET /api/v1/instances/:instance_id/stream`: SSE 기반 실행 이벤트 스트림.
 
 ## Export Workflow
 
@@ -494,14 +496,14 @@ ApprovalRequest (token당 1개)
 ### List My Open Tasks
 
 ```http
-GET /api/tasks
+GET /api/v1/tasks
 Cookie: pxm_session=...
 ```
 
 또는 개인 `USER` owner API key를 사용한다.
 
 ```http
-GET /api/tasks
+GET /api/v1/tasks
 Authorization: Bearer pxm_live_xxx
 ```
 
@@ -515,7 +517,7 @@ Authorization: Bearer pxm_live_xxx
 ### Approve Or Reject Task
 
 ```http
-POST /api/tasks/{task_id}/complete
+POST /api/v1/tasks/{task_id}/complete
 Idempotency-Key: approval-request-uuid
 Content-Type: application/json
 
@@ -578,12 +580,12 @@ Content-Type: application/json
 
 ### Approval Task History
 
-`GET /api/tasks`는 기존 호환성을 위해 현재 actor의 OPEN 결재함만 반환한다. 완료 이력과 검색은 별도 endpoint를 사용한다.
+`GET /api/v1/tasks`는 현재 actor의 OPEN 결재함만 반환한다. 완료 이력과 검색은 별도 endpoint를 사용한다.
 
 ```http
-GET /api/tasks/history?status=APPROVED,REJECTED&workflow_id={id}&from=2026-07-01T00:00:00Z&limit=50
-GET /api/tasks/{task_id}
-GET /api/instances/{instance_id}/tasks?limit=50
+GET /api/v1/tasks/history?status=APPROVED,REJECTED&workflow_id={id}&from=2026-07-01T00:00:00Z&limit=50
+GET /api/v1/tasks/{task_id}
+GET /api/v1/instances/{instance_id}/tasks?limit=50
 Authorization: Bearer pxm_live_xxx
 ```
 
@@ -697,7 +699,7 @@ payload, 서명 검증과 운영 설정은 `docs/webhook-delivery.md`를 따른�
 
 ## History API Permission Model
 
-이력 API 권한 모델은 `/api/instances`, `/api/instances/:id`, `/api/instances/:id/trace`, `/api/instances/:id/result`, `/api/instances/:id/stream`에 동일하게 적용한다. 목록 API는 조회 가능한 instance만 반환하고, 단건/trace/result/stream API는 조회 권한이 없으면 `404 Not Found`를 반환한다. 권한 없는 instance의 존재 여부를 노출하지 않기 위해 `403 Forbidden`은 사용하지 않는다.
+이력 API 권한 모델은 `/api/v1/instances`, `/api/v1/instances/:id`, `/api/v1/instances/:id/trace`, `/api/v1/instances/:id/result`, `/api/v1/instances/:id/stream`에 동일하게 적용한다. 목록 API는 조회 가능한 instance만 반환하고, 단건/trace/result/stream API는 조회 권한이 없으면 `404 Not Found`를 반환한다. 권한 없는 instance의 존재 여부를 노출하지 않기 위해 `403 Forbidden`은 사용하지 않는다.
 
 ### Actor Context
 
@@ -774,7 +776,7 @@ payload, 서명 검증과 운영 설정은 `docs/webhook-delivery.md`를 따른�
 
 ### Endpoint Rules
 
-`GET /api/instances`
+`GET /api/v1/instances`
 
 - `admin`: 전체 목록.
 - `group_manager`: `group_id in actor.group_ids`.
@@ -784,22 +786,22 @@ payload, 서명 검증과 운영 설정은 `docs/webhook-delivery.md`를 따른�
 - `approver`: `approver_ids contains actor.actor_id`.
 - `api_client`: 명시 허용 workflow/instance와 group permission 교집합.
 
-`GET /api/instances/:id`
+`GET /api/v1/instances/:id`
 
 - 목록 API와 같은 scope filter를 단건 instance에 적용한다.
 - 권한이 없거나 instance가 없으면 `404 Not Found`.
 
-`GET /api/instances/:id/trace`
+`GET /api/v1/instances/:id/trace`
 
 - instance 단건 조회 권한이 있을 때만 허용한다.
 - trace payload는 secret redaction 후 반환한다.
 
-`GET /api/instances/:id/result`
+`GET /api/v1/instances/:id/result`
 
 - instance 단건 조회 권한이 있을 때만 허용한다.
 - result payload는 secret redaction 후 반환한다.
 
-`GET /api/instances/:id/stream`
+`GET /api/v1/instances/:id/stream`
 
 - SSE 연결 시점에 instance 단건 조회 권한을 확인한다.
 - 연결 유지 중 권한이 변경될 수 있으므로 장기 연결은 재연결 또는 주기적 재검증 정책을 둔다. 초기 구현은 연결 시점 검증만 적용한다.

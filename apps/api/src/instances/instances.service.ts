@@ -492,9 +492,9 @@ export class InstancesService {
       template_name: definition.name,
       status: 'CREATED',
       retry_mode: 'full_instance',
-      trace_url: `/api/instances/${instanceId}/trace`,
-      stream_url: `/api/instances/${instanceId}/stream`,
-      result_url: `/api/instances/${instanceId}/result`,
+      trace_url: `/api/v1/instances/${instanceId}/trace`,
+      stream_url: `/api/v1/instances/${instanceId}/stream`,
+      result_url: `/api/v1/instances/${instanceId}/result`,
     };
     if (key) {
       const command = await this.instanceRepo.executeIdempotentCommand({
@@ -568,9 +568,9 @@ export class InstancesService {
       retry_mode: 'failed_node',
       node_id: failedNodeId,
       node_type: failedNodeType,
-      trace_url: `/api/instances/${id}/trace`,
-      stream_url: `/api/instances/${id}/stream`,
-      result_url: `/api/instances/${id}/result`,
+      trace_url: `/api/v1/instances/${id}/trace`,
+      stream_url: `/api/v1/instances/${id}/stream`,
+      result_url: `/api/v1/instances/${id}/result`,
     };
     if (idempotencyKey) {
       const command = await this.instanceRepo.executeIdempotentCommand({

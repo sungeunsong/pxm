@@ -113,10 +113,10 @@ allowed_workflow_ids: [...]
 
 ## API-05. 외부 API v1 경로 도입
 
-- [!] 외부 공개 API만 `/api/v1`으로 분리할지, `/api`와 병행 제공할지 결정한다.
-- [ ] 외부 공개 endpoint 목록을 확정한다.
-- [ ] Web, api-playground, E2E, health check, 운영 스크립트의 영향을 반영한다.
-- [ ] 외부 문서와 예제에는 버전 경로만 사용한다.
+- [x] 외부 공개 API는 `/api/v1`으로 제공하고 베타 마이그레이션 동안 공개 기능의 기존 `/api` 경로를 병행한다. 내부 관리 API는 `/api`만 유지한다.
+- [x] 외부 공개 endpoint 목록을 확정한다. `docs/public-api-v1.md`를 기준으로 한다.
+- [x] Web, api-playground, E2E, health check, 운영 스크립트의 영향을 반영한다. Web·health check는 관리/내부 경로이므로 기존 `/api`를 유지하고 api-playground만 `/api/v1`로 전환한다.
+- [x] 외부 문서와 예제에는 버전 경로만 사용한다.
 
 완료 조건: 기존 관리 콘솔 회귀 없이 `/api/v1` 공개 계약 테스트가 통과한다.
 

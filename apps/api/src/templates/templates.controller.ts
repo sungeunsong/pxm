@@ -1,4 +1,4 @@
-import { BadRequestException, Body, ConflictException, Controller, Delete, ForbiddenException, Get, Headers, HttpStatus, NotFoundException, Param, ParseIntPipe, Post, Put, Query, Req, Res } from '@nestjs/common';
+import { BadRequestException, Body, ConflictException, Controller, Delete, ForbiddenException, Get, Headers, HttpStatus, NotFoundException, Param, ParseIntPipe, Post, Put, Query, Req, Res, Version } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { TemplatesService } from './templates.service';
 import { CreateTemplateDto, DeployTemplateDto, UpdateTemplateDto } from './dto/template.dto';
@@ -17,6 +17,7 @@ import {
   normalizeExternalApprovalRequest,
   stableStringify,
 } from '../instances/external-approval-start';
+import { PUBLIC_API_VERSIONS } from '../public-api-version';
 
 @Controller('templates')
 export class TemplatesController {
@@ -50,6 +51,7 @@ export class TemplatesController {
   }
 
   @Get()
+  @Version(PUBLIC_API_VERSIONS)
   async findAll(@Query('activeOnly') activeOnly: string | undefined, @Req() req: Request) {
     const active = activeOnly !== 'false';
     const actor = actorFromRequest(req);
@@ -169,6 +171,7 @@ export class TemplatesController {
   }
 
   @Get(':id')
+  @Version(PUBLIC_API_VERSIONS)
   async findOne(@Param('id') id: string, @Req() req: Request) {
     return this.assertReadableTemplate(id, req);
   }
@@ -499,6 +502,7 @@ export class TemplatesController {
   }
 
   @Post(':id/execute')
+  @Version(PUBLIC_API_VERSIONS)
   async execute(@Param('id') id: string, @Body() body?: StartWorkflowRequest, @Headers('idempotency-key') idempotencyKey?: string, @Req() req?: Request, @Res({ passthrough: true }) res?: Response) {
     const actor = actorFromRequest(req);
     const allowDraft = !actor.api_key_id && actor.actor_type === 'user';
@@ -506,6 +510,7 @@ export class TemplatesController {
   }
 
   @Post(':id/start')
+  @Version(PUBLIC_API_VERSIONS)
   async start(@Param('id') id: string, @Body() body?: StartWorkflowRequest, @Headers('idempotency-key') idempotencyKey?: string, @Req() req?: Request, @Res({ passthrough: true }) res?: Response) {
     return this.startWorkflow(id, body, idempotencyKey, req, res, false);
   }
@@ -697,9 +702,9 @@ export class TemplatesController {
             revision: externalApproval.revision,
           }
         : null,
-      result_url: `/api/instances/${resolvedInstanceId}/result`,
-      trace_url: `/api/instances/${resolvedInstanceId}/trace`,
-      stream_url: `/api/instances/${resolvedInstanceId}/stream`,
+      result_url: `/api/v1/instances/${resolvedInstanceId}/result`,
+      trace_url: `/api/v1/instances/${resolvedInstanceId}/trace`,
+      stream_url: `/api/v1/instances/${resolvedInstanceId}/stream`,
     };
 
     if (mode === 'async') {

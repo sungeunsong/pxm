@@ -10,7 +10,7 @@ API(`3011`)와 Engine이 실행 중인 상태에서 다음 명령을 실행한�
 pnpm dev:api-playground
 ```
 
-브라우저에서 `http://localhost:5175`를 연다. 원격 개발 환경에서는 `5175` 포트를 포워딩해야 한다. 로컬 Vite 서버는 `/api` 요청을 `http://localhost:3011`로 프록시한다.
+브라우저에서 `http://localhost:5175`를 연다. 원격 개발 환경에서는 `5175` 포트를 포워딩해야 한다. 로컬 Vite 서버는 공개 계약 경로인 `/api/v1` 요청을 `http://localhost:3011`로 프록시한다.
 
 ## 테스트용 API Key 발급
 

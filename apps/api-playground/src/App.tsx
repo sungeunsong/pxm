@@ -31,7 +31,7 @@ type ApprovalItem = { task_id: string; instance_id: string; workflow_id: string 
 type ApprovalPage = { items: ApprovalItem[]; next_cursor: string | null };
 type TraceItem = { id: number; event_type?: string; type?: string; node_label?: string; created_at?: string; payload?: unknown };
 
-const storedBase = sessionStorage.getItem('pxm-playground-base') || '/api';
+const storedBase = sessionStorage.getItem('pxm-playground-base') || '/api/v1';
 const storedKey = sessionStorage.getItem('pxm-playground-key') || '';
 
 export function App() {
@@ -139,7 +139,7 @@ export function App() {
   return <div className="app-shell">
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark"><Braces /></div><div><strong>PXM</strong><span>API Consumer Demo</span></div></div>
-      <div className={`connection-state ${connected ? 'connected' : ''}`}><CircleDot /><div><strong>{connected ? 'API Connected' : 'Not connected'}</strong><span>{baseUrl || '/api'}</span></div></div>
+      <div className={`connection-state ${connected ? 'connected' : ''}`}><CircleDot /><div><strong>{connected ? 'API Connected' : 'Not connected'}</strong><span>{baseUrl || '/api/v1'}</span></div></div>
       <nav>
         <NavButton icon={<Workflow />} label="Workflows" active={tab === 'workflows'} disabled={!connected} onClick={() => switchTab('workflows')} />
         <NavButton icon={<Activity />} label="Instances" active={tab === 'instances'} disabled={!connected} onClick={() => switchTab('instances')} />
@@ -166,7 +166,7 @@ export function App() {
 }
 
 function ConnectionPanel(props: { baseUrl: string; apiKey: string; businessActor: string; busy: boolean; error: string; onBaseUrl: (v: string) => void; onApiKey: (v: string) => void; onBusinessActor: (v: string) => void; onConnect: () => void }) {
-  return <section className="connection-panel"><div className="connection-copy"><span className="eyebrow">API-FIRST VALIDATION</span><h2>외부 시스템의 시선으로<br />PXM을 호출해 보세요.</h2><p>실제 API Key의 scope, 허용 워크플로우, 그룹 경계를 사용합니다. 입력한 키는 현재 브라우저 탭의 sessionStorage에만 보관됩니다.</p><div className="capabilities"><span><Workflow /> Workflow execute</span><span><Activity /> Instance trace</span><span><FileClock /> Approval history</span></div></div><form onSubmit={(event) => { event.preventDefault(); props.onConnect(); }}><label>API Base URL<input value={props.baseUrl} onChange={(e) => props.onBaseUrl(e.target.value)} placeholder="/api" /><small>로컬 프록시는 `/api`, 원격 서버는 `https://host/api`</small></label><label>API Key<input type="password" value={props.apiKey} onChange={(e) => props.onApiKey(e.target.value)} placeholder="pxm_..." autoComplete="off" /></label><label>Business Actor JSON<textarea value={props.businessActor} onChange={(e) => props.onBusinessActor(e.target.value)} spellCheck={false} /></label>{props.error && <div className="form-error">{props.error}</div>}<button className="primary" disabled={props.busy || !props.apiKey.trim()}>{props.busy ? <RefreshCw className="spin" /> : <ArrowRight />} 연결 및 권한 확인</button></form></section>;
+  return <section className="connection-panel"><div className="connection-copy"><span className="eyebrow">API-FIRST VALIDATION</span><h2>외부 시스템의 시선으로<br />PXM을 호출해 보세요.</h2><p>실제 API Key의 scope, 허용 워크플로우, 그룹 경계를 사용합니다. 입력한 키는 현재 브라우저 탭의 sessionStorage에만 보관됩니다.</p><div className="capabilities"><span><Workflow /> Workflow execute</span><span><Activity /> Instance trace</span><span><FileClock /> Approval history</span></div></div><form onSubmit={(event) => { event.preventDefault(); props.onConnect(); }}><label>API Base URL<input value={props.baseUrl} onChange={(e) => props.onBaseUrl(e.target.value)} placeholder="/api/v1" /><small>로컬 프록시는 `/api/v1`, 원격 서버는 `https://host/api/v1`</small></label><label>API Key<input type="password" value={props.apiKey} onChange={(e) => props.onApiKey(e.target.value)} placeholder="pxm_..." autoComplete="off" /></label><label>Business Actor JSON<textarea value={props.businessActor} onChange={(e) => props.onBusinessActor(e.target.value)} spellCheck={false} /></label>{props.error && <div className="form-error">{props.error}</div>}<button className="primary" disabled={props.busy || !props.apiKey.trim()}>{props.busy ? <RefreshCw className="spin" /> : <ArrowRight />} 연결 및 권한 확인</button></form></section>;
 }
 
 function WorkflowsView({ items, busy, onRefresh, onSelect }: { items: WorkflowItem[]; busy: string; onRefresh: () => void; onSelect: (item: WorkflowItem) => void }) {

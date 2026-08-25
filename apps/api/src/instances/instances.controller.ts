@@ -1,9 +1,10 @@
-import { Body, Controller, Get, Headers, NotFoundException, Param, Post, Query, Req, Res, Sse } from '@nestjs/common';
+import { Body, Controller, Get, Headers, NotFoundException, Param, Post, Query, Req, Res, Sse, Version } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { Observable } from 'rxjs';
 import { OutboxService } from '../outbox/outbox.service';
 import { actorFromRequest, instanceAccessFromRequest } from './history-auth';
 import { InstancesService } from './instances.service';
+import { PUBLIC_API_VERSIONS } from '../public-api-version';
 
 type SseMessage = {
   id?: string;
@@ -28,16 +29,19 @@ export class InstancesController {
   }
 
   @Get('/instances')
+  @Version(PUBLIC_API_VERSIONS)
   async findAll(@Req() req: Request) {
     return this.instances.findAll(actorFromRequest(req));
   }
 
   @Get('/instances/:id')
+  @Version(PUBLIC_API_VERSIONS)
   async findOne(@Param('id') id: string, @Req() req: Request) {
     return this.instances.findOne(id, actorFromRequest(req));
   }
 
   @Get('/instances/:id/result')
+  @Version(PUBLIC_API_VERSIONS)
   async result(@Param('id') id: string, @Req() req: Request) {
     const result = await this.instances.getResult(id, actorFromRequest(req));
     if (!result) {
@@ -99,6 +103,7 @@ export class InstancesController {
   }
 
   @Get('/instances/:id/trace')
+  @Version(PUBLIC_API_VERSIONS)
   async trace(@Param('id') id: string, @Req() req: Request) {
     await this.instances.ensureReadableInstance(id, actorFromRequest(req));
     return this.outbox.fetchTrace(id, 200);
@@ -138,6 +143,7 @@ export class InstancesController {
   }
 
   @Sse('/instances/:id/stream')
+  @Version(PUBLIC_API_VERSIONS)
   async stream(
     @Param('id') instanceId: string,
     @Req() req: Request,

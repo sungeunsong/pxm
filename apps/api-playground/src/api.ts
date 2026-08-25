@@ -77,7 +77,7 @@ export class ApiError extends Error {
 }
 
 function normalizeBase(value: string) {
-  const trimmed = value.trim() || '/api';
+  const trimmed = value.trim() || '/api/v1';
   return trimmed.endsWith('/') ? trimmed.slice(0, -1) : trimmed;
 }
 
