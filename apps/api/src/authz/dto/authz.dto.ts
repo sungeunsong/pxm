@@ -131,6 +131,8 @@ export class CreateApiKeyDto {
   group_id: string;
   @IsOptional() @IsArray() @ArrayMaxSize(3) @IsIn(['workflow:read', 'workflow:execute', 'task:approve'], { each: true })
   scopes?: PxmApiKeyScope[];
+  @IsIn(['all_in_group', 'allowlist'])
+  workflow_access: 'all_in_group' | 'allowlist';
   @IsOptional() @IsArray() @ArrayMaxSize(1000) @IsString({ each: true })
   allowed_workflow_ids?: string[];
   // Exact IP and IPv4 CIDR syntax is normalized and validated by AuthzService.
@@ -152,6 +154,7 @@ export type ApiKeyResponseDto = {
   group_id: string;
   key_prefix: string;
   scopes: PxmApiKeyScope[];
+  workflow_access: 'all_in_group' | 'allowlist';
   allowed_workflow_ids: string[];
   ip_allowlist: string[];
   rate_limit_per_minute?: number | null;

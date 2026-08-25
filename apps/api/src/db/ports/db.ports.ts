@@ -616,6 +616,8 @@ export type PxmServiceAccount = {
   updated_at: string;
 };
 
+export type PxmApiKeyWorkflowAccess = 'all_in_group' | 'allowlist';
+
 export type PxmApiKey = {
   id: string;
   name: string;
@@ -625,6 +627,7 @@ export type PxmApiKey = {
   key_prefix: string;
   key_hash: string;
   scopes: PxmApiKeyScope[];
+  workflow_access: PxmApiKeyWorkflowAccess;
   allowed_workflow_ids: string[];
   ip_allowlist?: string[];
   rate_limit_per_minute?: number | null;
@@ -707,6 +710,7 @@ export type CreatePxmApiKey = {
   key_prefix: string;
   key_hash: string;
   scopes: PxmApiKeyScope[];
+  workflow_access: PxmApiKeyWorkflowAccess;
   allowed_workflow_ids: string[];
   ip_allowlist?: string[];
   rate_limit_per_minute?: number | null;

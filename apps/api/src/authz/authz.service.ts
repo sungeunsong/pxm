@@ -437,6 +437,9 @@ export class AuthzService {
     if (!['USER', 'SERVICE_ACCOUNT'].includes(dto.owner_type)) {
       throw new BadRequestException('owner_type is invalid');
     }
+    if (!['all_in_group', 'allowlist'].includes(dto.workflow_access)) {
+      throw new BadRequestException('workflow_access is required');
+    }
 
     const group = await this.getGroup(dto.group_id.trim());
     if (group.status !== 'active') {
@@ -447,11 +450,10 @@ export class AuthzService {
     await this.assertOwnerCanReceiveKey(dto.owner_type, dto.owner_id.trim(), dto.group_id.trim(), scopes);
 
     const rawKey = `${API_KEY_PREFIX}${randomBytes(32).toString('base64url')}`;
-    const allowedWorkflowIds = dto.allowed_workflow_ids === undefined
-      ? (await this.workflowRepo.listDefinitions())
-          .filter((workflow) => (workflow.group_id || workflow.metadata?.group_id) === dto.group_id.trim())
-          .map((workflow) => workflow.id)
-      : normalizeStringArray(dto.allowed_workflow_ids);
+    const allowedWorkflowIds = normalizeStringArray(dto.allowed_workflow_ids);
+    if (dto.workflow_access === 'all_in_group' && allowedWorkflowIds.length > 0) {
+      throw new BadRequestException('allowed_workflow_ids must be empty when workflow_access is all_in_group');
+    }
     for (const workflowId of allowedWorkflowIds) {
       const workflow = await this.workflowRepo.getDefinition(workflowId);
       if (!workflow || (workflow.group_id || workflow.metadata?.group_id) !== dto.group_id.trim()) {
@@ -468,6 +470,7 @@ export class AuthzService {
       key_prefix: rawKey.slice(0, API_KEY_VISIBLE_PREFIX_LENGTH),
       key_hash: hashApiKey(rawKey),
       scopes,
+      workflow_access: dto.workflow_access,
       allowed_workflow_ids: allowedWorkflowIds,
       ip_allowlist: normalizeIpAllowlist(dto.ip_allowlist),
       rate_limit_per_minute: normalizeRateLimit(dto.rate_limit_per_minute),
@@ -513,6 +516,7 @@ export class AuthzService {
       owner_id: current.owner_id,
       group_id: current.group_id,
       scopes: current.scopes,
+      workflow_access: current.workflow_access,
       allowed_workflow_ids: current.allowed_workflow_ids,
       ip_allowlist: current.ip_allowlist,
       rate_limit_per_minute: current.rate_limit_per_minute,
@@ -545,6 +549,15 @@ export class AuthzService {
     }
     await this.authzRepo.touchApiKey(key.id, new Date().toISOString());
     return key;
+  }
+
+  async resolveAllowedWorkflowIds(key: PxmApiKey): Promise<string[]> {
+    if (key.workflow_access !== 'all_in_group') {
+      return key.allowed_workflow_ids;
+    }
+    return (await this.workflowRepo.listDefinitions())
+      .filter((workflow) => (workflow.group_id || workflow.metadata?.group_id) === key.group_id)
+      .map((workflow) => workflow.id);
   }
 
   async appendApiKeyUsageLog(log: AppendPxmApiKeyUsageLog) {
@@ -649,6 +662,7 @@ function mapApiKey(key: PxmApiKey): ApiKeyResponseDto {
     group_id: key.group_id,
     key_prefix: key.key_prefix,
     scopes: key.scopes,
+    workflow_access: key.workflow_access === 'all_in_group' ? 'all_in_group' : 'allowlist',
     allowed_workflow_ids: key.allowed_workflow_ids,
     ip_allowlist: key.ip_allowlist || [],
     rate_limit_per_minute: key.rate_limit_per_minute || null,

@@ -16,6 +16,7 @@ export class ApiKeyAuthMiddleware implements NestMiddleware {
     try {
       const key = await this.authzService.authenticateApiKey(rawKey);
       await this.authzService.assertApiKeyRequestAllowed(key, req.ip || null);
+      const allowedWorkflowIds = await this.authzService.resolveAllowedWorkflowIds(key);
       const businessActor = parseBusinessActor(req);
       (req as any).workflowActor = {
         actor_type: key.owner_type === 'SERVICE_ACCOUNT' ? 'service_account' : 'user',
@@ -26,7 +27,7 @@ export class ApiKeyAuthMiddleware implements NestMiddleware {
         workspace_ids: [],
         group_ids: [key.group_id],
         owned_workflow_ids: [],
-        allowed_workflow_ids: key.allowed_workflow_ids,
+        allowed_workflow_ids: allowedWorkflowIds,
         allowed_instance_ids: [],
         business_actor: businessActor,
       };

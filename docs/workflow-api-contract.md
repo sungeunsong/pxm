@@ -399,6 +399,7 @@ API key는 둘 중 하나를 owner로 가진다.
   "owner_id": "nit-system",
   "group_id": "it",
   "scopes": ["workflow:execute", "workflow:read"],
+  "workflow_access": "allowlist",
   "allowed_workflow_ids": ["workflow-uuid"]
 }
 ```
@@ -406,8 +407,11 @@ API key는 둘 중 하나를 owner로 가진다.
 - 개인 실행 추적이 필요한 API 호출은 `USER` owner의 개인 API key를 사용한다.
 - 공용 시스템/외부 서비스가 실행하는 호출은 `SERVICE_ACCOUNT` owner의 API key를 사용한다.
 - 공용 시스템 내부에서 누가 버튼을 눌렀는지는 원칙적으로 해당 시스템의 audit 책임이다.
-- `scopes`는 행위 제한이고, `allowed_workflow_ids`는 대상 workflow 제한이다.
-- 기본 발급 화면은 owner group에서 접근 가능한 workflow 전체를 선택하되, 발급자가 일부 workflow만 남기도록 축소할 수 있어야 한다.
+- `scopes`는 행위 제한이고, `workflow_access`와 `allowed_workflow_ids`는 대상 workflow 제한이다.
+- `workflow_access: all_in_group`은 발급 이후 추가되는 같은 그룹 workflow도 동적으로 허용한다. 이때 `allowed_workflow_ids`는 비어 있어야 한다.
+- `workflow_access: allowlist`는 `allowed_workflow_ids`에 명시된 workflow만 허용하며, 빈 배열은 아무 workflow도 허용하지 않는다.
+- 기존 key처럼 `workflow_access`가 저장되지 않은 레코드는 권한 확대를 막기 위해 `allowlist`로 해석한다.
+- 발급 화면은 두 정책 중 하나를 반드시 선택하게 하며, 기본값은 `all_in_group`이다.
 - API key 만료일은 optional이다. 기본은 만료 없음이며, 만료일이 있으면 만료 임박/만료 상태를 표시하고 만료된 key는 사용할 수 없다.
 
 API key 지원 scope는 초기 버전에서 아래로 둔다.

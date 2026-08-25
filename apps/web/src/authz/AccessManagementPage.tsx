@@ -6,6 +6,7 @@ import {
   authzApi,
   type ApiKeyOwnerType,
   type ApiKeyScope,
+  type ApiKeyWorkflowAccess,
   type CreatedApiKey,
   type ExternalPrincipalMapping,
   type PxmApiKey,
@@ -365,6 +366,7 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
                     <div className="key-row-meta">
                       <span className={`status-badge ${key.status}`}>{key.status}</span>
                       <span>{key.scopes.map((scope) => scopeLabels[scope] || scope).join(', ') || '권한 없음'}</span>
+                      <span>{key.workflow_access === 'all_in_group' ? '그룹 전체 워크플로우' : `선택 워크플로우 ${key.allowed_workflow_ids.length}개`}</span>
                       <span>{key.expires_at ? `만료 ${new Date(key.expires_at).toLocaleDateString()}` : '만료 없음'}</span>
                       <Button
                         variant="ghost"
@@ -920,6 +922,7 @@ function ApiKeyForm({
     owner_id: string;
     group_id: string;
     scopes: ApiKeyScope[];
+    workflow_access: ApiKeyWorkflowAccess;
     allowed_workflow_ids: string[];
     ip_allowlist?: string[];
     rate_limit_per_minute?: number | null;
@@ -930,6 +933,7 @@ function ApiKeyForm({
   const [ownerType, setOwnerType] = useState<ApiKeyOwnerType>('SERVICE_ACCOUNT');
   const [ownerId, setOwnerId] = useState('');
   const [scopes, setScopes] = useState<ApiKeyScope[]>(['workflow:execute']);
+  const [workflowAccess, setWorkflowAccess] = useState<ApiKeyWorkflowAccess>('all_in_group');
   const [workflowIds, setWorkflowIds] = useState<string[]>([]);
   const [expiresAt, setExpiresAt] = useState('');
   const [ipAllowlist, setIpAllowlist] = useState('');
@@ -954,7 +958,8 @@ function ApiKeyForm({
         owner_id: ownerId,
         group_id: groupId,
         scopes,
-        allowed_workflow_ids: workflowIds,
+        workflow_access: workflowAccess,
+        allowed_workflow_ids: workflowAccess === 'allowlist' ? workflowIds : [],
         ip_allowlist: ipAllowlist.split(',').map((item) => item.trim()).filter(Boolean),
         rate_limit_per_minute: rateLimit ? Number(rateLimit) : null,
         expires_at: expiresAt || null,
@@ -993,9 +998,15 @@ function ApiKeyForm({
           </label>
         ))}
       </div>
+      <select value={workflowAccess} onChange={(event) => setWorkflowAccess(event.target.value as ApiKeyWorkflowAccess)}>
+        <option value="all_in_group">그룹 전체 워크플로우 (향후 추가 포함)</option>
+        <option value="allowlist">선택한 워크플로우만</option>
+      </select>
       <div className="scope-box workflow-scope-box">
         <strong>허용 워크플로우</strong>
-        {workflows.length === 0 ? (
+        {workflowAccess === 'all_in_group' ? (
+          <small>이 그룹에 나중에 추가되는 워크플로우도 자동으로 허용됩니다.</small>
+        ) : workflows.length === 0 ? (
           <small>현재 그룹에 활성 워크플로우가 없습니다.</small>
         ) : workflows.map((workflow) => (
           <label key={workflow.id}>

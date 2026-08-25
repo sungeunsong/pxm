@@ -4,6 +4,7 @@ export type PxmGroupMembership = { group_id: string; role: PxmGroupRole };
 export type PrincipalStatus = 'active' | 'disabled' | 'deleted';
 export type ApiKeyOwnerType = 'USER' | 'SERVICE_ACCOUNT';
 export type ApiKeyScope = 'workflow:read' | 'workflow:execute' | 'task:approve';
+export type ApiKeyWorkflowAccess = 'all_in_group' | 'allowlist';
 
 export type PxmGroup = {
   id: string;
@@ -44,6 +45,7 @@ export type PxmApiKey = {
   group_id: string;
   key_prefix: string;
   scopes: ApiKeyScope[];
+  workflow_access: ApiKeyWorkflowAccess;
   allowed_workflow_ids: string[];
   ip_allowlist: string[];
   rate_limit_per_minute?: number | null;
@@ -265,6 +267,7 @@ export const authzApi = {
     owner_id: string;
     group_id: string;
     scopes: ApiKeyScope[];
+    workflow_access: ApiKeyWorkflowAccess;
     allowed_workflow_ids: string[];
     ip_allowlist?: string[];
     rate_limit_per_minute?: number | null;

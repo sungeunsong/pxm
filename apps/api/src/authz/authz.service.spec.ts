@@ -318,6 +318,85 @@ describe('AuthzService external principal mappings', () => {
   });
 });
 
+describe('AuthzService API key workflow access', () => {
+  const now = '2026-01-01T00:00:00.000Z';
+
+  function apiKeyService(workflows: Array<{ id: string; group_id: string }> = []) {
+    const repo = {
+      getGroup: jest.fn().mockResolvedValue({ id: 'group-a', status: 'active' }),
+      getServiceAccount: jest.fn().mockResolvedValue({ id: 'service-1', group_id: 'group-a', status: 'active' }),
+      createApiKey: jest.fn().mockImplementation(async (key) => ({
+        ...key,
+        id: key.id || 'key-new',
+        status: 'active',
+        created_at: now,
+        updated_at: now,
+      })),
+      getApiKey: jest.fn(),
+      disableApiKey: jest.fn().mockResolvedValue(true),
+    };
+    const workflowRepo = {
+      listDefinitions: jest.fn().mockImplementation(async () => workflows),
+      getDefinition: jest.fn().mockImplementation(async (id: string) => workflows.find((item) => item.id === id) || null),
+    };
+    return { repo, workflowRepo, service: new AuthzService(repo as any, workflowRepo as any) };
+  }
+
+  it('dynamically includes workflows added after an all_in_group key was issued', async () => {
+    const workflows = [{ id: 'workflow-1', group_id: 'group-a' }];
+    const { service } = apiKeyService(workflows);
+    const key = { workflow_access: 'all_in_group', group_id: 'group-a', allowed_workflow_ids: [] } as any;
+
+    await expect(service.resolveAllowedWorkflowIds(key)).resolves.toEqual(['workflow-1']);
+    workflows.push({ id: 'workflow-2', group_id: 'group-a' });
+    workflows.push({ id: 'workflow-other-group', group_id: 'group-b' });
+    await expect(service.resolveAllowedWorkflowIds(key)).resolves.toEqual(['workflow-1', 'workflow-2']);
+  });
+
+  it('keeps an empty allowlist empty even when the group has workflows', async () => {
+    const { service, workflowRepo } = apiKeyService([{ id: 'workflow-1', group_id: 'group-a' }]);
+    const key = { workflow_access: 'allowlist', group_id: 'group-a', allowed_workflow_ids: [] } as any;
+
+    await expect(service.resolveAllowedWorkflowIds(key)).resolves.toEqual([]);
+    expect(workflowRepo.listDefinitions).not.toHaveBeenCalled();
+  });
+
+  it('stores explicit policies and rejects workflow ids for all_in_group', async () => {
+    const { service, repo } = apiKeyService([{ id: 'workflow-1', group_id: 'group-a' }]);
+    const base = {
+      name: 'Integration', owner_type: 'SERVICE_ACCOUNT' as const, owner_id: 'service-1',
+      group_id: 'group-a', scopes: ['workflow:execute'] as const,
+    };
+
+    await expect(service.createApiKey({
+      ...base, workflow_access: 'all_in_group', allowed_workflow_ids: ['workflow-1'],
+    })).rejects.toBeInstanceOf(BadRequestException);
+
+    await service.createApiKey({
+      ...base, workflow_access: 'allowlist', allowed_workflow_ids: ['workflow-1'],
+    });
+    expect(repo.createApiKey).toHaveBeenLastCalledWith(expect.objectContaining({
+      workflow_access: 'allowlist', allowed_workflow_ids: ['workflow-1'],
+    }));
+  });
+
+  it('preserves workflow access policy when rotating a key', async () => {
+    const { service, repo } = apiKeyService();
+    repo.getApiKey.mockResolvedValue({
+      id: 'key-old', name: 'Integration', owner_type: 'SERVICE_ACCOUNT', owner_id: 'service-1',
+      group_id: 'group-a', key_prefix: 'pxm_live_old', key_hash: 'hash', scopes: ['workflow:execute'],
+      workflow_access: 'all_in_group', allowed_workflow_ids: [], ip_allowlist: [], status: 'active',
+      created_at: now, updated_at: now,
+    });
+
+    await service.rotateApiKey('key-old', 'admin');
+    expect(repo.createApiKey).toHaveBeenCalledWith(expect.objectContaining({
+      workflow_access: 'all_in_group', allowed_workflow_ids: [],
+    }));
+    expect(repo.disableApiKey).toHaveBeenCalledWith('key-old', 'admin');
+  });
+});
+
 describe('AuthzService API key authentication', () => {
   const activeKey = {
     id: 'key-1',
@@ -328,6 +407,7 @@ describe('AuthzService API key authentication', () => {
     key_prefix: 'pxm_live_example',
     key_hash: 'hash',
     scopes: ['workflow:read'] as const,
+    workflow_access: 'allowlist' as const,
     allowed_workflow_ids: ['workflow-1'],
     ip_allowlist: [],
     rate_limit_per_minute: null,

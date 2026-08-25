@@ -2463,12 +2463,12 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
     const { rows } = await this.pool.query(
       `
       INSERT INTO pxm_api_keys
-        (id, name, owner_type, owner_id, group_id, key_prefix, key_hash, scopes, allowed_workflow_ids, ip_allowlist, rate_limit_per_minute, status, expires_at, created_by, created_at, updated_at)
+        (id, name, owner_type, owner_id, group_id, key_prefix, key_hash, scopes, workflow_access, allowed_workflow_ids, ip_allowlist, rate_limit_per_minute, status, expires_at, created_by, created_at, updated_at)
       VALUES
-        ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb, $11, 'active', $12, $13, NOW(), NOW())
+        ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10::jsonb, $11::jsonb, $12, 'active', $13, $14, NOW(), NOW())
       RETURNING *
       `,
-      [id, key.name.trim(), key.owner_type, key.owner_id, key.group_id, key.key_prefix, key.key_hash, JSON.stringify(key.scopes || []), JSON.stringify(key.allowed_workflow_ids || []), JSON.stringify(key.ip_allowlist || []), key.rate_limit_per_minute || null, key.expires_at || null, key.actor || null],
+      [id, key.name.trim(), key.owner_type, key.owner_id, key.group_id, key.key_prefix, key.key_hash, JSON.stringify(key.scopes || []), key.workflow_access, JSON.stringify(key.allowed_workflow_ids || []), JSON.stringify(key.ip_allowlist || []), key.rate_limit_per_minute || null, key.expires_at || null, key.actor || null],
     );
     return mapApiKeyRow(rows[0]);
   }
@@ -2672,6 +2672,7 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
         key_prefix TEXT NOT NULL,
         key_hash TEXT NOT NULL UNIQUE,
         scopes JSONB NOT NULL DEFAULT '[]'::jsonb,
+        workflow_access TEXT NOT NULL DEFAULT 'allowlist',
         allowed_workflow_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
         ip_allowlist JSONB NOT NULL DEFAULT '[]'::jsonb,
         rate_limit_per_minute INTEGER NULL,
@@ -2702,6 +2703,7 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+    await this.pool.query(`ALTER TABLE pxm_api_keys ADD COLUMN IF NOT EXISTS workflow_access TEXT NOT NULL DEFAULT 'allowlist'`);
     await this.pool.query(`ALTER TABLE pxm_api_keys ADD COLUMN IF NOT EXISTS ip_allowlist JSONB NOT NULL DEFAULT '[]'::jsonb`);
     await this.pool.query(`ALTER TABLE pxm_api_keys ADD COLUMN IF NOT EXISTS rate_limit_per_minute INTEGER NULL`);
     await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_pxm_users_group_ids ON pxm_users USING GIN (group_ids)`);
@@ -2844,6 +2846,7 @@ function mapApiKeyRow(row: any): PxmApiKey {
     key_prefix: row.key_prefix,
     key_hash: row.key_hash,
     scopes: Array.isArray(row.scopes) ? row.scopes : [],
+    workflow_access: row.workflow_access === 'all_in_group' ? 'all_in_group' : 'allowlist',
     allowed_workflow_ids: Array.isArray(row.allowed_workflow_ids) ? row.allowed_workflow_ids : [],
     ip_allowlist: Array.isArray(row.ip_allowlist) ? row.ip_allowlist : [],
     rate_limit_per_minute: Number(row.rate_limit_per_minute) > 0 ? Number(row.rate_limit_per_minute) : null,

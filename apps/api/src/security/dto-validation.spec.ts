@@ -41,9 +41,20 @@ describe('security-sensitive DTO validation', () => {
       owner_id: 'svc-1',
       group_id: 'group-1',
       scopes: ['workflow:execute'],
+      workflow_access: 'all_in_group',
       ip_allowlist: ['10.0.0.0/8'],
       rate_limit_per_minute: 60,
     }, bodyMetadata(CreateApiKeyDto))).resolves.toBeInstanceOf(CreateApiKeyDto);
+  });
+
+  it('requires an explicit API key workflow access policy', async () => {
+    await expect(pipe.transform({
+      name: 'integration',
+      owner_type: 'SERVICE_ACCOUNT',
+      owner_id: 'svc-1',
+      group_id: 'group-1',
+      scopes: ['workflow:execute'],
+    }, bodyMetadata(CreateApiKeyDto))).rejects.toMatchObject({ status: 400 });
   });
 
   it('rejects active in a credential create payload', async () => {

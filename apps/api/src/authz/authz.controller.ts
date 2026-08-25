@@ -304,7 +304,7 @@ export class AuthzController {
   async createApiKey(@Body() dto: CreateApiKeyDto, @Req() req: Request) {
     const actor = actorFromRequest(req); assertCanManageGroup(actor, dto.group_id);
     const key = await this.authzService.createApiKey({ ...dto, actor: actor.actor_id || undefined });
-    await this.audit.append({ action: 'api_key.issued', resource_type: 'api_key', resource_id: key.id, group_id: key.group_id, actor_id: actor.actor_id, details: { owner_type: key.owner_type, owner_id: key.owner_id, scopes: key.scopes, allowed_workflow_ids: key.allowed_workflow_ids, expires_at: key.expires_at } });
+    await this.audit.append({ action: 'api_key.issued', resource_type: 'api_key', resource_id: key.id, group_id: key.group_id, actor_id: actor.actor_id, details: { owner_type: key.owner_type, owner_id: key.owner_id, scopes: key.scopes, workflow_access: key.workflow_access, allowed_workflow_ids: key.allowed_workflow_ids, expires_at: key.expires_at } });
     return key;
   }
 
