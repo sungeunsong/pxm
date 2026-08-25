@@ -89,6 +89,43 @@ export class UpdateTemplateDto {
   updated_by?: string;
 }
 
+export class DeployTemplateDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  name?: string;
+  @IsOptional()
+  @IsString()
+  @MaxLength(5000)
+  description?: string;
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  group?: string;
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  group_id?: string | null;
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @IsString({ each: true })
+  tags?: string[];
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  version_note?: string;
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(5000)
+  nodes?: any[];
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10000)
+  edges?: any[];
+}
+
 export class TemplateResponseDto {
   id: string;
   name: string;

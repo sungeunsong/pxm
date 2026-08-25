@@ -103,4 +103,32 @@ describe('TemplatesController public API contract', () => {
       resource_id: 'workflow-1',
     }));
   });
+
+  it('deploys the saved workflow when the body is empty', async () => {
+    const { controller, templatesService } = buildController();
+    const admin = apiKeyActor({
+      actor_type: 'user', actor_id: 'admin-1', api_key_id: null, roles: ['admin'],
+      scopes: [], group_ids: [], allowed_workflow_ids: [],
+    });
+
+    await expect(controller.deploy('workflow-1', {}, request(admin))).resolves.toMatchObject({ success: true });
+    expect(templatesService.update).not.toHaveBeenCalled();
+  });
+
+  it('saves valid graph changes before deployment', async () => {
+    const { controller, templatesService } = buildController();
+    const admin = apiKeyActor({
+      actor_type: 'user', actor_id: 'admin-1', api_key_id: null, roles: ['admin'],
+      scopes: [], group_ids: [], allowed_workflow_ids: [],
+    });
+    const nodes = [{ id: 'start', data: { nodeType: 'start' } }];
+
+    await expect(controller.deploy('workflow-1', { nodes, edges: [] }, request(admin)))
+      .resolves.toMatchObject({ success: true });
+    expect(templatesService.update).toHaveBeenCalledWith(
+      'workflow-1',
+      expect.objectContaining({ nodes, edges: [], updated_by: 'admin-1' }),
+    );
+    expect(templatesService.publish).toHaveBeenCalledWith('workflow-1', 'admin-1');
+  });
 });

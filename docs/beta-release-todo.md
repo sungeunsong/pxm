@@ -90,7 +90,7 @@
 
 - [x] `POST /templates/:id/deploy`를 body 없이 호출해도 정상 동작하게 한다.
 - [x] 선택적 body를 받는 다른 POST 컨트롤러를 전수 검색한다.
-- [~] body 없음 테스트 완료. `{}`, 유효 body, 잘못된 body 검증은 남아 있다.
+- [x] body 없음, `{}`, 유효 body, 잘못된 body 테스트를 추가한다.
 
 완료 조건: 사용자 입력 때문에 처리되지 않은 `TypeError`와 500이 발생하지 않는다.
 

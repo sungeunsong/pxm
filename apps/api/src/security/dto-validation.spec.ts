@@ -2,6 +2,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { CreateApiKeyDto } from '../authz/dto/authz.dto';
 import { LoginDto } from '../authz/dto/session-auth.dto';
 import { CreateCredentialDto } from '../credentials/dto/credential.dto';
+import { DeployTemplateDto } from '../templates/dto/template.dto';
 import { CreateWebhookEndpointDto } from '../webhooks/dto/webhook.dto';
 
 const pipe = new ValidationPipe({
@@ -74,5 +75,28 @@ describe('security-sensitive DTO validation', () => {
       timeout_ms: 5000,
       max_attempts: 8,
     }, bodyMetadata(CreateWebhookEndpointDto))).resolves.toBeInstanceOf(CreateWebhookEndpointDto);
+  });
+
+  it('accepts an omitted or empty workflow deploy body', async () => {
+    await expect(pipe.transform(undefined, bodyMetadata(DeployTemplateDto))).resolves.toBeInstanceOf(DeployTemplateDto);
+    await expect(pipe.transform({}, bodyMetadata(DeployTemplateDto))).resolves.toBeInstanceOf(DeployTemplateDto);
+  });
+
+  it('accepts a valid workflow deploy body', async () => {
+    await expect(pipe.transform({
+      name: 'Purchase approval',
+      group_id: 'group-a',
+      tags: ['purchase'],
+      nodes: [{ id: 'start', data: { nodeType: 'start' } }],
+      edges: [],
+    }, bodyMetadata(DeployTemplateDto))).resolves.toBeInstanceOf(DeployTemplateDto);
+  });
+
+  it.each([
+    [{ nodes: { id: 'not-an-array' } }],
+    [{ tags: ['valid', 3] }],
+    [{ unknown_security_option: true }],
+  ])('rejects an invalid workflow deploy body: %p', async (body) => {
+    await expect(pipe.transform(body, bodyMetadata(DeployTemplateDto))).rejects.toMatchObject({ status: 400 });
   });
 });

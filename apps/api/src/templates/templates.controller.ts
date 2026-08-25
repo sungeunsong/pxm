@@ -1,7 +1,7 @@
 import { BadRequestException, Body, ConflictException, Controller, Delete, ForbiddenException, Get, Headers, HttpStatus, NotFoundException, Param, ParseIntPipe, Post, Put, Query, Req, Res } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { TemplatesService } from './templates.service';
-import { CreateTemplateDto, UpdateTemplateDto } from './dto/template.dto';
+import { CreateTemplateDto, DeployTemplateDto, UpdateTemplateDto } from './dto/template.dto';
 import { WorkflowInputPresetRepositoryPort, type WorkflowInputPreset, WorkflowInstanceRepositoryPort, WorkflowScheduleRepositoryPort } from '../db/ports/db.ports';
 import { InstancesService } from '../instances/instances.service';
 import { actorFromRequest, instanceAccessFromRequest } from '../instances/history-auth';
@@ -206,17 +206,7 @@ export class TemplatesController {
   @Post(':id/deploy')
   async deploy(
     @Param('id') id: string,
-    @Body()
-    body: {
-      name?: string;
-      description?: string;
-      group?: string;
-      group_id?: string | null;
-      tags?: string[];
-      version_note?: string;
-      nodes?: any[];
-      edges?: any[];
-    } | undefined,
+    @Body() body: DeployTemplateDto | undefined,
     @Req() req: Request,
   ) {
     const payload = body ?? {};
