@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, HttpException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, HttpException, HttpStatus, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { createHash, randomBytes } from 'crypto';
 import {
   AppendPxmApiKeyUsageLog,
@@ -530,18 +530,18 @@ export class AuthzService {
 
   async authenticateApiKey(rawKey: string): Promise<PxmApiKey> {
     if (!rawKey?.startsWith(API_KEY_PREFIX)) {
-      throw new BadRequestException('API key is invalid');
+      throw new UnauthorizedException('API key is invalid');
     }
     const key = await this.authzRepo.findApiKeyByHash(hashApiKey(rawKey));
     if (!key) {
-      throw new BadRequestException('API key is invalid');
+      throw new UnauthorizedException('API key is invalid');
     }
     if (effectiveApiKeyStatus(key) !== 'active') {
-      throw new BadRequestException('API key is not active');
+      throw new UnauthorizedException('API key is not active');
     }
     const group = await this.authzRepo.getGroup(key.group_id);
     if (!group || group.status !== 'active') {
-      throw new BadRequestException('API key group is not active');
+      throw new UnauthorizedException('API key group is not active');
     }
     await this.authzRepo.touchApiKey(key.id, new Date().toISOString());
     return key;

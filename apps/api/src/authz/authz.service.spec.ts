@@ -1,5 +1,5 @@
 import { AuthzService } from './authz.service';
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException, UnauthorizedException } from '@nestjs/common';
 
 describe('AuthzService group memberships', () => {
   function membershipService() {
@@ -315,5 +315,66 @@ describe('AuthzService external principal mappings', () => {
     const snapshot = formData.approval_request.approval_line.steps[0].approvers[0];
     expect(snapshot.pxm_user_id).toBe('pxm-user-1');
     expect(snapshot.principal_mapping.updated_at).toBe('2026-01-02T00:00:00.000Z');
+  });
+});
+
+describe('AuthzService API key authentication', () => {
+  const activeKey = {
+    id: 'key-1',
+    name: 'Integration key',
+    owner_type: 'SERVICE_ACCOUNT' as const,
+    owner_id: 'service-1',
+    group_id: 'group-a',
+    key_prefix: 'pxm_live_example',
+    key_hash: 'hash',
+    scopes: ['workflow:read'] as const,
+    allowed_workflow_ids: ['workflow-1'],
+    ip_allowlist: [],
+    rate_limit_per_minute: null,
+    status: 'active' as const,
+    expires_at: null,
+    created_by: 'admin',
+    disabled_at: null,
+    last_used_at: null,
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-01T00:00:00.000Z',
+  };
+
+  function authenticationService(key: Record<string, any> | null = activeKey, groupStatus = 'active') {
+    const repo = {
+      findApiKeyByHash: jest.fn().mockResolvedValue(key),
+      getGroup: jest.fn().mockResolvedValue({ id: 'group-a', status: groupStatus }),
+      touchApiKey: jest.fn().mockResolvedValue(undefined),
+    };
+    return { repo, service: new AuthzService(repo as any, {} as any) };
+  }
+
+  it('returns 401 for a malformed API key', async () => {
+    const { service } = authenticationService();
+    await expect(service.authenticateApiKey('not-a-pxm-key')).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it('returns 401 for an unknown API key', async () => {
+    const { service } = authenticationService(null);
+    await expect(service.authenticateApiKey('pxm_live_unknown')).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it.each([
+    ['disabled', { ...activeKey, status: 'disabled' }],
+    ['expired', { ...activeKey, expires_at: '2000-01-01T00:00:00.000Z' }],
+  ])('returns 401 for a %s API key', async (_label, key) => {
+    const { service } = authenticationService(key);
+    await expect(service.authenticateApiKey('pxm_live_existing')).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it('returns 401 when the API key group is inactive', async () => {
+    const { service } = authenticationService(activeKey, 'deleted');
+    await expect(service.authenticateApiKey('pxm_live_existing')).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it('authenticates an active key and records its use time', async () => {
+    const { repo, service } = authenticationService();
+    await expect(service.authenticateApiKey('pxm_live_existing')).resolves.toBe(activeKey);
+    expect(repo.touchApiKey).toHaveBeenCalledWith('key-1', expect.any(String));
   });
 });

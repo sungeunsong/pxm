@@ -216,27 +216,28 @@ export class TemplatesController {
       version_note?: string;
       nodes?: any[];
       edges?: any[];
-    },
+    } | undefined,
     @Req() req: Request,
   ) {
+    const payload = body ?? {};
     const current = await this.templatesService.findOne(id);
     if (!current) {
       throw new Error('Template not found');
     }
     const actor = actorFromRequest(req);
     assertCanManageGroup(actor, current.group_id);
-    assertCanManageGroup(actor, body.group_id !== undefined ? body.group_id : current.group_id);
-    const shouldSave = body.nodes !== undefined || body.edges !== undefined;
+    assertCanManageGroup(actor, payload.group_id !== undefined ? payload.group_id : current.group_id);
+    const shouldSave = payload.nodes !== undefined || payload.edges !== undefined;
     if (shouldSave) {
       await this.templatesService.update(id, {
-        name: body.name,
-        description: body.description,
-        group: body.group,
-        group_id: body.group_id,
-        tags: body.tags,
-        version_note: body.version_note,
-        nodes: body.nodes,
-        edges: body.edges,
+        name: payload.name,
+        description: payload.description,
+        group: payload.group,
+        group_id: payload.group_id,
+        tags: payload.tags,
+        version_note: payload.version_note,
+        nodes: payload.nodes,
+        edges: payload.edges,
         updated_by: actor.actor_id || 'system',
       });
     }
@@ -993,7 +994,13 @@ function assertCanExecuteWorkflow(actor: ReturnType<typeof actorFromRequest>, wo
     return;
   }
   if (!actor.scopes?.includes('workflow:execute')) {
-    throw new NotFoundException('Template not found');
+    throw new ForbiddenException({
+      statusCode: HttpStatus.FORBIDDEN,
+      error: 'Forbidden',
+      code: 'MISSING_SCOPE',
+      message: 'workflow:execute scope is required',
+      required_scope: 'workflow:execute',
+    });
   }
   if (!actor.allowed_workflow_ids.includes(workflowId)) {
     throw new NotFoundException('Template not found');
