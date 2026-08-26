@@ -218,6 +218,14 @@ function formatApprovalChannels(item: ApprovalItem) {
     .join(' + ');
 }
 function parseObject(value: string): Record<string, unknown> | null { try { const parsed: unknown = JSON.parse(value); return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null; } catch { return null; } }
-function apiError(cause: unknown) { if (cause instanceof ApiError) return `HTTP ${cause.status} · ${cause.message}`; return cause instanceof Error ? cause.message : String(cause); }
+function apiError(cause: unknown) {
+  if (cause instanceof ApiError) {
+    const requestId = cause.body && typeof cause.body === 'object' && 'request_id' in cause.body
+      ? String((cause.body as { request_id?: unknown }).request_id || '')
+      : '';
+    return `HTTP ${cause.status} · ${cause.message}${requestId ? ` · 요청 ID ${requestId}` : ''}`;
+  }
+  return cause instanceof Error ? cause.message : String(cause);
+}
 function defaultInput(workflow: WorkflowItem) { const fields = workflow.nodes?.find((node) => node.data?.nodeType === 'start')?.data?.formSchema?.fields || []; if (!fields.length) return '{\n  \n}'; return JSON.stringify(Object.fromEntries(fields.map((field) => [field.id, field.type === 'number' ? 0 : `${field.label || field.id} 입력`])), null, 2); }
 function curlFor(log: RequestLog) { const body = log.requestBody === undefined ? '' : ` \\\n  -H 'Content-Type: application/json' \\\n  -d '${JSON.stringify(log.requestBody)}'`; return `curl -X ${log.method} '<API_BASE>${log.path}' \\\n  -H 'Authorization: Bearer <API_KEY>'${body}`; }

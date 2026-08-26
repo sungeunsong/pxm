@@ -1,6 +1,7 @@
 import { HttpException, Injectable, NestMiddleware, UnauthorizedException } from '@nestjs/common';
 import type { NextFunction, Request, Response } from 'express';
 import { AuthzService } from './authz.service';
+import { correlationIdFromRequest } from '../observability/correlation-id.middleware';
 
 @Injectable()
 export class ApiKeyAuthMiddleware implements NestMiddleware {
@@ -59,13 +60,12 @@ function bearerToken(req: Request): string | null {
 }
 
 function requestIdFromRequest(req: Request): string | null {
-  const value = req.header('x-request-id');
-  return value?.trim() || null;
+  return correlationIdFromRequest(req);
 }
 
 function workflowIdFromRequest(req: Request): string | null {
   const path = req.originalUrl || req.url || '';
-  const match = path.match(/\/api\/templates\/([^/?]+)\/(?:start|execute|export|versions)/);
+  const match = path.match(/\/api\/(?:v1\/)?templates\/([^/?]+)\/(?:start|execute|export|versions)/);
   return match?.[1] ? decodeURIComponent(match[1]) : null;
 }
 

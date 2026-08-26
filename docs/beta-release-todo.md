@@ -122,10 +122,10 @@ allowed_workflow_ids: [...]
 
 ## API-06. 표준 오류 응답과 correlation id
 
-- [ ] 서버가 모든 요청에 correlation id를 생성하거나 유효한 `x-request-id`를 수용한다.
-- [ ] 식별자를 응답 헤더, 오류 응답, 애플리케이션 로그에 동일하게 기록한다.
-- [ ] 전역 exception filter로 공개 API 오류 형식을 통일한다.
-- [ ] 500 응답에는 내부 정보나 stack trace를 노출하지 않는다.
+- [x] 서버가 모든 요청에 correlation id를 생성하거나 유효한 `x-request-id`를 수용한다.
+- [x] 식별자를 응답 헤더, 오류 응답, 애플리케이션 로그에 동일하게 기록한다.
+- [x] 전역 exception filter로 공개 API 오류 형식을 통일한다.
+- [x] 500 응답에는 내부 정보나 stack trace를 노출하지 않는다.
 
 완료 조건: 고객이 전달한 correlation id 하나로 해당 서버 로그를 찾을 수 있다.
 

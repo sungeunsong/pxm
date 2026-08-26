@@ -19,6 +19,7 @@ import { RuntimeIntegrityModule } from './runtime-integrity/runtime-integrity.mo
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { OperationsModule } from './operations/operations.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { HttpObservabilityModule } from './observability/http-observability.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     WebhooksModule,
     OperationsModule,
     NotificationsModule,
+    HttpObservabilityModule,
   ],
   providers: [
     {
