@@ -18,8 +18,13 @@ import {
   stableStringify,
 } from '../instances/external-approval-start';
 import { PUBLIC_API_VERSIONS } from '../public-api-version';
+import { ApiBody, ApiHeader, ApiOkResponse, ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { PublicApiController, PublicApiErrors } from '../openapi/public-api.decorators';
+import { StartWorkflowDto, StartWorkflowResponseDto, WorkflowDto } from '../openapi/public-api.dto';
 
 @Controller('templates')
+@ApiTags('Workflows')
+@PublicApiController()
 export class TemplatesController {
   constructor(
     private readonly templatesService: TemplatesService,
@@ -52,6 +57,10 @@ export class TemplatesController {
 
   @Get()
   @Version(PUBLIC_API_VERSIONS)
+  @ApiOperation({ summary: '실행 가능한 워크플로우 목록 조회' })
+  @ApiQuery({ name: 'activeOnly', required: false, schema: { type: 'boolean', default: true } })
+  @ApiOkResponse({ type: WorkflowDto, isArray: true })
+  @PublicApiErrors()
   async findAll(@Query('activeOnly') activeOnly: string | undefined, @Req() req: Request) {
     const active = activeOnly !== 'false';
     const actor = actorFromRequest(req);
@@ -172,6 +181,10 @@ export class TemplatesController {
 
   @Get(':id')
   @Version(PUBLIC_API_VERSIONS)
+  @ApiOperation({ summary: '워크플로우 상세 조회' })
+  @ApiParam({ name: 'id', description: '워크플로우 ID' })
+  @ApiOkResponse({ type: WorkflowDto })
+  @PublicApiErrors()
   async findOne(@Param('id') id: string, @Req() req: Request) {
     return this.assertReadableTemplate(id, req);
   }
@@ -503,6 +516,13 @@ export class TemplatesController {
 
   @Post(':id/execute')
   @Version(PUBLIC_API_VERSIONS)
+  @ApiOperation({ summary: '워크플로우 실행', description: 'API Key 요청은 배포된 버전만 실행합니다.' })
+  @ApiParam({ name: 'id', description: '워크플로우 ID' })
+  @ApiHeader({ name: 'Idempotency-Key', required: false, description: '1~200자의 중복 실행 방지 키' })
+  @ApiBody({ type: StartWorkflowDto, required: false })
+  @ApiOkResponse({ type: StartWorkflowResponseDto, description: '동기 실행이 제한 시간 안에 완료됨' })
+  @ApiResponse({ status: 202, type: StartWorkflowResponseDto, description: '비동기 실행이 접수됨' })
+  @PublicApiErrors()
   async execute(@Param('id') id: string, @Body() body?: StartWorkflowRequest, @Headers('idempotency-key') idempotencyKey?: string, @Req() req?: Request, @Res({ passthrough: true }) res?: Response) {
     const actor = actorFromRequest(req);
     const allowDraft = !actor.api_key_id && actor.actor_type === 'user';
@@ -511,6 +531,13 @@ export class TemplatesController {
 
   @Post(':id/start')
   @Version(PUBLIC_API_VERSIONS)
+  @ApiOperation({ summary: '워크플로우 실행 (호환 별칭)' })
+  @ApiParam({ name: 'id', description: '워크플로우 ID' })
+  @ApiHeader({ name: 'Idempotency-Key', required: false })
+  @ApiBody({ type: StartWorkflowDto, required: false })
+  @ApiOkResponse({ type: StartWorkflowResponseDto })
+  @ApiResponse({ status: 202, type: StartWorkflowResponseDto })
+  @PublicApiErrors()
   async start(@Param('id') id: string, @Body() body?: StartWorkflowRequest, @Headers('idempotency-key') idempotencyKey?: string, @Req() req?: Request, @Res({ passthrough: true }) res?: Response) {
     return this.startWorkflow(id, body, idempotencyKey, req, res, false);
   }

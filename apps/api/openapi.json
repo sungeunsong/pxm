@@ -1,0 +1,1981 @@
+{
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/templates": {
+      "get": {
+        "operationId": "Templates_findAll",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "description": "호출자가 지정하는 요청 추적 ID. 생략하면 서버가 생성합니다.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "client-request-42"
+            }
+          },
+          {
+            "name": "activeOnly",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": true
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WorkflowDto"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key가 없거나 유효하지 않음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "필요한 scope가 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "리소스가 없거나 접근 범위 밖임",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "내부 정보가 제거된 서버 오류",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api-key": []
+          }
+        ],
+        "summary": "실행 가능한 워크플로우 목록 조회",
+        "tags": [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/templates/{id}": {
+      "get": {
+        "operationId": "Templates_findOne",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "description": "호출자가 지정하는 요청 추적 ID. 생략하면 서버가 생성합니다.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "client-request-42"
+            }
+          },
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "description": "워크플로우 ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key가 없거나 유효하지 않음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "필요한 scope가 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "리소스가 없거나 접근 범위 밖임",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "내부 정보가 제거된 서버 오류",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api-key": []
+          }
+        ],
+        "summary": "워크플로우 상세 조회",
+        "tags": [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/templates/{id}/execute": {
+      "post": {
+        "description": "API Key 요청은 배포된 버전만 실행합니다.",
+        "operationId": "Templates_execute",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "description": "호출자가 지정하는 요청 추적 ID. 생략하면 서버가 생성합니다.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "client-request-42"
+            }
+          },
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "description": "워크플로우 ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "required": true,
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1~200자의 중복 실행 방지 키",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartWorkflowDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "동기 실행이 제한 시간 안에 완료됨",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartWorkflowResponseDto"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "비동기 실행이 접수됨",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartWorkflowResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key가 없거나 유효하지 않음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "필요한 scope가 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "리소스가 없거나 접근 범위 밖임",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "내부 정보가 제거된 서버 오류",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api-key": []
+          }
+        ],
+        "summary": "워크플로우 실행",
+        "tags": [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/templates/{id}/start": {
+      "post": {
+        "operationId": "Templates_start",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "description": "호출자가 지정하는 요청 추적 ID. 생략하면 서버가 생성합니다.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "client-request-42"
+            }
+          },
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "description": "워크플로우 ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "required": true,
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartWorkflowDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartWorkflowResponseDto"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartWorkflowResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key가 없거나 유효하지 않음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "필요한 scope가 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "리소스가 없거나 접근 범위 밖임",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "내부 정보가 제거된 서버 오류",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api-key": []
+          }
+        ],
+        "summary": "워크플로우 실행 (호환 별칭)",
+        "tags": [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/instances": {
+      "get": {
+        "operationId": "Instances_findAll",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "description": "호출자가 지정하는 요청 추적 ID. 생략하면 서버가 생성합니다.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "client-request-42"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/InstanceDto"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key가 없거나 유효하지 않음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "필요한 scope가 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "리소스가 없거나 접근 범위 밖임",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "내부 정보가 제거된 서버 오류",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api-key": []
+          }
+        ],
+        "summary": "접근 가능한 실행 목록 조회",
+        "tags": [
+          "Instances"
+        ]
+      }
+    },
+    "/api/v1/instances/{id}": {
+      "get": {
+        "operationId": "Instances_findOne",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "description": "호출자가 지정하는 요청 추적 ID. 생략하면 서버가 생성합니다.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "client-request-42"
+            }
+          },
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "description": "인스턴스 ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key가 없거나 유효하지 않음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "필요한 scope가 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "리소스가 없거나 접근 범위 밖임",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "내부 정보가 제거된 서버 오류",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api-key": []
+          }
+        ],
+        "summary": "실행 상태 조회",
+        "tags": [
+          "Instances"
+        ]
+      }
+    },
+    "/api/v1/instances/{id}/result": {
+      "get": {
+        "operationId": "Instances_result",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "description": "호출자가 지정하는 요청 추적 ID. 생략하면 서버가 생성합니다.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "client-request-42"
+            }
+          },
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "description": "인스턴스 ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceResultDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key가 없거나 유효하지 않음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "필요한 scope가 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "리소스가 없거나 접근 범위 밖임",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "내부 정보가 제거된 서버 오류",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api-key": []
+          }
+        ],
+        "summary": "실행 결과 조회",
+        "tags": [
+          "Instances"
+        ]
+      }
+    },
+    "/api/v1/instances/{id}/trace": {
+      "get": {
+        "operationId": "Instances_trace",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "description": "호출자가 지정하는 요청 추적 ID. 생략하면 서버가 생성합니다.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "client-request-42"
+            }
+          },
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "description": "인스턴스 ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TraceEventDto"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key가 없거나 유효하지 않음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "필요한 scope가 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "리소스가 없거나 접근 범위 밖임",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "내부 정보가 제거된 서버 오류",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api-key": []
+          }
+        ],
+        "summary": "실행 Trace 조회",
+        "tags": [
+          "Instances"
+        ]
+      }
+    },
+    "/api/v1/instances/{id}/stream": {
+      "get": {
+        "operationId": "Instances_stream",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "description": "호출자가 지정하는 요청 추적 ID. 생략하면 서버가 생성합니다.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "client-request-42"
+            }
+          },
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "description": "인스턴스 ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Server-Sent Events stream",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key가 없거나 유효하지 않음",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "필요한 scope가 없음",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "리소스가 없거나 접근 범위 밖임",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "내부 정보가 제거된 서버 오류",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api-key": []
+          }
+        ],
+        "summary": "실행 이벤트 스트림 구독",
+        "tags": [
+          "Instances"
+        ]
+      }
+    },
+    "/api/v1/tasks": {
+      "get": {
+        "operationId": "Tasks_getTasks",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "description": "호출자가 지정하는 요청 추적 ID. 생략하면 서버가 생성합니다.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "client-request-42"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ApprovalTaskDto"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key가 없거나 유효하지 않음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "필요한 scope가 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "리소스가 없거나 접근 범위 밖임",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "내부 정보가 제거된 서버 오류",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api-key": []
+          }
+        ],
+        "summary": "내 결재 대기 목록 조회",
+        "tags": [
+          "Approvals"
+        ]
+      }
+    },
+    "/api/v1/tasks/history": {
+      "get": {
+        "operationId": "Tasks_history",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "description": "호출자가 지정하는 요청 추적 ID. 생략하면 서버가 생성합니다.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "client-request-42"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "example": 50,
+              "type": "number"
+            }
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {}
+          },
+          {
+            "name": "to",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "name": "approver_channel",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "enum": [
+                "pxm_user",
+                "external_email"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "assignee",
+            "required": false,
+            "in": "query",
+            "schema": {}
+          },
+          {
+            "name": "instance_id",
+            "required": false,
+            "in": "query",
+            "schema": {}
+          },
+          {
+            "name": "workflow_id",
+            "required": false,
+            "in": "query",
+            "schema": {}
+          },
+          {
+            "name": "status",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "example": "OPEN,APPROVED,REJECTED"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalTaskPageDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key가 없거나 유효하지 않음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "필요한 scope가 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "리소스가 없거나 접근 범위 밖임",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "내부 정보가 제거된 서버 오류",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api-key": []
+          }
+        ],
+        "summary": "결재 이력 조회",
+        "tags": [
+          "Approvals"
+        ]
+      }
+    },
+    "/api/v1/tasks/{id}": {
+      "get": {
+        "operationId": "Tasks_historyItem",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "description": "호출자가 지정하는 요청 추적 ID. 생략하면 서버가 생성합니다.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "client-request-42"
+            }
+          },
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "description": "결재 Task ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalTaskDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key가 없거나 유효하지 않음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "필요한 scope가 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "리소스가 없거나 접근 범위 밖임",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "내부 정보가 제거된 서버 오류",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api-key": []
+          }
+        ],
+        "summary": "결재 상세 조회",
+        "tags": [
+          "Approvals"
+        ]
+      }
+    },
+    "/api/v1/tasks/{id}/complete": {
+      "post": {
+        "operationId": "Tasks_completeTask",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "description": "호출자가 지정하는 요청 추적 ID. 생략하면 서버가 생성합니다.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "client-request-42"
+            }
+          },
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "description": "결재 Task ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "중복 처리 방지 키",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteApprovalDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalTaskDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key가 없거나 유효하지 않음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "필요한 scope가 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "리소스가 없거나 접근 범위 밖임",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "내부 정보가 제거된 서버 오류",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api-key": []
+          }
+        ],
+        "summary": "결재 승인 또는 반려",
+        "tags": [
+          "Approvals"
+        ]
+      }
+    },
+    "/api/v1/instances/{instanceId}/tasks": {
+      "get": {
+        "operationId": "InstanceTasks_history",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "description": "호출자가 지정하는 요청 추적 ID. 생략하면 서버가 생성합니다.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "client-request-42"
+            }
+          },
+          {
+            "name": "instanceId",
+            "required": true,
+            "in": "path",
+            "description": "인스턴스 ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "example": 50,
+              "type": "number"
+            }
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {}
+          },
+          {
+            "name": "status",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "example": "OPEN,APPROVED,REJECTED"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalTaskPageDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key가 없거나 유효하지 않음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "필요한 scope가 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "리소스가 없거나 접근 범위 밖임",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "내부 정보가 제거된 서버 오류",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api-key": []
+          }
+        ],
+        "summary": "인스턴스의 결재 이력 조회",
+        "tags": [
+          "Approvals"
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "PXM Public API",
+    "description": "워크플로우 실행, 인스턴스 조회, 결재 처리를 위한 PXM 공개 API입니다.",
+    "version": "1.0.0-beta",
+    "contact": {}
+  },
+  "tags": [],
+  "servers": [],
+  "components": {
+    "securitySchemes": {
+      "api-key": {
+        "scheme": "bearer",
+        "bearerFormat": "PXM API Key",
+        "type": "http",
+        "description": "Authorization: Bearer pxm_live_..."
+      }
+    },
+    "schemas": {
+      "PublicApiErrorDto": {
+        "type": "object",
+        "properties": {
+          "statusCode": {
+            "type": "number",
+            "example": 403
+          },
+          "error": {
+            "type": "string",
+            "example": "Forbidden"
+          },
+          "code": {
+            "type": "string",
+            "example": "MISSING_SCOPE"
+          },
+          "message": {
+            "type": "string",
+            "example": "workflow:execute scope is required"
+          },
+          "details": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "required_scope": {
+            "type": "string",
+            "example": "workflow:execute"
+          },
+          "request_id": {
+            "type": "string",
+            "example": "client-request-42"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "path": {
+            "type": "string",
+            "example": "/api/v1/templates/workflow-1/start"
+          }
+        },
+        "required": [
+          "statusCode",
+          "error",
+          "code",
+          "message",
+          "request_id",
+          "timestamp",
+          "path"
+        ]
+      },
+      "WorkflowDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "group": {
+            "type": "string"
+          },
+          "group_id": {
+            "type": "object",
+            "nullable": true
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "version": {
+            "type": "number"
+          },
+          "lifecycle_status": {
+            "type": "string",
+            "enum": [
+              "DRAFT",
+              "PUBLISHED",
+              "DISABLED"
+            ]
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "edges": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "tags",
+          "version",
+          "lifecycle_status",
+          "nodes",
+          "edges"
+        ]
+      },
+      "StartWorkflowDto": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "async",
+              "sync"
+            ],
+            "default": "async"
+          },
+          "sync_timeout_ms": {
+            "type": "number",
+            "minimum": 100,
+            "maximum": 30000
+          },
+          "input": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "formData": {
+            "type": "object",
+            "additionalProperties": true,
+            "example": {
+              "requestTitle": "구매 승인",
+              "amount": 125000
+            }
+          },
+          "preset": {
+            "type": "string"
+          },
+          "preset_id": {
+            "type": "string"
+          },
+          "preset_alias": {
+            "type": "string"
+          }
+        }
+      },
+      "StartWorkflowResponseDto": {
+        "type": "object",
+        "properties": {
+          "instance_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "template_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "template_name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "example": "CREATED"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "async",
+              "sync"
+            ]
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "result_url": {
+            "type": "string",
+            "example": "/api/v1/instances/instance-id/result"
+          },
+          "trace_url": {
+            "type": "string",
+            "example": "/api/v1/instances/instance-id/trace"
+          },
+          "stream_url": {
+            "type": "string",
+            "example": "/api/v1/instances/instance-id/stream"
+          }
+        },
+        "required": [
+          "instance_id",
+          "template_id",
+          "template_name",
+          "status",
+          "mode",
+          "idempotent_replay",
+          "result_url",
+          "trace_url",
+          "stream_url"
+        ]
+      },
+      "InstanceDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "process_definition_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "state": {
+            "type": "string",
+            "example": "RUNNING"
+          },
+          "context": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "state"
+        ]
+      },
+      "InstanceResultDto": {
+        "type": "object",
+        "properties": {
+          "instance_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "example": "COMPLETED"
+          },
+          "result": {
+            "type": "object",
+            "nullable": true,
+            "additionalProperties": true
+          },
+          "result_path": {
+            "type": "object",
+            "nullable": true
+          },
+          "completed_at": {
+            "type": "object",
+            "nullable": true,
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "object",
+            "nullable": true,
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "instance_id",
+          "status"
+        ]
+      },
+      "TraceEventDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "node_label": {
+            "type": "string"
+          },
+          "payload": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "ApprovalTaskDto": {
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "type": "string"
+          },
+          "instance_id": {
+            "type": "string"
+          },
+          "workflow_id": {
+            "type": "object",
+            "nullable": true
+          },
+          "workflow_name": {
+            "type": "object",
+            "nullable": true
+          },
+          "node_label": {
+            "type": "object",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "example": "OPEN"
+          },
+          "assignee": {
+            "type": "string"
+          },
+          "approver_channel": {
+            "type": "string",
+            "example": "pxm_user"
+          },
+          "approval_channels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "action": {
+            "type": "object",
+            "nullable": true
+          },
+          "comment": {
+            "type": "object",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completed_at": {
+            "type": "object",
+            "nullable": true,
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "task_id",
+          "instance_id",
+          "status",
+          "assignee",
+          "approver_channel"
+        ]
+      },
+      "ApprovalTaskPageDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApprovalTaskDto"
+            }
+          },
+          "next_cursor": {
+            "type": "object",
+            "nullable": true
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "CompleteApprovalDto": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "approve",
+              "reject"
+            ]
+          },
+          "comment": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "result": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "WorkflowResultWebhookSourceDto": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "example": "acrapoint"
+          },
+          "request_id": {
+            "type": "string",
+            "example": "ACRA-2026-0042"
+          },
+          "revision": {
+            "type": "number",
+            "example": 1
+          }
+        },
+        "required": [
+          "provider",
+          "request_id",
+          "revision"
+        ]
+      },
+      "WorkflowResultWebhookDataDto": {
+        "type": "object",
+        "properties": {
+          "instance_id": {
+            "type": "string"
+          },
+          "approval_request_id": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "APPROVED",
+              "REJECTED",
+              "CANCELED"
+            ]
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "approved",
+              "rejected",
+              "canceled"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/WorkflowResultWebhookSourceDto"
+          }
+        },
+        "required": [
+          "instance_id",
+          "approval_request_id",
+          "task_id",
+          "status",
+          "outcome",
+          "source"
+        ]
+      },
+      "WorkflowResultWebhookDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "mongodb:66a123..."
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "APPROVAL_REQUEST_APPROVED",
+              "APPROVAL_REQUEST_REJECTED",
+              "APPROVAL_REQUEST_CANCELED"
+            ]
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "data": {
+            "$ref": "#/components/schemas/WorkflowResultWebhookDataDto"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "occurred_at",
+          "data"
+        ]
+      }
+    }
+  },
+  "webhooks": {
+    "workflowResult": {
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "PXM이 외부 시스템으로 전송하는 최종 결재 결과",
+        "description": "서명 입력은 `${X-PXM-Timestamp}.${raw_request_body}`이며 HMAC-SHA256으로 검증합니다. 동일 Idempotency-Key는 중복 처리하지 않습니다.\n\n```js\nconst expected = 'v1=' + createHmac('sha256', secret)\n  .update(`${timestamp}.${rawBody}`)\n  .digest('hex');\nconst valid = timingSafeEqual(Buffer.from(signature), Buffer.from(expected));\n```",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-PXM-Event-Id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-PXM-Timestamp",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "1785373200"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-PXM-Signature",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "v1=<hex hmac sha256>"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowResultWebhookDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "처리 성공"
+          },
+          "409": {
+            "description": "이미 처리한 이벤트"
+          }
+        }
+      }
+    }
+  }
+}

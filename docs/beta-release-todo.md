@@ -191,12 +191,12 @@ allowed_workflow_ids: [...]
 
 ## DX-01. 공개 API OpenAPI 문서
 
-- [ ] 워크플로우 조회·실행 스키마를 작성한다.
-- [ ] 인스턴스 상태·trace 스키마를 작성한다.
-- [ ] 결재 조회·처리 스키마를 작성한다.
-- [ ] 결과 Webhook 스키마와 서명 검증 예제를 작성한다.
-- [ ] 인증, Idempotency-Key, 오류 응답 예제를 포함한다.
-- [ ] `/api/docs`와 빌드 산출물 `openapi.json`을 제공한다.
+- [x] 워크플로우 조회·실행 스키마를 작성한다.
+- [x] 인스턴스 상태·trace 스키마를 작성한다.
+- [x] 결재 조회·처리 스키마를 작성한다.
+- [x] 결과 Webhook 스키마와 서명 검증 예제를 작성한다.
+- [x] 인증, Idempotency-Key, 오류 응답 예제를 포함한다.
+- [x] `/api/docs`와 빌드 산출물 `openapi.json`을 제공한다.
 
 완료 조건: 공개 spec으로 생성한 클라이언트가 대표 API 시나리오를 수행한다.
 
@@ -211,10 +211,10 @@ allowed_workflow_ids: [...]
 
 ## DX-03. api-playground 정리
 
-- [ ] `/api/v1` 계약을 사용한다.
-- [ ] 요청·응답·cURL에서 API Key 원문을 마스킹한다.
-- [ ] 오류 코드, correlation id와 해결 힌트를 표시한다.
-- [ ] 공개 API 범위 밖의 관리 기능은 넣지 않는다.
+- [x] `/api/v1` 계약을 사용한다.
+- [x] 요청·응답·cURL에서 API Key 원문을 마스킹한다.
+- [x] 오류 코드, correlation id와 해결 힌트를 표시한다.
+- [x] 공개 API 범위 밖의 관리 기능은 넣지 않는다.
 
 ## DX-04. 알려진 제한 공개
 

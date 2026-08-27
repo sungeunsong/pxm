@@ -8,6 +8,7 @@ import { AppModule } from './app.module';
 import { corsOptions, trustProxySetting } from './security/http-security';
 import { validateProductionConfig } from './security/production-config';
 import { enablePublicApiVersioning } from './public-api-version';
+import { setupPublicApiDocs } from './openapi/public-openapi';
 
 async function bootstrap() {
   validateProductionConfig();
@@ -16,6 +17,7 @@ async function bootstrap() {
   // Global prefix 설정 (/api/...)
   app.setGlobalPrefix('api');
   enablePublicApiVersioning(app);
+  setupPublicApiDocs(app);
 
   const trustProxy = trustProxySetting();
   if (trustProxy !== false) app.set('trust proxy', trustProxy);

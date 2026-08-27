@@ -5,6 +5,9 @@ import { OutboxService } from '../outbox/outbox.service';
 import { actorFromRequest, instanceAccessFromRequest } from './history-auth';
 import { InstancesService } from './instances.service';
 import { PUBLIC_API_VERSIONS } from '../public-api-version';
+import { ApiOkResponse, ApiOperation, ApiParam, ApiProduces, ApiTags } from '@nestjs/swagger';
+import { PublicApiController, PublicApiErrors } from '../openapi/public-api.decorators';
+import { InstanceDto, InstanceResultDto, TraceEventDto } from '../openapi/public-api.dto';
 
 type SseMessage = {
   id?: string;
@@ -13,6 +16,8 @@ type SseMessage = {
 };
 
 @Controller()
+@ApiTags('Instances')
+@PublicApiController()
 export class InstancesController {
   constructor(
     private readonly outbox: OutboxService,
@@ -30,18 +35,29 @@ export class InstancesController {
 
   @Get('/instances')
   @Version(PUBLIC_API_VERSIONS)
+  @ApiOperation({ summary: '접근 가능한 실행 목록 조회' })
+  @ApiOkResponse({ type: InstanceDto, isArray: true })
+  @PublicApiErrors()
   async findAll(@Req() req: Request) {
     return this.instances.findAll(actorFromRequest(req));
   }
 
   @Get('/instances/:id')
   @Version(PUBLIC_API_VERSIONS)
+  @ApiOperation({ summary: '실행 상태 조회' })
+  @ApiParam({ name: 'id', description: '인스턴스 ID' })
+  @ApiOkResponse({ type: InstanceDto })
+  @PublicApiErrors()
   async findOne(@Param('id') id: string, @Req() req: Request) {
     return this.instances.findOne(id, actorFromRequest(req));
   }
 
   @Get('/instances/:id/result')
   @Version(PUBLIC_API_VERSIONS)
+  @ApiOperation({ summary: '실행 결과 조회' })
+  @ApiParam({ name: 'id', description: '인스턴스 ID' })
+  @ApiOkResponse({ type: InstanceResultDto })
+  @PublicApiErrors()
   async result(@Param('id') id: string, @Req() req: Request) {
     const result = await this.instances.getResult(id, actorFromRequest(req));
     if (!result) {
@@ -104,6 +120,10 @@ export class InstancesController {
 
   @Get('/instances/:id/trace')
   @Version(PUBLIC_API_VERSIONS)
+  @ApiOperation({ summary: '실행 Trace 조회' })
+  @ApiParam({ name: 'id', description: '인스턴스 ID' })
+  @ApiOkResponse({ type: TraceEventDto, isArray: true })
+  @PublicApiErrors()
   async trace(@Param('id') id: string, @Req() req: Request) {
     await this.instances.ensureReadableInstance(id, actorFromRequest(req));
     return this.outbox.fetchTrace(id, 200);
@@ -144,6 +164,11 @@ export class InstancesController {
 
   @Sse('/instances/:id/stream')
   @Version(PUBLIC_API_VERSIONS)
+  @ApiOperation({ summary: '실행 이벤트 스트림 구독' })
+  @ApiParam({ name: 'id', description: '인스턴스 ID' })
+  @ApiProduces('text/event-stream')
+  @ApiOkResponse({ description: 'Server-Sent Events stream', schema: { type: 'string' } })
+  @PublicApiErrors()
   async stream(
     @Param('id') instanceId: string,
     @Req() req: Request,

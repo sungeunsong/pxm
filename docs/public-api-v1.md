@@ -2,6 +2,12 @@
 
 외부 소비자는 `/api/v1`만 사용한다. 베타 마이그레이션 동안 동일 기능의 기존 `/api` 경로도 유지하지만, 내부 관리 API는 버전 경로로 노출하지 않는다.
 
+- Swagger UI: `/api/docs`
+- OpenAPI 3.1 JSON: `/api/docs/openapi.json`
+- 빌드 산출물: `apps/api/openapi.json`
+
+API 코드와 DTO가 문서의 원본이다. 서버를 다시 실행하면 Swagger UI가 갱신되고, `pnpm --filter api build`는 DB 연결 없이 `openapi.json`을 다시 생성한다. API 테스트는 저장된 산출물이 코드와 달라지면 실패한다.
+
 ## 공개 엔드포인트
 
 ### 워크플로우

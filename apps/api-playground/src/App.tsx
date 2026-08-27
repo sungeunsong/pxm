@@ -220,12 +220,22 @@ function formatApprovalChannels(item: ApprovalItem) {
 function parseObject(value: string): Record<string, unknown> | null { try { const parsed: unknown = JSON.parse(value); return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null; } catch { return null; } }
 function apiError(cause: unknown) {
   if (cause instanceof ApiError) {
-    const requestId = cause.body && typeof cause.body === 'object' && 'request_id' in cause.body
-      ? String((cause.body as { request_id?: unknown }).request_id || '')
-      : '';
-    return `HTTP ${cause.status} · ${cause.message}${requestId ? ` · 요청 ID ${requestId}` : ''}`;
+    const body = cause.body && typeof cause.body === 'object'
+      ? cause.body as { request_id?: unknown; code?: unknown }
+      : {};
+    const requestId = String(body.request_id || '');
+    const code = String(body.code || '');
+    const hint = errorHint(code, cause.status);
+    return `HTTP ${cause.status}${code ? ` · ${code}` : ''} · ${cause.message}${requestId ? ` · 요청 ID ${requestId}` : ''}${hint ? ` · ${hint}` : ''}`;
   }
   return cause instanceof Error ? cause.message : String(cause);
+}
+function errorHint(code: string, status: number) {
+  if (code === 'MISSING_SCOPE') return 'API Key의 scope를 확인하세요.';
+  if (status === 401) return 'API Key가 유효한지 확인하세요.';
+  if (status === 404) return '워크플로우 허용 범위와 리소스 ID를 확인하세요.';
+  if (status >= 500) return '요청 ID와 함께 관리자에게 문의하세요.';
+  return '';
 }
 function defaultInput(workflow: WorkflowItem) { const fields = workflow.nodes?.find((node) => node.data?.nodeType === 'start')?.data?.formSchema?.fields || []; if (!fields.length) return '{\n  \n}'; return JSON.stringify(Object.fromEntries(fields.map((field) => [field.id, field.type === 'number' ? 0 : `${field.label || field.id} 입력`])), null, 2); }
 function curlFor(log: RequestLog) { const body = log.requestBody === undefined ? '' : ` \\\n  -H 'Content-Type: application/json' \\\n  -d '${JSON.stringify(log.requestBody)}'`; return `curl -X ${log.method} '<API_BASE>${log.path}' \\\n  -H 'Authorization: Bearer <API_KEY>'${body}`; }
