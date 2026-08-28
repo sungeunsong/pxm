@@ -74,6 +74,12 @@ export class TraceEventDto {
   @ApiPropertyOptional({ format: 'date-time' }) created_at?: string;
 }
 
+export class ApprovalHoldDto {
+  @ApiProperty() actor_id!: string;
+  @ApiPropertyOptional({ nullable: true }) comment?: string | null;
+  @ApiProperty({ format: 'date-time' }) held_at!: string;
+}
+
 export class ApprovalTaskDto {
   @ApiProperty() task_id!: string;
   @ApiProperty() instance_id!: string;
@@ -86,6 +92,7 @@ export class ApprovalTaskDto {
   @ApiPropertyOptional({ type: [String] }) approval_channels?: string[];
   @ApiPropertyOptional({ nullable: true }) action?: string | null;
   @ApiPropertyOptional({ nullable: true }) comment?: string | null;
+  @ApiPropertyOptional({ nullable: true, type: ApprovalHoldDto }) hold?: ApprovalHoldDto | null;
   @ApiPropertyOptional({ format: 'date-time' }) created_at?: string;
   @ApiPropertyOptional({ nullable: true, format: 'date-time' }) completed_at?: string | null;
 }

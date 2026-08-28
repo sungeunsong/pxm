@@ -94,6 +94,50 @@ test.describe.serial('PXM 동적 결재 베타 회귀', () => {
     await closeContexts(tracker.context, a.context, b.context, c.context);
   });
 
+  test('신청자는 내 요청에서 보류와 다단계 승인 결과를 실제 데이터로 확인한다', async ({ browser }) => {
+    const title = uniqueTitle('신청자 진행 현황');
+    const execution = await startApproval(approverC, title, [
+      step(1, '실무 검토', 'ALL', [pxmApprover('a')]),
+      step(2, '최종 승인', 'ALL', [pxmApprover('b')]),
+    ], { requester: fixture.users.c.name });
+
+    const requester = await loginPage(
+      browser,
+      fixture.users.c.id,
+      userPassword,
+      'my-requests',
+    );
+    const requestRow = requester.page.locator(
+      `[data-testid="my-request-row"][data-instance-id="${execution.instance_id}"]`,
+    );
+    await expect(requestRow).toContainText(title, { timeout: 30_000 });
+    await requestRow.click();
+    await expect(requester.page.getByRole('heading', { name: title })).toBeVisible();
+    await expect(requester.page.getByText('1단계 결재 진행 중')).toBeVisible();
+
+    const approver = await loginPage(browser, fixture.users.a.id, userPassword);
+    await openAndAssertApprovalDetails(approver.page, title, ['실무 검토', '최종 승인'], '1 / 2단계');
+    await approver.page.locator('[data-testid="decision-hold"]').click();
+    await approver.page.locator('.form-textarea-comment').fill('예산 자료를 추가로 확인합니다.');
+    await approver.page.getByRole('button', { name: '보류 적용하기' }).click();
+
+    await expect(requester.page.locator('[data-testid="request-approval-history"]')).toContainText('보류', { timeout: 30_000 });
+    await expect(requester.page.locator('[data-testid="request-approval-history"]')).toContainText('예산 자료를 추가로 확인합니다.');
+    expect(await resumeJobCount(db, execution.instance_id)).toBe(0);
+
+    await approveInBrowser(approver.page, title, '실무 검토 승인');
+    await waitForOpenTasks(approverB, execution.instance_id);
+    await expect(requester.page.getByText('2단계 결재 진행 중')).toBeVisible({ timeout: 30_000 });
+
+    const finalApprover = await loginPage(browser, fixture.users.b.id, userPassword);
+    await approveInBrowser(finalApprover.page, title, '최종 승인 완료');
+    await waitForInstance(admin, execution.instance_id, (instance) => instance.state === 'COMPLETED');
+    await expect(requester.page.getByText('모든 결재가 완료되었습니다')).toBeVisible({ timeout: 30_000 });
+    await expect(requester.page.locator('[data-testid="request-approval-history"]')).toContainText('최종 승인 완료');
+
+    await closeContexts(requester.context, approver.context, finalApprover.context);
+  });
+
   test('ALL은 전원 승인까지 기다리고 ANY는 첫 승인 뒤 나머지를 취소한다', async () => {
     const title = uniqueTitle('ALL ANY 집계');
     const execution = await startApproval(admin, title, [

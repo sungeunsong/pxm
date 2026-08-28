@@ -13,3 +13,10 @@ export class CompleteTaskDto {
   @IsObject()
   result?: Record<string, any>;
 }
+
+export class HoldTaskDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  comment?: string;
+}

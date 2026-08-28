@@ -1191,6 +1191,22 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
     return rows[0] || null;
   }
 
+  async holdTask(
+    taskId: string,
+    hold: { actor_id: string; comment: string | null; held_at: string },
+  ): Promise<any | null> {
+    await this.ensureTaskRuntimeColumns();
+    const { rows } = await this.pool.query(
+      `UPDATE v2_tasks
+       SET payload = jsonb_set(COALESCE(payload, '{}'::jsonb), '{hold}', $1::jsonb, true),
+           updated_at = NOW()
+       WHERE id = $2::uuid AND status = 'OPEN'
+       RETURNING payload->'hold' AS hold`,
+      [JSON.stringify(hold), taskId],
+    );
+    return rows[0]?.hold || null;
+  }
+
   async listTaskHistory(query: WorkflowTaskHistoryQuery): Promise<WorkflowTaskHistoryPage> {
     await this.ensureTaskRuntimeColumns();
     const params: unknown[] = [];
@@ -3109,6 +3125,7 @@ function mapTaskHistoryPostgres(task: any): WorkflowTaskHistoryItem {
     created_at: new Date(task.created_at).toISOString(),
     updated_at: new Date(task.updated_at || task.created_at).toISOString(),
     completed_at: completion?.completed_at ? new Date(completion.completed_at).toISOString() : null,
+    hold: task.payload?.hold || null,
   };
 }
 

@@ -12,7 +12,7 @@ import {
   WorkflowTaskRepositoryPort,
 } from '../db/ports/db.ports';
 import { ManagementAuditService } from '../audit/management-audit.service';
-import { CompleteTaskDto } from './dto/task.dto';
+import { CompleteTaskDto, HoldTaskDto } from './dto/task.dto';
 import { TaskHistoryQueryDto } from './dto/task-history.dto';
 import {
   assertCanManageGroup,
@@ -77,6 +77,11 @@ export class TasksService {
       // Admin may use every supported filter.
     } else if (managerGroupIds(actor).length) {
       Object.assign(query, { group_ids: managerGroupIds(actor) });
+    } else if (
+      instanceId &&
+      (await this.isRequesterOwnedInstance(instanceId, actor))
+    ) {
+      // The requester can follow the complete approval line for their own request.
     } else {
       if (dto.assignee && dto.assignee !== actor.actor_id) {
         throw new ForbiddenException(
@@ -178,6 +183,55 @@ export class TasksService {
     };
   }
 
+  async holdTask(
+    id: string,
+    dto: HoldTaskDto,
+    actor: WorkflowHistoryActor,
+  ) {
+    this.assertAuthenticatedActor(actor);
+    this.assertApiKeyApprovalScope(actor);
+    const task = await this.tasks.getTask(id);
+    if (!task) throw new NotFoundException('Task not found');
+    const instance = await this.instances.getInstance(task.instance_id);
+    if (!instance) throw new NotFoundException('Task instance not found');
+    if (!this.canAccessTask(actor, task, instance)) {
+      throw new ForbiddenException('Task hold is not allowed for this actor');
+    }
+    if (task.status !== 'OPEN') {
+      throw new ConflictException('Only open tasks can be put on hold');
+    }
+
+    const hold = await this.tasks.holdTask(id, {
+      actor_id: actor.actor_id!,
+      comment: dto.comment?.trim() || null,
+      held_at: new Date().toISOString(),
+    });
+    if (!hold) throw new ConflictException('Task is no longer open');
+
+    await this.audit.append({
+      action: 'task.held',
+      resource_type: 'task',
+      resource_id: id,
+      group_id:
+        instance.group_id ||
+        instance.context?.runtime?.access?.group_id ||
+        null,
+      actor_id: actor.actor_id,
+      api_key_id: actor.api_key_id || null,
+      details: {
+        instance_id: task.instance_id,
+        comment: dto.comment?.trim() || null,
+      },
+    });
+    return {
+      success: true,
+      task_id: id,
+      instance_id: task.instance_id,
+      status: 'OPEN',
+      hold,
+    };
+  }
+
   async retryExternalApproval(id: string, actor: WorkflowHistoryActor) {
     this.assertHistoryAuthenticated(actor);
     if (actor.api_key_id)
@@ -261,6 +315,20 @@ export class TasksService {
     if (item.group_id && managerGroupIds(actor).includes(item.group_id))
       return true;
     return item.assignee === actor.actor_id;
+  }
+
+  private async isRequesterOwnedInstance(
+    instanceId: string,
+    actor: WorkflowHistoryActor,
+  ): Promise<boolean> {
+    if (!actor.actor_id || actor.api_key_id) return false;
+    const instance = await this.instances.getInstance(instanceId);
+    if (!instance) throw new NotFoundException('Instance not found');
+    const access =
+      instance.context?.runtime?.access ||
+      instance.ctx?.runtime?.access ||
+      {};
+    return (instance.requester_id || access.requester_id || null) === actor.actor_id;
   }
 
   private assertAuthenticatedActor(actor: WorkflowHistoryActor) {

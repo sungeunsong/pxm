@@ -18,7 +18,6 @@ import { templatesApi } from '../api/templates';
 import type { WorkflowTemplate } from '../api/templates';
 import { authzApi, type PxmGroup } from '../api/authz';
 import type { SessionUser } from '../api/session';
-import { approvalSampleUiEnabled } from '../config/features';
 import { pluginsApi } from '../api/plugins';
 import type { PluginManifest, PluginTestResponse } from '../api/plugins';
 import { PluginIcon } from './plugin-icons';
@@ -913,7 +912,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
             {currentTemplateId && <Button variant="ghost" icon={<Braces />} onClick={() => { window.location.hash = `#/presets?workflow=${encodeURIComponent(currentTemplateId)}`; }}>
               실행 프리셋
             </Button>}
-            {approvalSampleUiEnabled && <Button variant="ghost" icon={<Inbox />} onClick={() => onSwitchToInbox?.()}>
+            {onSwitchToInbox && <Button variant="ghost" icon={<Inbox />} onClick={() => onSwitchToInbox()}>
               내 결재함
             </Button>}
           </>

@@ -1466,6 +1466,18 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
     };
   }
 
+  async holdTask(
+    taskId: string,
+    hold: { actor_id: string; comment: string | null; held_at: string },
+  ): Promise<any | null> {
+    const task = await this.db.collection<any>('v2_tasks').findOneAndUpdate(
+      { _id: taskId, status: 'OPEN' },
+      { $set: { 'payload.hold': hold, updated_at: hold.held_at } },
+      { returnDocument: 'after' },
+    );
+    return task?.payload?.hold || null;
+  }
+
   async listTaskHistory(query: WorkflowTaskHistoryQuery): Promise<WorkflowTaskHistoryPage> {
     const taskMatch: Record<string, any> = {};
     if (query.statuses?.length) taskMatch.status = { $in: query.statuses };
@@ -3304,6 +3316,7 @@ function mapTaskHistoryMongo(task: any): WorkflowTaskHistoryItem {
     created_at: String(task.created_at),
     updated_at: String(task.updated_at || task.created_at),
     completed_at: completion?.completed_at ? String(completion.completed_at) : null,
+    hold: task.payload?.hold || null,
   };
 }
 

@@ -51,6 +51,11 @@ interface Task {
     }>;
   } | null;
   comment?: string | null;
+  hold?: {
+    actor_id: string;
+    comment: string | null;
+    held_at: string;
+  } | null;
   completed_at?: string | null;
   created_at: string;
 }
@@ -234,18 +239,23 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
     if (!confirm(`선택한 문서를 [${displayActionText}] 처리하시겠습니까?\n의견: ${comment}`)) return;
 
     try {
-      const res = await fetch(`/api/tasks/${selectedTask.id}/complete`, {
+      const endpoint = decision === 'hold'
+        ? `/api/tasks/${selectedTask.id}/hold`
+        : `/api/tasks/${selectedTask.id}/complete`;
+      const res = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `inbox:${selectedTask.id}:${action}` },
-        body: JSON.stringify({ action, comment }),
+        headers: decision === 'hold'
+          ? { 'Content-Type': 'application/json' }
+          : { 'Content-Type': 'application/json', 'Idempotency-Key': `inbox:${selectedTask.id}:${action}` },
+        body: JSON.stringify(decision === 'hold' ? { comment } : { action, comment }),
       });
 
       if (!res.ok) throw new Error('Failed to complete task');
 
       alert(`성공적으로 [${displayActionText}] 처리되었습니다.`);
+      await fetchTasks();
       setSelectedTask(null);
       setScreen('list');
-      fetchTasks();
     } catch (error) {
       console.error('Failed to process task:', error);
       alert('처리 중 오류가 발생했습니다.');
@@ -339,7 +349,7 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
                 <td>
                   <span className={`status-badge-outline ${task.status.toLowerCase()}`}>
                     {task.status === 'OPEN'
-                      ? '승인 대기'
+                      ? task.payload?.hold ? '보류' : '승인 대기'
                       : task.status === 'APPROVED'
                         ? '승인 완료'
                         : task.status === 'REJECTED'
@@ -399,7 +409,7 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
             <p>{selectedTask.instance_id}</p>
           </div>
           <span className={`status-badge-full ${selectedTask.status === 'OPEN' ? 'orange' : ''}`}>
-            {selectedTask.status}
+            {selectedTask.status === 'OPEN' && selectedTask.payload?.hold ? '보류' : selectedTask.status}
           </span>
         </div>
 
@@ -559,6 +569,7 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
                   <span>반려</span>
                 </button>
                 <button
+                  data-testid="decision-hold"
                   className={`decision-btn btn-hold ${decision === 'hold' ? 'selected' : ''}`}
                   onClick={() => {
                     setDecision('hold');
@@ -649,18 +660,18 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
               {(instanceHistory.length ? instanceHistory : [selectedTask]).map((history) => (
                 <div className="v-log-item blue" key={history.id}>
                   <div className="v-log-time">
-                    {formatDateTime(history.completed_at || history.created_at)}
+                    {formatDateTime(history.completed_at || history.hold?.held_at || history.created_at)}
                   </div>
                   <div className="v-log-content">
                     <div className="v-log-header">
                       <span className="v-log-actor">{history.assignee || getRequester(selectedTask)}</span>
                       <span className="v-log-badge blue">
                         {history.step_order ? `${history.step_order}단계 · ` : ''}
-                        {history.status}
+                        {history.status === 'OPEN' && (history.hold || history.payload?.hold) ? '보류' : history.status}
                       </span>
                     </div>
                     <p className="v-log-comment">
-                      {history.comment ||
+                      {history.comment || history.hold?.comment || history.payload?.hold?.comment ||
                         (history.status === 'OPEN'
                           ? `${history.node_id} 노드에서 승인을 기다리고 있습니다.`
                           : `${history.node_id} 노드에서 ${history.status} 처리되었습니다.`)}

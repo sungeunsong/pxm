@@ -6,6 +6,7 @@ describe('TasksService', () => {
   const taskRepo = {
     listTasks: jest.fn(),
     getTask: jest.fn(),
+    holdTask: jest.fn(),
     completeTask: jest.fn(),
     listTaskHistory: jest.fn(),
     getTaskHistoryItem: jest.fn(),
@@ -257,6 +258,69 @@ describe('TasksService', () => {
       }),
     );
     expect(result).toEqual({ items: expect.any(Array), next_cursor: null });
+  });
+
+  it('lets a requester read the complete approval line for their own instance', async () => {
+    instanceRepo.getInstance.mockResolvedValue({
+      requester_id: 'alice',
+      definition_id: 'workflow-1',
+      group_id: 'group-1',
+    });
+    taskRepo.listTaskHistory.mockResolvedValue({
+      items: [{ task_id: 'task-bob', assignee: 'bob', created_at: '2026-07-21T00:00:00.000Z' }],
+      has_more: false,
+    });
+
+    await service.listHistory(
+      { limit: 100 },
+      actor({ actor_id: 'alice' }),
+      'instance-1',
+    );
+
+    expect(taskRepo.listTaskHistory).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instance_id: 'instance-1',
+        assignee: undefined,
+      }),
+    );
+  });
+
+  it('keeps a held task open and records the hold without completing it', async () => {
+    taskRepo.getTask.mockResolvedValue({
+      id: 'task-1',
+      instance_id: 'instance-1',
+      assignee: 'alice',
+      status: 'OPEN',
+      payload: { approval_channels: ['pxm_user'] },
+    });
+    instanceRepo.getInstance.mockResolvedValue({
+      definition_id: 'workflow-1',
+      group_id: 'group-1',
+    });
+    taskRepo.holdTask.mockResolvedValue({
+      actor_id: 'alice',
+      comment: '추가 확인 필요',
+      held_at: '2026-08-28T00:00:00.000Z',
+    });
+
+    const result = await service.holdTask(
+      'task-1',
+      { comment: '추가 확인 필요' },
+      actor({ actor_id: 'alice', group_ids: ['group-1'] }),
+    );
+
+    expect(taskRepo.holdTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        actor_id: 'alice',
+        comment: '추가 확인 필요',
+      }),
+    );
+    expect(taskRepo.completeTask).not.toHaveBeenCalled();
+    expect(result).toEqual(expect.objectContaining({ status: 'OPEN' }));
+    expect(audit.append).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'task.held' }),
+    );
   });
 
   it('scopes API key history by group and allowed workflows', async () => {

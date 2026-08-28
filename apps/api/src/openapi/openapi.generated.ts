@@ -428,6 +428,12 @@ export interface components {
             /** Format: date-time */
             created_at?: string;
         };
+        ApprovalHoldDto: {
+            actor_id: string;
+            comment?: Record<string, never> | null;
+            /** Format: date-time */
+            held_at: string;
+        };
         ApprovalTaskDto: {
             task_id: string;
             instance_id: string;
@@ -442,6 +448,7 @@ export interface components {
             approval_channels?: string[];
             action?: Record<string, never> | null;
             comment?: Record<string, never> | null;
+            hold?: components["schemas"]["ApprovalHoldDto"] | null;
             /** Format: date-time */
             created_at?: string;
             /** Format: date-time */

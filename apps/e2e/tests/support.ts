@@ -142,7 +142,7 @@ export async function startApproval(
   admin: ApiSession,
   title: string,
   steps: any[],
-  options: { requestId?: string; revision?: number; summary?: string } = {},
+  options: { requestId?: string; revision?: number; summary?: string; requester?: string } = {},
 ) {
   const requestId = options.requestId || `E2E-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   return admin.post<any>(`/templates/${fixture.workflowId}/start`, approvalPayload(
@@ -155,7 +155,7 @@ export async function startApproval(
 export function approvalPayload(
   title: string,
   steps: any[],
-  options: { requestId: string; revision?: number; summary?: string },
+  options: { requestId: string; revision?: number; summary?: string; requester?: string },
 ) {
   return {
     formData: {
@@ -166,7 +166,7 @@ export function approvalPayload(
         content: {
           title,
           summary: options.summary || `${title} 자동 회귀 검증`,
-          requester: fixture.users.admin.name,
+          requester: options.requester || fixture.users.admin.name,
           source_url: 'https://example.test/e2e',
         },
         approval_line: { steps },

@@ -11,7 +11,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { actorFromRequest } from '../instances/history-auth';
-import { CompleteTaskDto } from './dto/task.dto';
+import { CompleteTaskDto, HoldTaskDto } from './dto/task.dto';
 import { TasksService } from './tasks.service';
 import { TaskHistoryQueryDto } from './dto/task-history.dto';
 import { PUBLIC_API_VERSIONS } from '../public-api-version';
@@ -84,6 +84,15 @@ export class TasksController {
       actorFromRequest(req),
       idempotencyKey,
     );
+  }
+
+  @Post(':id/hold')
+  async holdTask(
+    @Param('id') id: string,
+    @Body() body: HoldTaskDto,
+    @Req() req: Request,
+  ) {
+    return this.tasks.holdTask(id, body, actorFromRequest(req));
   }
 
   @Post(':id/external-approval/retry')

@@ -1713,6 +1713,26 @@
           "id"
         ]
       },
+      "ApprovalHoldDto": {
+        "type": "object",
+        "properties": {
+          "actor_id": {
+            "type": "string"
+          },
+          "comment": {
+            "type": "object",
+            "nullable": true
+          },
+          "held_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "actor_id",
+          "held_at"
+        ]
+      },
       "ApprovalTaskDto": {
         "type": "object",
         "properties": {
@@ -1758,6 +1778,15 @@
           "comment": {
             "type": "object",
             "nullable": true
+          },
+          "hold": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ApprovalHoldDto"
+              }
+            ]
           },
           "created_at": {
             "type": "string",

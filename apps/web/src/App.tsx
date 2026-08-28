@@ -21,10 +21,12 @@ import {
   Send,
   Activity,
   MailCheck,
+  ClipboardCheck,
 } from 'lucide-react';
 import { DashboardPage } from './dashboard/DashboardPage';
 import { FlowDesigner } from './flow-designer/FlowDesigner';
 import { RequestPortal } from './request-portal/RequestPortal';
+import { MyRequestsPage } from './my-requests/MyRequestsPage';
 import { InstanceTracker } from './instance-tracker/InstanceTracker';
 import { InboxPage } from './inbox/InboxPage';
 import { CredentialsPage } from './credentials/CredentialsPage';
@@ -40,7 +42,6 @@ import { ExecutionPresetsPage } from './input-presets/ExecutionPresetsPage';
 import { SecurityPolicyPage } from './security/SecurityPolicyPage';
 import { sessionApi, type SessionUser } from './api/session';
 import { AUTH_REQUIRED_EVENT } from './api/fetch-security';
-import { approvalSampleUiEnabled } from './config/features';
 import { RuntimeIntegrityPage } from './runtime-integrity/RuntimeIntegrityPage';
 import { WebhookManagementPage } from './webhooks/WebhookManagementPage';
 import { OperationsPage } from './operations/OperationsPage';
@@ -51,6 +52,7 @@ type ActiveTab =
   | 'dashboard'
   | 'designer'
   | 'request'
+  | 'myRequests'
   | 'presets'
   | 'tracker'
   | 'inbox'
@@ -71,6 +73,7 @@ const ROUTE_TO_TAB: Record<string, ActiveTab> = {
   dashboard: 'dashboard',
   designer: 'designer',
   request: 'request',
+  'my-requests': 'myRequests',
   presets: 'presets',
   tracker: 'tracker',
   inbox: 'inbox',
@@ -90,6 +93,7 @@ const TAB_TO_ROUTE: Record<ActiveTab, string> = {
   dashboard: 'dashboard',
   designer: 'designer',
   request: 'request',
+  myRequests: 'my-requests',
   presets: 'presets',
   tracker: 'tracker',
   inbox: 'inbox',
@@ -108,8 +112,7 @@ const TAB_TO_ROUTE: Record<ActiveTab, string> = {
 const readTabFromHash = (): ActiveTab | null => {
   if (typeof window === 'undefined') return null;
   const route = window.location.hash.replace(/^#\/?/, '').split('?')[0];
-  const tab = ROUTE_TO_TAB[route] || null;
-  return tab === 'inbox' && !approvalSampleUiEnabled ? null : tab;
+  return ROUTE_TO_TAB[route] || null;
 };
 
 const readInitialTab = (): ActiveTab => {
@@ -121,8 +124,14 @@ const readInitialTab = (): ActiveTab => {
 };
 
 function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessionExpired }: { user: SessionUser; onUserChange: (user: SessionUser) => void; onLogout: () => void; onSessionRevoked: () => void; onSessionExpired: () => void }) {
-  const [activeTab, setActiveTabState] = useState<ActiveTab>(readInitialTab);
+  const [activeTab, setActiveTabState] = useState<ActiveTab>(() => {
+    const initialTab = readInitialTab();
+    return user.role === 'user' && !['request', 'myRequests', 'inbox'].includes(initialTab)
+      ? 'request'
+      : initialTab;
+  });
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
+  const [selectedRequestInstanceId, setSelectedRequestInstanceId] = useState<string | null>(null);
   const [accountOpen, setAccountOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('pxm.sidebar.collapsed') === 'true');
 
@@ -132,21 +141,9 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
   });
 
   const setActiveTab = (tab: ActiveTab) => {
-    const nextTab = tab === 'inbox' && !approvalSampleUiEnabled ? 'request' : tab;
-    setActiveTabState(nextTab);
-    window.history.pushState(null, '', `#/${TAB_TO_ROUTE[nextTab]}`);
+    setActiveTabState(tab);
+    window.history.pushState(null, '', `#/${TAB_TO_ROUTE[tab]}`);
   };
-
-  useEffect(() => {
-    const userTabs: ActiveTab[] = approvalSampleUiEnabled
-      ? ['request', 'tracker', 'inbox']
-      : ['request', 'tracker'];
-    if (user.role === 'user' && !userTabs.includes(activeTab)) {
-      setActiveTab('request');
-    } else if (!approvalSampleUiEnabled && activeTab === 'inbox') {
-      setActiveTab(user.role === 'user' ? 'request' : 'dashboard');
-    }
-  }, [activeTab, user.role]);
 
   useEffect(() => {
     if (!window.location.hash) {
@@ -171,6 +168,11 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
   const handleSelectInstanceForTracking = (instanceId: string) => {
     setSelectedInstanceId(instanceId);
     setActiveTab('designer'); // Flow Designer로 탭 스위칭
+  };
+
+  const handleRequestStarted = (instanceId: string) => {
+    setSelectedRequestInstanceId(instanceId);
+    setActiveTab('myRequests');
   };
 
   return (
@@ -227,12 +229,21 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
           </button>}
 
           <button
-            title="워크플로우 관리"
+            title={user.role === 'user' ? '요청하기' : '워크플로우 관리'}
             className={`sidebar-menu-item ${activeTab === 'request' ? 'active' : ''}`}
             onClick={() => setActiveTab('request')}
           >
             <Rocket size={16} />
-            <span>워크플로우 관리</span>
+            <span>{user.role === 'user' ? '요청하기' : '워크플로우 관리'}</span>
+          </button>
+
+          <button
+            title="내 요청"
+            className={`sidebar-menu-item ${activeTab === 'myRequests' ? 'active' : ''}`}
+            onClick={() => setActiveTab('myRequests')}
+          >
+            <ClipboardCheck size={16} />
+            <span>내 요청</span>
           </button>
 
           {user.role !== 'user' && <button
@@ -244,23 +255,23 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
             <span>API 실행 프리셋</span>
           </button>}
 
-          <button
+          {user.role !== 'user' && <button
             title="실행 모니터링"
             className={`sidebar-menu-item ${activeTab === 'tracker' ? 'active' : ''}`}
             onClick={() => setActiveTab('tracker')}
           >
             <Search size={16} />
             <span>실행 모니터링</span>
-          </button>
+          </button>}
 
-          {approvalSampleUiEnabled && <button
-            title="승인자 / 결재자"
+          <button
+            title="내 결재함"
             className={`sidebar-menu-item ${activeTab === 'inbox' ? 'active' : ''}`}
             onClick={() => setActiveTab('inbox')}
           >
             <Inbox size={16} />
-            <span>승인자 / 결재자</span>
-          </button>}
+            <span>내 결재함</span>
+          </button>
           
           {user.role !== 'user' && <div className="sidebar-separator">설정 및 감사</div>}
           
@@ -364,7 +375,8 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
             <h1 className="header-title">
               {activeTab === 'dashboard' && "종합 상황실 / 대시보드"}
               {activeTab === 'designer' && "Flow Designer"}
-              {activeTab === 'request' && "워크플로우 관리"}
+              {activeTab === 'request' && (user.role === 'user' ? "요청하기" : "워크플로우 관리")}
+              {activeTab === 'myRequests' && "내 요청"}
               {activeTab === 'presets' && "API 실행 프리셋"}
               {activeTab === 'tracker' && "운영자 / 모니터링 담당 상세 화면 구성"}
               {activeTab === 'inbox' && "내 결재함"}
@@ -382,7 +394,8 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
             <p className="header-subtitle">
               {activeTab === 'dashboard' && "전체 워크플로우 실시간 상태 모니터링 및 주요 KPI 요약"}
               {activeTab === 'designer' && "프로세스 템플릿 설계, 배포, 관리 및 노드 속성 설정"}
-              {activeTab === 'request' && "배포된 워크플로우를 조회하고 트리거 상태와 수동 실행을 관리합니다"}
+              {activeTab === 'request' && (user.role === 'user' ? "사용할 워크플로우를 선택하고 요청을 시작합니다" : "배포된 워크플로우를 조회하고 트리거 상태와 수동 실행을 관리합니다")}
+              {activeTab === 'myRequests' && "내가 시작한 요청의 현재 결재 단계와 처리 결과를 확인합니다"}
               {activeTab === 'presets' && "워크플로우별 Start 입력값과 API 호출 alias를 한곳에서 관리합니다"}
               {activeTab === 'tracker' && "실행 모니터링, 실패 대응, 재시도/운영 조치 및 로그 분석"}
               {activeTab === 'inbox' && "승인 대기 Task 확인 및 처리"}
@@ -482,13 +495,17 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
             <div style={{ height: '100%' }}>
               <FlowDesigner 
                 currentUser={user}
-                onSwitchToInbox={approvalSampleUiEnabled ? () => setActiveTab('inbox') : undefined}
+                onSwitchToInbox={() => setActiveTab('inbox')}
                 initialMonitorInstanceId={selectedInstanceId || undefined}
               />
             </div>
           )}
 
-          {activeTab === 'request' && <RequestPortal currentUser={user} />}
+          {activeTab === 'request' && <RequestPortal currentUser={user} onRequestStarted={handleRequestStarted} />}
+
+          {activeTab === 'myRequests' && (
+            <MyRequestsPage currentUser={user} initialInstanceId={selectedRequestInstanceId} />
+          )}
 
           {activeTab === 'presets' && <ExecutionPresetsPage currentUser={user} />}
 
@@ -496,7 +513,7 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
             <InstanceTracker onSelectInstance={handleSelectInstanceForTracking} />
           )}
 
-          {approvalSampleUiEnabled && activeTab === 'inbox' && (
+          {activeTab === 'inbox' && (
             <InboxPage onSwitchToDesigner={() => setActiveTab('designer')} />
           )}
 

@@ -187,6 +187,10 @@ export abstract class WorkflowTaskRepositoryPort {
   abstract createTask(id: string, instanceId: string, nodeId: string, assignee: string, status: string, payload: any): Promise<void>;
   abstract listTasks(assignee: string): Promise<any[]>;
   abstract getTask(id: string): Promise<any>;
+  abstract holdTask(
+    taskId: string,
+    hold: { actor_id: string; comment: string | null; held_at: string },
+  ): Promise<any | null>;
   abstract completeTask(command: CompleteWorkflowTaskCommand): Promise<CompleteWorkflowTaskResult>;
   abstract claimExternalApprovalTasks(owner: string, now: Date, claimUntil: Date, limit: number): Promise<ExternalApprovalClaim[]>;
   abstract setExternalApprovalDeliveryToken(taskId: string, owner: string, input: ExternalApprovalDeliveryToken): Promise<boolean>;
@@ -280,6 +284,11 @@ export type WorkflowTaskHistoryItem = {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+  hold: {
+    actor_id: string;
+    comment: string | null;
+    held_at: string;
+  } | null;
 };
 
 export type WorkflowTaskHistoryPage = {

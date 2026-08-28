@@ -66,7 +66,11 @@ type ScheduleStatus = {
   }>;
 };
 
-export const RequestPortal: React.FC<{ currentUser: SessionUser }> = ({ currentUser }) => {
+export const RequestPortal: React.FC<{
+  currentUser: SessionUser;
+  onRequestStarted?: (instanceId: string) => void;
+}> = ({ currentUser, onRequestStarted }) => {
+  const isRequester = currentUser.role === 'user';
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState('');
@@ -232,6 +236,7 @@ export const RequestPortal: React.FC<{ currentUser: SessionUser }> = ({ currentU
       if (!res.ok) throw new Error('Execution failed');
       const data = await res.json();
       setSuccessInstanceId(data.instance_id);
+      onRequestStarted?.(data.instance_id);
     } catch (error) {
       console.error('Failed to launch workflow:', error);
       alert('워크플로우 실행에 실패했습니다.');
@@ -350,9 +355,11 @@ export const RequestPortal: React.FC<{ currentUser: SessionUser }> = ({ currentU
         <div>
           <div className="workflow-admin-title">
             <Workflow size={20} />
-            <h2>워크플로우 관리</h2>
+            <h2>{isRequester ? '요청하기' : '워크플로우 관리'}</h2>
           </div>
-          <p>배포된 워크플로우를 한눈에 보고, 트리거 상태와 구성을 확인하며 필요 시 수동 실행합니다.</p>
+          <p>{isRequester
+            ? '필요한 요청을 선택하고 내용을 입력해 제출하세요.'
+            : '배포된 워크플로우를 한눈에 보고, 트리거 상태와 구성을 확인하며 필요 시 수동 실행합니다.'}</p>
         </div>
         <button className="workflow-refresh-button" onClick={fetchTemplates} disabled={loading}>
           <RefreshCw size={15} />
@@ -360,12 +367,12 @@ export const RequestPortal: React.FC<{ currentUser: SessionUser }> = ({ currentU
         </button>
       </div>
 
-      <div className="workflow-metrics">
+      {!isRequester && <div className="workflow-metrics">
         <MetricCard icon={<FileText size={18} />} label="전체 템플릿" value={metrics.total} />
         <MetricCard icon={<CalendarClock size={18} />} label="스케줄 타입" value={metrics.schedule} />
         <MetricCard icon={<Activity size={18} />} label="DB Watch 타입" value={metrics.dbWatch} />
         <MetricCard icon={<CheckCircle2 size={18} />} label="승인 포함" value={metrics.approval} />
-      </div>
+      </div>}
 
       <div className="workflow-admin-layout">
         <section className="workflow-list-panel">
@@ -378,7 +385,7 @@ export const RequestPortal: React.FC<{ currentUser: SessionUser }> = ({ currentU
                 placeholder="워크플로우명, 그룹, 태그 검색"
               />
             </div>
-            <div className="workflow-filter-tabs">
+            {!isRequester && <div className="workflow-filter-tabs">
               {[
                 ['all', '전체'],
                 ['manual', 'Manual/API'],
@@ -394,7 +401,7 @@ export const RequestPortal: React.FC<{ currentUser: SessionUser }> = ({ currentU
                   {label}
                 </button>
               ))}
-            </div>
+            </div>}
             <select className="workflow-group-filter" value={groupFilter} onChange={(event) => setGroupFilter(event.target.value)} aria-label="관리 그룹 필터">
               <option value="all">모든 관리 그룹</option>
               {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
@@ -407,8 +414,8 @@ export const RequestPortal: React.FC<{ currentUser: SessionUser }> = ({ currentU
               <thead>
                 <tr>
                   <th>워크플로우</th>
-                  <th>트리거</th>
-                  <th>구성</th>
+                  {!isRequester && <th>트리거</th>}
+                  {!isRequester && <th>구성</th>}
                   <th>관리 그룹</th>
                   <th>태그</th>
                   <th>업데이트</th>
@@ -418,11 +425,11 @@ export const RequestPortal: React.FC<{ currentUser: SessionUser }> = ({ currentU
               <tbody>
                 {loading && filteredTemplates.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="workflow-empty">템플릿 목록을 불러오는 중입니다.</td>
+                    <td colSpan={isRequester ? 5 : 7} className="workflow-empty">템플릿 목록을 불러오는 중입니다.</td>
                   </tr>
                 ) : filteredTemplates.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="workflow-empty">조건에 맞는 워크플로우가 없습니다.</td>
+                    <td colSpan={isRequester ? 5 : 7} className="workflow-empty">조건에 맞는 워크플로우가 없습니다.</td>
                   </tr>
                 ) : (
                   filteredTemplates.map((template) => {
@@ -439,15 +446,15 @@ export const RequestPortal: React.FC<{ currentUser: SessionUser }> = ({ currentU
                             <span>{template.description}</span>
                           </div>
                         </td>
-                        <td>
+                        {!isRequester && <td>
                           <TriggerBadge summary={summary} />
-                        </td>
-                        <td>
+                        </td>}
+                        {!isRequester && <td>
                           <div className="workflow-structure">
                             <span>{summary.nodeCount} nodes</span>
                             <span>{summary.edgeCount} edges</span>
                           </div>
-                        </td>
+                        </td>}
                         <td>
                           <span className={`workflow-group-badge${template.group_id ? '' : ' legacy'}`}>{template.group || '미지정'}</span>
                         </td>
@@ -478,22 +485,26 @@ export const RequestPortal: React.FC<{ currentUser: SessionUser }> = ({ currentU
             <>
               <div className="detail-header">
                 <div>
-                  <span className="detail-kicker">Workflow Detail</span>
+                  <span className="detail-kicker">{isRequester ? '요청 상세' : 'Workflow Detail'}</span>
                   <h3>{selectedTemplate.name}</h3>
                 </div>
-                <TriggerBadge summary={selectedSummary} />
+                {!isRequester && <TriggerBadge summary={selectedSummary} />}
               </div>
 
-              <div className="detail-grid">
-                <DetailItem label="Template ID" value={selectedTemplate.id} mono />
-                <DetailItem label="Version" value={`v${selectedTemplate.version || 1}`} />
-                <DetailItem label="Nodes" value={String(selectedSummary.nodeCount)} />
-                <DetailItem label="Edges" value={String(selectedSummary.edgeCount)} />
-                <DetailItem label="Approval Nodes" value={String(selectedSummary.approvalNodes)} />
-                <DetailItem label="Service Nodes" value={String(selectedSummary.serviceNodes)} />
-              </div>
+              {isRequester ? (
+                <p className="form-info-text">{selectedTemplate.description || '요청 내용을 입력해 신청할 수 있습니다.'}</p>
+              ) : (
+                <div className="detail-grid">
+                  <DetailItem label="Template ID" value={selectedTemplate.id} mono />
+                  <DetailItem label="Version" value={`v${selectedTemplate.version || 1}`} />
+                  <DetailItem label="Nodes" value={String(selectedSummary.nodeCount)} />
+                  <DetailItem label="Edges" value={String(selectedSummary.edgeCount)} />
+                  <DetailItem label="Approval Nodes" value={String(selectedSummary.approvalNodes)} />
+                  <DetailItem label="Service Nodes" value={String(selectedSummary.serviceNodes)} />
+                </div>
+              )}
 
-              <div className="detail-section workflow-group-section">
+              {!isRequester && <div className="detail-section workflow-group-section">
                 <h4>관리 그룹</h4>
                 {currentUser.role === 'admin' ? (
                   <select value={selectedTemplate.group_id || ''} onChange={(event) => void handleChangeGroup(event.target.value)}>
@@ -504,9 +515,9 @@ export const RequestPortal: React.FC<{ currentUser: SessionUser }> = ({ currentU
                   <div className="workflow-group-readonly">{selectedTemplate.group || '미지정'}<small>{selectedTemplate.group_id || 'Legacy workflow'}</small></div>
                 )}
                 {currentUser.role === 'admin' && <p className="form-info-text">그룹 변경은 새 워크플로 버전으로 저장됩니다.</p>}
-              </div>
+              </div>}
 
-              {selectedSummary.triggerType === 'schedule' && (
+              {!isRequester && selectedSummary.triggerType === 'schedule' && (
                 <div className="detail-section schedule-control-section">
                   <h4>스케줄 운영</h4>
                   <p className="form-info-text">
@@ -524,7 +535,7 @@ export const RequestPortal: React.FC<{ currentUser: SessionUser }> = ({ currentU
                 </div>
               )}
 
-              {selectedSummary.triggerType === 'db_watch' && (
+              {!isRequester && selectedSummary.triggerType === 'db_watch' && (
                 <div className="detail-section schedule-control-section">
                   <h4>DB Watch 운영</h4>
                   <p className="form-info-text">
@@ -541,7 +552,7 @@ export const RequestPortal: React.FC<{ currentUser: SessionUser }> = ({ currentU
               )}
 
               <div className="detail-section">
-                <h4>수동 실행</h4>
+                <h4>{isRequester ? '요청 내용' : '수동 실행'}</h4>
                 {successInstanceId ? (
                   <div className="launch-success">
                     <CheckCircle2 size={40} className="success-icon" />
@@ -551,9 +562,9 @@ export const RequestPortal: React.FC<{ currentUser: SessionUser }> = ({ currentU
                   </div>
                 ) : (
                   <div className="launch-form">
-                    <p className="form-info-text">
-                      관리자가 테스트나 운영 조치 목적으로 이 워크플로우를 즉시 시작합니다.
-                    </p>
+                    <p className="form-info-text">{isRequester
+                      ? '필요한 내용을 입력하고 요청을 제출하세요.'
+                      : '관리자가 테스트나 운영 조치 목적으로 이 워크플로우를 즉시 시작합니다.'}</p>
                     <InputFields
                       template={selectedTemplate}
                       formData={formData}
@@ -568,13 +579,13 @@ export const RequestPortal: React.FC<{ currentUser: SessionUser }> = ({ currentU
                     />
                     <button className="btn-launch-execute" onClick={handleLaunch}>
                       <Play size={14} fill="currentColor" />
-                      즉시 실행
+                      {isRequester ? '요청 제출' : '즉시 실행'}
                     </button>
                   </div>
                 )}
               </div>
 
-              <div className="detail-section danger-section">
+              {currentUser.role === 'admin' && <div className="detail-section danger-section">
                 <h4>워크플로우 삭제</h4>
                 <p className="form-info-text">
                   삭제하면 목록에서 제거되고 연결된 스케줄/DB Watch job도 비활성화됩니다.
@@ -583,7 +594,7 @@ export const RequestPortal: React.FC<{ currentUser: SessionUser }> = ({ currentU
                   <Trash2 size={14} />
                   워크플로우 삭제
                 </button>
-              </div>
+              </div>}
             </>
           ) : (
             <div className="detail-empty">

@@ -109,7 +109,6 @@ try {
   ], {
     ...sharedEnv,
     VITE_API_TARGET: `http://127.0.0.1:${apiPort}`,
-    VITE_ENABLE_APPROVAL_SAMPLE_UI: 'true',
   }));
 
   await Promise.all([
