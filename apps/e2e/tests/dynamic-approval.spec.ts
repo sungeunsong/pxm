@@ -62,16 +62,21 @@ test.describe.serial('PXM 동적 결재 베타 회귀', () => {
     const adminUi = await loginPage(browser, fixture.users.admin.id, process.env.PXM_E2E_ADMIN_PASSWORD || 'E2eAdminPassword!2026', 'dashboard');
     const adminMenu = adminUi.page.locator('.sidebar-menu');
     await expect(adminMenu).toContainText('제품 설정');
-    await expect(adminMenu).toContainText('Flow Designer');
-    await expect(adminMenu).toContainText('Access Management');
+    await expect(adminMenu).toContainText('워크플로우 설계');
+    await expect(adminMenu).toContainText('사용자 및 권한');
+    await expect(adminMenu.locator('.sidebar-section-label')).toHaveText(['개요', '설계 및 실행', '요청 및 결재', '운영', '플랫폼 설정']);
+    await expect(adminMenu.getByRole('button', { name: '워크플로우 관리', exact: true })).toHaveCount(1);
+    await expect(adminMenu).not.toContainText('감사 로그');
     await expect(admin.get('/auth/security-policy')).resolves.toEqual(expect.objectContaining({ source: expect.any(String) }));
 
     const managerUi = await loginPage(browser, fixture.users.manager.id, userPassword, 'security');
     await expect(managerUi.page).toHaveURL(/#\/dashboard$/);
     const managerMenu = managerUi.page.locator('.sidebar-menu');
     await expect(managerMenu).not.toContainText('제품 설정');
-    await expect(managerMenu).toContainText('Flow Designer');
-    await expect(managerMenu).toContainText('Access Management');
+    await expect(managerMenu).toContainText('워크플로우 설계');
+    await expect(managerMenu).toContainText('사용자 및 권한');
+    await expect(managerMenu.locator('.sidebar-section-label')).toHaveText(['개요', '설계 및 실행', '요청 및 결재', '그룹 관리']);
+    await expect(managerMenu.getByRole('button', { name: '워크플로우 관리', exact: true })).toHaveCount(1);
     expect((await manager.rawGet('/auth/security-policy')).status()).toBe(403);
     await expect(manager.get(`/authz/users?groupId=${fixture.groupId}`)).resolves.toEqual(expect.any(Array));
 
@@ -81,8 +86,9 @@ test.describe.serial('PXM 동적 결재 베타 회귀', () => {
     await expect(userMenu).toContainText('요청하기');
     await expect(userMenu).toContainText('내 요청');
     await expect(userMenu).toContainText('내 결재함');
-    await expect(userMenu).not.toContainText('Flow Designer');
-    await expect(userMenu).not.toContainText('Access Management');
+    await expect(userMenu.locator('.sidebar-section-label')).toHaveText(['나의 업무']);
+    await expect(userMenu).not.toContainText('워크플로우 설계');
+    await expect(userMenu).not.toContainText('사용자 및 권한');
     expect((await approverA.rawGet(`/authz/users?groupId=${fixture.groupId}`)).status()).toBe(403);
 
     const workflowRow = userUi.page.getByRole('row').filter({ hasText: fixture.workflowName });

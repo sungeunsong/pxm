@@ -1,11 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ComponentType } from 'react';
 import { 
   LayoutGrid, 
   Paintbrush, 
   Rocket, 
   Search, 
   Inbox, 
-  FileText, 
   FileJson,
   Bell,
   KeyRound,
@@ -131,6 +130,86 @@ function landingTab(role: SessionUser['role']): ActiveTab {
   return role === 'user' ? 'request' : 'dashboard';
 }
 
+type SidebarItemDefinition = {
+  tab: ActiveTab;
+  label: string;
+  icon: ComponentType<{ size?: number }>;
+};
+
+type SidebarSectionDefinition = {
+  id: string;
+  label: string;
+  items: SidebarItemDefinition[];
+};
+
+function sidebarSections(role: SessionUser['role']): SidebarSectionDefinition[] {
+  const requests: SidebarSectionDefinition = {
+    id: 'requests',
+    label: role === 'user' ? '나의 업무' : '요청 및 결재',
+    items: role === 'user'
+      ? [
+          { tab: 'request', label: '요청하기', icon: Rocket },
+          { tab: 'myRequests', label: '내 요청', icon: ClipboardCheck },
+          { tab: 'inbox', label: '내 결재함', icon: Inbox },
+        ]
+      : [
+          { tab: 'myRequests', label: '내 요청', icon: ClipboardCheck },
+          { tab: 'inbox', label: '내 결재함', icon: Inbox },
+        ],
+  };
+  if (role === 'user') return [requests];
+
+  const sections: SidebarSectionDefinition[] = [
+    {
+      id: 'overview',
+      label: '개요',
+      items: [{ tab: 'dashboard', label: '대시보드', icon: LayoutGrid }],
+    },
+    {
+      id: 'workflow',
+      label: '설계 및 실행',
+      items: [
+        { tab: 'designer', label: '워크플로우 설계', icon: Paintbrush },
+        { tab: 'request', label: '워크플로우 관리', icon: Rocket },
+        { tab: 'presets', label: '실행 프리셋', icon: Braces },
+        { tab: 'tracker', label: '실행 모니터링', icon: Search },
+      ],
+    },
+    requests,
+  ];
+
+  if (role === 'admin') {
+    sections.push({
+      id: 'operations',
+      label: '운영',
+      items: [
+        { tab: 'operations', label: '운영 상태', icon: Activity },
+        { tab: 'integrity', label: '실행 이상 점검', icon: Stethoscope },
+        { tab: 'notifications', label: '승인자 알림', icon: MailCheck },
+        { tab: 'webhooks', label: '결과 Webhook', icon: Send },
+      ],
+    });
+  }
+
+  sections.push({
+    id: 'platform',
+    label: role === 'admin' ? '플랫폼 설정' : '그룹 관리',
+    items: [
+      { tab: 'access', label: '사용자 및 권한', icon: Shield },
+      { tab: 'credentials', label: '연동 자격증명', icon: KeyRound },
+      ...(role === 'admin'
+        ? [
+            { tab: 'security' as const, label: '제품 설정', icon: LockKeyhole },
+            { tab: 'commands' as const, label: '명령어 관리', icon: Terminal },
+            { tab: 'plugins' as const, label: '플러그인 제어', icon: Plug },
+            { tab: 'pluginRegistry' as const, label: '플러그인 등록', icon: FileJson },
+          ]
+        : []),
+    ],
+  });
+  return sections;
+}
+
 const readTabFromHash = (): ActiveTab | null => {
   if (typeof window === 'undefined') return null;
   const route = window.location.hash.replace(/^#\/?/, '').split('?')[0];
@@ -154,6 +233,7 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
   const [selectedRequestInstanceId, setSelectedRequestInstanceId] = useState<string | null>(null);
   const [accountOpen, setAccountOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('pxm.sidebar.collapsed') === 'true');
+  const navigationSections = sidebarSections(user.role);
 
   const toggleSidebar = () => setSidebarCollapsed((current) => {
     localStorage.setItem('pxm.sidebar.collapsed', String(!current));
@@ -205,6 +285,11 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
     setActiveTab('myRequests');
   };
 
+  const handleSidebarSelect = (tab: ActiveTab) => {
+    if (tab === 'designer') setSelectedInstanceId(null);
+    setActiveTab(tab);
+  };
+
   return (
     <div className="app-container">
       {/* 1. Left Sidebar (Deep Navy) */}
@@ -219,168 +304,28 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
         </div>
         
         <nav className="sidebar-menu">
-          {user.role !== 'user' && <button
-            title="대시보드"
-            className={`sidebar-menu-item ${activeTab === 'dashboard' ? 'active' : ''}`}
-            onClick={() => setActiveTab('dashboard')}
-          >
-            <LayoutGrid size={16} />
-            <span>대시보드</span>
-          </button>}
-
-          {user.role === 'admin' && <button
-            title="제품 설정"
-            className={`sidebar-menu-item ${activeTab === 'security' ? 'active' : ''}`}
-            onClick={() => setActiveTab('security')}
-          >
-            <LockKeyhole size={16} />
-            <span>제품 설정</span>
-          </button>}
-
-          {user.role === 'admin' && <button
-            title="실행 이상 점검"
-            className={`sidebar-menu-item ${activeTab === 'integrity' ? 'active' : ''}`}
-            onClick={() => setActiveTab('integrity')}
-          >
-            <Stethoscope size={16} />
-            <span>실행 이상 점검</span>
-          </button>}
+          {navigationSections.map((section) => (
+            <section className="sidebar-menu-section" data-testid="sidebar-section" data-section-id={section.id} key={section.id}>
+              <div className="sidebar-section-label">{section.label}</div>
+              <div className="sidebar-section-items">
+                {section.items.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <button
+                      key={item.tab}
+                      title={item.label}
+                      className={`sidebar-menu-item ${activeTab === item.tab ? 'active' : ''}`}
+                      onClick={() => handleSidebarSelect(item.tab)}
+                    >
+                      <Icon size={16} />
+                      <span>{item.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
           
-          {user.role !== 'user' && <button
-            title="Flow Designer"
-            className={`sidebar-menu-item ${activeTab === 'designer' ? 'active' : ''}`}
-            onClick={() => {
-              setActiveTab('designer');
-              setSelectedInstanceId(null); // 신규 설계 모드 리셋
-            }}
-          >
-            <Paintbrush size={16} />
-            <span>Flow Designer</span>
-          </button>}
-
-          <button
-            title={user.role === 'user' ? '요청하기' : '워크플로우 관리'}
-            className={`sidebar-menu-item ${activeTab === 'request' ? 'active' : ''}`}
-            onClick={() => setActiveTab('request')}
-          >
-            <Rocket size={16} />
-            <span>{user.role === 'user' ? '요청하기' : '워크플로우 관리'}</span>
-          </button>
-
-          <button
-            title="내 요청"
-            className={`sidebar-menu-item ${activeTab === 'myRequests' ? 'active' : ''}`}
-            onClick={() => setActiveTab('myRequests')}
-          >
-            <ClipboardCheck size={16} />
-            <span>내 요청</span>
-          </button>
-
-          {user.role !== 'user' && <button
-            title="API 실행 프리셋"
-            className={`sidebar-menu-item ${activeTab === 'presets' ? 'active' : ''}`}
-            onClick={() => setActiveTab('presets')}
-          >
-            <Braces size={16} />
-            <span>API 실행 프리셋</span>
-          </button>}
-
-          {user.role !== 'user' && <button
-            title="실행 모니터링"
-            className={`sidebar-menu-item ${activeTab === 'tracker' ? 'active' : ''}`}
-            onClick={() => setActiveTab('tracker')}
-          >
-            <Search size={16} />
-            <span>실행 모니터링</span>
-          </button>}
-
-          <button
-            title="내 결재함"
-            className={`sidebar-menu-item ${activeTab === 'inbox' ? 'active' : ''}`}
-            onClick={() => setActiveTab('inbox')}
-          >
-            <Inbox size={16} />
-            <span>내 결재함</span>
-          </button>
-          
-          {user.role !== 'user' && <div className="sidebar-separator">설정 및 감사</div>}
-          
-          {user.role !== 'user' && <button
-            title="Credential Store"
-            className={`sidebar-menu-item ${activeTab === 'credentials' ? 'active' : ''}`}
-            onClick={() => setActiveTab('credentials')}
-          >
-            <KeyRound size={16} />
-            <span>Credential Store</span>
-          </button>}
-
-          {user.role === 'admin' && <button
-            title="운영 상태"
-            className={`sidebar-menu-item ${activeTab === 'operations' ? 'active' : ''}`}
-            onClick={() => setActiveTab('operations')}
-          >
-            <Activity size={16} />
-            <span>운영 상태</span>
-          </button>}
-
-          {user.role === 'admin' && <button
-            title="승인자 알림"
-            className={`sidebar-menu-item ${activeTab === 'notifications' ? 'active' : ''}`}
-            onClick={() => setActiveTab('notifications')}
-          >
-            <MailCheck size={16} />
-            <span>승인자 알림</span>
-          </button>}
-
-          {user.role === 'admin' && <button
-            title="외부 결과 Webhook"
-            className={`sidebar-menu-item ${activeTab === 'webhooks' ? 'active' : ''}`}
-            onClick={() => setActiveTab('webhooks')}
-          >
-            <Send size={16} />
-            <span>결과 Webhook</span>
-          </button>}
-
-          {user.role !== 'user' && <button
-            title="Access Management"
-            className={`sidebar-menu-item ${activeTab === 'access' ? 'active' : ''}`}
-            onClick={() => setActiveTab('access')}
-          >
-            <Shield size={16} />
-            <span>Access Management</span>
-          </button>}
-
-          {user.role === 'admin' && <button
-            title="Command Registry"
-            className={`sidebar-menu-item ${activeTab === 'commands' ? 'active' : ''}`}
-            onClick={() => setActiveTab('commands')}
-          >
-            <Terminal size={16} />
-            <span>Command Registry</span>
-          </button>}
-
-          {user.role === 'admin' && <button
-            title="Plugin Control"
-            className={`sidebar-menu-item ${activeTab === 'plugins' ? 'active' : ''}`}
-            onClick={() => setActiveTab('plugins')}
-          >
-            <Plug size={16} />
-            <span>Plugin Control</span>
-          </button>}
-
-          {user.role === 'admin' && <button
-            title="Plugin Registry"
-            className={`sidebar-menu-item ${activeTab === 'pluginRegistry' ? 'active' : ''}`}
-            onClick={() => setActiveTab('pluginRegistry')}
-          >
-            <FileJson size={16} />
-            <span>Plugin Registry</span>
-          </button>}
-          
-          {user.role !== 'user' && <button className="sidebar-menu-item disabled" title="감사 로그">
-            <FileText size={16} />
-            <span>감사 로그</span>
-          </button>}
         </nav>
         
         <div className="sidebar-footer">
