@@ -17,6 +17,7 @@ export const fixture = {
     a: { id: 'approver-a', name: '승인자 A', email: 'approver-a@pxm.test', subject: 'EMP-A' },
     b: { id: 'approver-b', name: '승인자 B', email: 'approver-b@pxm.test', subject: 'EMP-B' },
     c: { id: 'approver-c', name: '승인자 C', email: 'approver-c@pxm.test', subject: 'EMP-C' },
+    manager: { id: 'approval-manager', name: '결재 그룹 관리자', email: 'approval-manager@pxm.test' },
   },
 };
 
@@ -66,6 +67,10 @@ export class ApiSession {
     });
   }
 
+  rawGet(path: string) {
+    return this.context.get(`/api${path}`);
+  }
+
   async dispose() {
     await this.context.dispose();
   }
@@ -98,6 +103,15 @@ export async function seedFixture(admin: ApiSession) {
       department: 'E2E 결재팀',
     });
   }
+  await admin.post('/authz/users', {
+    id: fixture.users.manager.id,
+    display_name: fixture.users.manager.name,
+    email: fixture.users.manager.email,
+    role: 'group_manager',
+    group_ids: [fixture.groupId],
+    memberships: [{ group_id: fixture.groupId, role: 'group_manager' }],
+    password: userPassword,
+  });
 
   const template = await admin.post<any>('/templates', dynamicApprovalTemplate());
   fixture.workflowId = template.id;

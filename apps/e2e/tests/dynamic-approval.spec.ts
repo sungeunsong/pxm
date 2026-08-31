@@ -31,29 +31,69 @@ test.describe.serial('PXM 동적 결재 베타 회귀', () => {
   let approverA: ApiSession;
   let approverB: ApiSession;
   let approverC: ApiSession;
+  let manager: ApiSession;
   let mongoClient: MongoClient;
   let db: Db;
 
   test.beforeAll(async () => {
     admin = await ApiSession.login('admin', process.env.PXM_E2E_ADMIN_PASSWORD || 'E2eAdminPassword!2026');
     await seedFixture(admin);
-    [approverA, approverB, approverC] = await Promise.all([
+    [approverA, approverB, approverC, manager] = await Promise.all([
       ApiSession.login(fixture.users.a.id, userPassword),
       ApiSession.login(fixture.users.b.id, userPassword),
       ApiSession.login(fixture.users.c.id, userPassword),
+      ApiSession.login(fixture.users.manager.id, userPassword),
     ]);
     ({ client: mongoClient, db } = await databaseConnection());
   });
 
   test.afterAll(async () => {
     await Promise.all([
-      admin?.dispose(), approverA?.dispose(), approverB?.dispose(), approverC?.dispose(),
+      admin?.dispose(), approverA?.dispose(), approverB?.dispose(), approverC?.dispose(), manager?.dispose(),
     ]);
     await mongoClient?.close();
   });
 
   test.beforeEach(async () => {
     await clearMailpit();
+  });
+
+  test('admin, group_manager, user는 허용된 화면과 API에만 접근한다', async ({ browser }) => {
+    const adminUi = await loginPage(browser, fixture.users.admin.id, process.env.PXM_E2E_ADMIN_PASSWORD || 'E2eAdminPassword!2026', 'dashboard');
+    const adminMenu = adminUi.page.locator('.sidebar-menu');
+    await expect(adminMenu).toContainText('제품 설정');
+    await expect(adminMenu).toContainText('Flow Designer');
+    await expect(adminMenu).toContainText('Access Management');
+    await expect(admin.get('/auth/security-policy')).resolves.toEqual(expect.objectContaining({ source: expect.any(String) }));
+
+    const managerUi = await loginPage(browser, fixture.users.manager.id, userPassword, 'security');
+    await expect(managerUi.page).toHaveURL(/#\/dashboard$/);
+    const managerMenu = managerUi.page.locator('.sidebar-menu');
+    await expect(managerMenu).not.toContainText('제품 설정');
+    await expect(managerMenu).toContainText('Flow Designer');
+    await expect(managerMenu).toContainText('Access Management');
+    expect((await manager.rawGet('/auth/security-policy')).status()).toBe(403);
+    await expect(manager.get(`/authz/users?groupId=${fixture.groupId}`)).resolves.toEqual(expect.any(Array));
+
+    const userUi = await loginPage(browser, fixture.users.a.id, userPassword, 'designer');
+    await expect(userUi.page).toHaveURL(/#\/request$/);
+    const userMenu = userUi.page.locator('.sidebar-menu');
+    await expect(userMenu).toContainText('요청하기');
+    await expect(userMenu).toContainText('내 요청');
+    await expect(userMenu).toContainText('내 결재함');
+    await expect(userMenu).not.toContainText('Flow Designer');
+    await expect(userMenu).not.toContainText('Access Management');
+    expect((await approverA.rawGet(`/authz/users?groupId=${fixture.groupId}`)).status()).toBe(403);
+
+    const workflowRow = userUi.page.getByRole('row').filter({ hasText: fixture.workflowName });
+    await expect(workflowRow).toBeVisible();
+    await workflowRow.click();
+    await expect(userUi.page.getByRole('heading', { name: '요청 내용' })).toBeVisible();
+    await expect(userUi.page.getByRole('button', { name: '요청 제출' })).toBeVisible();
+    await expect(userUi.page.getByText('Template ID', { exact: true })).toHaveCount(0);
+    await expect(userUi.page.getByText('워크플로우 삭제', { exact: true })).toHaveCount(0);
+
+    await closeContexts(adminUi.context, managerUi.context, userUi.context);
   });
 
   test('순차 3단계 결재는 화면에 전체 라인과 현재 단계를 표시하고 마지막에 한 번만 재개한다', async ({ browser }) => {

@@ -144,7 +144,7 @@ allowed_workflow_ids: [...]
 - [x] 일반 사용자에게 내부 Template ID, Nodes, Edges 등 모델링 정보를 숨긴다.
 - [x] 일반 사용자에게 실패가 확정된 삭제·관리 버튼을 숨긴다.
 - [x] 역할과 맞지 않는 관리자 안내 문구를 제거한다.
-- [ ] `admin`, `group_manager`, `user`별 브라우저 테스트를 추가한다.
+- [x] `admin`, `group_manager`, `user`별 브라우저 테스트를 추가한다.
 
 ## DEMO-03. 테스트 데이터와 설계 메모 제거
 

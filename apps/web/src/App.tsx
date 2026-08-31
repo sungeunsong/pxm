@@ -109,6 +109,28 @@ const TAB_TO_ROUTE: Record<ActiveTab, string> = {
   notifications: 'notifications',
 };
 
+const USER_TABS = new Set<ActiveTab>(['request', 'myRequests', 'inbox']);
+const GROUP_MANAGER_TABS = new Set<ActiveTab>([
+  'dashboard',
+  'designer',
+  'request',
+  'myRequests',
+  'presets',
+  'tracker',
+  'inbox',
+  'credentials',
+  'access',
+]);
+
+function canAccessTab(role: SessionUser['role'], tab: ActiveTab): boolean {
+  if (role === 'admin') return true;
+  return (role === 'group_manager' ? GROUP_MANAGER_TABS : USER_TABS).has(tab);
+}
+
+function landingTab(role: SessionUser['role']): ActiveTab {
+  return role === 'user' ? 'request' : 'dashboard';
+}
+
 const readTabFromHash = (): ActiveTab | null => {
   if (typeof window === 'undefined') return null;
   const route = window.location.hash.replace(/^#\/?/, '').split('?')[0];
@@ -126,9 +148,7 @@ const readInitialTab = (): ActiveTab => {
 function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessionExpired }: { user: SessionUser; onUserChange: (user: SessionUser) => void; onLogout: () => void; onSessionRevoked: () => void; onSessionExpired: () => void }) {
   const [activeTab, setActiveTabState] = useState<ActiveTab>(() => {
     const initialTab = readInitialTab();
-    return user.role === 'user' && !['request', 'myRequests', 'inbox'].includes(initialTab)
-      ? 'request'
-      : initialTab;
+    return canAccessTab(user.role, initialTab) ? initialTab : landingTab(user.role);
   });
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
   const [selectedRequestInstanceId, setSelectedRequestInstanceId] = useState<string | null>(null);
@@ -141,19 +161,29 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
   });
 
   const setActiveTab = (tab: ActiveTab) => {
-    setActiveTabState(tab);
-    window.history.pushState(null, '', `#/${TAB_TO_ROUTE[tab]}`);
+    const nextTab = canAccessTab(user.role, tab) ? tab : landingTab(user.role);
+    setActiveTabState(nextTab);
+    window.history.pushState(null, '', `#/${TAB_TO_ROUTE[nextTab]}`);
   };
 
   useEffect(() => {
     if (!window.location.hash) {
       window.history.replaceState(null, '', `#/${TAB_TO_ROUTE[activeTab]}`);
+    } else {
+      const requestedTab = readTabFromHash();
+      if (requestedTab && !canAccessTab(user.role, requestedTab)) {
+        window.history.replaceState(null, '', `#/${TAB_TO_ROUTE[activeTab]}`);
+      }
     }
 
     const syncTabFromLocation = () => {
       const nextTab = readTabFromHash();
       if (!nextTab) return;
-      setActiveTabState(nextTab);
+      const allowedTab = canAccessTab(user.role, nextTab) ? nextTab : landingTab(user.role);
+      setActiveTabState(allowedTab);
+      if (allowedTab !== nextTab) {
+        window.history.replaceState(null, '', `#/${TAB_TO_ROUTE[allowedTab]}`);
+      }
     };
 
     window.addEventListener('hashchange', syncTabFromLocation);
@@ -162,7 +192,7 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
       window.removeEventListener('hashchange', syncTabFromLocation);
       window.removeEventListener('popstate', syncTabFromLocation);
     };
-  }, [activeTab]);
+  }, [activeTab, user.role]);
 
   // 실행 트래커에서 인스턴스를 선택해 실시간 모니터링을 시도할 때
   const handleSelectInstanceForTracking = (instanceId: string) => {
