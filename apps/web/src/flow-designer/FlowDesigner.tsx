@@ -26,6 +26,7 @@ import './FlowDesigner.css';
 export interface FlowDesignerProps {
   children?: React.ReactNode;
   onSwitchToInbox?: () => void;
+  onExitTrace?: () => void;
   initialMonitorInstanceId?: string;
   currentUser: SessionUser;
 }
@@ -46,6 +47,7 @@ type DesignerTab = {
   nodes: Node<CustomNodeData>[];
   edges: Edge[];
   isDirty: boolean;
+  traceInstanceId?: string;
 };
 
 const INITIAL_DESIGNER_TAB_ID = 'designer-tab-initial';
@@ -58,7 +60,7 @@ type WorkflowClipboard = {
   edges: Edge[];
 };
 
-export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, initialMonitorInstanceId, currentUser }) => {
+export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onExitTrace, initialMonitorInstanceId, currentUser }) => {
   const [darkMode, setDarkMode] = useState(true);
   const [selectedNode, setSelectedNode] = useState<Node<CustomNodeData> | null>(null);
   const [canvasNodes, setCanvasNodes] = useState<Node<CustomNodeData>[]>([]);
@@ -79,6 +81,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
   const [isPropertiesPanelOpen, setIsPropertiesPanelOpen] = useState(true);
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [executionInstanceId, setExecutionInstanceId] = useState<string | null>(null);
+  const [traceInstanceId, setTraceInstanceId] = useState<string | null>(null);
   const [executionFormSchema, setExecutionFormSchema] = useState<FormSchema | undefined>(undefined);
   const [plugins, setPlugins] = useState<PluginManifest[]>([]);
   const [pluginSearch, setPluginSearch] = useState('');
@@ -334,21 +337,21 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
   const handleCanvasNodesChange = React.useCallback(
     (nodes: Node[]) => {
       setCanvasNodes(nodes as Node<CustomNodeData>[]);
-      if (!suppressCanvasDirtyRef.current) {
+      if (!traceInstanceId && !suppressCanvasDirtyRef.current) {
         markActiveDesignerTabDirty();
       }
     },
-    [markActiveDesignerTabDirty],
+    [markActiveDesignerTabDirty, traceInstanceId],
   );
 
   const handleCanvasEdgesChange = React.useCallback(
     (edges: Edge[]) => {
       setCanvasEdges(edges);
-      if (!suppressCanvasDirtyRef.current) {
+      if (!traceInstanceId && !suppressCanvasDirtyRef.current) {
         markActiveDesignerTabDirty();
       }
     },
-    [markActiveDesignerTabDirty],
+    [markActiveDesignerTabDirty, traceInstanceId],
   );
 
   const handleMetadataChange = <K extends 'description' | 'group' | 'tags' | 'versionNote'>(
@@ -732,21 +735,34 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
       const res = await fetch(`/api/instances/${instanceId}`);
       if (!res.ok) throw new Error('Failed to fetch instance details');
       const instance = await res.json();
-      
+      const fallbackContext = instance.ctx || instance.context || {};
+      const fallbackRuntime = fallbackContext.runtime || fallbackContext;
+      const templateId = instance.template_id || instance.definition_id || fallbackRuntime.template_id || null;
+      const templateName = instance.template_name || fallbackRuntime.template_name || fallbackRuntime.snapshot?.workflow?.name || '워크플로우';
+
       // ctx에서 nodes/edges 복원
-      const runtimeContext = instance.ctx?.runtime || instance.context?.runtime || instance.ctx || instance.context;
+      const runtimeContext = fallbackRuntime;
       if (runtimeContext && runtimeContext.nodes && runtimeContext.edges) {
         flowCanvasRef.current?.setNodesAndEdges(runtimeContext.nodes, runtimeContext.edges);
-        
-        // 템플릿 정보도 업데이트 (선택 사항)
-        if (instance.template_id) {
-          setCurrentTemplateId(instance.template_id);
-          // 템플릿 이름은 별도로 가져오거나 instance 정보에 없다면 스킵
-        }
+        setCanvasNodes(runtimeContext.nodes);
+        setCanvasEdges(runtimeContext.edges);
+        window.setTimeout(() => flowCanvasRef.current?.fitView(), 0);
       }
+      setCurrentTemplateId(templateId);
+      setCurrentTemplateName(templateName);
+      setDesignerTabs((tabs) => tabs.map((tab) => tab.tabId === activeDesignerTabId ? {
+        ...tab,
+        templateId,
+        templateName,
+        nodes: runtimeContext?.nodes || tab.nodes,
+        edges: runtimeContext?.edges || tab.edges,
+        isDirty: false,
+        traceInstanceId: instanceId,
+      } : tab));
       
       // 2. 실행 상태 패널 열기 및 SSE 연결
       setExecutionInstanceId(instanceId);
+      setTraceInstanceId(instanceId);
       setIsExecutionPanelOpen(true);
       setIsPropertiesPanelOpen(true);
       connectSSE(instanceId);
@@ -904,12 +920,13 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
   }, [canvasEdges, canvasNodes, plugins, selectedNode]);
 
   return (
-    <div className="flow-designer">
+    <div className={`flow-designer${traceInstanceId ? ' trace-mode' : ''}`}>
       <Header
-        title="PXM Flow Designer"
+        title={traceInstanceId ? '실행 추적' : 'PXM Flow Designer'}
         actions={(
           <>
-            {currentTemplateId && <Button variant="ghost" icon={<Braces />} onClick={() => { window.location.hash = `#/presets?workflow=${encodeURIComponent(currentTemplateId)}`; }}>
+            {traceInstanceId && <div className="trace-mode-badge"><span>READ ONLY</span><strong>{currentTemplateName || '워크플로우'} · {shortInstanceId(traceInstanceId)}</strong></div>}
+            {!traceInstanceId && currentTemplateId && <Button variant="ghost" icon={<Braces />} onClick={() => { window.location.hash = `#/presets?workflow=${encodeURIComponent(currentTemplateId)}`; }}>
               실행 프리셋
             </Button>}
             {onSwitchToInbox && <Button variant="ghost" icon={<Inbox />} onClick={() => onSwitchToInbox()}>
@@ -917,19 +934,19 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
             </Button>}
           </>
         )}
-        onRun={() => handleRun()}
-        onSave={handleSave}
-        onLoad={handleLoad}
-        onImport={handleImport}
-        onExport={handleExport}
+        onRun={traceInstanceId ? undefined : () => handleRun()}
+        onSave={traceInstanceId ? undefined : handleSave}
+        onLoad={traceInstanceId ? undefined : handleLoad}
+        onImport={traceInstanceId ? undefined : handleImport}
+        onExport={traceInstanceId ? undefined : handleExport}
         onHistory={handleHistory}
-        onSettings={handleSettings}
+        onSettings={traceInstanceId ? undefined : handleSettings}
         darkMode={darkMode}
         onToggleDarkMode={handleToggleDarkMode}
       />
       <div className="workflow-tab-bar" role="tablist" aria-label="열린 워크플로우">
         <div className="workflow-tabs">
-          {designerTabs.map((tab) => (
+          {designerTabs.filter((tab) => !traceInstanceId || tab.tabId === activeDesignerTabId).map((tab) => (
             <div
               key={tab.tabId}
               className={`workflow-tab ${tab.tabId === activeDesignerTabId ? 'active' : ''}`}
@@ -958,7 +975,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
                 )}
                 {tab.hasUnpublishedChanges && <span className="workflow-tab-unpublished">미배포</span>}
               </button>
-              <button
+              {!traceInstanceId && <button
                 type="button"
                 className="workflow-tab-close"
                 aria-label={`${getDesignerTabTitle(tab)} 탭 닫기`}
@@ -969,11 +986,11 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
                 }}
               >
                 <X size={13} />
-              </button>
+              </button>}
             </div>
           ))}
         </div>
-        <button
+        {!traceInstanceId && <button
           type="button"
           className="workflow-tab-add"
           onClick={handleNewDesignerTab}
@@ -981,8 +998,8 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
           title="새 워크플로우 탭"
         >
           <Plus size={15} />
-        </button>
-        <div className="workflow-tab-tools" aria-label="워크플로우 복사 도구">
+        </button>}
+        {!traceInstanceId && <div className="workflow-tab-tools" aria-label="워크플로우 복사 도구">
           <button
             type="button"
             className="workflow-tab-tool"
@@ -1007,7 +1024,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
             <ClipboardPaste size={14} />
             {workflowClipboard && <span>{workflowClipboard.nodes.length}</span>}
           </button>
-        </div>
+        </div>}
       </div>
       <input
         ref={importFileInputRef}
@@ -1017,8 +1034,8 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
         onChange={handleImportFileChange}
       />
 
-      <div className={`flow-designer-content${isPropertiesPanelOpen ? '' : ' properties-collapsed'}`}>
-        <aside className="node-palette">
+      <div className={`flow-designer-content${isPropertiesPanelOpen ? '' : ' properties-collapsed'}${traceInstanceId ? ' trace-content' : ''}`}>
+        {!traceInstanceId && <aside className="node-palette">
           <div className="palette-header">
             <h3 className="palette-title">노드 팔레트</h3>
           </div>
@@ -1136,7 +1153,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
               ))}
             </div>
           </div>
-        </aside>
+        </aside>}
 
         <main className="canvas">
           <FlowCanvas
@@ -1144,6 +1161,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
             onNodeSelect={handleNodeSelect}
             onNodesChange={handleCanvasNodesChange}
             onEdgesChange={handleCanvasEdgesChange}
+            readOnly={Boolean(traceInstanceId)}
           />
         </main>
 
@@ -1156,6 +1174,10 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, ini
               formSchema={executionFormSchema}
               onFormSubmit={(formData) => handleRun(formData)}
               onClose={() => {
+                if (traceInstanceId && onExitTrace) {
+                  onExitTrace();
+                  return;
+                }
                 setIsExecutionPanelOpen(false);
                 setExecutionInstanceId(null);
                 setExecutionFormSchema(undefined);
@@ -1303,7 +1325,12 @@ function createDesignerTabId() {
 }
 
 function getDesignerTabTitle(tab: DesignerTab) {
-  return tab.templateName || 'Untitled Workflow';
+  const title = tab.templateName || 'Untitled Workflow';
+  return tab.traceInstanceId ? `${title} · ${shortInstanceId(tab.traceInstanceId)}` : title;
+}
+
+function shortInstanceId(instanceId: string) {
+  return instanceId.length > 16 ? `${instanceId.slice(0, 8)}…${instanceId.slice(-6)}` : instanceId;
 }
 
 function cloneWorkflowNodes(nodes: Node<CustomNodeData>[]) {

@@ -52,6 +52,10 @@
   border-color: var(--border-strong);
 }
 
+.trace-mode .workflow-tab {
+  grid-template-columns: minmax(220px, 320px);
+}
+
 .workflow-tab-main,
 .workflow-tab-close,
 .workflow-tab-add {
@@ -193,6 +197,43 @@
 
 .flow-designer-content.properties-collapsed {
   grid-template-columns: 260px minmax(0, 1fr) 48px;
+}
+
+.flow-designer-content.trace-content {
+  grid-template-columns: minmax(0, 1fr) minmax(440px, 32vw);
+}
+
+.flow-designer-content.trace-content.properties-collapsed {
+  grid-template-columns: minmax(0, 1fr) 48px;
+}
+
+.trace-mode-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 360px;
+  padding: 6px 10px;
+  border: 1px solid rgba(73, 173, 125, .35);
+  border-radius: 8px;
+  background: rgba(73, 173, 125, .1);
+}
+
+.trace-mode-badge span {
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: #2b8a5a;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .04em;
+}
+
+.trace-mode-badge strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ============================================

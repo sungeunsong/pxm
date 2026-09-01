@@ -8,7 +8,7 @@ import ReactFlow, {
   BackgroundVariant,
   MiniMap,
 } from 'reactflow';
-import type { Node, Edge, Connection, NodeTypes } from 'reactflow';
+import type { Node, Edge, Connection, NodeTypes, ReactFlowInstance } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { CustomNode } from './CustomNode';
 import type { CustomNodeData } from './form-types';
@@ -41,6 +41,7 @@ export interface FlowCanvasProps {
   onNodeSelect?: (node: Node | null) => void;
   onNodesChange?: (nodes: Node[]) => void;
   onEdgesChange?: (edges: Edge[]) => void;
+  readOnly?: boolean;
 }
 
 export interface FlowCanvasRef {
@@ -51,12 +52,14 @@ export interface FlowCanvasRef {
   setNodesAndEdges: (nodes: Node[], edges: Edge[]) => void;
   appendNodesAndEdges: (nodes: Node[], edges: Edge[]) => void;
   updateEdgesByNodeStatus: (nodeId: string, status: string) => void;
+  fitView: () => void;
 }
 
 export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
-  ({ onNodeSelect, onNodesChange: onNodesChangeProp, onEdgesChange: onEdgesChangeProp }, ref) => {
+  ({ onNodeSelect, onNodesChange: onNodesChangeProp, onEdgesChange: onEdgesChangeProp, readOnly = false }, ref) => {
     const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
     const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+    const reactFlowRef = React.useRef<ReactFlowInstance | null>(null);
 
     // 노드 변경 시 부모에게 알림
     React.useEffect(() => {
@@ -116,6 +119,14 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
     // 노드와 엣지 가져오기
     const getNodes = useCallback(() => nodes, [nodes]);
     const getEdges = useCallback(() => edges, [edges]);
+    const fitView = useCallback(() => {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          reactFlowRef.current?.fitView({ padding: 0.18, duration: 350 });
+        });
+      });
+      window.setTimeout(() => reactFlowRef.current?.fitView({ padding: 0.18, duration: 250 }), 80);
+    }, []);
 
     // 노드와 엣지 설정하기 (템플릿 불러오기용)
     const setNodesAndEdges = useCallback(
@@ -228,8 +239,9 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
         setNodesAndEdges,
         appendNodesAndEdges,
         updateEdgesByNodeStatus,
+        fitView,
       }),
-      [updateNodeData, updateEdgeData, getNodes, getEdges, setNodesAndEdges, appendNodesAndEdges, updateEdgesByNodeStatus]
+      [updateNodeData, updateEdgeData, getNodes, getEdges, setNodesAndEdges, appendNodesAndEdges, updateEdgesByNodeStatus, fitView]
     );
 
   const onConnect = useCallback(
@@ -326,17 +338,21 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
   return (
     <div className="flow-canvas-wrapper">
       <ReactFlow
+        onInit={(instance) => { reactFlowRef.current = instance; }}
         nodes={nodes}
         edges={edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
-        onConnect={onConnect}
+        onConnect={readOnly ? undefined : onConnect}
         onNodeClick={onNodeClick}
         onPaneClick={onPaneClick}
-        onEdgeDoubleClick={onEdgeDoubleClick}
-        onDrop={onDrop}
-        onDragOver={onDragOver}
-        deleteKeyCode={['Backspace', 'Delete']}
+        onEdgeDoubleClick={readOnly ? undefined : onEdgeDoubleClick}
+        onDrop={readOnly ? undefined : onDrop}
+        onDragOver={readOnly ? undefined : onDragOver}
+        deleteKeyCode={readOnly ? null : ['Backspace', 'Delete']}
+        nodesDraggable={!readOnly}
+        nodesConnectable={!readOnly}
+        edgesUpdatable={!readOnly}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         fitView

@@ -66,8 +66,9 @@ test.describe.serial('PXM 동적 결재 베타 회귀', () => {
     await expect(adminMenu).toContainText('사용자 및 권한');
     await expect(adminMenu.locator('.sidebar-section-label')).toHaveText(['개요', '설계 및 실행', '요청 및 결재', '운영', '플랫폼 설정']);
     await expect(adminMenu.getByRole('button', { name: '워크플로우 관리', exact: true })).toHaveCount(1);
-    await expect(adminMenu).not.toContainText('감사 로그');
+    await expect(adminMenu).toContainText('감사 로그');
     await expect(admin.get('/auth/security-policy')).resolves.toEqual(expect.objectContaining({ source: expect.any(String) }));
+    await expect(admin.get('/audit/management?limit=1')).resolves.toEqual(expect.any(Array));
 
     const managerUi = await loginPage(browser, fixture.users.manager.id, userPassword, 'security');
     await expect(managerUi.page).toHaveURL(/#\/dashboard$/);
@@ -75,9 +76,11 @@ test.describe.serial('PXM 동적 결재 베타 회귀', () => {
     await expect(managerMenu).not.toContainText('제품 설정');
     await expect(managerMenu).toContainText('워크플로우 설계');
     await expect(managerMenu).toContainText('사용자 및 권한');
+    await expect(managerMenu).toContainText('감사 로그');
     await expect(managerMenu.locator('.sidebar-section-label')).toHaveText(['개요', '설계 및 실행', '요청 및 결재', '그룹 관리']);
     await expect(managerMenu.getByRole('button', { name: '워크플로우 관리', exact: true })).toHaveCount(1);
     expect((await manager.rawGet('/auth/security-policy')).status()).toBe(403);
+    expect((await manager.rawGet('/audit/management?limit=1')).status()).toBe(200);
     await expect(manager.get(`/authz/users?groupId=${fixture.groupId}`)).resolves.toEqual(expect.any(Array));
 
     const userUi = await loginPage(browser, fixture.users.a.id, userPassword, 'designer');
@@ -88,6 +91,7 @@ test.describe.serial('PXM 동적 결재 베타 회귀', () => {
     await expect(userMenu).toContainText('내 결재함');
     await expect(userMenu.locator('.sidebar-section-label')).toHaveText(['나의 업무']);
     await expect(userMenu).not.toContainText('워크플로우 설계');
+    expect((await approverA.rawGet('/audit/management?limit=1')).status()).toBe(403);
     await expect(userMenu).not.toContainText('사용자 및 권한');
     expect((await approverA.rawGet(`/authz/users?groupId=${fixture.groupId}`)).status()).toBe(403);
 

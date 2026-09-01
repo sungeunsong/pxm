@@ -21,6 +21,7 @@ import {
   Activity,
   MailCheck,
   ClipboardCheck,
+  FileClock,
 } from 'lucide-react';
 import { DashboardPage } from './dashboard/DashboardPage';
 import { FlowDesigner } from './flow-designer/FlowDesigner';
@@ -45,6 +46,7 @@ import { RuntimeIntegrityPage } from './runtime-integrity/RuntimeIntegrityPage';
 import { WebhookManagementPage } from './webhooks/WebhookManagementPage';
 import { OperationsPage } from './operations/OperationsPage';
 import { NotificationManagementPage } from './notifications/NotificationManagementPage';
+import { AuditLogPage } from './audit/AuditLogPage';
 import './App.css';
 
 type ActiveTab =
@@ -64,7 +66,8 @@ type ActiveTab =
   | 'integrity'
   | 'webhooks'
   | 'operations'
-  | 'notifications';
+  | 'notifications'
+  | 'audit';
 
 const DEFAULT_TAB: ActiveTab = 'dashboard';
 
@@ -86,6 +89,7 @@ const ROUTE_TO_TAB: Record<string, ActiveTab> = {
   webhooks: 'webhooks',
   operations: 'operations',
   notifications: 'notifications',
+  audit: 'audit',
 };
 
 const TAB_TO_ROUTE: Record<ActiveTab, string> = {
@@ -106,6 +110,7 @@ const TAB_TO_ROUTE: Record<ActiveTab, string> = {
   webhooks: 'webhooks',
   operations: 'operations',
   notifications: 'notifications',
+  audit: 'audit',
 };
 
 const USER_TABS = new Set<ActiveTab>(['request', 'myRequests', 'inbox']);
@@ -119,6 +124,7 @@ const GROUP_MANAGER_TABS = new Set<ActiveTab>([
   'inbox',
   'credentials',
   'access',
+  'audit',
 ]);
 
 function canAccessTab(role: SessionUser['role'], tab: ActiveTab): boolean {
@@ -187,6 +193,7 @@ function sidebarSections(role: SessionUser['role']): SidebarSectionDefinition[] 
         { tab: 'integrity', label: '실행 이상 점검', icon: Stethoscope },
         { tab: 'notifications', label: '승인자 알림', icon: MailCheck },
         { tab: 'webhooks', label: '결과 Webhook', icon: Send },
+        { tab: 'audit', label: '감사 로그', icon: FileClock },
       ],
     });
   }
@@ -197,6 +204,9 @@ function sidebarSections(role: SessionUser['role']): SidebarSectionDefinition[] 
     items: [
       { tab: 'access', label: '사용자 및 권한', icon: Shield },
       { tab: 'credentials', label: '연동 자격증명', icon: KeyRound },
+      ...(role === 'group_manager'
+        ? [{ tab: 'audit' as const, label: '감사 로그', icon: FileClock }]
+        : []),
       ...(role === 'admin'
         ? [
             { tab: 'security' as const, label: '제품 설정', icon: LockKeyhole },
@@ -365,6 +375,7 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
               {activeTab === 'webhooks' && "외부 결과 Webhook"}
               {activeTab === 'operations' && "실행·Outbox 운영 상태"}
               {activeTab === 'notifications' && "승인자 알림 발송 이력"}
+              {activeTab === 'audit' && "감사 로그"}
             </h1>
             <p className="header-subtitle">
               {activeTab === 'dashboard' && "전체 워크플로우 실시간 상태 모니터링 및 주요 KPI 요약"}
@@ -384,6 +395,7 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
               {activeTab === 'webhooks' && "최종 승인·반려·취소 결과의 외부 전달, 실패 이력과 재전송을 관리합니다"}
               {activeTab === 'operations' && "Engine Job, 장기 대기, 만료 잠금과 외부 전송 적체를 진단하고 안전하게 복구합니다"}
               {activeTab === 'notifications' && "PXM 승인자 이메일의 발송 상태, 실패 원인과 재발송을 관리합니다"}
+              {activeTab === 'audit' && "관리 작업의 수행자, 대상과 변경 상세를 안전하게 추적합니다"}
             </p>
           </div>
 
@@ -433,6 +445,11 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
                 점검만으로 데이터가 변경되지는 않으며, 복구 전 현재 상태를 다시 확인합니다.
               </div>
             )}
+            {activeTab === 'audit' && (
+              <div className="info-banner-bubble">
+                민감정보는 기록 단계와 조회 단계에서 마스킹됩니다.
+              </div>
+            )}
             
             <div className="header-search">
               <input type="text" placeholder="메뉴, 업무, 요청명 검색 (Ctrl + K)" />
@@ -471,6 +488,10 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
               <FlowDesigner 
                 currentUser={user}
                 onSwitchToInbox={() => setActiveTab('inbox')}
+                onExitTrace={() => {
+                  setSelectedInstanceId(null);
+                  setActiveTab('tracker');
+                }}
                 initialMonitorInstanceId={selectedInstanceId || undefined}
               />
             </div>
@@ -511,6 +532,8 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
           {activeTab === 'operations' && <OperationsPage />}
 
           {activeTab === 'notifications' && <NotificationManagementPage />}
+
+          {activeTab === 'audit' && <AuditLogPage currentUser={user} />}
         </main>
       </div>
       {accountOpen && <AccountDialog user={user} onChange={onUserChange} onClose={() => setAccountOpen(false)} />}

@@ -16,6 +16,14 @@ export type ManagementAuditEvent = {
   details?: Record<string, unknown>;
 };
 
+export type ManagementAuditQuery = {
+  groupId?: string;
+  action?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+};
+
 @Injectable()
 export class ManagementAuditService {
   constructor(@Inject(MONGO_DB) private readonly db: Db) {}
@@ -45,8 +53,9 @@ export class ManagementAuditService {
     await this.collection.insertOne(document);
   }
 
-  async list(actor: WorkflowHistoryActor, groupId?: string, limit = 200) {
+  async list(actor: WorkflowHistoryActor, query: ManagementAuditQuery = {}) {
     if (actor.api_key_id) throw new ForbiddenException('API key cannot read management audit');
+    const { groupId, action, from, to } = query;
     let filter: Record<string, unknown> = {};
     if (isAdmin(actor)) {
       if (groupId) filter = { group_id: groupId };
@@ -59,12 +68,34 @@ export class ManagementAuditService {
     } else {
       throw new ForbiddenException('management role is required');
     }
-    return this.collection.find(filter).sort({ created_at: -1 }).limit(Math.min(Math.max(limit, 1), 500)).toArray();
+    if (action) filter.action = action;
+    if (from || to) {
+      filter.created_at = {
+        ...(from ? { $gte: normalizeDateBoundary(from) } : {}),
+        ...(to ? { $lte: normalizeDateBoundary(to, true) } : {}),
+      };
+    }
+    const limit = Number.isFinite(query.limit) ? Number(query.limit) : 200;
+    const rows = await this.collection
+      .find(filter)
+      .sort({ created_at: -1 })
+      .limit(Math.min(Math.max(limit, 1), 500))
+      .toArray();
+    return rows.map((row) => ({
+      ...row,
+      details: sanitizeAuditDetails(row.details || {}),
+    }));
   }
 
   private get collection() {
     return this.db.collection<any>('management_audit_logs');
   }
+}
+
+function normalizeDateBoundary(value: string, endOfDay = false): string {
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const parsed = new Date(dateOnly ? `${value}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}Z` : value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString();
 }
 
 const SECRET_KEY = /(password|passwd|secret|token|api[_-]?key|authorization|private[_-]?key|passphrase)/i;

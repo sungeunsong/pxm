@@ -37,4 +37,32 @@ describe('management audit redaction', () => {
       { upsert: true },
     );
   });
+
+  it('applies audit filters and redacts legacy details again when reading', async () => {
+    const toArray = jest.fn().mockResolvedValue([{
+      _id: 'audit-1',
+      action: 'credential.updated',
+      details: { password: 'legacy-secret', safe: 'visible' },
+    }]);
+    const limit = jest.fn().mockReturnValue({ toArray });
+    const sort = jest.fn().mockReturnValue({ limit });
+    const find = jest.fn().mockReturnValue({ sort });
+    const service = new ManagementAuditService({ collection: () => ({ find }) } as any);
+
+    await expect(service.list(
+      { actor_id: 'admin', roles: ['admin'], group_ids: [], api_key_id: null } as any,
+      { groupId: 'group-a', action: 'credential.updated', from: '2026-09-01', to: '2026-09-02', limit: 50 },
+    )).resolves.toEqual([expect.objectContaining({
+      details: { password: '[REDACTED]', safe: 'visible' },
+    })]);
+    expect(find).toHaveBeenCalledWith({
+      group_id: 'group-a',
+      action: 'credential.updated',
+      created_at: {
+        $gte: '2026-09-01T00:00:00.000Z',
+        $lte: '2026-09-02T23:59:59.999Z',
+      },
+    });
+    expect(limit).toHaveBeenCalledWith(50);
+  });
 });
