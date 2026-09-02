@@ -1,1 +1,33 @@
-.operations-page{height:100%;overflow:auto;padding:22px 24px 44px;box-sizing:border-box;background:#f8fafc;color:#1e293b}.operations-intro{display:flex;justify-content:space-between;align-items:center;padding:22px 24px;border:1px solid #e2e8f0;border-radius:12px;background:#fff}.operations-intro span{color:#2563eb;font-size:12px;font-weight:800}.operations-intro h2{margin:6px 0;font-size:20px}.operations-intro p{margin:0;color:#64748b;font-size:14px}.operations-intro button,.operations-table button{display:inline-flex;align-items:center;gap:6px;border:1px solid #cfd7e6;border-radius:8px;background:#fff;padding:9px 12px;cursor:pointer}.spin{animation:ops-spin .8s linear infinite}@keyframes ops-spin{to{transform:rotate(360deg)}}.operations-error{display:flex;gap:7px;margin-top:12px;padding:11px;border-radius:8px;background:#fef2f2;color:#b91c1c}.operations-health{display:flex;align-items:center;gap:12px;margin-top:14px;padding:16px 18px;border-radius:12px}.operations-health.healthy{background:#ecfdf5;color:#047857}.operations-health.warning{background:#fffaeb;color:#b45309}.operations-health.danger{background:#fef2f2;color:#b91c1c}.operations-health div{display:flex;flex-direction:column}.operations-health small{margin-top:3px}.operations-cards{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-top:14px}.operations-cards article{display:flex;flex-direction:column;padding:17px;border:1px solid #e2e8f0;border-radius:12px;background:#fff}.operations-cards span{color:#64748b;font-size:14px}.operations-cards strong{margin:8px 0;font-size:24px}.operations-cards small{color:#94a3b8}.operations-table{margin-top:14px;border:1px solid #e2e8f0;border-radius:12px;background:#fff;overflow:hidden}.operations-table header{display:flex;justify-content:space-between;padding:15px 18px;border-bottom:1px solid #e9edf3}.operations-table h3{margin:0;font-size:16px}.operations-table header span{font-size:14px;color:#64748b}.operations-table article{display:flex;align-items:center;gap:18px;min-height:52px;padding:8px 18px;border-bottom:1px solid #f1f5f9;font-size:14px}.operations-table article>*{min-width:110px}.operations-table article>*:nth-last-child(2){flex:1}.operations-table article button{min-width:auto;color:#2563eb}.operations-table code{font-size:12px}.operations-table>p{margin:0;padding:25px;text-align:center;color:#94a3b8}.status{font-weight:800;color:#b91c1c}.expected{font-weight:800;color:#047857}@media(max-width:1000px){.operations-cards{grid-template-columns:repeat(2,1fr)}.operations-table article{overflow:auto}}@media(max-width:650px){.operations-page{padding:16px}.operations-intro{align-items:flex-start;flex-direction:column;gap:14px}.operations-cards{grid-template-columns:1fr}}
+.operations-page { height: 100%; overflow: auto; padding: 22px 24px 44px; background: var(--bg-primary); color: var(--text-primary); }
+.operations-intro button,
+.operations-table button { display: inline-flex; align-items: center; gap: 6px; padding: 9px 12px; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--bg-secondary); color: var(--text-secondary); cursor: pointer; }
+.operations-intro button:focus-visible,
+.operations-table button:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.operations-page .spin { animation: operations-spin .8s linear infinite; }
+@keyframes operations-spin { to { transform: rotate(360deg); } }
+.operations-error { display: flex; gap: 7px; margin-top: 12px; padding: 11px; border-radius: var(--radius-md); background: color-mix(in srgb, var(--color-error) 9%, var(--bg-secondary)); color: var(--color-error); }
+.operations-health { display: flex; align-items: center; gap: 12px; margin-top: 14px; padding: 16px 18px; border-radius: var(--radius-lg); }
+.operations-health.healthy { background: color-mix(in srgb, var(--color-success) 10%, var(--bg-secondary)); color: var(--color-success); }
+.operations-health.warning { background: color-mix(in srgb, var(--color-warning) 10%, var(--bg-secondary)); color: color-mix(in srgb, var(--color-warning) 72%, var(--text-primary)); }
+.operations-health.danger { background: color-mix(in srgb, var(--color-error) 9%, var(--bg-secondary)); color: var(--color-error); }
+.operations-health div { display: flex; flex-direction: column; }
+.operations-health small { margin-top: 3px; }
+.operations-cards { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 12px; margin-top: 14px; }
+.operations-cards article { display: flex; flex-direction: column; padding: 17px; border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--bg-secondary); }
+.operations-cards span { color: var(--text-tertiary); font-size: var(--font-size-sm); }
+.operations-cards strong { margin: 8px 0; font-size: var(--font-size-xl); }
+.operations-cards small { color: var(--text-disabled); }
+.operations-table { margin-top: 14px; overflow: hidden; border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--bg-secondary); }
+.operations-table header { display: flex; justify-content: space-between; padding: 15px 18px; border-bottom: 1px solid var(--border-subtle); }
+.operations-table h3 { margin: 0; font-size: var(--font-size-base); }
+.operations-table header span { color: var(--text-tertiary); font-size: var(--font-size-sm); }
+.operations-table article { display: flex; align-items: center; gap: 18px; min-height: 52px; padding: 8px 18px; border-bottom: 1px solid var(--border-subtle); font-size: var(--font-size-sm); }
+.operations-table article > * { min-width: 110px; }
+.operations-table article > *:nth-last-child(2) { flex: 1; }
+.operations-table article button { min-width: auto; color: var(--color-info); }
+.operations-table code { font-size: var(--font-size-xs); }
+.operations-table > p { margin: 0; padding: 25px; color: var(--text-disabled); text-align: center; }
+.status { color: var(--color-error); font-weight: var(--font-weight-bold); }
+.expected { color: var(--color-success); font-weight: var(--font-weight-bold); }
+@media (max-width: 1000px) { .operations-cards { grid-template-columns: repeat(2,1fr); } .operations-table article { overflow: auto; } }
+@media (max-width: 650px) { .operations-page { padding: 16px; } .operations-cards { grid-template-columns: 1fr; } }

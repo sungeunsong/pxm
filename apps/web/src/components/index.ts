@@ -24,3 +24,14 @@ export type { HeaderProps } from './Header';
 export { FeedbackProvider } from './feedback/FeedbackProvider';
 export { useFeedback } from './feedback/feedback-context';
 export type { FeedbackApi, ToastKind, ToastOptions, ConfirmOptions, PromptOptions } from './feedback/feedback-context';
+
+export { PageHeader } from './ui/PageHeader';
+export type { PageHeaderProps } from './ui/PageHeader';
+export { DataTable } from './ui/DataTable';
+export type { DataTableProps } from './ui/DataTable';
+export { StatusBadge } from './ui/StatusBadge';
+export type { StatusBadgeProps, StatusBadgeTone } from './ui/StatusBadge';
+export { EmptyState } from './ui/EmptyState';
+export type { EmptyStateProps, EmptyStateKind } from './ui/EmptyState';
+export { Drawer } from './ui/Drawer';
+export type { DrawerProps } from './ui/Drawer';

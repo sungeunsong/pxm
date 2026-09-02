@@ -386,9 +386,14 @@ designer → react-flow 캔버스 패닝(정상) + 연결 핸들 6px(의도된 �
 
 ## 6. 다음 계획
 
-### P2 — 공용 컴포넌트 추출 (권장 다음 작업)
+### P2 — 공용 컴포넌트 추출 (PXM-32 1차 완료)
 
-지금도 페이지마다 같은 것을 각자 만들고 있습니다.
+`PageHeader` · `DataTable` · `StatusBadge` · `EmptyState` · `Drawer`를
+`apps/web/src/components/ui/`에 추가하고 각각 실제 화면 2곳 이상에 적용했습니다.
+API와 접근성 계약은 `docs/ui-components.md`를 기준으로 합니다.
+
+아직 적용하지 않은 화면에는 아래와 같은 기존 구현이 남아 있으므로, 새 기능을 수정할 때
+공용 컴포넌트로 단계적으로 치환합니다.
 
 ```
 .status-badge          39곳 정의
@@ -401,11 +406,8 @@ designer → react-flow 캔버스 패닝(정상) + 연결 핸들 6px(의도된 �
 CSS 13,169줄 중 토큰 사용은 1,494회. 하드코딩 hex가 아직 **1,220개** 남아 있습니다.
 (회색 램프는 통일됐으니 이제 남은 건 대부분 토큰으로 치환 가능한 것들입니다.)
 
-뽑을 것 5종: **`PageHeader` · `DataTable` · `StatusBadge` · `EmptyState` · `Drawer`**
-
-`components/feedback/`와 `lib/status-label.ts`가 이미 그 첫 조각입니다.
-**같은 규칙으로 확장하세요: 토큰만 사용, 페이지별 중복 CSS 금지.**
-이걸 끝내면 CSS가 절반 이하로 줄어들 것으로 봅니다.
+공용 컴포넌트는 `components/feedback/`와 `lib/status-label.ts`의 원칙을 이어받습니다.
+**토큰만 사용하고, 공용 구조를 페이지 CSS에서 다시 정의하지 않습니다.**
 
 ### P3 — 다크 테마 (지금은 해볼 만함)
 

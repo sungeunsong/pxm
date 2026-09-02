@@ -3,6 +3,7 @@ import { AlertTriangle, CheckCircle2, RefreshCw, RotateCcw, ServerCog } from 'lu
 import { operationsApi, type OperationsOverview } from '../api/operations';
 import './OperationsPage.css';
 import { useFeedback } from '../components/feedback/feedback-context';
+import { PageHeader } from '../components';
 import { deliveryStatusLabel } from '../lib/status-label';
 
 const age = (ms: number | null) => {
@@ -40,10 +41,13 @@ export function OperationsPage() {
   };
 
   return <div className="operations-page">
-    <section className="operations-intro">
-      <div><p>Job 적체, 장기 대기, 만료 잠금과 외부 전송 실패를 한곳에서 확인하고 안전하게 복구합니다.</p></div>
-      <button onClick={load} disabled={loading}><RefreshCw size={15} className={loading ? 'spin' : ''}/>새로고침</button>
-    </section>
+    <PageHeader
+      className="operations-intro"
+      aria-label="운영 현황 안내"
+      icon={<ServerCog size={22} />}
+      description="Job 적체, 장기 대기, 만료 잠금과 외부 전송 실패를 한곳에서 확인하고 안전하게 복구합니다."
+      actions={<button onClick={load} disabled={loading}><RefreshCw size={15} className={loading ? 'spin' : ''}/>새로고침</button>}
+    />
     {error && <div className="operations-error"><AlertTriangle size={15}/>{error}</div>}
     {data && <>
       <section className={`operations-health ${data.status.toLowerCase()}`}>

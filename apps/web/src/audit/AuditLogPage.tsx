@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CalendarDays, ChevronRight, FileClock, RefreshCw, Search, ShieldCheck, X } from 'lucide-react';
+import { CalendarDays, ChevronRight, FileClock, RefreshCw, Search, ShieldCheck } from 'lucide-react';
 import { auditApi, type ManagementAuditEvent } from '../api/audit';
 import { authzApi, type PxmGroup } from '../api/authz';
 import type { SessionUser } from '../api/session';
+import { Drawer, EmptyState, PageHeader } from '../components';
 import './AuditLogPage.css';
 
 const ACTION_LABELS: Record<string, string> = {
@@ -59,11 +60,13 @@ export function AuditLogPage({ currentUser }: { currentUser: SessionUser }) {
   const groupNames = useMemo(() => new Map(groups.map((group) => [group.id, group.name])), [groups]);
 
   return <div className="audit-page">
-    <section className="audit-intro">
-      <div className="audit-intro-icon"><ShieldCheck size={22} /></div>
-      <div><p>누가 언제 어떤 관리 작업을 수행했는지 확인합니다. 민감정보는 저장 및 조회 단계에서 마스킹됩니다.</p></div>
-      <button className="audit-refresh" onClick={load} disabled={loading}><RefreshCw size={15} className={loading ? 'spin' : ''} />새로고침</button>
-    </section>
+    <PageHeader
+      className="audit-intro"
+      aria-label="감사 로그 안내"
+      icon={<ShieldCheck size={22} />}
+      description="누가 언제 어떤 관리 작업을 수행했는지 확인합니다. 민감정보는 저장 및 조회 단계에서 마스킹됩니다."
+      actions={<button className="audit-refresh" onClick={load} disabled={loading}><RefreshCw size={15} className={loading ? 'spin' : ''} />새로고침</button>}
+    />
 
     <section className="audit-filters" aria-label="감사 로그 필터">
       <label><span>그룹</span><select value={groupId} onChange={(event) => setGroupId(event.target.value)}><option value="">전체 그룹</option>{groups.map((group) => <option value={group.id} key={group.id}>{group.name}</option>)}</select></label>
@@ -84,12 +87,22 @@ export function AuditLogPage({ currentUser }: { currentUser: SessionUser }) {
         <span>{event.actor_id || 'system'}</span>
         <span>{event.group_id ? groupNames.get(event.group_id) || shortId(event.group_id) : '플랫폼 전체'}</span>
         <ChevronRight size={16}/>
-      </button>) : <div className="audit-empty"><ShieldCheck size={28}/><strong>{loading ? '감사 로그를 불러오는 중입니다.' : '조건에 맞는 감사 로그가 없습니다.'}</strong><span>그룹이나 조회 기간을 변경해 보세요.</span></div>}
+      </button>) : <EmptyState
+        className="audit-empty"
+        kind={loading ? 'loading' : 'empty'}
+        icon={loading ? undefined : <ShieldCheck size={28} />}
+        title={loading ? '감사 로그를 불러오는 중입니다.' : '조건에 맞는 감사 로그가 없습니다.'}
+        description="그룹이나 조회 기간을 변경해 보세요."
+      />}
     </section>
 
-    {selected && <div className="audit-drawer-backdrop" onMouseDown={() => setSelected(null)}>
-      <aside className="audit-drawer" onMouseDown={(event) => event.stopPropagation()} aria-label="감사 로그 상세">
-        <header><div><span>감사 이벤트 상세</span><h3>{actionLabel(selected.action)}</h3></div><button onClick={() => setSelected(null)} aria-label="닫기"><X size={18}/></button></header>
+    {selected && <Drawer
+      className="audit-drawer"
+      title={actionLabel(selected.action)}
+      eyebrow="감사 이벤트 상세"
+      onClose={() => setSelected(null)}
+      closeLabel="감사 로그 상세 닫기"
+    >
         <dl>
           <div><dt>발생 시각</dt><dd>{new Date(selected.created_at).toLocaleString('ko-KR')}</dd></div>
           <div><dt>수행자</dt><dd>{selected.actor_id || 'system'}</dd></div>
@@ -99,8 +112,7 @@ export function AuditLogPage({ currentUser }: { currentUser: SessionUser }) {
           <div><dt>이벤트 ID</dt><dd><code>{selected._id}</code></dd></div>
         </dl>
         <section><div><h4>상세 데이터</h4><span><ShieldCheck size={13}/>민감정보 마스킹 적용</span></div><pre>{JSON.stringify(selected.details || {}, null, 2)}</pre></section>
-      </aside>
-    </div>}
+    </Drawer>}
   </div>;
 }
 

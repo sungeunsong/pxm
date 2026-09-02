@@ -4,6 +4,7 @@ import './InstanceTracker.css';
 import { useFeedback } from '../components/feedback/feedback-context';
 import { errorMessage } from '../lib/error-message';
 import { approvalStatusLabel, instanceStateLabel } from '../lib/status-label';
+import { DataTable, EmptyState, StatusBadge } from '../components';
 
 interface Instance {
   id: string;
@@ -285,12 +286,11 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
       {/* INSTANCES LIST TABLE */}
       <div className="tracker-table-section">
         {loading && instances.length === 0 ? (
-          <div className="loading-state">인스턴스 실행 목록 조회 중...</div>
+          <EmptyState kind="loading" title="인스턴스 실행 목록 조회 중..." />
         ) : filteredInstances.length === 0 ? (
-          <div className="empty-state">조건에 부합하는 실행 인스턴스 이력이 없습니다.</div>
+          <EmptyState title="조건에 부합하는 실행 인스턴스 이력이 없습니다." description="필터를 변경하거나 목록을 다시 동기화해 보세요." />
         ) : (
-          <div className="table-wrapper">
-            <table className="premium-table">
+            <DataTable className="premium-table" containerClassName="table-wrapper" aria-label="실행 인스턴스 목록" minWidth={1040}>
               <thead>
                 <tr>
                   <th>실행 ID</th>
@@ -344,10 +344,11 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
                       )}
                     </td>
                     <td className="inst-status-cell">
-                      <div className={`status-badge-wrapper ${displayState(inst).toLowerCase()}`}>
-                        {inst.is_paused ? <PauseCircle className="status-icon paused" size={16} /> : getStatusIcon(inst.state)}
-                        <span>{instanceStateLabel(displayState(inst))}</span>
-                      </div>
+                      <StatusBadge
+                        status={displayState(inst)}
+                        icon={inst.is_paused ? <PauseCircle size={16} /> : getStatusIcon(inst.state)}
+                        label={instanceStateLabel(displayState(inst))}
+                      />
                     </td>
                     <td className="time-cell">{new Date(inst.created_at).toLocaleString()}</td>
                     <td className="time-cell">{new Date(inst.updated_at).toLocaleString()}</td>
@@ -436,8 +437,7 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
                   </tr>
                 ))}
               </tbody>
-            </table>
-          </div>
+            </DataTable>
         )}
       </div>
       {retryPreview && (

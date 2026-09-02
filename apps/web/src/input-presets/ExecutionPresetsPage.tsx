@@ -3,7 +3,7 @@ import { Braces, Check, Copy, Plus, RefreshCw, Search, Trash2, X } from 'lucide-
 import { templatesApi, type WorkflowTemplate } from '../api/templates';
 import { authzApi, type PxmGroup } from '../api/authz';
 import type { SessionUser } from '../api/session';
-import { Button } from '../components';
+import { Button, DataTable, EmptyState } from '../components';
 import { useFeedback } from '../components/feedback/feedback-context';
 import {
   createInputPreset,
@@ -213,11 +213,10 @@ export function ExecutionPresetsPage({ currentUser }: Props) {
           <div className="execution-presets-count"><strong>{filteredPresets.length}</strong><span>개 프리셋</span><i /> <strong>{new Set(filteredPresets.map((preset) => preset.workflow_id)).size}</strong><span>개 워크플로우</span></div>
         </div>
         {error && !draft && <div className="execution-presets-error">{error}</div>}
-        <div className="execution-presets-table-wrap">
-          <table className="execution-presets-table">
+          <DataTable className="execution-presets-table" containerClassName="execution-presets-table-wrap" aria-label="API 실행 프리셋 목록" minWidth={760}>
             <thead><tr><th>프리셋</th><th>워크플로우</th><th>사용 범위</th><th>입력 키</th><th>수정일</th><th /></tr></thead>
             <tbody>
-              {loading ? <tr><td colSpan={6} className="execution-presets-empty">불러오는 중입니다.</td></tr> : filteredPresets.length === 0 ? <tr><td colSpan={6} className="execution-presets-empty">조건에 맞는 실행 프리셋이 없습니다.</td></tr> : filteredPresets.map((preset) => (
+              {loading ? <tr><td colSpan={6} className="execution-presets-empty"><EmptyState compact kind="loading" title="실행 프리셋을 불러오는 중입니다." /></td></tr> : filteredPresets.length === 0 ? <tr><td colSpan={6} className="execution-presets-empty"><EmptyState compact title="조건에 맞는 실행 프리셋이 없습니다." /></td></tr> : filteredPresets.map((preset) => (
                 <tr key={preset.id} onClick={() => beginEdit(preset)}>
                   <td><strong>{preset.name}</strong><code>{preset.alias}</code></td>
                   <td><strong>{preset.workflow_name || preset.workflow_id}</strong><small>v{preset.workflow_version || '-'} · {preset.workflow_group_name || '그룹 미지정'}</small></td>
@@ -228,8 +227,7 @@ export function ExecutionPresetsPage({ currentUser }: Props) {
                 </tr>
               ))}
             </tbody>
-          </table>
-        </div>
+          </DataTable>
       </section>
 
       {draft && (

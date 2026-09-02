@@ -106,29 +106,6 @@
   box-shadow: var(--shadow-md);
 }
 
-.table-wrapper {
-  overflow-x: auto;
-  width: 100%;
-}
-
-.premium-table {
-  width: 100%;
-  border-collapse: collapse;
-  text-align: left;
-  font-size: 14px;
-}
-
-.premium-table th {
-  padding: 16px 20px;
-  background: var(--bg-tertiary);
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-tertiary);
-  font-weight: 600;
-  font-size: 14px;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-}
-
 .premium-row {
   border-bottom: 1px solid var(--border-subtle);
   transition: all 0.2s ease;
@@ -136,12 +113,6 @@
 
 .premium-row:hover {
   background: var(--bg-primary);
-}
-
-.premium-row td {
-  padding: 14px 20px;
-  vertical-align: middle;
-  color: var(--text-secondary);
 }
 
 .inst-id-cell code {
@@ -181,55 +152,6 @@
 .approval-progress-line {
   color: #6d28d9;
 }
-
-/* STATUS BADGES */
-.status-badge-wrapper {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.status-badge-wrapper.completed {
-  background: rgba(16, 185, 129, 0.1);
-  border: 1px solid rgba(16, 185, 129, 0.2);
-  color: #10b981;
-}
-
-.status-badge-wrapper.failed {
-  background: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.2);
-  color: #ef4444;
-}
-
-.status-badge-wrapper.waiting {
-  background: rgba(245, 158, 11, 0.1);
-  border: 1px solid rgba(245, 158, 11, 0.2);
-  color: #f59e0b;
-}
-
-.status-badge-wrapper.running {
-  background: rgba(59, 130, 246, 0.1);
-  border: 1px solid rgba(59, 130, 246, 0.2);
-  color: #3b82f6;
-}
-
-.status-badge-wrapper.paused {
-  background: rgba(139, 92, 246, 0.1);
-  border: 1px solid rgba(139, 92, 246, 0.22);
-  color: #7c3aed;
-}
-
-.status-icon.success { color: #10b981; }
-.status-icon.danger { color: #ef4444; }
-.status-icon.warning { color: #f59e0b; }
-.status-icon.primary { color: #3b82f6; }
-.status-icon.paused { color: #7c3aed; }
 
 .time-cell {
   color: var(--text-tertiary);
