@@ -49,14 +49,17 @@
 }
 
 .custom-node-label {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
   margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .custom-node-description {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
@@ -228,7 +231,7 @@
 .gateway-handle-label {
   position: absolute;
   right: 12px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: var(--font-weight-bold);
   pointer-events: none;
   text-transform: uppercase;

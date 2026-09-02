@@ -7,6 +7,7 @@ import {
   updateInputPreset,
 } from '../input-presets';
 import './InputPresetManager.css';
+import { useFeedback } from '../components/feedback/feedback-context';
 
 type Props = {
   open: boolean;
@@ -19,6 +20,7 @@ type Props = {
 type Draft = InputPreset & { valuesText: string; was_shared?: boolean };
 
 export function InputPresetManager({ open, workflowId, presets, onClose, onChanged }: Props) {
+  const { confirm: confirmDialog } = useFeedback();
   const [selectedId, setSelectedId] = useState('');
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saving, setSaving] = useState(false);
@@ -56,7 +58,14 @@ export function InputPresetManager({ open, workflowId, presets, onClose, onChang
   };
 
   const remove = async () => {
-    if (!draft?.can_manage || !confirm(`파라미터 세트 "${draft.name}"을 삭제할까요?`)) return;
+    if (!draft?.can_manage) return;
+    const proceed = await confirmDialog({
+      title: '파라미터 세트를 삭제할까요?',
+      description: `"${draft.name}"이(가) 제거됩니다. 이 작업은 되돌릴 수 없습니다.`,
+      confirmLabel: '삭제',
+      tone: 'danger',
+    });
+    if (!proceed) return;
     setSaving(true);
     setError(null);
     try {

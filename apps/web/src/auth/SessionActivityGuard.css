@@ -1,8 +1,8 @@
 .session-expiry-backdrop { position: fixed; inset: 0; z-index: 3000; display: flex; align-items: flex-start; justify-content: center; padding-top: 28px; background: rgba(10, 18, 36, .32); backdrop-filter: blur(2px); }
-.session-expiry-dialog { display: grid; grid-template-columns: auto minmax(260px, 1fr) auto auto; align-items: center; gap: 14px; width: min(680px, calc(100vw - 32px)); padding: 16px 18px; border: 1px solid #f5c451; border-radius: 12px; background: #fff; box-shadow: 0 18px 60px rgba(15, 23, 42, .28); color: #172033; }
+.session-expiry-dialog { display: grid; grid-template-columns: auto minmax(260px, 1fr) auto auto; align-items: center; gap: 14px; width: min(680px, calc(100vw - 32px)); padding: 16px 18px; border: 1px solid #f5c451; border-radius: 12px; background: #fff; box-shadow: 0 18px 60px rgba(15, 23, 42, .28); color: #1e293b; }
 .session-expiry-dialog > svg { color: #d97706; }
-.session-expiry-dialog strong { display: block; margin-bottom: 3px; font-size: 15px; }
-.session-expiry-dialog p { margin: 0; color: #667085; font-size: 12px; }
-.session-expiry-countdown { color: #b54708; font-family: ui-monospace, monospace; font-size: 20px; font-weight: 800; }
-.session-expiry-dialog button { height: 38px; padding: 0 16px; border: 0; border-radius: 8px; background: #2458d6; color: #fff; font-weight: 700; cursor: pointer; }
+.session-expiry-dialog strong { display: block; margin-bottom: 3px; font-size: 16px; }
+.session-expiry-dialog p { margin: 0; color: #64748b; font-size: 14px; }
+.session-expiry-countdown { color: #b45309; font-family: ui-monospace, monospace; font-size: 20px; font-weight: 800; }
+.session-expiry-dialog button { height: 38px; padding: 0 16px; border: 0; border-radius: 8px; background: #2563eb; color: #fff; font-weight: 700; cursor: pointer; }
 @media (max-width: 640px) { .session-expiry-dialog { grid-template-columns: auto 1fr; } .session-expiry-countdown, .session-expiry-dialog button { grid-column: 2; } }

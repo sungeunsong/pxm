@@ -3,7 +3,7 @@
   padding: 24px;
   overflow: auto;
   background: #f8fafc;
-  color: #172033;
+  color: #1e293b;
 }
 
 .access-header {
@@ -27,7 +27,7 @@
 .access-header p {
   margin: 6px 0 0;
   color: #64748b;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .access-page-tabs {
@@ -45,7 +45,7 @@
   gap: 10px;
   padding: 11px 13px;
   border: 1px solid #cbd5e1;
-  border-radius: 9px;
+  border-radius: 8px;
   background: #ffffff;
   color: #475569;
   text-align: left;
@@ -70,12 +70,12 @@
 }
 
 .access-page-tabs strong {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .access-page-tabs small {
   color: #64748b;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
 }
 
@@ -86,13 +86,13 @@
   padding: 10px 12px;
   border-radius: 8px;
   margin-bottom: 14px;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .access-alert.error {
   background: #fef2f2;
   border: 1px solid #fecaca;
-  color: #991b1b;
+  color: #b91c1c;
 }
 
 .access-alert.success {
@@ -109,7 +109,7 @@
   color: #dbeafe;
   border-radius: 6px;
   padding: 4px 7px;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .access-summary {
@@ -140,7 +140,7 @@
 
 .access-summary-card span {
   color: #64748b;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .access-summary-card strong {
@@ -182,7 +182,7 @@
   align-items: center;
   gap: 7px;
   padding: 0 11px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
   white-space: nowrap;
   cursor: pointer;
@@ -200,7 +200,7 @@
   border-radius: 999px;
   background: #e2e8f0;
   color: #475569;
-  font-size: 11px;
+  font-size: 12px;
   text-align: center;
 }
 
@@ -218,7 +218,7 @@
 
 .access-panel-header h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: 16px;
 }
 
 .selected-group-card {
@@ -233,18 +233,18 @@
 
 .selected-group-card > span:first-child {
   color: #1d4ed8;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
 }
 
 .selected-group-card strong {
-  color: #172033;
+  color: #1e293b;
   font-size: 14px;
 }
 
 .selected-group-card small {
   color: #475569;
-  font-size: 12px;
+  font-size: 14px;
   overflow-wrap: anywhere;
 }
 
@@ -261,11 +261,11 @@
   border-radius: 8px;
   background: #eff6ff;
   color: #1e3a8a;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .access-context strong {
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .access-context span,
@@ -313,14 +313,14 @@
 .mapping-search input {
   height: 34px;
   border: 1px solid #cbd5e1;
-  border-radius: 7px;
+  border-radius: 8px;
   padding: 0 10px;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .mapping-search > span {
   color: #64748b;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .access-form input,
@@ -330,9 +330,9 @@
 .group-member-actions select {
   height: 34px;
   border: 1px solid #cbd5e1;
-  border-radius: 7px;
+  border-radius: 8px;
   padding: 0 10px;
-  font-size: 13px;
+  font-size: 14px;
   min-width: 0;
   background: #ffffff;
 }
@@ -361,13 +361,13 @@
 .member-management-title strong,
 .new-user-form-header strong,
 .group-member-heading strong {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .member-management-title small,
 .new-user-form-header small {
   color: #64748b;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .member-search-controls {
@@ -410,19 +410,19 @@
 
 .member-search-result strong,
 .group-member-identity strong {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .member-search-result small,
 .group-member-identity small {
   margin-top: 2px;
   color: #64748b;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .new-user-card {
   border-color: #bfdbfe;
-  background: #f8fbff;
+  background: #f8fafc;
 }
 
 .new-user-form-header {
@@ -437,7 +437,7 @@
   width: 30px;
   height: 30px;
   flex: 0 0 auto;
-  border-radius: 7px;
+  border-radius: 8px;
   background: #dbeafe;
   color: #1d4ed8;
 }
@@ -468,7 +468,7 @@
 
 .group-member-heading span {
   color: #64748b;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .group-member-actions {
@@ -539,13 +539,13 @@
 
 .user-management-intro h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: 16px;
 }
 
 .user-management-intro p {
   margin: 4px 0 0;
   color: #64748b;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .user-directory-header {
@@ -561,12 +561,12 @@
 }
 
 .user-directory-header strong {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .user-directory-header small {
   color: #64748b;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .user-directory-header label {
@@ -577,7 +577,7 @@
   height: 34px;
   padding: 0 9px;
   border: 1px solid #cbd5e1;
-  border-radius: 7px;
+  border-radius: 8px;
   background: #ffffff;
   color: #64748b;
 }
@@ -587,7 +587,7 @@
   width: 100%;
   border: 0;
   outline: 0;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .user-detail-panel {
@@ -595,7 +595,7 @@
   gap: 16px;
   padding: 14px;
   border: 1px solid #dbe3ef;
-  border-radius: 9px;
+  border-radius: 8px;
   background: #fbfdff;
 }
 
@@ -614,13 +614,13 @@
 }
 
 .user-detail-heading strong {
-  font-size: 15px;
+  font-size: 16px;
 }
 
 .user-detail-heading small {
   margin-top: 3px;
   color: #64748b;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .user-account-form,
@@ -636,12 +636,12 @@
 }
 
 .user-detail-section-title strong {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .user-detail-section-title small {
   color: #64748b;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .user-account-form label {
@@ -653,7 +653,7 @@
 
 .user-account-form label > span {
   color: #475569;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
 }
 
@@ -665,9 +665,9 @@
   min-width: 0;
   padding: 0 9px;
   border: 1px solid #cbd5e1;
-  border-radius: 7px;
+  border-radius: 8px;
   background: #ffffff;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .user-account-form button {
@@ -692,7 +692,7 @@
   gap: 10px;
   padding: 9px;
   border: 1px solid #e2e8f0;
-  border-radius: 7px;
+  border-radius: 8px;
   background: #ffffff;
 }
 
@@ -702,13 +702,13 @@
 }
 
 .user-membership-row > span:first-child strong {
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .user-membership-row > span:first-child small {
   margin-top: 2px;
   color: #64748b;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .user-membership-row > span:last-child {
@@ -724,7 +724,7 @@
   gap: 8px;
   background: #f8fafc;
   border: 1px solid #e2e8f0;
-  border-radius: 7px;
+  border-radius: 8px;
   padding: 8px;
 }
 
@@ -733,7 +733,7 @@
   align-items: center;
   gap: 6px;
   color: #334155;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .access-list,
@@ -783,7 +783,7 @@
 .entity-row strong,
 .key-row strong {
   display: block;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .access-list-row small,
@@ -791,7 +791,7 @@
 .key-row small {
   display: block;
   color: #64748b;
-  font-size: 12px;
+  font-size: 14px;
   overflow-wrap: anywhere;
 }
 
@@ -800,7 +800,7 @@
   align-self: flex-start;
   border-radius: 999px;
   padding: 3px 8px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
 }
@@ -830,7 +830,7 @@
   justify-content: flex-end;
   gap: 8px;
   color: #64748b;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .key-row {
@@ -861,12 +861,12 @@
 
 .mapping-identity strong {
   margin-bottom: 3px;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .mapping-identity small {
   color: #64748b;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .mapping-meta,
@@ -889,7 +889,7 @@
   padding: 3px 8px;
   background: #fff7ed;
   color: #c2410c;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
 }
@@ -907,7 +907,7 @@
 .access-empty {
   padding: 18px 10px;
   color: #64748b;
-  font-size: 13px;
+  font-size: 14px;
   text-align: center;
   background: #f8fafc;
   border: 1px dashed #cbd5e1;

@@ -169,6 +169,8 @@ export const CommandRegistryPage: React.FC = () => {
                     icon={<Trash2 size={14} />}
                     onClick={() => void handleDisable(command.command_id)}
                     disabled={!command.enabled}
+                    aria-label={`${command.display_name} 명령어 비활성화`}
+                    title="비활성화"
                   />
                 </div>
               ))}

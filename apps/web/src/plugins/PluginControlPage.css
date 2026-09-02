@@ -61,13 +61,13 @@
 .plugin-summary-card span {
   display: block;
   color: #64748b;
-  font-size: 12px;
+  font-size: 14px;
   margin-bottom: 6px;
 }
 
 .plugin-summary-card strong {
   color: #0f172a;
-  font-size: 22px;
+  font-size: 20px;
 }
 
 .plugin-control-layout {
@@ -95,7 +95,7 @@
 
 .plugin-form-id {
   color: #64748b;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .plugin-empty {
@@ -146,7 +146,7 @@
 
 .plugin-meta {
   color: #64748b;
-  font-size: 12px;
+  font-size: 14px;
   margin-top: 3px;
 }
 
@@ -155,7 +155,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: 12px;
   padding: 3px 7px;
   border-radius: 999px;
   border: 1px solid #cbd5e1;

@@ -2,10 +2,13 @@ import { useCallback, useEffect, useState } from 'react';
 import { Mail, RefreshCw, RotateCcw, X } from 'lucide-react';
 import { notificationsApi, type NotificationDelivery } from '../api/notifications';
 import './NotificationManagementPage.css';
+import { useFeedback } from '../components/feedback/feedback-context';
+import { deliveryStatusLabel } from '../lib/status-label';
 
 const statuses = ['', 'PENDING', 'RUNNING', 'SENT', 'FAILED', 'DEAD_LETTER', 'CANCELED'];
 
 export function NotificationManagementPage() {
+  const { prompt: promptDialog } = useFeedback();
   const [items, setItems] = useState<NotificationDelivery[]>([]);
   const [status, setStatus] = useState('');
   const [selected, setSelected] = useState<(NotificationDelivery & { attempts: any[] }) | null>(null);
@@ -21,16 +24,21 @@ export function NotificationManagementPage() {
   useEffect(() => { void load(); }, [load]);
 
   const retry = async (item: NotificationDelivery) => {
-    const reason = window.prompt('재발송 사유를 입력하세요. (3자 이상)');
+    const reason = await promptDialog({
+      title: '알림을 재발송할까요?',
+      description: 'Task가 아직 OPEN인 경우에만 재발송됩니다.',
+      label: '재발송 사유 (3자 이상)',
+      placeholder: '예: 승인자 메일 수신 실패',
+      confirmLabel: '재발송',
+    });
     if (!reason || reason.trim().length < 3) return;
-    if (!window.confirm('Task가 아직 OPEN인 경우에만 재발송됩니다. 계속할까요?')) return;
     try { await notificationsApi.retry(item.id, reason.trim()); setSelected(null); await load(); }
     catch (e) { setError(e instanceof Error ? e.message : '재발송 실패'); }
   };
 
   return <div className="notification-page">
     <section className="notification-intro">
-      <div><span>APPROVAL NOTIFICATIONS</span><h2>승인자 알림 발송 이력</h2><p>새 결재 요청 이메일의 성공·실패와 재시도 결과를 확인합니다.</p></div>
+      <div><p>새 결재 요청 이메일의 성공·실패와 재시도 결과를 확인합니다.</p></div>
       <button onClick={load} disabled={loading}><RefreshCw size={15} className={loading ? 'spin' : ''}/>새로고침</button>
     </section>
     <section className="notification-summary">
@@ -44,7 +52,7 @@ export function NotificationManagementPage() {
       <header><span>결재 제목</span><span>승인자</span><span>채널</span><span>상태</span><span>시도</span><span>갱신 시각</span><span>조치</span></header>
       {items.map(item => <article key={item.id} onClick={() => notificationsApi.detail(item.id).then(setSelected).catch(e => setError(e.message))}>
         <strong>{item.title}</strong><span>{item.recipient_id}<small>{item.recipient_hint || ''}</small></span><span><Mail size={13}/> 이메일</span>
-        <span className={`notification-status ${item.status.toLowerCase()}`}>{item.status}</span>
+        <span className={`notification-status ${item.status.toLowerCase()}`}>{deliveryStatusLabel(item.status)}</span>
         <span>{item.attempt_count}/{item.max_attempts}</span><span>{new Date(item.updated_at).toLocaleString()}</span>
         <span>{['FAILED','DEAD_LETTER','CANCELED'].includes(item.status) && <button onClick={e => { e.stopPropagation(); void retry(item); }}><RotateCcw size={13}/>재발송</button>}</span>
       </article>)}

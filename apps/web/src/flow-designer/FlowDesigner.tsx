@@ -1,10 +1,12 @@
 import React, { useMemo, useState, useRef } from 'react';
 import type { Node } from 'reactflow';
 import type { Edge } from 'reactflow';
-import { Braces, CheckSquare, CircleCheck, Clipboard, ClipboardPaste, Clock, Diamond, Inbox, PanelRightClose, PanelRightOpen, Play, Plus, Search, Star, Terminal, Workflow, X } from 'lucide-react';
+import { Braces, CheckSquare, CircleCheck, Clipboard, ClipboardPaste, Clock, Diamond, Inbox, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Play, Plus, Search, Star, Terminal, Workflow, X } from 'lucide-react';
 import { Button } from '../components/Button';
 import { Header } from '../components/Header';
 import { Input } from '../components/Input';
+import { useFeedback } from '../components/feedback/feedback-context';
+import { errorMessage } from '../lib/error-message';
 import { FlowCanvas } from './FlowCanvas';
 import type { FlowCanvasRef } from './FlowCanvas';
 import type { CustomNodeData, FormSchema } from './form-types';
@@ -61,6 +63,7 @@ type WorkflowClipboard = {
 };
 
 export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onExitTrace, initialMonitorInstanceId, currentUser }) => {
+  const { toast, confirm: confirmDialog, prompt: promptDialog } = useFeedback();
   const [darkMode, setDarkMode] = useState(true);
   const [selectedNode, setSelectedNode] = useState<Node<CustomNodeData> | null>(null);
   const [canvasNodes, setCanvasNodes] = useState<Node<CustomNodeData>[]>([]);
@@ -78,7 +81,9 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [isExecutionModalOpen, setIsExecutionModalOpen] = useState(false);
   const [isExecutionPanelOpen, setIsExecutionPanelOpen] = useState(false);
-  const [isPropertiesPanelOpen, setIsPropertiesPanelOpen] = useState(true);
+  const [isPropertiesPanelOpen, setIsPropertiesPanelOpen] = useState(false);
+  // 팔레트는 기본 rail(아이콘)로 접어 캔버스를 넓게 쓴다. 선택은 기억한다.
+  const [isPaletteOpen, setIsPaletteOpen] = useState(() => localStorage.getItem('pxm.designer.palette') === 'open');
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [executionInstanceId, setExecutionInstanceId] = useState<string | null>(null);
   const [traceInstanceId, setTraceInstanceId] = useState<string | null>(null);
@@ -236,6 +241,10 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
     setExecutionInstanceId(null);
     setExecutionFormSchema(undefined);
     flowCanvasRef.current?.setNodesAndEdges(tab.nodes, tab.edges);
+    // 노드를 교체한 뒤에는 항상 화면에 맞춘다.
+    // (이게 없으면 18개짜리 워크플로우를 열어도 직전 viewport가 남아 첫 노드만 크게 보인다)
+    // 이 경로는 선택을 해제하므로 패널은 닫힌다 → 전체 폭 기준.
+    flowCanvasRef.current?.fitView(0);
     window.setTimeout(() => {
       suppressCanvasDirtyRef.current = false;
     }, 0);
@@ -262,13 +271,19 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
     restoreDesignerTab(newTab);
   };
 
-  const handleCloseDesignerTab = (tabId: string) => {
+  const handleCloseDesignerTab = async (tabId: string) => {
     const closingTab = tabId === activeDesignerTabId ? buildCurrentTabSnapshot(tabId) : designerTabs.find((tab) => tab.tabId === tabId);
     if (!closingTab) {
       return;
     }
-    if (closingTab.isDirty && !window.confirm(`"${getDesignerTabTitle(closingTab)}" 탭의 저장하지 않은 변경사항을 버릴까요?`)) {
-      return;
+    if (closingTab.isDirty) {
+      const discard = await confirmDialog({
+        title: '저장하지 않은 변경사항이 있습니다',
+        description: `"${getDesignerTabTitle(closingTab)}" 탭을 닫으면 변경사항이 사라집니다.`,
+        confirmLabel: '닫고 버리기',
+        tone: 'danger',
+      });
+      if (!discard) return;
     }
 
     if (designerTabs.length === 1) {
@@ -301,7 +316,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
     const edges = flowCanvasRef.current?.getEdges() || canvasEdges;
     const selectedNodes = nodes.filter((node) => node.selected || node.id === selectedNode?.id);
     if (selectedNodes.length === 0) {
-      window.alert('복사할 노드를 먼저 선택하세요.');
+      toast.info('복사할 노드를 먼저 선택하세요.');
       return;
     }
 
@@ -314,7 +329,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
       nodes: selectedNodes.map(cloneNodeForClipboard),
       edges: selectedEdges.map(cloneEdgeForClipboard),
     });
-  }, [activeDesignerTabId, canvasEdges, canvasNodes, currentTemplateName, selectedNode]);
+  }, [activeDesignerTabId, canvasEdges, canvasNodes, currentTemplateName, selectedNode, toast]);
 
   const handlePasteSubflow = React.useCallback(() => {
     if (!workflowClipboard) {
@@ -390,7 +405,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
 
   const handleRun = async (formData?: Record<string, any>) => {
     if (!currentTemplateId) {
-      alert('먼저 템플릿을 저장하거나 불러와주세요.');
+      toast.info('먼저 템플릿을 저장하거나 불러와주세요.');
       return;
     }
 
@@ -437,7 +452,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
       console.log('Workflow execution started:', result);
     } catch (error) {
       console.error('Failed to execute workflow:', error);
-      alert('워크플로우 실행에 실패했습니다.');
+      toast.error('워크플로우 실행에 실패했습니다.', { description: errorMessage(error) });
     }
   };
 
@@ -570,10 +585,16 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
     const nodes = flowCanvasRef.current?.getNodes() || [];
     const edges = flowCanvasRef.current?.getEdges() || [];
 
-    const templateName = prompt('템플릿 이름을 입력하세요:', currentTemplateName || 'New Workflow');
+    const templateName = await promptDialog({
+      title: '워크플로우 저장',
+      label: '워크플로우 이름',
+      defaultValue: currentTemplateName || 'New Workflow',
+      placeholder: '예: IT 권한 신청',
+      confirmLabel: '저장',
+    });
     if (!templateName) return;
     if (!workflowGroupId) {
-      alert('워크플로우를 저장하려면 관리 그룹을 선택해야 합니다.');
+      toast.error('관리 그룹을 먼저 선택해 주세요.', { description: '워크플로우는 관리 그룹 없이 저장할 수 없습니다.' });
       setSelectedNode(null);
       setIsPropertiesPanelOpen(true);
       return;
@@ -615,7 +636,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
               : tab,
           ),
         );
-        alert(`템플릿이 업데이트되었습니다: ${updated.name} (v${updated.version})`);
+        toast.success('워크플로우를 저장했습니다.', { description: `${updated.name} · v${updated.version}` });
       } else {
         const created = await templatesApi.create({
           name: templateName,
@@ -652,11 +673,11 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
               : tab,
           ),
         );
-        alert(`템플릿이 저장되었습니다: ${created.name}`);
+        toast.success('워크플로우를 저장했습니다.', { description: created.name });
       }
     } catch (error) {
       console.error('Failed to save template:', error);
-      alert('템플릿 저장에 실패했습니다.');
+      toast.error('워크플로우 저장에 실패했습니다.', { description: errorMessage(error) });
     }
   };
 
@@ -666,7 +687,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
 
   const handleExport = async () => {
     if (!currentTemplateId) {
-      alert('먼저 템플릿을 저장하거나 불러와주세요.');
+      toast.info('먼저 템플릿을 저장하거나 불러와주세요.');
       return;
     }
 
@@ -675,7 +696,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
       downloadJson(document, `${safeFileName(document.workflow.name)}.pxm-workflow.json`);
     } catch (error) {
       console.error('Failed to export workflow:', error);
-      alert('워크플로우 내보내기에 실패했습니다.');
+      toast.error('워크플로우 내보내기에 실패했습니다.', { description: errorMessage(error) });
     }
   };
 
@@ -693,10 +714,10 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
       const document = JSON.parse(text);
       const imported = await templatesApi.import(document);
       openTemplateInDesignerTab(imported);
-      alert(`워크플로우를 가져왔습니다: ${imported.name}`);
+      toast.success('워크플로우를 가져왔습니다.', { description: imported.name });
     } catch (error) {
       console.error('Failed to import workflow:', error);
-      alert(error instanceof Error ? `워크플로우 가져오기에 실패했습니다: ${error.message}` : '워크플로우 가져오기에 실패했습니다.');
+      toast.error('워크플로우 가져오기에 실패했습니다.', { description: errorMessage(error) });
     }
   };
 
@@ -706,7 +727,6 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
 
   const handleTemplateSelect = (template: WorkflowTemplate) => {
     openTemplateInDesignerTab(template);
-    alert(`템플릿 "${template.name}"을 불러왔습니다.`);
   };
 
   const openTemplateInDesignerTab = (template: WorkflowTemplate) => {
@@ -770,7 +790,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
       
     } catch (error) {
       console.error('Failed to restore history:', error);
-      alert('실행 이력을 불러오는 데 실패했습니다.');
+      toast.error('실행 이력을 불러오지 못했습니다.', { description: errorMessage(error) });
     }
   };
 
@@ -783,6 +803,20 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
   const handleToggleDarkMode = () => {
     setDarkMode(!darkMode);
   };
+
+  // 패널이 열리면 가려지는 폭을 뺀 영역에, 닫히면 전체 폭에 다시 맞춘다.
+  // 개폐 순간에만 움직이므로 노드를 바꿔 선택해도 화면이 흔들리지 않는다.
+  const previousPanelOpenRef = useRef(isPropertiesPanelOpen);
+  React.useEffect(() => {
+    if (previousPanelOpenRef.current === isPropertiesPanelOpen) return;
+    previousPanelOpenRef.current = isPropertiesPanelOpen;
+    flowCanvasRef.current?.fitView(isPropertiesPanelOpen ? PROPERTIES_PANEL_WIDTH : 0);
+  }, [isPropertiesPanelOpen]);
+
+  const togglePalette = () => setIsPaletteOpen((current) => {
+    localStorage.setItem('pxm.designer.palette', current ? 'rail' : 'open');
+    return !current;
+  });
 
   const handleNodeSelect = (node: Node | null) => {
     if (node?.id !== selectedNode?.id) {
@@ -922,7 +956,13 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
   return (
     <div className={`flow-designer${traceInstanceId ? ' trace-mode' : ''}`}>
       <Header
-        title={traceInstanceId ? '실행 추적' : 'PXM Flow Designer'}
+        workflowName={traceInstanceId ? `실행 추적 · ${currentTemplateName || '워크플로우'}` : currentTemplateName || undefined}
+        statusLabel={traceInstanceId ? undefined : activeDesignerTab?.lifecycleStatus === 'PUBLISHED'
+          ? publishedLabel(activeDesignerTab.activePublishedVersion)
+          : activeDesignerTab?.lifecycleStatus === 'DISABLED'
+            ? '배포 중지'
+            : currentTemplateId ? '초안' : undefined}
+        dirty={!traceInstanceId && Boolean(activeDesignerTab?.isDirty)}
         actions={(
           <>
             {traceInstanceId && <div className="trace-mode-badge"><span>READ ONLY</span><strong>{currentTemplateName || '워크플로우'} · {shortInstanceId(traceInstanceId)}</strong></div>}
@@ -967,7 +1007,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
                 {tab.lifecycleStatus && (
                   <span className={`workflow-tab-lifecycle ${tab.lifecycleStatus.toLowerCase()}`}>
                     {tab.lifecycleStatus === 'PUBLISHED'
-                      ? `배포 v${tab.activePublishedVersion}`
+                      ? publishedLabel(tab.activePublishedVersion)
                       : tab.lifecycleStatus === 'DISABLED'
                         ? '배포 중지'
                         : '초안'}
@@ -1035,27 +1075,37 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
       />
 
       <div className={`flow-designer-content${isPropertiesPanelOpen ? '' : ' properties-collapsed'}${traceInstanceId ? ' trace-content' : ''}`}>
-        {!traceInstanceId && <aside className="node-palette">
+        {!traceInstanceId && <aside className={`node-palette${isPaletteOpen ? '' : ' rail'}`}>
           <div className="palette-header">
-            <h3 className="palette-title">노드 팔레트</h3>
+            <h3 className="palette-title">노드</h3>
+            <button
+              type="button"
+              className="palette-toggle"
+              onClick={togglePalette}
+              aria-label={isPaletteOpen ? '노드 팔레트 접기' : '노드 팔레트 펼치기'}
+              title={isPaletteOpen ? '접기' : '펼치기'}
+            >
+              {isPaletteOpen ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}
+            </button>
           </div>
           <div className="palette-content">
-            <div className="palette-section">
+            <div className="palette-section palette-section-basic">
               <h4 className="palette-section-title">기본 노드</h4>
               <div className="palette-nodes">
-                <div className="palette-node" draggable onDragStart={(e) => onDragStart(e, 'start', 'Start')}>
+                <div className="palette-node" draggable title="Start · 워크플로우 시작 (Manual · Schedule · DB Watch)" onDragStart={(e) => onDragStart(e, 'start', 'Start')}>
                   <div className="palette-node-icon" style={{ background: 'var(--node-start)' }}><Play size={16} fill="currentColor" /></div>
                   <div className="palette-node-text">
                     <span className="palette-node-label">Start</span>
                     <span className="palette-node-caption">Manual · Schedule · DB Watch</span>
                   </div>
                 </div>
-                <div className="palette-node" draggable onDragStart={(e) => onDragStart(e, 'timer', 'Timer')}>
+                <div className="palette-node" draggable title="Timer · 지정 시간 대기" onDragStart={(e) => onDragStart(e, 'timer', 'Timer')}>
                   <div className="palette-node-icon" style={{ background: 'var(--node-timer)' }}><Clock size={16} /></div>
                   <span className="palette-node-label">Timer</span>
                 </div>
                 <div
                   className="palette-node"
+                  title="JS Node · JavaScript 실행"
                   draggable
                   onDragStart={(e) =>
                     onDragStart(e, 'script', 'JS Node', {
@@ -1071,6 +1121,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
                 </div>
                 <div
                   className="palette-node"
+                  title="Command · 허용된 명령어 실행"
                   draggable
                   onDragStart={(e) =>
                     onDragStart(e, 'command', 'Command', {
@@ -1085,16 +1136,17 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
                   <div className="palette-node-icon" style={{ background: 'var(--node-command)' }}><Terminal size={16} /></div>
                   <span className="palette-node-label">Command</span>
                 </div>
-                <div className="palette-node" draggable onDragStart={(e) => onDragStart(e, 'gateway', 'Gateway')}>
+                <div className="palette-node" draggable title="Gateway · 조건 분기" onDragStart={(e) => onDragStart(e, 'gateway', 'Gateway')}>
                   <div className="palette-node-icon" style={{ background: 'var(--node-gateway)' }}><Diamond size={16} fill="currentColor" /></div>
                   <span className="palette-node-label">Gateway</span>
                 </div>
-                <div className="palette-node" draggable onDragStart={(e) => onDragStart(e, 'approval', 'Approval')}>
+                <div className="palette-node" draggable title="Approval · 결재 요청" onDragStart={(e) => onDragStart(e, 'approval', 'Approval')}>
                   <div className="palette-node-icon" style={{ background: 'var(--node-approval)' }}><CheckSquare size={16} /></div>
                   <span className="palette-node-label">Approval</span>
                 </div>
                 <div
                   className="palette-node"
+                  title="Workflow Call · 다른 워크플로우 호출"
                   draggable
                   onDragStart={(e) =>
                     onDragStart(e, 'workflow_call', 'Workflow Call', {
@@ -1108,14 +1160,14 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
                   <div className="palette-node-icon" style={{ background: 'var(--node-workflow-call)' }}><Workflow size={16} /></div>
                   <span className="palette-node-label">Workflow Call</span>
                 </div>
-                <div className="palette-node" draggable onDragStart={(e) => onDragStart(e, 'end', 'End')}>
+                <div className="palette-node" draggable title="End · 워크플로우 종료" onDragStart={(e) => onDragStart(e, 'end', 'End')}>
                   <div className="palette-node-icon" style={{ background: 'var(--node-end)' }}><CircleCheck size={16} /></div>
                   <span className="palette-node-label">End</span>
                 </div>
               </div>
             </div>
 
-            <div className="palette-section">
+            <div className="palette-section palette-section-plugins">
               <h4 className="palette-section-title">플러그인 노드</h4>
               <div className="palette-search">
                 <Search size={14} />
@@ -1153,6 +1205,15 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
               ))}
             </div>
           </div>
+          <button
+            type="button"
+            className="palette-rail-search"
+            onClick={() => setIsPaletteOpen(true)}
+            aria-label="플러그인 노드 검색"
+            title="플러그인 노드 검색"
+          >
+            <Search size={16} />
+          </button>
         </aside>}
 
         <main className="canvas">
@@ -1164,6 +1225,18 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
             readOnly={Boolean(traceInstanceId)}
           />
         </main>
+
+        {!isPropertiesPanelOpen && (
+          <button
+            type="button"
+            className="properties-reopen"
+            onClick={() => setIsPropertiesPanelOpen(true)}
+            aria-label="속성 패널 열기"
+            title={selectedNode ? `${selectedNode.data.label} 속성` : '워크플로우 설정'}
+          >
+            <PanelRightOpen size={16} />
+          </button>
+        )}
 
         <aside className={`properties-panel${isPropertiesPanelOpen ? '' : ' collapsed'}`}>
           {isExecutionPanelOpen ? (
@@ -1327,6 +1400,15 @@ function createDesignerTabId() {
 function getDesignerTabTitle(tab: DesignerTab) {
   const title = tab.templateName || 'Untitled Workflow';
   return tab.traceInstanceId ? `${title} · ${shortInstanceId(tab.traceInstanceId)}` : title;
+}
+
+// lifecycle_status가 PUBLISHED여도 active_published_version이 비어 있는 데이터가 있다.
+// 그 경우 'v null'을 찍는 대신 버전 없이 '배포'만 표시한다.
+// .properties-panel 의 clamp(360px, 26vw, 440px) 상한과 맞춘다.
+const PROPERTIES_PANEL_WIDTH = 440;
+
+function publishedLabel(version?: number | null) {
+  return typeof version === 'number' ? `배포 v${version}` : '배포';
 }
 
 function shortInstanceId(instanceId: string) {

@@ -6,11 +6,9 @@ import {
   Search, 
   Inbox, 
   FileJson,
-  Bell,
   KeyRound,
   Plug,
   Terminal,
-  HelpCircle,
   Shield,
   PanelLeftClose,
   PanelLeftOpen,
@@ -111,6 +109,27 @@ const TAB_TO_ROUTE: Record<ActiveTab, string> = {
   operations: 'operations',
   notifications: 'notifications',
   audit: 'audit',
+};
+
+const PAGE_TITLE: Record<ActiveTab, string> = {
+  dashboard: '대시보드',
+  designer: '워크플로우 설계',
+  request: '워크플로우 관리',
+  myRequests: '내 요청',
+  presets: '실행 프리셋',
+  tracker: '실행 모니터링',
+  inbox: '내 결재함',
+  credentials: '연동 자격증명',
+  commands: '명령어 관리',
+  plugins: '플러그인 제어',
+  pluginRegistry: '플러그인 등록',
+  access: '사용자 및 권한',
+  security: '제품 설정',
+  integrity: '실행 이상 점검',
+  webhooks: '결과 Webhook',
+  operations: '운영 상태',
+  notifications: '승인자 알림',
+  audit: '감사 로그',
 };
 
 const USER_TABS = new Set<ActiveTab>(['request', 'myRequests', 'inbox']);
@@ -358,112 +377,11 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
         <header className="app-top-header">
           <div className="header-left">
             <h1 className="header-title">
-              {activeTab === 'dashboard' && "종합 상황실 / 대시보드"}
-              {activeTab === 'designer' && "Flow Designer"}
-              {activeTab === 'request' && (user.role === 'user' ? "요청하기" : "워크플로우 관리")}
-              {activeTab === 'myRequests' && "내 요청"}
-              {activeTab === 'presets' && "API 실행 프리셋"}
-              {activeTab === 'tracker' && "운영자 / 모니터링 담당 상세 화면 구성"}
-              {activeTab === 'inbox' && "내 결재함"}
-              {activeTab === 'credentials' && "Credential Store 관리"}
-              {activeTab === 'access' && "Access Management"}
-              {activeTab === 'security' && "제품 설정"}
-              {activeTab === 'commands' && "Command Registry 관리"}
-              {activeTab === 'plugins' && "Plugin Control 관리"}
-              {activeTab === 'pluginRegistry' && "Plugin Registry 관리"}
-              {activeTab === 'integrity' && "워크플로우 실행 이상 점검"}
-              {activeTab === 'webhooks' && "외부 결과 Webhook"}
-              {activeTab === 'operations' && "실행·Outbox 운영 상태"}
-              {activeTab === 'notifications' && "승인자 알림 발송 이력"}
-              {activeTab === 'audit' && "감사 로그"}
+              {activeTab === 'request' && user.role === 'user' ? '요청하기' : PAGE_TITLE[activeTab]}
             </h1>
-            <p className="header-subtitle">
-              {activeTab === 'dashboard' && "전체 워크플로우 실시간 상태 모니터링 및 주요 KPI 요약"}
-              {activeTab === 'designer' && "프로세스 템플릿 설계, 배포, 관리 및 노드 속성 설정"}
-              {activeTab === 'request' && (user.role === 'user' ? "사용할 워크플로우를 선택하고 요청을 시작합니다" : "배포된 워크플로우를 조회하고 트리거 상태와 수동 실행을 관리합니다")}
-              {activeTab === 'myRequests' && "내가 시작한 요청의 현재 결재 단계와 처리 결과를 확인합니다"}
-              {activeTab === 'presets' && "워크플로우별 Start 입력값과 API 호출 alias를 한곳에서 관리합니다"}
-              {activeTab === 'tracker' && "실행 모니터링, 실패 대응, 재시도/운영 조치 및 로그 분석"}
-              {activeTab === 'inbox' && "승인 대기 Task 확인 및 처리"}
-              {activeTab === 'credentials' && "외부 연동 secret을 안전하게 관리하고 노드에서는 credential ID만 참조합니다"}
-              {activeTab === 'access' && "그룹, 유저, 서비스계정, API key 발급과 폐기를 관리합니다"}
-              {activeTab === 'security' && "제품 전역 보안과 운영 정책을 관리합니다"}
-              {activeTab === 'commands' && "workflow에서 사용할 allowlist command를 최고관리자가 등록하고 통제합니다"}
-              {activeTab === 'plugins' && "Flow Designer에서 사용할 플러그인의 활성 상태와 workspace 정책을 관리합니다"}
-              {activeTab === 'pluginRegistry' && "플러그인 manifest를 등록, 검증, hot reload합니다"}
-              {activeTab === 'integrity' && "연결이 끊겼거나 처리 작업 없이 멈춘 실행 데이터를 진단하고 안전하게 복구합니다"}
-              {activeTab === 'webhooks' && "최종 승인·반려·취소 결과의 외부 전달, 실패 이력과 재전송을 관리합니다"}
-              {activeTab === 'operations' && "Engine Job, 장기 대기, 만료 잠금과 외부 전송 적체를 진단하고 안전하게 복구합니다"}
-              {activeTab === 'notifications' && "PXM 승인자 이메일의 발송 상태, 실패 원인과 재발송을 관리합니다"}
-              {activeTab === 'audit' && "관리 작업의 수행자, 대상과 변경 상세를 안전하게 추적합니다"}
-            </p>
           </div>
 
           <div className="header-right">
-            {activeTab === 'inbox' && (
-              <div className="info-banner-bubble">
-                승인자는 "내 결재함"에서 대기 Task를 확인하고, 상세 내용을 검토한 후 승인/반려/보류 처리할 수 있습니다.
-              </div>
-            )}
-            {activeTab === 'tracker' && (
-              <div className="info-banner-bubble info-orange">
-                운영자/모니터링 담당은 실행 현황 모니터링, 실패 원인 분석, 재시도 및 로그 확인을 통해 안정적인 운영을 지원합니다.
-              </div>
-            )}
-            {activeTab === 'credentials' && (
-              <div className="info-banner-bubble">
-                Secret 원문은 저장 후 다시 노출하지 않으며, 사용 이력은 audit log에 기록됩니다.
-              </div>
-            )}
-            {activeTab === 'access' && (
-              <div className="info-banner-bubble">
-                API key 원문은 생성 직후 한 번만 표시되며, 이후에는 prefix만 조회됩니다.
-              </div>
-            )}
-            {activeTab === 'security' && (
-              <div className="info-banner-bubble">
-                정책 변경은 최고관리자 비밀번호 재확인 후 감사 로그에 기록됩니다.
-              </div>
-            )}
-            {activeTab === 'commands' && (
-              <div className="info-banner-bubble">
-                Command는 registry에 등록된 executable만 실행되며 실행 이력은 audit log로 남습니다.
-              </div>
-            )}
-            {activeTab === 'plugins' && (
-              <div className="info-banner-bubble">
-                Disabled 플러그인은 디자이너 팔레트와 실행 API에서 사용할 수 없습니다.
-              </div>
-            )}
-            {activeTab === 'pluginRegistry' && (
-              <div className="info-banner-bubble">
-                파일 manifest는 읽기 전용이며, 운영자가 추가한 manifest는 Mongo registry에 저장됩니다.
-              </div>
-            )}
-            {activeTab === 'integrity' && (
-              <div className="info-banner-bubble info-orange">
-                점검만으로 데이터가 변경되지는 않으며, 복구 전 현재 상태를 다시 확인합니다.
-              </div>
-            )}
-            {activeTab === 'audit' && (
-              <div className="info-banner-bubble">
-                민감정보는 기록 단계와 조회 단계에서 마스킹됩니다.
-              </div>
-            )}
-            
-            <div className="header-search">
-              <input type="text" placeholder="메뉴, 업무, 요청명 검색 (Ctrl + K)" />
-            </div>
-            
-            <button className="header-icon-btn badge-btn">
-              <Bell size={16} />
-              <span className="btn-badge">12</span>
-            </button>
-            
-            <button className="header-icon-btn">
-              <HelpCircle size={16} />
-            </button>
-            
             <button className="header-profile" onClick={() => setAccountOpen(true)}>
               <span className="header-profile-avatar">{user.display_name.slice(0, 1)}</span>
               <div className="profile-text">

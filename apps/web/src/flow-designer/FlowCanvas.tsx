@@ -8,8 +8,10 @@ import ReactFlow, {
   BackgroundVariant,
   MiniMap,
 } from 'reactflow';
+import { getRectOfNodes, getTransformForBounds } from 'reactflow';
 import type { Node, Edge, Connection, NodeTypes, ReactFlowInstance } from 'reactflow';
 import 'reactflow/dist/style.css';
+import { useFeedback } from '../components/feedback/feedback-context';
 import { CustomNode } from './CustomNode';
 import type { CustomNodeData } from './form-types';
 import './FlowCanvas.css';
@@ -52,14 +54,26 @@ export interface FlowCanvasRef {
   setNodesAndEdges: (nodes: Node[], edges: Edge[]) => void;
   appendNodesAndEdges: (nodes: Node[], edges: Edge[]) => void;
   updateEdgesByNodeStatus: (nodeId: string, status: string) => void;
-  fitView: () => void;
+  /**
+   * 그래프를 화면에 맞춘다.
+   * rightInset을 주면 그만큼을 뺀 폭(= 속성 패널에 가리지 않는 영역)에 맞춘다.
+   */
+  fitView: (rightInset?: number) => void;
 }
+
+const FIT_PADDING = 0.18;
+const MIN_ZOOM = 0.2;
+const MAX_ZOOM = 1.5;
+// 패널이 캔버스를 거의 다 덮는 좁은 화면에서 폭이 0 이하로 떨어지지 않게 한다.
+const MIN_FIT_WIDTH = 320;
 
 export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
   ({ onNodeSelect, onNodesChange: onNodesChangeProp, onEdgesChange: onEdgesChangeProp, readOnly = false }, ref) => {
+    const { confirm: confirmDialog } = useFeedback();
     const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
     const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
     const reactFlowRef = React.useRef<ReactFlowInstance | null>(null);
+    const wrapperRef = React.useRef<HTMLDivElement | null>(null);
 
     // 노드 변경 시 부모에게 알림
     React.useEffect(() => {
@@ -119,14 +133,32 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
     // 노드와 엣지 가져오기
     const getNodes = useCallback(() => nodes, [nodes]);
     const getEdges = useCallback(() => edges, [edges]);
-    const fitView = useCallback(() => {
-      window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => {
-          reactFlowRef.current?.fitView({ padding: 0.18, duration: 350 });
-        });
-      });
-      window.setTimeout(() => reactFlowRef.current?.fitView({ padding: 0.18, duration: 250 }), 80);
+    // 속성 패널은 캔버스 위에 겹쳐 뜨므로, 패널이 열려 있으면 그 폭을 뺀 영역에 맞춘다.
+    // 화면을 옆으로 미는 방식은 반대편 노드를 캔버스 밖으로 밀어내므로 쓰지 않는다.
+    const applyFit = useCallback((rightInset: number, duration: number) => {
+      const instance = reactFlowRef.current;
+      const container = wrapperRef.current;
+      if (!instance || !container) return;
+      const nodes = instance.getNodes();
+      if (nodes.length === 0) return;
+
+      const width = Math.max(container.clientWidth - rightInset, MIN_FIT_WIDTH);
+      const height = container.clientHeight;
+      if (width <= 0 || height <= 0) return;
+
+      const [x, y, zoom] = getTransformForBounds(
+        getRectOfNodes(nodes), width, height, MIN_ZOOM, MAX_ZOOM, FIT_PADDING,
+      );
+      instance.setViewport({ x, y, zoom }, { duration });
     }, []);
+
+    const fitView = useCallback((rightInset = 0) => {
+      // 노드 교체 직후에는 레이아웃이 아직 확정되지 않아 두 번 맞춘다.
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => applyFit(rightInset, 350));
+      });
+      window.setTimeout(() => applyFit(rightInset, 250), 80);
+    }, [applyFit]);
 
     // 노드와 엣지 설정하기 (템플릿 불러오기용)
     const setNodesAndEdges = useCallback(
@@ -289,13 +321,18 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
   }, [onNodeSelect]);
 
   const onEdgeDoubleClick = useCallback(
-    (event: React.MouseEvent, edge: Edge) => {
+    async (event: React.MouseEvent, edge: Edge) => {
       event.stopPropagation();
-      if (confirm('이 연결을 삭제하시겠습니까?')) {
+      const proceed = await confirmDialog({
+        title: '이 연결을 삭제할까요?',
+        confirmLabel: '삭제',
+        tone: 'danger',
+      });
+      if (proceed) {
         setEdges((eds) => eds.filter((item) => item.id !== edge.id));
       }
     },
-    [setEdges]
+    [setEdges, confirmDialog]
   );
 
   // 드래그 앤 드롭 핸들러
@@ -336,7 +373,7 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
   );
 
   return (
-    <div className="flow-canvas-wrapper">
+    <div className="flow-canvas-wrapper" ref={wrapperRef}>
       <ReactFlow
         onInit={(instance) => { reactFlowRef.current = instance; }}
         nodes={nodes}

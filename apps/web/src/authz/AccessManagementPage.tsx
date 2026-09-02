@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { KeyRound, Link2, RefreshCw, RotateCcw, Save, Search, Shield, Trash2, UserPlus, UserRound, UsersRound } from 'lucide-react';
 import { Button } from '../components';
+import { useFeedback } from '../components/feedback/feedback-context';
 import {
   authzApi,
   type ApiKeyOwnerType,
@@ -30,6 +31,7 @@ type AccessDetailTab = 'users' | 'serviceAccounts' | 'apiKeys' | 'externalMappin
 type AccessPageSection = 'groups' | 'users';
 
 export function AccessManagementPage({ currentUser }: { currentUser: SessionUser }) {
+  const { confirm: confirmDialog } = useFeedback();
   const [groups, setGroups] = useState<PxmGroup[]>([]);
   const [users, setUsers] = useState<PxmUser[]>([]);
   const [userDirectory, setUserDirectory] = useState<PxmUser[]>([]);
@@ -133,10 +135,6 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
     <div className="access-page">
       <div className="access-header">
         <div>
-          <div className="access-title">
-            <Shield size={20} />
-            <h2>접근 권한 관리</h2>
-          </div>
           <p>그룹 권한과 사용자 계정을 구분해 관리합니다.</p>
         </div>
         <Button variant="secondary" size="sm" icon={<RefreshCw size={14} />} onClick={() => void loadData()} disabled={loading}>
@@ -293,8 +291,14 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
                 canAssignManager={currentUser.role === 'admin'}
                 disabled={saving || !currentGroupId}
                 onRoleChange={(userId, role) => run(() => authzApi.setGroupMembership(currentGroupId, userId, role))}
-                onRemove={(user) => {
-                  if (!window.confirm(`${user.display_name} 사용자를 현재 그룹에서 제외할까요?\n사용자 계정과 다른 그룹 소속은 유지됩니다.`)) return;
+                onRemove={async (user) => {
+                  const proceed = await confirmDialog({
+                    title: '그룹에서 제외할까요?',
+                    description: `${user.display_name} 사용자가 현재 그룹에서 제외됩니다. 사용자 계정과 다른 그룹 소속은 유지됩니다.`,
+                    confirmLabel: '제외',
+                    tone: 'danger',
+                  });
+                  if (!proceed) return;
                   void run(() => authzApi.removeGroupMembership(currentGroupId, user.id));
                 }}
               />
@@ -782,6 +786,7 @@ function UserDetailPanel({
   onSetMembership: (groupId: string, role: PxmGroupRole) => Promise<boolean>;
   onRemoveMembership: (groupId: string) => Promise<boolean>;
 }) {
+  const { confirm: confirmDialog } = useFeedback();
   const [displayName, setDisplayName] = useState(user?.display_name || '');
   const [email, setEmail] = useState(user?.email || '');
   const [status, setStatus] = useState<PxmUser['status']>(user?.status || 'active');
@@ -859,8 +864,14 @@ function UserDetailPanel({
                     <option value="user">일반 사용자</option>
                     {canEditAccount && <option value="group_manager">그룹 관리자</option>}
                   </select>
-                  <Button variant="ghost" size="sm" disabled={disabled || !manageable || managerProtected} onClick={() => {
-                    if (!window.confirm(`${user.display_name} 사용자를 ${groupName(membership.group_id)} 그룹에서 제외할까요?`)) return;
+                  <Button variant="ghost" size="sm" disabled={disabled || !manageable || managerProtected} onClick={async () => {
+                    const proceed = await confirmDialog({
+                      title: '그룹에서 제외할까요?',
+                      description: `${user.display_name} 사용자가 ${groupName(membership.group_id)} 그룹에서 제외됩니다.`,
+                      confirmLabel: '제외',
+                      tone: 'danger',
+                    });
+                    if (!proceed) return;
                     void onRemoveMembership(membership.group_id);
                   }}>그룹 제외</Button>
                 </span>

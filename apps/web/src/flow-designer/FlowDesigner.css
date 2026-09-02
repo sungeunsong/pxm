@@ -82,7 +82,7 @@
 .workflow-tab-status {
   width: 10px;
   color: var(--color-warning);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1;
   flex: 0 0 auto;
 }
@@ -98,7 +98,7 @@
 
 .workflow-tab-version {
   color: var(--text-tertiary);
-  font-size: 11px;
+  font-size: 12px;
   flex: 0 0 auto;
 }
 
@@ -106,14 +106,14 @@
 .workflow-tab-unpublished {
   padding: 2px 6px;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
 }
 
 .workflow-tab-lifecycle.published { color: #1b7a52; background: #dff5e9; }
 .workflow-tab-lifecycle.draft { color: #8a5a0a; background: #fff0c9; }
-.workflow-tab-lifecycle.disabled { color: #667085; background: #e9edf2; }
+.workflow-tab-lifecycle.disabled { color: #64748b; background: #e9edf2; }
 .workflow-tab-unpublished { color: #a14214; background: #ffe7da; }
 
 .workflow-tab-close {
@@ -182,29 +182,25 @@
 }
 
 .workflow-tab-tool span {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: var(--font-weight-semibold);
   line-height: 1;
 }
 
-/* ===== Content Area (3-Column Layout) ===== */
+/* ===== Content Area =====
+   팔레트(rail 또는 펼침) + 캔버스 2열.
+   속성 패널은 열을 차지하지 않고 캔버스 위에 겹쳐 뜬다.
+   → 패널을 열고 닫아도 캔버스 크기와 viewport가 흔들리지 않는다. */
 .flow-designer-content {
+  position: relative;
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr) minmax(440px, 32vw);
+  grid-template-columns: auto minmax(0, 1fr);
   flex: 1;
   overflow: hidden;
 }
 
-.flow-designer-content.properties-collapsed {
-  grid-template-columns: 260px minmax(0, 1fr) 48px;
-}
-
 .flow-designer-content.trace-content {
-  grid-template-columns: minmax(0, 1fr) minmax(440px, 32vw);
-}
-
-.flow-designer-content.trace-content.properties-collapsed {
-  grid-template-columns: minmax(0, 1fr) 48px;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .trace-mode-badge {
@@ -223,7 +219,7 @@
   border-radius: 4px;
   background: #2b8a5a;
   color: #fff;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: .04em;
 }
@@ -231,7 +227,7 @@
 .trace-mode-badge strong {
   overflow: hidden;
   color: var(--text-primary);
-  font-size: 11px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -243,21 +239,113 @@
 .node-palette {
   display: flex;
   flex-direction: column;
+  width: 240px;
   background: var(--bg-secondary);
   border-right: 1px solid var(--border-subtle);
   overflow: hidden;
+  transition: width var(--transition-base);
+}
+
+/* rail: 아이콘만 남기고 56px로 접는다 (기본값) */
+.node-palette.rail {
+  width: 56px;
 }
 
 .palette-header {
-  padding: var(--space-lg);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  height: 44px;
+  padding: 0 10px 0 var(--space-md);
   border-bottom: 1px solid var(--border-subtle);
 }
 
 .palette-title {
   margin: 0;
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.node-palette.rail .palette-title {
+  display: none;
+}
+
+.node-palette.rail .palette-header {
+  justify-content: center;
+  padding: 0;
+}
+
+.palette-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.palette-toggle:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+/* rail에서는 라벨·캡션·섹션 제목·플러그인 목록을 감추고 아이콘만 남긴다 */
+.node-palette.rail .palette-content {
+  padding: var(--space-sm) 0;
+}
+.node-palette.rail .palette-section-title,
+.node-palette.rail .palette-node-text,
+.node-palette.rail .palette-node-label,
+.node-palette.rail .palette-node-caption,
+.node-palette.rail .palette-section-plugins {
+  display: none;
+}
+.node-palette.rail .palette-nodes {
+  align-items: center;
+  gap: var(--space-xs);
+}
+.node-palette.rail .palette-node {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  justify-content: center;
+  gap: 0;
+  background: transparent;
+  border-color: transparent;
+}
+.node-palette.rail .palette-node:hover {
+  transform: none;
+  background: var(--bg-tertiary);
+  border-color: var(--border-subtle);
+  box-shadow: none;
+}
+
+/* rail 하단: 플러그인은 검색으로 진입 */
+.palette-rail-search {
+  display: none;
+}
+.node-palette.rail .palette-rail-search {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  margin: 0 8px 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.node-palette.rail .palette-rail-search:hover {
+  color: var(--text-primary);
+  border-color: var(--border-focus);
 }
 
 .palette-content {
@@ -367,7 +455,7 @@
 }
 
 .workflow-metadata-form .property-select:disabled { cursor: not-allowed; opacity: .65; }
-.workflow-metadata-form .property-warning-text { color: var(--color-warning); font-size: 11px; line-height: 1.45; }
+.workflow-metadata-form .property-warning-text { color: var(--color-warning); font-size: 12px; line-height: 1.45; }
 
 .plugin-category {
   display: flex;
@@ -471,16 +559,49 @@
    ============================================ */
 
 .properties-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: var(--z-panel);
   display: flex;
   flex-direction: column;
+  width: clamp(360px, 26vw, 440px);
   background: var(--bg-secondary);
   border-left: 1px solid var(--border-subtle);
   overflow: hidden;
-  min-width: 420px;
+  box-shadow: var(--shadow-xl);
+  transition: transform var(--transition-base);
 }
 
+/* 닫히면 화면 밖으로 밀어낸다. 캔버스 폭은 그대로다. */
 .properties-panel.collapsed {
-  min-width: 0;
+  transform: translateX(100%);
+  box-shadow: none;
+  pointer-events: none;
+}
+
+/* 닫힌 상태에서 다시 열기 위한 손잡이 */
+.properties-reopen {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: calc(var(--z-panel) - 1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+}
+.properties-reopen:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
 }
 
 .properties-header {
@@ -611,12 +732,8 @@
 
 /* Tablet (768px ~ 1024px) */
 @media (max-width: 1024px) {
-  .flow-designer-content {
-    grid-template-columns: 220px minmax(0, 1fr) 380px;
-  }
-
-  .flow-designer-content.properties-collapsed {
-    grid-template-columns: 220px minmax(0, 1fr) 48px;
+  .node-palette {
+    width: 200px;
   }
 
   .palette-node {
@@ -630,53 +747,23 @@
   }
 }
 
-/* Mobile (< 768px) */
+/* Mobile (< 768px) — 좁은 화면에서는 속성 패널이 전체를 덮는다 */
 @media (max-width: 768px) {
-  .flow-designer-content {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr auto;
+  .node-palette,
+  .node-palette.rail {
+    width: 56px;
   }
 
-  .flow-designer-content.properties-collapsed {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr 48px;
-  }
-
-  .node-palette {
-    border-right: none;
-    border-bottom: 1px solid var(--border-subtle);
-    max-height: 200px;
-  }
-
-  .palette-nodes {
-    flex-direction: row;
-    overflow-x: auto;
-  }
-
-  .palette-node {
-    flex-direction: column;
-    min-width: 80px;
-    text-align: center;
+  .node-palette .palette-section-title,
+  .node-palette .palette-node-text,
+  .node-palette .palette-node-label,
+  .node-palette .palette-node-caption,
+  .node-palette .palette-section-plugins,
+  .node-palette .palette-title {
+    display: none;
   }
 
   .properties-panel {
-    border-left: none;
-    border-top: 1px solid var(--border-subtle);
-    min-width: 0;
-    max-height: 320px;
-  }
-
-  .properties-panel.collapsed {
-    max-height: 48px;
-  }
-
-  .properties-panel.collapsed .properties-header {
-    align-items: center;
-    justify-content: flex-end;
-    padding: 8px 12px;
-  }
-
-  .canvas {
-    order: -1;
+    width: 100%;
   }
 }

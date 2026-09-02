@@ -155,7 +155,7 @@
 
 /* 활성 엣지 (실행 중인 경로) - 그려지는 효과 */
 .react-flow__edge-path.edge-active {
-  stroke: #2196f3 !important;
+  stroke: #3b82f6 !important;
   stroke-width: 3.5 !important;
   stroke-dasharray: 1 !important;
   stroke-dashoffset: 1 !important;
@@ -165,7 +165,7 @@
 
 /* 완료된 엣지 - 고정 실선 */
 .react-flow__edge-path.edge-completed {
-  stroke: #4caf50 !important;
+  stroke: #10b981 !important;
   stroke-width: 3 !important;
   stroke-dasharray: none !important;
   stroke-dashoffset: 0 !important;
@@ -175,7 +175,7 @@
 
 /* 실패한 엣지 */
 .react-flow__edge-path.edge-failed {
-  stroke: #f44336 !important;
+  stroke: #ef4444 !important;
   stroke-width: 3 !important;
   stroke-dasharray: 8 4 !important;
   filter: drop-shadow(0 0 4px rgba(244, 67, 54, 0.5)) !important;
@@ -183,7 +183,7 @@
 
 /* 대기 중인 엣지 */
 .react-flow__edge-path.edge-waiting {
-  stroke: #FFC107 !important;
+  stroke: #f59e0b !important;
   stroke-width: 3 !important;
   stroke-dasharray: 0.05 0.05 !important;
   animation: edge-flow-dot 2s linear infinite !important;
@@ -202,7 +202,7 @@
 
 /* 활성 엣지의 라벨 */
 .react-flow__edge.edge-active .react-flow__edge-text {
-  fill: #2196f3;
+  fill: #3b82f6;
   font-weight: 600;
 }
 

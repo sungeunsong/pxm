@@ -3,13 +3,14 @@ import {
   ArrowLeft,
   Check,
   FileText,
-  Filter,
   Pause,
   RotateCcw,
   Search as SearchIcon,
   X,
 } from 'lucide-react';
 import { Button } from '../components/Button';
+import { useFeedback } from '../components/feedback/feedback-context';
+import { errorMessage } from '../lib/error-message';
 import './InboxPage.css';
 
 interface Task {
@@ -74,12 +75,62 @@ export interface InboxPageProps {
   onSwitchToDesigner?: () => void;
 }
 
+// 아래 4개는 task 인자에만 의존하는 순수 함수다.
+// 컴포넌트 안에 두면 렌더마다 새 참조가 생겨 useMemo 의존성이 계속 바뀐다.
+const readField = (task: Task | null, keys: string[], fallback = '-') => {
+  if (!task) return fallback;
+  for (const key of keys) {
+    const value = task.form_data?.[key];
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      return String(value);
+    }
+  }
+  return fallback;
+};
+
+const getTaskTitle = (task: Task | null) => {
+  if (!task) return '승인 요청';
+  const approvalContent =
+    task.content_snapshot || task.form_data?.approval_request?.content || {};
+  return (
+    approvalContent.title ||
+    task.template_name ||
+    readField(task, ['요청 프로세스', 'processName', 'title', 'requestTitle'], '') ||
+    task.node_id ||
+    '승인 요청'
+  );
+};
+
+const getRequester = (task: Task | null) =>
+  String(
+    task?.content_snapshot?.requester ||
+      task?.form_data?.approval_request?.content?.requester ||
+      readField(task, ['신청자', 'requester', 'requesterName', 'applicant'], task?.assignee || '-'),
+  );
+
+const getApprovalChannels = (task: Task | null) => {
+  const channels: Array<'pxm_user' | 'external_email'> =
+    task?.approval_channels ||
+    task?.payload?.approval_channels ||
+    [task?.approver_channel || task?.payload?.approver_channel || 'pxm_user'];
+  return channels
+    .map((channel) =>
+      channel === 'external_email' ? '이메일 링크' : 'PXM 웹',
+    )
+    .join(' + ');
+};
+
+const getProcessLabel = (task: Task | null) =>
+  task?.template_name || readField(task, ['요청 프로세스', 'processName'], task?.process_definition_id || '-');
+
 export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
+  const { toast, confirm: confirmDialog } = useFeedback();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [loading, setLoading] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState<'pending' | 'completed' | 'rejected'>('pending');
   const [searchTerm, setSearchTerm] = useState('');
+  const [processFilter, setProcessFilter] = useState('');
   const [screen, setScreen] = useState<'list' | 'detail'>('list');
   const [decision, setDecision] = useState<'approve' | 'reject' | 'hold'>('approve');
   const [comment, setComment] = useState('요청 내용을 확인하였습니다. 승인합니다.');
@@ -97,52 +148,6 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
   };
-
-  const readField = (task: Task | null, keys: string[], fallback = '-') => {
-    if (!task) return fallback;
-    for (const key of keys) {
-      const value = task.form_data?.[key];
-      if (value !== undefined && value !== null && String(value).trim() !== '') {
-        return String(value);
-      }
-    }
-    return fallback;
-  };
-
-  const getTaskTitle = (task: Task | null) => {
-    if (!task) return '승인 요청';
-    const approvalContent =
-      task.content_snapshot || task.form_data?.approval_request?.content || {};
-    return (
-      approvalContent.title ||
-      task.template_name ||
-      readField(task, ['요청 프로세스', 'processName', 'title', 'requestTitle'], '') ||
-      task.node_id ||
-      '승인 요청'
-    );
-  };
-
-  const getRequester = (task: Task | null) =>
-    String(
-      task?.content_snapshot?.requester ||
-        task?.form_data?.approval_request?.content?.requester ||
-        readField(task, ['신청자', 'requester', 'requesterName', 'applicant'], task?.assignee || '-'),
-    );
-
-  const getApprovalChannels = (task: Task | null) => {
-    const channels: Array<'pxm_user' | 'external_email'> =
-      task?.approval_channels ||
-      task?.payload?.approval_channels ||
-      [task?.approver_channel || task?.payload?.approver_channel || 'pxm_user'];
-    return channels
-      .map((channel) =>
-        channel === 'external_email' ? '이메일 링크' : 'PXM 웹',
-      )
-      .join(' + ');
-  };
-
-  const getProcessLabel = (task: Task | null) =>
-    task?.template_name || readField(task, ['요청 프로세스', 'processName'], task?.process_definition_id || '-');
 
   const fetchTasks = async () => {
     setLoading(true);
@@ -184,15 +189,24 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
       if (activeSubTab === 'rejected') return task.status === 'REJECTED';
       return task.status === 'APPROVED' || task.status === 'CANCELED';
     });
+    const byProcess = processFilter
+      ? byTab.filter((task) => getProcessLabel(task) === processFilter)
+      : byTab;
     const q = searchTerm.trim().toLowerCase();
-    if (!q) return byTab;
-    return byTab.filter((task) =>
+    if (!q) return byProcess;
+    return byProcess.filter((task) =>
       [getTaskTitle(task), getRequester(task), task.instance_id, task.node_id]
         .join(' ')
         .toLowerCase()
         .includes(q),
     );
-  }, [activeSubTab, searchTerm, tasks]);
+  }, [activeSubTab, processFilter, searchTerm, tasks]);
+
+  // 필터 목록은 실제 결재함에 존재하는 프로세스에서만 만든다.
+  const processOptions = useMemo(
+    () => Array.from(new Set(tasks.map((task) => getProcessLabel(task)).filter((label) => label && label !== '-'))).sort(),
+    [tasks],
+  );
   const taskCounts = useMemo(
     () => ({
       pending: tasks.filter((task) => task.status === 'OPEN').length,
@@ -236,7 +250,13 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
     const action = decision === 'reject' ? 'reject' : 'approve';
     const displayActionText = decision === 'approve' ? '승인' : decision === 'reject' ? '반려' : '보류';
 
-    if (!confirm(`선택한 문서를 [${displayActionText}] 처리하시겠습니까?\n의견: ${comment}`)) return;
+    const proceed = await confirmDialog({
+      title: `이 요청을 ${displayActionText} 처리할까요?`,
+      description: comment.trim() ? `의견: ${comment}` : '남긴 의견이 없습니다.',
+      confirmLabel: displayActionText,
+      tone: decision === 'reject' ? 'danger' : 'default',
+    });
+    if (!proceed) return;
 
     try {
       const endpoint = decision === 'hold'
@@ -252,13 +272,13 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
 
       if (!res.ok) throw new Error('Failed to complete task');
 
-      alert(`성공적으로 [${displayActionText}] 처리되었습니다.`);
+      toast.success(`${displayActionText} 처리했습니다.`);
       await fetchTasks();
       setSelectedTask(null);
       setScreen('list');
     } catch (error) {
       console.error('Failed to process task:', error);
-      alert('처리 중 오류가 발생했습니다.');
+      toast.error(`${displayActionText} 처리에 실패했습니다.`, { description: errorMessage(error) });
     }
   };
 
@@ -266,7 +286,6 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
     <div className="inbox-list-page">
       <div className="inbox-list-header">
         <div>
-          <h2>내 결재함</h2>
           <p>승인 대기 중인 작업을 확인하고 상세 화면에서 처리합니다.</p>
         </div>
         <button className="icon-action-btn" onClick={fetchTasks} title="새로고침">
@@ -297,8 +316,16 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
 
       <div className="search-filter-bar">
         <div className="select-wrapper">
-          <select className="form-select-sm">
-            <option>전체 프로세스</option>
+          <select
+            className="form-select-sm"
+            value={processFilter}
+            onChange={(event) => setProcessFilter(event.target.value)}
+            aria-label="프로세스 필터"
+          >
+            <option value="">전체 프로세스</option>
+            {processOptions.map((label) => (
+              <option key={label} value={label}>{label}</option>
+            ))}
           </select>
         </div>
         <div className="search-input-wrap">
@@ -310,9 +337,6 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
-        <button className="icon-action-btn" title="필터">
-          <Filter size={13} />
-        </button>
         {loading && <span className="loading-text">loading...</span>}
       </div>
 
@@ -375,11 +399,6 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
 
       <div className="pagination-bar">
         <span>전체 {visibleTasks.length}건</span>
-        <div className="pagination-arrows">
-          <button disabled>&lt;</button>
-          <button className="active">1</button>
-          <button disabled>&gt;</button>
-        </div>
       </div>
     </div>
   );

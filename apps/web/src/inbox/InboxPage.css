@@ -46,7 +46,7 @@
 .inbox-list-header p,
 .inbox-detail-header p {
   margin: 4px 0 0 0;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-tertiary, #64748b);
 }
 
@@ -73,7 +73,7 @@
   border-radius: 6px;
   background: #ffffff;
   color: var(--text-secondary, #475569);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
   cursor: pointer;
   padding: 0 10px;
@@ -84,7 +84,7 @@
 }
 
 .loading-text {
-  font-size: 11px;
+  font-size: 12px;
   color: #3b82f6;
   align-self: center;
 }
@@ -108,7 +108,7 @@
 .inbox-left-panel {
   background: var(--bg-secondary, #ffffff);
   border: 1px solid var(--border-subtle, #e2e8f0);
-  border-radius: 14px;
+  border-radius: 12px;
   padding: 20px;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.03), 0 2px 4px -1px rgba(0, 0, 0, 0.02);
   display: flex;
@@ -154,7 +154,7 @@
 .inbox-section {
   background: var(--bg-secondary, #ffffff);
   border: 1px solid var(--border-subtle, #e2e8f0);
-  border-radius: 14px;
+  border-radius: 12px;
   padding: 24px;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.03), 0 2px 4px -1px rgba(0, 0, 0, 0.02);
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
@@ -168,7 +168,7 @@
 .inbox-section-compact {
   background: var(--bg-secondary, #ffffff);
   border: 1px solid var(--border-subtle, #e2e8f0);
-  border-radius: 14px;
+  border-radius: 12px;
   padding: 20px;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.03), 0 2px 4px -1px rgba(0, 0, 0, 0.02);
 }
@@ -201,12 +201,12 @@
   border-radius: 6px;
   background-color: #2563eb;
   color: #ffffff;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
 }
 
 .subtitle-desc {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-tertiary, #64748b);
   margin-top: 4px;
 }
@@ -225,7 +225,7 @@
   padding: 8px 12px;
   background: transparent;
   border: none;
-  font-size: 12.5px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-secondary, #475569);
   cursor: pointer;
@@ -252,7 +252,7 @@
 }
 
 .tab-count {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 800;
   padding: 1px 6px;
   border-radius: 20px;
@@ -288,7 +288,7 @@
   border-radius: 6px;
   padding-left: 28px;
   padding-right: 12px;
-  font-size: 12px;
+  font-size: 14px;
   background-color: #f8fafc;
 }
 
@@ -303,7 +303,7 @@
   border: 1px solid var(--border-subtle, #e2e8f0);
   border-radius: 6px;
   padding: 0 6px;
-  font-size: 11.5px;
+  font-size: 12px;
   background-color: #ffffff;
   color: var(--text-primary, #0f172a);
   cursor: pointer;
@@ -339,7 +339,7 @@
   width: 100%;
   border-collapse: collapse;
   text-align: left;
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 .inbox-table th {
@@ -360,7 +360,7 @@
   text-align: center;
   color: var(--text-tertiary, #64748b) !important;
   padding: 28px 12px !important;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .task-row-item {
@@ -385,7 +385,7 @@
 }
 
 .req-tag {
-  font-size: 8.5px;
+  font-size: 12px;
   font-weight: 800;
   padding: 1px 4px;
   border-radius: 4px;
@@ -397,7 +397,7 @@
 .req-tag.tag-api { background-color: #faf5ff; color: #6b21a8; }
 
 .priority-badge {
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 700;
   padding: 1px 5px;
   border-radius: 4px;
@@ -408,7 +408,7 @@
 .priority-badge.low { background-color: #f0fdf4; color: #166534; }
 
 .status-badge-outline {
-  font-size: 9.5px;
+  font-size: 12px;
   font-weight: 700;
   padding: 1px 5px;
   border-radius: 4px;
@@ -444,7 +444,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-tertiary, #64748b);
   padding-top: 4px;
 }
@@ -464,7 +464,7 @@
   border-radius: 4px;
   background-color: #ffffff;
   color: var(--text-secondary, #475569);
-  font-size: 10.5px;
+  font-size: 12px;
   cursor: pointer;
 }
 
@@ -488,11 +488,11 @@
    5. SECTION 2: 결재 상세 (Details View)
    ======================================================== */
 .view-designer-link {
-  background: none; 
-  border: none; 
-  color: #2563eb; 
-  font-size: 11px; 
-  cursor: pointer; 
+  background: none;
+  border: none;
+  color: #2563eb;
+  font-size: 12px;
+  cursor: pointer;
   text-align: left;
   padding: 0;
   font-weight: bold;
@@ -522,14 +522,14 @@
 }
 
 .details-header-title h4 {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
   color: var(--text-primary, #0f172a);
   margin: 0;
 }
 
 .status-badge-full {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   padding: 2px 8px;
   border-radius: 20px;
@@ -546,7 +546,7 @@
 }
 
 .info-block h5 {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
   color: #2563eb;
   margin: 0;
@@ -571,12 +571,12 @@
 }
 
 .info-label {
-  font-size: 10.5px;
+  font-size: 12px;
   color: var(--text-tertiary, #64748b);
 }
 
 .info-val {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-primary, #0f172a);
   font-weight: 600;
 }
@@ -617,7 +617,7 @@
   border-radius: 6px;
   border: 1px solid var(--border-subtle, #e2e8f0);
   font-weight: normal;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.4;
   color: var(--text-secondary, #475569);
 }
@@ -636,7 +636,7 @@
   padding: 6px 10px;
   border-radius: 6px;
   border: 1px solid var(--border-subtle, #e2e8f0);
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 .empty-file-item {
@@ -691,7 +691,7 @@
 }
 
 .decision-btn span {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--text-secondary, #475569);
 }
@@ -755,7 +755,7 @@
   border-radius: 6px;
   border: 1px solid var(--border-subtle, #e2e8f0);
   padding: 8px;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.4;
   color: var(--text-primary, #0f172a);
   background-color: #f8fafc;
@@ -779,7 +779,7 @@
 }
 
 .checkbox-lbl {
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
 }
 
@@ -805,7 +805,7 @@
   margin-bottom: 24px;
   background-color: #f8fafc;
   padding: 16px;
-  border-radius: 10px;
+  border-radius: 12px;
   border: 1px solid var(--border-subtle, #e2e8f0);
   overflow-x: auto;
 }
@@ -827,13 +827,13 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
   transition: all 0.25s ease;
 }
 
 .t-node-name {
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-tertiary, #64748b);
   text-align: center;
@@ -912,7 +912,7 @@
 .v-log-item.blue::after { background-color: #2563eb; }
 
 .v-log-time {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-tertiary, #64748b);
   width: 100px;
   padding-top: 3px;
@@ -935,13 +935,13 @@
 }
 
 .v-log-actor {
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 700;
   color: var(--text-primary, #0f172a);
 }
 
 .v-log-badge {
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 700;
   padding: 1px 6px;
   border-radius: 4px;
@@ -951,7 +951,7 @@
 
 .v-log-content p {
   margin: 0;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-secondary, #475569);
   line-height: 1.4;
 }
@@ -970,7 +970,7 @@
   text-align: center;
   background: var(--bg-secondary, #ffffff);
   border: 1px dashed var(--border-subtle, #cbd5e1);
-  border-radius: 14px;
+  border-radius: 12px;
   padding: 48px;
   max-width: 320px;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.02);
@@ -989,7 +989,7 @@
 }
 
 .no-task-selected-card p {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--text-tertiary, #64748b);
   margin: 0;
 }
@@ -1083,7 +1083,7 @@
   .mobile-badge {
     background-color: #2563eb;
     color: white;
-    font-size: 10px;
+    font-size: 12px;
     padding: 1px 6px;
     border-radius: 12px;
   }
@@ -1138,10 +1138,10 @@
   }
 
   .mini-badge-orange {
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 800;
     padding: 1px 6px;
-    border-radius: 10px;
+    border-radius: 12px;
     background-color: #fff7ed;
     color: #c2410c;
     border: 1px solid #fed7aa;
@@ -1157,7 +1157,7 @@
   .phone-detail-row {
     display: flex;
     justify-content: space-between;
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .phone-detail-row.vertical {
@@ -1201,7 +1201,7 @@
     border: none;
     border-radius: 8px;
     padding: 10px 4px;
-    font-size: 11.5px;
+    font-size: 12px;
     font-weight: 700;
     color: white;
     cursor: pointer;
@@ -1218,7 +1218,7 @@
 
   .mobile-guide-info {
     text-align: center;
-    font-size: 10px;
+    font-size: 12px;
     color: #94a3b8;
     margin-top: 14px;
   }

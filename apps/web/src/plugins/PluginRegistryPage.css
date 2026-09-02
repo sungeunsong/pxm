@@ -62,13 +62,13 @@
 .plugin-registry-summary-card span {
   display: block;
   color: #64748b;
-  font-size: 12px;
+  font-size: 14px;
   margin-bottom: 6px;
 }
 
 .plugin-registry-summary-card strong {
   color: #0f172a;
-  font-size: 22px;
+  font-size: 20px;
 }
 
 .plugin-registry-layout {
@@ -96,7 +96,7 @@
 
 .plugin-registry-readonly {
   color: #64748b;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .plugin-registry-empty {
@@ -146,12 +146,12 @@
 
 .plugin-registry-meta {
   color: #64748b;
-  font-size: 12px;
+  font-size: 14px;
   margin-top: 3px;
 }
 
 .plugin-registry-source {
-  font-size: 11px;
+  font-size: 12px;
   padding: 3px 7px;
   border-radius: 999px;
   border: 1px solid #cbd5e1;
@@ -177,7 +177,7 @@
   border-radius: 8px;
   padding: 12px;
   font-family: var(--font-mono, monospace);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.5;
   color: #0f172a;
   background: #ffffff;

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, RefreshCw, RotateCcw, ServerCog } from 'lucide-react';
 import { operationsApi, type OperationsOverview } from '../api/operations';
 import './OperationsPage.css';
+import { useFeedback } from '../components/feedback/feedback-context';
+import { deliveryStatusLabel } from '../lib/status-label';
 
 const age = (ms: number | null) => {
   if (ms == null) return '-';
@@ -11,6 +13,7 @@ const age = (ms: number | null) => {
 };
 
 export function OperationsPage() {
+  const { prompt: promptDialog } = useFeedback();
   const [data, setData] = useState<OperationsOverview | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -24,9 +27,13 @@ export function OperationsPage() {
   useEffect(() => { void load(); const timer = window.setInterval(load, 15_000); return () => window.clearInterval(timer); }, [load]);
 
   const run = async (key: string, label: string, fn: (reason: string) => Promise<unknown>) => {
-    const reason = window.prompt(`${label} 사유를 입력하세요. (3자 이상)`);
+    const reason = await promptDialog({
+      title: `${label}을 실행할까요?`,
+      description: '현재 상태를 다시 검증한 뒤 가능한 경우에만 처리합니다.',
+      label: '처리 사유 (3자 이상)',
+      confirmLabel: label,
+    });
     if (!reason || reason.trim().length < 3) return;
-    if (!window.confirm(`${label}을 실행할까요?\n현재 상태를 다시 검증한 뒤 가능한 경우에만 처리합니다.`)) return;
     setActing(key); setError('');
     try { await fn(reason.trim()); await load(); } catch (e) { setError(e instanceof Error ? e.message : '운영 조치 실패'); }
     finally { setActing(''); }
@@ -34,7 +41,7 @@ export function OperationsPage() {
 
   return <div className="operations-page">
     <section className="operations-intro">
-      <div><span>OPERATIONS CONTROL</span><h2>실행·전송 운영 상태</h2><p>Job 적체, 장기 대기, 만료 잠금과 외부 전송 실패를 한곳에서 확인하고 안전하게 복구합니다.</p></div>
+      <div><p>Job 적체, 장기 대기, 만료 잠금과 외부 전송 실패를 한곳에서 확인하고 안전하게 복구합니다.</p></div>
       <button onClick={load} disabled={loading}><RefreshCw size={15} className={loading ? 'spin' : ''}/>새로고침</button>
     </section>
     {error && <div className="operations-error"><AlertTriangle size={15}/>{error}</div>}
@@ -66,7 +73,7 @@ export function OperationsPage() {
         render={(lock) => <><code>{lock.instance_id}</code><span>{lock.lock_owner}</span><span>{new Date(lock.lock_until).toLocaleString()}</span>
           <button disabled={acting === `lock-${lock.instance_id}`} onClick={() => run(`lock-${lock.instance_id}`, '만료 잠금 회수', r => operationsApi.reclaimLock(lock.instance_id, r))}><ServerCog size={13}/>잠금 회수</button></>}/>
       <OperationTable title="Outbox 전송 이상" rows={data.outbox.deliveries.filter(d => ['FAILED','DEAD_LETTER'].includes(d.status))} empty="실패한 전송이 없습니다."
-        render={(delivery) => <><code>{delivery.id.slice(0, 12)}…</code><span>{delivery.endpoint_name}</span><span className="status">{delivery.status}</span><span>{delivery.last_error || delivery.event_type}</span>
+        render={(delivery) => <><code>{delivery.id.slice(0, 12)}…</code><span>{delivery.endpoint_name}</span><span className="status">{deliveryStatusLabel(delivery.status)}</span><span>{delivery.last_error || delivery.event_type}</span>
           <button disabled={acting === `outbox-${delivery.id}`} onClick={() => run(`outbox-${delivery.id}`, 'Outbox 재전송', r => operationsApi.retryOutbox(delivery.id, r))}><RotateCcw size={13}/>재전송</button></>}/>
     </>}
   </div>;

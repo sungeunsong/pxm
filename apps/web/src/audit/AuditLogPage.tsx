@@ -61,7 +61,7 @@ export function AuditLogPage({ currentUser }: { currentUser: SessionUser }) {
   return <div className="audit-page">
     <section className="audit-intro">
       <div className="audit-intro-icon"><ShieldCheck size={22} /></div>
-      <div><span>MANAGEMENT AUDIT</span><h2>감사 로그</h2><p>누가 언제 어떤 관리 작업을 수행했는지 확인합니다. 민감정보는 저장 및 조회 단계에서 마스킹됩니다.</p></div>
+      <div><p>누가 언제 어떤 관리 작업을 수행했는지 확인합니다. 민감정보는 저장 및 조회 단계에서 마스킹됩니다.</p></div>
       <button className="audit-refresh" onClick={load} disabled={loading}><RefreshCw size={15} className={loading ? 'spin' : ''} />새로고침</button>
     </section>
 

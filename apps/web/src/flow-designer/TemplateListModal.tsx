@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { templatesApi } from '../api/templates';
+import { useFeedback } from '../components/feedback/feedback-context';
+import { errorMessage } from '../lib/error-message';
 import type { WorkflowTemplate, WorkflowTemplateVersion, WorkflowVersionDiff } from '../api/templates';
 import { Button } from '../components/Button';
 import { X, FileText, Calendar, Hash, Copy, GitCompare, RotateCcw } from 'lucide-react';
@@ -18,6 +20,7 @@ export const TemplateListModal: React.FC<TemplateListModalProps> = ({
   onSelect,
   allowedGroupIds,
 }) => {
+  const { toast, confirm: confirmDialog } = useFeedback();
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,16 +57,20 @@ export const TemplateListModal: React.FC<TemplateListModalProps> = ({
   };
 
   const handleDelete = async (id: string, name: string) => {
-    if (!confirm(`"${name}" 템플릿을 삭제하시겠습니까?`)) {
-      return;
-    }
+    const proceed = await confirmDialog({
+      title: '워크플로우를 삭제할까요?',
+      description: `"${name}"이(가) 목록에서 제거됩니다. 이 작업은 되돌릴 수 없습니다.`,
+      confirmLabel: '삭제',
+      tone: 'danger',
+    });
+    if (!proceed) return;
 
     try {
       await templatesApi.delete(id);
       setTemplates(templates.filter((t) => t.id !== id));
     } catch (err) {
       console.error('Failed to delete template:', err);
-      alert('템플릿 삭제에 실패했습니다.');
+      toast.error('워크플로우 삭제에 실패했습니다.', { description: errorMessage(err) });
     }
   };
 
@@ -76,19 +83,19 @@ export const TemplateListModal: React.FC<TemplateListModalProps> = ({
     template: WorkflowTemplate,
     action: 'publish' | 'disable' | 'reactivate',
   ) => {
-    const message = action === 'publish'
-      ? `v${template.version}을 외부 실행 버전으로 배포하시겠습니까?`
+    const dialog = action === 'publish'
+      ? { title: `v${template.version}을 배포할까요?`, description: '배포하면 이 버전이 외부 실행 대상이 됩니다.', confirmLabel: '배포' }
       : action === 'disable'
-        ? '신규 API 실행과 자동 실행을 중지하시겠습니까? 기존 인스턴스는 계속 처리됩니다.'
-        : `배포 버전 v${template.active_published_version}을 다시 활성화하시겠습니까?`;
-    if (!confirm(message)) return;
+        ? { title: '실행을 중지할까요?', description: '신규 API 실행과 자동 실행이 중지됩니다. 이미 진행 중인 인스턴스는 계속 처리됩니다.', confirmLabel: '중지', tone: 'danger' as const }
+        : { title: `배포 버전 v${template.active_published_version}을 다시 활성화할까요?`, confirmLabel: '활성화' };
+    if (!(await confirmDialog(dialog))) return;
     try {
       const updated = await templatesApi[action](template.id);
       setTemplates((items) => items.map((item) => item.id === updated.id ? updated : item));
       if (versionTemplate?.id === updated.id) setVersionTemplate(updated);
     } catch (err) {
       console.error(`Failed to ${action} workflow:`, err);
-      alert('워크플로우 배포 상태 변경에 실패했습니다.');
+      toast.error('배포 상태 변경에 실패했습니다.', { description: errorMessage(err) });
     }
   };
 
@@ -129,9 +136,12 @@ export const TemplateListModal: React.FC<TemplateListModalProps> = ({
   const handleRollbackVersion = async (event: React.MouseEvent, version: number) => {
     event.stopPropagation();
     if (!versionTemplate) return;
-    if (!confirm(`"${versionTemplate.name}" 템플릿을 v${version} 상태로 롤백하시겠습니까? 새 버전으로 저장됩니다.`)) {
-      return;
-    }
+    const proceed = await confirmDialog({
+      title: `v${version} 상태로 롤백할까요?`,
+      description: `"${versionTemplate.name}"의 v${version} 내용으로 새 버전이 만들어집니다. 기존 버전은 그대로 남습니다.`,
+      confirmLabel: '롤백',
+    });
+    if (!proceed) return;
 
     setVersionsLoading(true);
     setVersionsError(null);
@@ -142,7 +152,7 @@ export const TemplateListModal: React.FC<TemplateListModalProps> = ({
       setVersions(await templatesApi.listVersions(updated.id));
       setVersionDiff(null);
       onSelect(updated);
-      alert(`v${version} 기준으로 v${updated.version} 롤백 버전이 생성되었습니다.`);
+      toast.success('롤백 버전을 만들었습니다.', { description: `v${version} 기준 → v${updated.version}` });
     } catch (err) {
       console.error('Failed to rollback template version:', err);
       setVersionsError('롤백에 실패했습니다.');

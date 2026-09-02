@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
+import { useFeedback } from '../components/feedback/feedback-context';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -31,6 +32,7 @@ const STATUS_LABELS: Record<WebhookDeliveryStatus, string> = {
 };
 
 export function WebhookManagementPage() {
+  const { confirm: confirmDialog } = useFeedback();
   const [endpoints, setEndpoints] = useState<WebhookEndpoint[]>([]);
   const [deliveries, setDeliveries] = useState<WebhookDelivery[]>([]);
   const [status, setStatus] = useState('');
@@ -110,8 +112,12 @@ export function WebhookManagementPage() {
   };
 
   const retry = async (delivery: WebhookDelivery) => {
-    if (!window.confirm('이 전송 건을 다시 전송 대기 상태로 바꿀까요?'))
-      return;
+    const proceed = await confirmDialog({
+      title: '이 전송 건을 다시 보낼까요?',
+      description: '전송 대기 상태로 되돌린 뒤 다음 전송 주기에 재시도합니다.',
+      confirmLabel: '재전송',
+    });
+    if (!proceed) return;
     setBusy(delivery.id);
     setError('');
     try {
@@ -133,7 +139,6 @@ export function WebhookManagementPage() {
           <span className="webhook-eyebrow">
             <Webhook size={15} /> 최고관리자 전용
           </span>
-          <h2>외부 결과 Webhook</h2>
           <p>
             최종 승인·반려·취소 이벤트를 외부 시스템으로 전달하고 실패
             이력과 재시도를 관리합니다.

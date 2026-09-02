@@ -4,6 +4,7 @@ import { templatesApi, type WorkflowTemplate } from '../api/templates';
 import { authzApi, type PxmGroup } from '../api/authz';
 import type { SessionUser } from '../api/session';
 import { Button } from '../components';
+import { useFeedback } from '../components/feedback/feedback-context';
 import {
   createInputPreset,
   deleteInputPreset,
@@ -41,6 +42,7 @@ type PresetInputField = {
 };
 
 export function ExecutionPresetsPage({ currentUser }: Props) {
+  const { confirm: confirmDialog } = useFeedback();
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [presets, setPresets] = useState<InputPreset[]>([]);
   const [groups, setGroups] = useState<PxmGroup[]>([]);
@@ -169,7 +171,14 @@ export function ExecutionPresetsPage({ currentUser }: Props) {
   };
 
   const remove = async () => {
-    if (!draft?.id || !draft.can_manage || !confirm(`실행 프리셋 “${draft.name}”을 삭제할까요?`)) return;
+    if (!draft?.id || !draft.can_manage) return;
+    const proceed = await confirmDialog({
+      title: '실행 프리셋을 삭제할까요?',
+      description: `"${draft.name}"이(가) 제거됩니다. 이 작업은 되돌릴 수 없습니다.`,
+      confirmLabel: '삭제',
+      tone: 'danger',
+    });
+    if (!proceed) return;
     setSaving(true);
     try {
       await deleteInputPreset(draft.workflow_id, draft.id);
@@ -186,7 +195,6 @@ export function ExecutionPresetsPage({ currentUser }: Props) {
     <div className="execution-presets-page">
       <section className="execution-presets-hero">
         <div>
-          <div className="execution-presets-title"><Braces size={21} /><h2>API 실행 프리셋</h2></div>
           <p>워크플로우별 Start 입력값을 alias로 저장하고 API 호출에서 재사용합니다.</p>
         </div>
         <div className="execution-presets-hero-actions">

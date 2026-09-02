@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { FileJson, Plus, RotateCw, Save, Trash2 } from 'lucide-react';
+import { Plus, RotateCw, Save, Trash2 } from 'lucide-react';
 import { Button } from '../components';
+import { useFeedback } from '../components/feedback/feedback-context';
 import { pluginsApi, type PluginManifest } from '../api/plugins';
 import './PluginRegistryPage.css';
 
@@ -33,6 +34,7 @@ const defaultManifest = {
 };
 
 export const PluginRegistryPage: React.FC = () => {
+  const { confirm: confirmDialog } = useFeedback();
   const [plugins, setPlugins] = useState<PluginManifest[]>([]);
   const [selected, setSelected] = useState<PluginManifest | null>(null);
   const [manifestText, setManifestText] = useState(JSON.stringify(defaultManifest, null, 2));
@@ -96,7 +98,13 @@ export const PluginRegistryPage: React.FC = () => {
 
   const handleDelete = async () => {
     if (!selected || selected.manifest_source !== 'registry') return;
-    if (!confirm(`${selected.plugin_id}@${selected.version} manifest를 삭제하시겠습니까?`)) return;
+    const proceed = await confirmDialog({
+      title: 'manifest를 삭제할까요?',
+      description: `${selected.plugin_id}@${selected.version}이(가) registry에서 제거됩니다.`,
+      confirmLabel: '삭제',
+      tone: 'danger',
+    });
+    if (!proceed) return;
     setError(null);
     try {
       await pluginsApi.deleteRegistryManifest(selected.plugin_id, selected.version);
@@ -114,10 +122,6 @@ export const PluginRegistryPage: React.FC = () => {
     <div className="plugin-registry-page">
       <div className="plugin-registry-header">
         <div>
-          <div className="plugin-registry-title">
-            <FileJson size={20} />
-            <h2>Plugin Registry</h2>
-          </div>
           <p>운영자가 추가하는 plugin manifest를 등록하고 서버 재시작 없이 반영합니다.</p>
         </div>
         <div className="plugin-registry-actions">

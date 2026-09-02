@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useFeedback } from '../components/feedback/feedback-context';
 import { Clock3, Laptop, LockKeyhole, LogOut, RefreshCw, ShieldCheck, TriangleAlert } from 'lucide-react';
 import { sessionApi, type ActiveSession, type SessionSecurityPolicy } from '../api/session';
 import './SecurityPolicyPage.css';
@@ -6,6 +7,7 @@ import './SecurityPolicyPage.css';
 type ExistingSessions = 'keep' | 'revoke_others' | 'revoke_all';
 
 export function SecurityPolicyPage({ onCurrentSessionRevoked }: { onCurrentSessionRevoked: () => void }) {
+  const { confirm: confirmDialog } = useFeedback();
   const [activeTab, setActiveTab] = useState<'policy' | 'sessions'>('policy');
   const [policy, setPolicy] = useState<SessionSecurityPolicy | null>(null);
   const [idleMinutes, setIdleMinutes] = useState(30);
@@ -49,7 +51,13 @@ export function SecurityPolicyPage({ onCurrentSessionRevoked }: { onCurrentSessi
       : existingSessions === 'revoke_others'
         ? '현재 세션을 제외한 모든 사용자의 세션이 즉시 종료됩니다.'
         : '현재 세션을 포함한 모든 사용자의 세션이 즉시 종료됩니다.';
-    if (!window.confirm(`세션 정책을 ${idleMinutes}분 / ${absoluteHours}시간으로 변경할까요?\n\n${sessionAction}`)) return;
+    const proceed = await confirmDialog({
+      title: `세션 정책을 ${idleMinutes}분 / ${absoluteHours}시간으로 변경할까요?`,
+      description: sessionAction,
+      confirmLabel: '변경',
+      tone: existingSessions === 'keep' ? 'default' : 'danger',
+    });
+    if (!proceed) return;
     setSaving(true);
     try {
       const result = await sessionApi.updateSecurityPolicy({
@@ -119,6 +127,7 @@ export function SecurityPolicyPage({ onCurrentSessionRevoked }: { onCurrentSessi
 }
 
 function ActiveSessionsPanel() {
+  const { confirm: confirmDialog } = useFeedback();
   const [sessions, setSessions] = useState<ActiveSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -134,12 +143,25 @@ function ActiveSessionsPanel() {
 
   const activeSessions = sessions.filter((session) => !session.revoked_at && Date.parse(session.idle_expires_at) > Date.now() && Date.parse(session.absolute_expires_at) > Date.now());
   const revoke = async (session: ActiveSession) => {
-    if (session.current || !window.confirm(`${deviceLabel(session.user_agent)} 세션을 종료할까요?`)) return;
+    if (session.current) return;
+    const proceed = await confirmDialog({
+      title: '이 세션을 종료할까요?',
+      description: `${deviceLabel(session.user_agent)} 기기의 로그인이 즉시 해제됩니다.`,
+      confirmLabel: '종료',
+      tone: 'danger',
+    });
+    if (!proceed) return;
     try { await sessionApi.revokeSession(session.id); setMessage('선택한 세션을 종료했습니다.'); await load(); }
     catch (value) { setError(errorText(value)); }
   };
   const revokeOthers = async () => {
-    if (!window.confirm('현재 브라우저를 제외한 모든 로그인 세션을 종료할까요?')) return;
+    const proceed = await confirmDialog({
+      title: '다른 세션을 모두 종료할까요?',
+      description: '현재 브라우저를 제외한 모든 기기의 로그인이 즉시 해제됩니다.',
+      confirmLabel: '모두 종료',
+      tone: 'danger',
+    });
+    if (!proceed) return;
     try { const result = await sessionApi.revokeOtherSessions(); setMessage(`다른 세션 ${result.revoked}개를 종료했습니다.`); await load(); }
     catch (value) { setError(errorText(value)); }
   };

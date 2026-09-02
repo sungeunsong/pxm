@@ -24,7 +24,7 @@
 
 .property-section-title {
   margin: 0;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
 }
@@ -37,7 +37,7 @@
 }
 
 .property-label {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: var(--font-weight-semibold);
   color: var(--text-secondary);
   text-transform: none;
@@ -109,7 +109,7 @@
   grid-template-columns: 80px 1fr;
   gap: 8px;
   align-items: center;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .credential-binding-row span {
@@ -126,7 +126,7 @@
 
 .credential-binding-note {
   color: #1d4ed8;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.45;
 }
 
@@ -143,26 +143,26 @@
 
 .credential-managed-label {
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: var(--font-weight-semibold);
 }
 
 .credential-managed-helper {
   margin-top: 3px;
   color: var(--text-tertiary);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .credential-managed-field code {
   color: #1d4ed8;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .credential-managed-field span {
   grid-column: 1 / -1;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .node-test-section {
@@ -223,7 +223,7 @@
   background: var(--bg-tertiary);
   border: 1px solid var(--border-subtle);
   border-radius: 4px;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .ssh-test-terminal-meta button {
@@ -245,7 +245,7 @@
   border: 1px solid rgba(148, 163, 184, 0.24);
   border-radius: 6px;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -279,7 +279,7 @@
   padding: 6px 0;
   color: var(--text-primary);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.45;
 }
 
@@ -336,7 +336,7 @@
 
 .json-tree-count {
   color: var(--text-tertiary);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .path-suggestion-panel {
@@ -402,7 +402,7 @@
 .path-suggestion-item code {
   color: var(--text-primary);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .path-suggestion-action {
@@ -434,7 +434,7 @@
 .property-textarea.code-textarea {
   min-height: 260px;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.6;
 }
 
@@ -554,14 +554,14 @@
   color: var(--color-error);
   background: color-mix(in srgb, var(--color-error) 9%, transparent);
   border-radius: 999px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: var(--font-weight-semibold);
 }
 
 .command-argument-source {
   padding: 2px 6px;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: 12px;
   font-style: normal;
   font-weight: var(--font-weight-semibold);
 }
@@ -589,7 +589,7 @@
 .command-argument-meta,
 .command-argument-description {
   color: var(--text-tertiary);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.35;
 }
 
@@ -648,7 +648,7 @@
   background: color-mix(in srgb, var(--color-success) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-success) 30%, transparent);
   border-radius: var(--radius-sm);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: var(--font-weight-semibold);
   text-transform: uppercase;
 }

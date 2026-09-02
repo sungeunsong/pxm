@@ -7,6 +7,8 @@ import { Input } from '../components/Input';
 import { Select } from '../components/Select';
 import { Checkbox } from '../components/Checkbox';
 import { Button } from '../components/Button';
+import { useFeedback } from '../components/feedback/feedback-context';
+import { errorMessage } from '../lib/error-message';
 import { type InputPreset, listInputPresets, saveInputPreset } from '../input-presets';
 import { InputPresetManager } from '../input-presets/InputPresetManager';
 import './FormRenderer.css';
@@ -28,6 +30,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   onSubmit,
   onCancel,
 }) => {
+  const { toast, prompt: promptDialog } = useFeedback();
   const [formData, setFormData] = useState<FormValues>(initialData);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [presetVersion, setPresetVersion] = useState(0);
@@ -100,14 +103,19 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
 
   const handleSavePreset = async () => {
     if (!presetScopeId) return;
-    const name = prompt('파라미터 세트 이름을 입력하세요.');
+    const name = await promptDialog({
+      title: '파라미터 세트 저장',
+      label: '세트 이름',
+      placeholder: '예: 운영계 기본값',
+      confirmLabel: '저장',
+    });
     if (!name?.trim()) return;
     try {
       await saveInputPreset(presetScopeId, name, formData, undefined, 'group');
       refreshPresets();
     } catch (error) {
       console.error('Failed to save input preset:', error);
-      alert('파라미터 세트 저장에 실패했습니다.');
+      toast.error('파라미터 세트 저장에 실패했습니다.', { description: errorMessage(error) });
     }
   };
 

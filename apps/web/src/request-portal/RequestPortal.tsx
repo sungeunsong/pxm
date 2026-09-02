@@ -10,13 +10,14 @@ import {
   RefreshCw,
   Search,
   Trash2,
-  Workflow,
 } from 'lucide-react';
 import { type InputPreset, listInputPresets, saveInputPreset } from '../input-presets';
 import { InputPresetManager } from '../input-presets/InputPresetManager';
 import { authzApi, type PxmGroup } from '../api/authz';
 import type { SessionUser } from '../api/session';
 import './RequestPortal.css';
+import { useFeedback } from '../components/feedback/feedback-context';
+import { errorMessage } from '../lib/error-message';
 
 interface Template {
   id: string;
@@ -70,6 +71,7 @@ export const RequestPortal: React.FC<{
   currentUser: SessionUser;
   onRequestStarted?: (instanceId: string) => void;
 }> = ({ currentUser, onRequestStarted }) => {
+  const { toast, confirm: confirmDialog, prompt: promptDialog } = useFeedback();
   const isRequester = currentUser.role === 'user';
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(false);
@@ -212,14 +214,19 @@ export const RequestPortal: React.FC<{
 
   const handleSavePreset = async () => {
     if (!selectedTemplate) return;
-    const name = prompt('파라미터 세트 이름을 입력하세요.');
+    const name = await promptDialog({
+      title: '파라미터 세트 저장',
+      label: '세트 이름',
+      placeholder: '예: 운영계 기본값',
+      confirmLabel: '저장',
+    });
     if (!name?.trim()) return;
     try {
       await saveInputPreset(selectedTemplate.id, name, formData, undefined, currentUser.role === 'user' ? 'private' : 'group');
       refreshPresets();
     } catch (error) {
       console.error('Failed to save input preset:', error);
-      alert('파라미터 세트 저장에 실패했습니다.');
+      toast.error('파라미터 세트 저장에 실패했습니다.', { description: errorMessage(error) });
     }
   };
 
@@ -239,7 +246,7 @@ export const RequestPortal: React.FC<{
       onRequestStarted?.(data.instance_id);
     } catch (error) {
       console.error('Failed to launch workflow:', error);
-      alert('워크플로우 실행에 실패했습니다.');
+      toast.error('워크플로우 실행에 실패했습니다.', { description: errorMessage(error) });
     }
   };
 
@@ -265,7 +272,7 @@ export const RequestPortal: React.FC<{
       await fetchScheduleStatus(updated.id);
     } catch (error) {
       console.error('Failed to toggle schedule:', error);
-      alert('스케줄 상태 변경에 실패했습니다.');
+      toast.error('스케줄 상태 변경에 실패했습니다.', { description: errorMessage(error) });
     }
   };
 
@@ -290,13 +297,18 @@ export const RequestPortal: React.FC<{
       setSuccessInstanceId(null);
     } catch (error) {
       console.error('Failed to toggle DB Watch:', error);
-      alert('DB Watch 상태 변경에 실패했습니다.');
+      toast.error('DB Watch 상태 변경에 실패했습니다.', { description: errorMessage(error) });
     }
   };
 
   const handleDeleteTemplate = async () => {
     if (!selectedTemplate) return;
-    const confirmed = window.confirm(`워크플로우 "${selectedTemplate.name}"을 삭제할까요?`);
+    const confirmed = await confirmDialog({
+      title: '워크플로우를 삭제할까요?',
+      description: `"${selectedTemplate.name}"이(가) 목록에서 제거됩니다. 이 작업은 되돌릴 수 없습니다.`,
+      confirmLabel: '삭제',
+      tone: 'danger',
+    });
     if (!confirmed) return;
 
     try {
@@ -312,14 +324,20 @@ export const RequestPortal: React.FC<{
       setScheduleStatus(null);
     } catch (error) {
       console.error('Failed to delete workflow:', error);
-      alert('워크플로우 삭제에 실패했습니다.');
+      toast.error('워크플로우 삭제에 실패했습니다.', { description: errorMessage(error) });
     }
   };
 
   const handleChangeGroup = async (groupId: string) => {
     if (!selectedTemplate || currentUser.role !== 'admin') return;
     const group = groups.find((item) => item.id === groupId);
-    if (!group || !window.confirm(`워크플로우 “${selectedTemplate.name}”을 ${group.name} 그룹으로 이동할까요?`)) return;
+    if (!group) return;
+    const moveConfirmed = await confirmDialog({
+      title: '관리 그룹을 변경할까요?',
+      description: `"${selectedTemplate.name}"이(가) ${group.name} 그룹으로 이동합니다. 새 워크플로우 버전으로 저장됩니다.`,
+      confirmLabel: '이동',
+    });
+    if (!moveConfirmed) return;
     try {
       const response = await fetch(`/api/templates/${selectedTemplate.id}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -331,7 +349,7 @@ export const RequestPortal: React.FC<{
       setSelectedTemplate(updated);
     } catch (error) {
       console.error('Failed to change workflow group:', error);
-      alert(error instanceof Error ? error.message : '관리 그룹 변경에 실패했습니다.');
+      toast.error('관리 그룹 변경에 실패했습니다.', { description: errorMessage(error) });
     }
   };
 
@@ -353,10 +371,6 @@ export const RequestPortal: React.FC<{
     <div className="request-portal">
       <div className="workflow-admin-header">
         <div>
-          <div className="workflow-admin-title">
-            <Workflow size={20} />
-            <h2>{isRequester ? '요청하기' : '워크플로우 관리'}</h2>
-          </div>
           <p>{isRequester
             ? '필요한 요청을 선택하고 내용을 입력해 제출하세요.'
             : '배포된 워크플로우를 한눈에 보고, 트리거 상태와 구성을 확인하며 필요 시 수동 실행합니다.'}</p>
@@ -451,8 +465,8 @@ export const RequestPortal: React.FC<{
                         </td>}
                         {!isRequester && <td>
                           <div className="workflow-structure">
-                            <span>{summary.nodeCount} nodes</span>
-                            <span>{summary.edgeCount} edges</span>
+                            <span>노드 {summary.nodeCount}개</span>
+                            <span>연결 {summary.edgeCount}개</span>
                           </div>
                         </td>}
                         <td>

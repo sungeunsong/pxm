@@ -17,7 +17,7 @@
 
 .form-schema-header h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
   letter-spacing: -0.01em;
@@ -40,7 +40,7 @@
 
 .form-schema-empty .helper-text {
   margin-top: var(--space-xs);
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text-tertiary);
 }
 
@@ -85,7 +85,7 @@
 .form-field-number {
   font-weight: var(--font-weight-bold);
   color: var(--text-tertiary);
-  font-size: 13px;
+  font-size: 14px;
   min-width: 20px;
 }
 
@@ -97,7 +97,7 @@
 }
 
 .form-field-type {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-secondary);
   padding: 2px 8px;
   background: var(--bg-tertiary);
@@ -109,13 +109,13 @@
   background: rgba(244, 67, 54, 0.2);
   color: var(--color-error);
   border-radius: var(--radius-sm);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: var(--font-weight-bold);
   letter-spacing: 0.02em;
 }
 
 .form-field-id {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-tertiary);
   font-family: var(--font-mono);
   background: var(--bg-tertiary);
@@ -125,7 +125,7 @@
 }
 
 .form-field-options {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-secondary);
   line-height: 1.5;
 }
@@ -236,7 +236,7 @@
 
 .field-editor-header h4 {
   margin: 0;
-  font-size: 18px;
+  font-size: 20px;
   font-weight: var(--font-weight-bold);
   color: var(--text-primary);
   letter-spacing: -0.02em;
@@ -251,7 +251,7 @@
   background: transparent;
   border: none;
   color: var(--text-secondary);
-  font-size: 28px;
+  font-size: 24px;
   line-height: 1;
   cursor: pointer;
   border-radius: var(--radius-sm);
@@ -301,7 +301,7 @@
 }
 
 .form-label {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
   letter-spacing: -0.01em;
@@ -363,13 +363,13 @@
 }
 
 .error-text {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--color-error);
   font-weight: var(--font-weight-medium);
 }
 
 .helper-text {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-tertiary);
   line-height: 1.4;
 }
@@ -461,7 +461,7 @@
   align-items: center;
   gap: var(--space-sm);
   padding: var(--space-sm) var(--space-md);
-  background: linear-gradient(135deg, #2196f3 0%, #1976d2 100%);
+  background: linear-gradient(135deg, #3b82f6 0%, #1976d2 100%);
   color: white;
   border-radius: var(--radius-md);
   font-size: 14px;
@@ -504,7 +504,7 @@
   border: none;
   border-radius: 50%;
   color: white;
-  font-size: 18px;
+  font-size: 20px;
   font-weight: var(--font-weight-bold);
   line-height: 1;
   cursor: pointer;

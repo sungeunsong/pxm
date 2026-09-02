@@ -62,13 +62,13 @@
 .command-summary-card span {
   display: block;
   color: #64748b;
-  font-size: 12px;
+  font-size: 14px;
   margin-bottom: 6px;
 }
 
 .command-summary-card strong {
   color: #0f172a;
-  font-size: 22px;
+  font-size: 20px;
 }
 
 .command-registry-layout {
@@ -143,12 +143,12 @@
 
 .command-meta {
   color: #64748b;
-  font-size: 12px;
+  font-size: 14px;
   margin-top: 3px;
 }
 
 .command-status {
-  font-size: 11px;
+  font-size: 12px;
   padding: 3px 7px;
   border-radius: 999px;
   border: 1px solid #cbd5e1;
@@ -185,7 +185,7 @@
 
 .command-form-group label {
   color: #334155;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
 }
 
@@ -196,7 +196,7 @@
   border-radius: 8px;
   padding: 10px;
   font-family: var(--font-mono, monospace);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .command-form-actions {

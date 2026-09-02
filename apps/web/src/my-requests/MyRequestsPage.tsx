@@ -161,8 +161,6 @@ export function MyRequestsPage({
     <div className="my-requests-page">
       <div className="my-requests-hero">
         <div>
-          <span className="my-requests-eyebrow">REQUEST STATUS</span>
-          <h2>내 요청</h2>
           <p>내가 시작한 요청의 현재 결재 단계와 처리 결과를 확인합니다.</p>
         </div>
         <button type="button" onClick={() => void refresh()} disabled={loading}>

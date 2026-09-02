@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Plug, RotateCw, Save, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { RotateCw, Save, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { Button, Checkbox, Input, Select } from '../components';
 import { pluginsApi, type PluginManifest } from '../api/plugins';
 import './PluginControlPage.css';
@@ -80,10 +80,6 @@ export const PluginControlPage: React.FC = () => {
     <div className="plugin-control-page">
       <div className="plugin-control-header">
         <div>
-          <div className="plugin-control-title">
-            <Plug size={20} />
-            <h2>Plugin Control</h2>
-          </div>
           <p>Flow Designer에서 사용할 플러그인의 활성 상태, 버전, workspace 정책을 관리합니다.</p>
         </div>
         <Button variant="secondary" size="sm" icon={<RotateCw size={14} />} onClick={loadData}>

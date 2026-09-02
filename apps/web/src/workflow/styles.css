@@ -90,7 +90,7 @@
 
 ::-webkit-scrollbar-thumb {
   background: #475569;
-  border-radius: 3px;
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -113,7 +113,7 @@
   gap: 6px;
   padding: 4px 12px;
   border-radius: 20px;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
 }
 
@@ -160,7 +160,7 @@
   border: 1px solid #334155;
   background: #1e293b;
   color: #e2e8f0;
-  font-size: 13px;
+  font-size: 14px;
   width: 320px;
   outline: none;
   transition: border-color 0.2s;
@@ -177,7 +177,7 @@
 .btn {
   padding: 8px 16px;
   border-radius: 8px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;

@@ -7,6 +7,7 @@ import {
   type RuntimeIntegrityScan,
 } from '../api/runtime-integrity';
 import './RuntimeIntegrityPage.css';
+import { useFeedback } from '../components/feedback/feedback-context';
 
 const TYPE_LABELS: Record<RuntimeIntegrityFindingType, string> = {
   ORPHAN_JOB: '연결 없는 작업',
@@ -18,6 +19,7 @@ const TYPE_LABELS: Record<RuntimeIntegrityFindingType, string> = {
 };
 
 export function RuntimeIntegrityPage() {
+  const { prompt: promptDialog } = useFeedback();
   const [scan, setScan] = useState<RuntimeIntegrityScan | null>(null);
   const [scanning, setScanning] = useState(false);
   const [repairingId, setRepairingId] = useState<string | null>(null);
@@ -38,16 +40,18 @@ export function RuntimeIntegrityPage() {
 
   const repair = async (finding: RuntimeIntegrityFinding) => {
     if (!finding.repair.supported) return;
-    const reason = window.prompt(
-      `${finding.title}\n\n복구 전에 현재 상태를 다시 확인합니다. 처리 사유를 입력해 주세요.`,
-      '',
-    )?.trim();
+    const input = await promptDialog({
+      title: `"${finding.repair.label}" 작업을 실행할까요?`,
+      description: `${finding.title}\n\n대상: ${finding.resource_id}\n복구 전에 현재 상태를 다시 확인합니다.`,
+      label: '처리 사유 (3자 이상)',
+      confirmLabel: '복구 실행',
+    });
+    const reason = input?.trim();
     if (!reason) return;
     if (reason.length < 3) {
       setError('복구 사유를 3자 이상 입력해 주세요.');
       return;
     }
-    if (!window.confirm(`"${finding.repair.label}" 작업을 실행할까요?\n\n대상: ${finding.resource_id}`)) return;
 
     setRepairingId(finding.id);
     setError('');
@@ -69,7 +73,6 @@ export function RuntimeIntegrityPage() {
     <section className="integrity-intro">
       <div>
         <span className="integrity-eyebrow"><ShieldCheck size={15} /> 최고관리자 전용</span>
-        <h2>워크플로우 실행 이상 점검</h2>
         <p>실행 정보 사이의 연결이 끊겼거나 처리 작업 없이 멈춘 항목을 찾습니다. 점검만으로 데이터가 변경되지는 않습니다.</p>
       </div>
       <button className="integrity-scan-button" onClick={() => void runScan()} disabled={scanning}>

@@ -152,7 +152,7 @@
 }
 
 .template-version {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-secondary);
   background: var(--surface-tertiary);
   padding: 2px 8px;
@@ -164,7 +164,7 @@
 .template-unpublished {
   padding: 3px 8px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -186,7 +186,7 @@
   gap: 8px;
   margin: 0 0 12px 0;
   color: var(--text-tertiary);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .template-id-label {
@@ -221,7 +221,7 @@
 .template-meta {
   display: flex;
   gap: 16px;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text-tertiary);
 }
 
@@ -242,7 +242,7 @@
   padding: 18px;
   background: var(--surface-primary);
   border: 1px solid color-mix(in srgb, var(--primary) 24%, var(--border-primary));
-  border-radius: 10px;
+  border-radius: 12px;
 }
 
 .template-version-panel::before {
@@ -276,7 +276,7 @@
 
 .template-version-panel-header p {
   margin: 0;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-tertiary);
 }
 
@@ -301,7 +301,7 @@
   width: auto;
   gap: 5px;
   padding: 0 9px;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
 }
 
@@ -315,7 +315,7 @@
 .template-version-state,
 .template-version-error {
   margin: 10px 0;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .template-version-state {
@@ -352,7 +352,7 @@
   align-items: center;
   gap: 8px;
   color: var(--text-primary);
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
 }
 
@@ -362,7 +362,7 @@
   background: color-mix(in srgb, var(--primary) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--primary) 20%, transparent);
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -370,7 +370,7 @@
 .template-version-note {
   margin-top: 4px;
   color: var(--text-tertiary);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .template-version-actions {
@@ -395,7 +395,7 @@
   padding: 10px 12px;
   border-bottom: 1px solid var(--border-primary);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
 }
 
@@ -408,7 +408,7 @@
 .template-version-diff-list p {
   margin: 6px 0;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .template-version-diff-row {
@@ -417,7 +417,7 @@
   gap: 8px;
   align-items: center;
   padding: 5px 0;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .template-version-diff-row code {
@@ -429,7 +429,7 @@
 }
 
 .template-version-diff-type {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
 }

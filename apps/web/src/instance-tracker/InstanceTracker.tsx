@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Search, Eye, Filter, CheckCircle2, AlertTriangle, PlayCircle, Clock, RotateCcw, ShieldAlert, StopCircle, PauseCircle } from 'lucide-react';
+import { Eye, Filter, CheckCircle2, AlertTriangle, PlayCircle, Clock, RotateCcw, ShieldAlert, StopCircle, PauseCircle } from 'lucide-react';
 import './InstanceTracker.css';
+import { useFeedback } from '../components/feedback/feedback-context';
+import { errorMessage } from '../lib/error-message';
+import { approvalStatusLabel, instanceStateLabel } from '../lib/status-label';
 
 interface Instance {
   id: string;
@@ -67,6 +70,7 @@ interface RetryPreview {
 }
 
 export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstance }) => {
+  const { toast, confirm: confirmDialog } = useFeedback();
   const [instances, setInstances] = useState<Instance[]>([]);
   const [loading, setLoading] = useState(false);
   const [filterState, setFilterState] = useState<string>('ALL');
@@ -159,7 +163,7 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
       }
       setRetryPreview(payload);
     } catch (error) {
-      alert(error instanceof Error ? error.message : '재시도 미리보기를 불러오지 못했습니다.');
+      toast.error('재시도 미리보기를 불러오지 못했습니다.', { description: errorMessage(error) });
     } finally {
       setPreviewLoadingId(null);
     }
@@ -184,16 +188,20 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
       }
       setRetryPreview(null);
     } catch (error) {
-      alert(error instanceof Error ? error.message : '재시도 요청에 실패했습니다.');
+      toast.error('재시도 요청에 실패했습니다.', { description: errorMessage(error) });
     } finally {
       setRetryingId(null);
     }
   };
 
   const terminateInstance = async (instanceId: string) => {
-    if (!confirm('이 실행과 연결된 대기 중인 자식 실행을 종료하시겠습니까?')) {
-      return;
-    }
+    const proceed = await confirmDialog({
+      title: '실행을 종료할까요?',
+      description: '이 실행과 연결된 대기 중인 자식 실행도 함께 종료됩니다. 되돌릴 수 없습니다.',
+      confirmLabel: '종료',
+      tone: 'danger',
+    });
+    if (!proceed) return;
     setTerminatingId(instanceId);
     try {
       const response = await fetch(`/api/instances/${instanceId}/terminate`, {
@@ -205,7 +213,7 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
       }
       await fetchInstances();
     } catch (error) {
-      alert(error instanceof Error ? error.message : '실행 종료 요청에 실패했습니다.');
+      toast.error('실행 종료 요청에 실패했습니다.', { description: errorMessage(error) });
     } finally {
       setTerminatingId(null);
     }
@@ -224,7 +232,7 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
       }
       await fetchInstances();
     } catch (error) {
-      alert(error instanceof Error ? error.message : `실행 ${paused ? '일시중지' : '재개'} 요청에 실패했습니다.`);
+      toast.error(`실행 ${paused ? '일시중지' : '재개'} 요청에 실패했습니다.`, { description: errorMessage(error) });
     } finally {
       setControllingId(null);
     }
@@ -233,8 +241,7 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
   return (
     <div className="instance-tracker">
       <div className="tracker-header-title">
-        <Search size={20} className="header-icon" />
-        <h2>워크플로우 실시간 트래커 <span className="neon-badge">TRACKER</span></h2>
+        <p>실행 현황을 확인하고 실패한 실행을 재시도하거나 중지합니다.</p>
       </div>
 
       {/* FILTER BAR */}
@@ -245,31 +252,31 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
             className={`filter-btn ${filterState === 'ALL' ? 'active' : ''}`}
             onClick={() => setFilterState('ALL')}
           >
-            전체 목록 (ALL)
+            전체
           </button>
           <button 
             className={`filter-btn ${filterState === 'WAITING' ? 'active' : ''}`}
             onClick={() => setFilterState('WAITING')}
           >
-            결재대기 (WAITING)
+            대기 중
           </button>
           <button
             className={`filter-btn ${filterState === 'PAUSED' ? 'active' : ''}`}
             onClick={() => setFilterState('PAUSED')}
           >
-            일시중지 (PAUSED)
+            일시중지
           </button>
           <button 
             className={`filter-btn ${filterState === 'COMPLETED' ? 'active' : ''}`}
             onClick={() => setFilterState('COMPLETED')}
           >
-            전이완료 (COMPLETED)
+            완료
           </button>
           <button 
             className={`filter-btn ${filterState === 'FAILED' ? 'active' : ''}`}
             onClick={() => setFilterState('FAILED')}
           >
-            실행실패 (FAILED)
+            실패
           </button>
         </div>
         <button className="btn-refresh" onClick={fetchInstances}>목록 동기화</button>
@@ -286,12 +293,12 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
             <table className="premium-table">
               <thead>
                 <tr>
-                  <th>인스턴스 고유 ID</th>
-                  <th>워크플로우 템플릿명</th>
-                  <th>실시간 전이상태</th>
-                  <th>기동 시간</th>
-                  <th>최종 갱신 시간</th>
-                  <th>운영 조치</th>
+                  <th>실행 ID</th>
+                  <th>워크플로우</th>
+                  <th>상태</th>
+                  <th>시작</th>
+                  <th>최종 변경</th>
+                  <th>조치</th>
                 </tr>
               </thead>
               <tbody>
@@ -330,7 +337,7 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
                       {inst.approval_summary && (
                         <div className="retry-lineage approval-progress-line">
                           결재 {inst.approval_summary.current_step_order}/{inst.approval_summary.total_steps}단계
-                          {' · '}{inst.approval_summary.status}
+                          {' · '}{approvalStatusLabel(inst.approval_summary.status)}
                           {' · '}대기 {inst.approval_summary.open_task_count}명
                           {inst.approval_summary.title ? ` · ${inst.approval_summary.title}` : ''}
                         </div>
@@ -339,7 +346,7 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
                     <td className="inst-status-cell">
                       <div className={`status-badge-wrapper ${displayState(inst).toLowerCase()}`}>
                         {inst.is_paused ? <PauseCircle className="status-icon paused" size={16} /> : getStatusIcon(inst.state)}
-                        <span>{displayState(inst)}</span>
+                        <span>{instanceStateLabel(displayState(inst))}</span>
                       </div>
                     </td>
                     <td className="time-cell">{new Date(inst.created_at).toLocaleString()}</td>

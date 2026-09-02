@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { KeyRound, Plus, RotateCw, Search, Share2, ShieldCheck, Trash2 } from 'lucide-react';
+import { Plus, RotateCw, Search, Share2, ShieldCheck, Trash2 } from 'lucide-react';
 import { Button, Input, Select, Checkbox } from '../components';
 import {
   credentialsApi,
@@ -162,10 +162,6 @@ export const CredentialsPage: React.FC<{ currentUser: SessionUser }> = ({ curren
     <div className="credentials-page">
       <div className="credentials-header">
         <div>
-          <div className="credentials-title">
-            <KeyRound size={20} />
-            <h2>Credential Store</h2>
-          </div>
           <p>Credential은 한 그룹이 소유하며, 다른 관리 그룹에는 Secret 노출 없이 실행 권한만 공유합니다.</p>
         </div>
         <Button variant="secondary" size="sm" icon={<RotateCw size={14} />} onClick={loadData}>
@@ -232,6 +228,8 @@ export const CredentialsPage: React.FC<{ currentUser: SessionUser }> = ({ curren
                     icon={<Trash2 size={14} />}
                     onClick={() => void handleDeactivate(credential)}
                     disabled={!credential.active || credential.access_level === 'shared'}
+                    aria-label={`${credential.name} 자격증명 비활성화`}
+                    title="비활성화"
                   />
                 </div>
               ))}

@@ -20,3 +20,7 @@ export type { CheckboxProps } from './Checkbox';
 
 export { Header } from './Header';
 export type { HeaderProps } from './Header';
+
+export { FeedbackProvider } from './feedback/FeedbackProvider';
+export { useFeedback } from './feedback/feedback-context';
+export type { FeedbackApi, ToastKind, ToastOptions, ConfirmOptions, PromptOptions } from './feedback/feedback-context';

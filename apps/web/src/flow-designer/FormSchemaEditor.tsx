@@ -4,6 +4,7 @@
 import React, { useState } from 'react';
 import type { FormSchema, FormField } from './form-types';
 import { Button } from '../components/Button';
+import { useFeedback } from '../components/feedback/feedback-context';
 import { ChevronUp, ChevronDown, Edit2, Trash2, Plus } from 'lucide-react';
 import './FormSchemaEditor.css';
 
@@ -16,6 +17,7 @@ export const FormSchemaEditor: React.FC<FormSchemaEditorProps> = ({
   schema,
   onChange,
 }) => {
+  const { confirm: confirmDialog } = useFeedback();
   const [editingField, setEditingField] = useState<FormField | null>(null);
   const [isAddingField, setIsAddingField] = useState(false);
 
@@ -51,8 +53,14 @@ export const FormSchemaEditor: React.FC<FormSchemaEditorProps> = ({
     setIsAddingField(false);
   };
 
-  const handleDeleteField = (fieldId: string) => {
-    if (confirm('이 필드를 삭제하시겠습니까?')) {
+  const handleDeleteField = async (fieldId: string) => {
+    const proceed = await confirmDialog({
+      title: '이 필드를 삭제할까요?',
+      description: '폼에서 즉시 사라집니다. 저장하지 않으면 되돌릴 수 있습니다.',
+      confirmLabel: '삭제',
+      tone: 'danger',
+    });
+    if (proceed) {
       onChange({ fields: fields.filter(f => f.id !== fieldId) });
     }
   };

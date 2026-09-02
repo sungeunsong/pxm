@@ -1,72 +1,72 @@
-.security-policy-page { box-sizing: border-box; height: 100%; overflow: auto; padding: 20px 24px 40px; background: var(--bg-primary, #f6f8fb); color: var(--text-primary, #172033); }
-.product-settings-tabs { display: flex; gap: 6px; max-width: 1440px; margin-bottom: 18px; padding: 5px; border: 1px solid #dfe5ef; border-radius: 12px; background: #fff; }
-.product-settings-tabs button { display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 4px 8px; min-width: 230px; padding: 10px 14px; border: 0; border-radius: 8px; background: transparent; color: #667085; text-align: left; cursor: pointer; }
+.security-policy-page { box-sizing: border-box; height: 100%; overflow: auto; padding: 20px 24px 40px; background: var(--bg-primary, #f8fafc); color: var(--text-primary, #1e293b); }
+.product-settings-tabs { display: flex; gap: 6px; max-width: 1440px; margin-bottom: 18px; padding: 5px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; }
+.product-settings-tabs button { display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 4px 8px; min-width: 230px; padding: 10px 14px; border: 0; border-radius: 8px; background: transparent; color: #64748b; text-align: left; cursor: pointer; }
 .product-settings-tabs button svg { grid-row: 1 / span 2; }
-.product-settings-tabs button span { color: #344054; font-size: 13px; font-weight: 700; }
-.product-settings-tabs button small { grid-column: 2; font-size: 11px; }
-.product-settings-tabs button.active { background: #edf2ff; color: #3568dc; }
+.product-settings-tabs button span { color: #334155; font-size: 14px; font-weight: 700; }
+.product-settings-tabs button small { grid-column: 2; font-size: 12px; }
+.product-settings-tabs button.active { background: #edf2ff; color: #2563eb; }
 .product-settings-tabs button.active span { color: #214ebc; }
 .security-policy-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; max-width: 1440px; margin-bottom: 16px; }
-.security-policy-summary > div { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 4px 10px; padding: 18px; border: 1px solid #dfe5ef; border-radius: 12px; background: #fff; }
-.security-policy-summary svg { grid-row: span 2; color: #3568dc; }
-.security-policy-summary span { color: #667085; font-size: 12px; }
-.security-policy-summary strong { font-size: 18px; }
+.security-policy-summary > div { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 4px 10px; padding: 18px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; }
+.security-policy-summary svg { grid-row: span 2; color: #2563eb; }
+.security-policy-summary span { color: #64748b; font-size: 14px; }
+.security-policy-summary strong { font-size: 20px; }
 .security-policy-form { display: grid; grid-template-columns: minmax(500px, 1.1fr) minmax(430px, .9fr); align-items: start; gap: 16px; max-width: 1440px; }
 .security-policy-side-column { display: grid; gap: 16px; }
-.security-policy-panel { padding: 22px; border: 1px solid #dfe5ef; border-radius: 12px; background: #fff; }
+.security-policy-panel { padding: 22px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; }
 .security-policy-panel > header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 20px; }
-.security-policy-panel h2 { margin: 0 0 5px; font-size: 17px; }
-.security-policy-panel p { margin: 0; color: #667085; font-size: 13px; }
-.security-policy-panel header svg { color: #3568dc; }
+.security-policy-panel h2 { margin: 0 0 5px; font-size: 16px; }
+.security-policy-panel p { margin: 0; color: #64748b; font-size: 14px; }
+.security-policy-panel header svg { color: #2563eb; }
 .security-timeout-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
-.security-timeout-grid label, .security-confirm-panel label { display: grid; gap: 8px; color: #344054; font-size: 13px; font-weight: 700; }
-.security-timeout-grid label > div { display: flex; align-items: center; overflow: hidden; border: 1px solid #cfd6e4; border-radius: 9px; }
+.security-timeout-grid label, .security-confirm-panel label { display: grid; gap: 8px; color: #334155; font-size: 14px; font-weight: 700; }
+.security-timeout-grid label > div { display: flex; align-items: center; overflow: hidden; border: 1px solid #cbd5e1; border-radius: 8px; }
 .security-timeout-grid input { width: 100%; height: 44px; padding: 0 12px; border: 0; outline: 0; font: inherit; }
-.security-timeout-grid b { padding: 0 13px; color: #667085; font-size: 12px; }
-.security-timeout-grid small, .security-session-option small { color: #667085; font-size: 12px; font-weight: 400; line-height: 1.5; }
-.security-policy-warning, .security-policy-error, .security-policy-message { display: flex; align-items: center; gap: 7px; margin-top: 14px; padding: 10px 12px; border-radius: 8px; font-size: 13px; }
-.security-policy-warning, .security-policy-error { background: #fef3f2; color: #b42318; }
-.security-policy-message { background: #ecfdf3; color: #027a48; }
+.security-timeout-grid b { padding: 0 13px; color: #64748b; font-size: 14px; }
+.security-timeout-grid small, .security-session-option small { color: #64748b; font-size: 14px; font-weight: 400; line-height: 1.5; }
+.security-policy-warning, .security-policy-error, .security-policy-message { display: flex; align-items: center; gap: 7px; margin-top: 14px; padding: 10px 12px; border-radius: 8px; font-size: 14px; }
+.security-policy-warning, .security-policy-error { background: #fef2f2; color: #b91c1c; }
+.security-policy-message { background: #ecfdf5; color: #047857; }
 .security-session-options { display: grid; gap: 9px; }
-.security-session-option { display: flex; align-items: flex-start; gap: 11px; padding: 13px; border: 1px solid #dfe5ef; border-radius: 9px; cursor: pointer; }
+.security-session-option { display: flex; align-items: flex-start; gap: 11px; padding: 13px; border: 1px solid #e2e8f0; border-radius: 8px; cursor: pointer; }
 .security-session-option.selected { border-color: #4b72df; background: #f2f5ff; box-shadow: 0 0 0 1px #4b72df; }
 .security-session-option.danger.selected { border-color: #d92d20; background: #fff5f4; box-shadow: 0 0 0 1px #d92d20; }
 .security-session-option input { margin-top: 3px; }
 .security-session-option span { display: grid; gap: 3px; }
-.security-confirm-panel textarea, .security-confirm-panel input { box-sizing: border-box; width: 100%; border: 1px solid #cfd6e4; border-radius: 9px; padding: 11px 12px; background: #fff; color: #172033; font: inherit; font-size: 13px; outline: none; }
+.security-confirm-panel textarea, .security-confirm-panel input { box-sizing: border-box; width: 100%; border: 1px solid #cbd5e1; border-radius: 8px; padding: 11px 12px; background: #fff; color: #1e293b; font: inherit; font-size: 14px; outline: none; }
 .security-confirm-panel textarea { min-height: 84px; resize: vertical; }
 .security-confirm-panel label + label { margin-top: 14px; }
 .security-policy-actions { display: flex; justify-content: flex-end; margin-top: 18px; }
-.security-policy-actions button { min-width: 120px; height: 40px; border: 0; border-radius: 9px; background: #2458d6; color: #fff; font-weight: 700; cursor: pointer; }
+.security-policy-actions button { min-width: 120px; height: 40px; border: 0; border-radius: 8px; background: #2563eb; color: #fff; font-weight: 700; cursor: pointer; }
 .security-policy-actions button:disabled { opacity: .45; cursor: default; }
-.security-policy-state { padding: 32px; color: #667085; }
-.security-policy-state.error { color: #b42318; }
-.active-sessions-panel { box-sizing: border-box; max-width: 1440px; padding: 22px; border: 1px solid #dfe5ef; border-radius: 12px; background: #fff; }
+.security-policy-state { padding: 32px; color: #64748b; }
+.security-policy-state.error { color: #b91c1c; }
+.active-sessions-panel { box-sizing: border-box; max-width: 1440px; padding: 22px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; }
 .active-sessions-panel > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 20px; }
-.active-sessions-panel h2 { margin: 0 0 5px; font-size: 17px; }
-.active-sessions-panel p { margin: 0; color: #667085; font-size: 13px; }
+.active-sessions-panel h2 { margin: 0 0 5px; font-size: 16px; }
+.active-sessions-panel p { margin: 0; color: #64748b; font-size: 14px; }
 .active-sessions-panel > header > div:last-child { display: flex; align-items: center; gap: 8px; }
-.active-sessions-panel > header > div:last-child > span { padding: 6px 9px; border-radius: 999px; background: #ecfdf3; color: #027a48; font-size: 11px; font-weight: 700; white-space: nowrap; }
-.sessions-refresh, .revoke-others, .session-revoke-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 34px; border: 1px solid #cfd6e4; border-radius: 8px; background: #fff; color: #344054; font-size: 12px; font-weight: 700; cursor: pointer; }
+.active-sessions-panel > header > div:last-child > span { padding: 6px 9px; border-radius: 999px; background: #ecfdf5; color: #047857; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.sessions-refresh, .revoke-others, .session-revoke-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 34px; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; color: #334155; font-size: 14px; font-weight: 700; cursor: pointer; }
 .sessions-refresh { width: 34px; padding: 0; }
 .revoke-others { padding: 0 11px; }
 .sessions-refresh:hover, .revoke-others:hover, .session-revoke-button:hover { background: #f8fafc; }
 .revoke-others:disabled, .session-revoke-button:disabled { opacity: .45; cursor: default; }
-.active-session-list { overflow: hidden; border: 1px solid #e4e9f1; border-radius: 10px; }
+.active-session-list { overflow: hidden; border: 1px solid #e4e9f1; border-radius: 12px; }
 .active-session-list article { display: grid; grid-template-columns: auto minmax(220px, .9fr) minmax(420px, 1.4fr) auto; align-items: center; gap: 14px; min-height: 74px; padding: 13px 16px; border-bottom: 1px solid #e9edf3; }
 .active-session-list article:last-child { border-bottom: 0; }
 .active-session-list article.current { background: #f7f9ff; }
-.active-session-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 9px; background: #edf2ff; color: #3568dc; }
+.active-session-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 8px; background: #edf2ff; color: #2563eb; }
 .active-session-main { display: grid; min-width: 0; gap: 4px; }
-.active-session-main strong { color: #172033; font-size: 13px; }
-.active-session-main em { margin-left: 6px; padding: 2px 6px; border-radius: 999px; background: #dbe6ff; color: #214ebc; font-size: 10px; font-style: normal; }
-.active-session-main > span { overflow: hidden; color: #667085; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.active-session-main strong { color: #1e293b; font-size: 14px; }
+.active-session-main em { margin-left: 6px; padding: 2px 6px; border-radius: 999px; background: #dbe6ff; color: #214ebc; font-size: 12px; font-style: normal; }
+.active-session-main > span { overflow: hidden; color: #64748b; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .active-session-list dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin: 0; }
 .active-session-list dl > div { display: grid; gap: 3px; }
-.active-session-list dt { color: #98a2b3; font-size: 10px; font-weight: 700; }
-.active-session-list dd { margin: 0; color: #344054; font-size: 12px; white-space: nowrap; }
-.session-revoke-button { min-width: 78px; padding: 0 10px; color: #b42318; }
-.active-sessions-empty { padding: 54px 20px; border: 1px dashed #d7deea; border-radius: 10px; color: #667085; font-size: 13px; text-align: center; }
+.active-session-list dt { color: #94a3b8; font-size: 12px; font-weight: 700; }
+.active-session-list dd { margin: 0; color: #334155; font-size: 14px; white-space: nowrap; }
+.session-revoke-button { min-width: 78px; padding: 0 10px; color: #b91c1c; }
+.active-sessions-empty { padding: 54px 20px; border: 1px dashed #cbd5e1; border-radius: 12px; color: #64748b; font-size: 14px; text-align: center; }
 @media (max-width: 1180px) {
   .security-policy-form { grid-template-columns: 1fr; }
   .active-session-list article { grid-template-columns: auto minmax(180px, .8fr) minmax(360px, 1.2fr) auto; }

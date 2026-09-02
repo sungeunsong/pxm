@@ -1,0 +1,187 @@
+/* ============================================
+   Feedback: Toast + Confirm/Prompt Dialog
+   브라우저 기본 alert/confirm/prompt 대체용 공용 레이어
+   ============================================ */
+
+/* ===== Toast ===== */
+.pxm-toast-viewport {
+  position: fixed;
+  right: var(--space-lg);
+  bottom: var(--space-lg);
+  z-index: var(--z-notification);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  width: min(380px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.pxm-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--text-tertiary);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-lg);
+  pointer-events: auto;
+  animation: pxmToastIn 160ms ease-out;
+}
+
+@keyframes pxmToastIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.pxm-toast.leaving {
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.pxm-toast-success {
+  border-left-color: var(--color-success);
+}
+.pxm-toast-error {
+  border-left-color: var(--color-error);
+}
+.pxm-toast-info {
+  border-left-color: var(--color-info);
+}
+
+.pxm-toast-icon {
+  flex: 0 0 auto;
+  display: flex;
+  margin-top: 1px;
+}
+.pxm-toast-success .pxm-toast-icon {
+  color: var(--color-success);
+}
+.pxm-toast-error .pxm-toast-icon {
+  color: var(--color-error);
+}
+.pxm-toast-info .pxm-toast-icon {
+  color: var(--color-info);
+}
+
+.pxm-toast-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pxm-toast-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+  line-height: var(--line-height-tight);
+}
+
+.pxm-toast-description {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  line-height: var(--line-height-normal);
+  overflow-wrap: anywhere;
+}
+
+.pxm-toast-close {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.pxm-toast-close:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+/* ===== Dialog ===== */
+.pxm-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: grid;
+  place-items: center;
+  padding: var(--space-lg);
+  background: var(--bg-overlay);
+  backdrop-filter: blur(3px);
+}
+
+.pxm-dialog {
+  width: min(440px, 100%);
+  padding: var(--space-lg);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-xl);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.pxm-dialog-title {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+  line-height: var(--line-height-tight);
+}
+
+.pxm-dialog-description {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  line-height: var(--line-height-normal);
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+.pxm-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.pxm-dialog-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+}
+
+.pxm-dialog-input {
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  outline: none;
+}
+.pxm-dialog-input:focus {
+  border-color: var(--border-focus);
+  box-shadow: var(--shadow-glow-blue);
+}
+
+.pxm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
