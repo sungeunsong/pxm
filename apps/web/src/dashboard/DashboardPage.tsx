@@ -8,13 +8,14 @@ import './DashboardPage.css';
  * 값을 만들어내거나 추정하지 않으며, 조회에 실패한 영역은 실패했다고 표시한다.
  */
 
-type InstanceState = 'CREATED' | 'RUNNING' | 'WAITING' | 'COMPLETED' | 'FAILED' | 'TERMINATED';
+type InstanceState = 'CREATED' | 'RUNNING' | 'WAITING' | 'PAUSED' | 'COMPLETED' | 'FAILED' | 'TERMINATED' | 'UNKNOWN';
 
 interface InstanceRow {
   id: string;
   template_id?: string;
   template_name?: string;
   state: string;
+  is_paused?: boolean;
   created_at?: string;
   updated_at?: string;
 }
@@ -41,15 +42,20 @@ const STATE_LABEL: Record<string, string> = {
   CREATED: '생성됨',
   RUNNING: '실행 중',
   WAITING: '대기 중',
+  PAUSED: '일시중지',
   COMPLETED: '완료',
   FAILED: '실패',
   TERMINATED: '종료됨',
+  UNKNOWN: '상태 미확인',
 };
 
 const normalizeState = (value: unknown): InstanceState => {
   const state = String(value ?? '').toUpperCase();
-  return (STATE_LABEL[state] ? state : 'RUNNING') as InstanceState;
+  return (STATE_LABEL[state] ? state : 'UNKNOWN') as InstanceState;
 };
+
+const effectiveState = (instance: InstanceRow): InstanceState =>
+  instance.is_paused ? 'PAUSED' : normalizeState(instance.state);
 
 const getJson = async <T,>(url: string): Promise<T> => {
   const response = await fetch(url, { credentials: 'include' });
@@ -97,6 +103,7 @@ export const DashboardPage: React.FC = () => {
           instances: (Array.isArray(instances) ? instances : []).map((row) => ({
             ...row,
             state: normalizeState(row.state),
+            is_paused: row.is_paused === true,
           })),
           pendingApprovals: Array.isArray(tasks) ? tasks.length : 0,
         } satisfies DashboardData;
@@ -122,7 +129,7 @@ export const DashboardPage: React.FC = () => {
   }, [load]);
 
   const instances = data.status === 'ready' ? data.value.instances : [];
-  const countByState = (state: InstanceState) => instances.filter((row) => row.state === state).length;
+  const countByState = (state: InstanceState) => instances.filter((row) => effectiveState(row) === state).length;
   const recentInstances = [...instances]
     .sort((a, b) => Date.parse(b.updated_at || b.created_at || '') - Date.parse(a.updated_at || a.created_at || ''))
     .slice(0, 8);
@@ -212,14 +219,17 @@ export const DashboardPage: React.FC = () => {
               )}
               {data.status === 'ready' && recentInstances.length > 0 && (
                 <ul className="recent-instance-list">
-                  {recentInstances.map((instance) => (
-                    <li key={instance.id} className={`recent-instance state-${instance.state.toLowerCase()}`}>
-                      <span className="recent-instance-state">{STATE_LABEL[instance.state] ?? instance.state}</span>
-                      <span className="recent-instance-name">{instance.template_name || '이름 없는 워크플로우'}</span>
-                      <span className="recent-instance-id">{instance.id.slice(0, 8)}</span>
-                      <span className="recent-instance-time">{formatRelativeTime(instance.updated_at || instance.created_at)}</span>
-                    </li>
-                  ))}
+                  {recentInstances.map((instance) => {
+                    const state = effectiveState(instance);
+                    return (
+                      <li key={instance.id} className={`recent-instance state-${state.toLowerCase()}`}>
+                        <span className="recent-instance-state">{STATE_LABEL[state]}</span>
+                        <span className="recent-instance-name">{instance.template_name || '이름 없는 워크플로우'}</span>
+                        <span className="recent-instance-id">{instance.id.slice(0, 8)}</span>
+                        <span className="recent-instance-time">{formatRelativeTime(instance.updated_at || instance.created_at)}</span>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </div>

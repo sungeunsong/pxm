@@ -47,10 +47,20 @@ export const FeedbackProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [dialog, setDialog] = useState<PendingDialog | null>(null);
   const [promptValue, setPromptValue] = useState('');
+  const promptValueRef = useRef('');
   const nextId = useRef(1);
   const timers = useRef<number[]>([]);
+  const pendingDialogRef = useRef<PendingDialog | null>(null);
+  const dialogElementRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
 
-  useEffect(() => () => timers.current.forEach((timer) => window.clearTimeout(timer)), []);
+  useEffect(() => () => {
+    timers.current.forEach((timer) => window.clearTimeout(timer));
+    const pending = pendingDialogRef.current;
+    if (pending?.kind === 'confirm') pending.resolve(false);
+    if (pending?.kind === 'prompt') pending.resolve(null);
+    pendingDialogRef.current = null;
+  }, []);
 
   const dismissToast = useCallback((id: number) => {
     setToasts((current) => current.map((item) => (item.id === id ? { ...item, leaving: true } : item)));
@@ -80,12 +90,26 @@ export const FeedbackProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       },
       confirm: (options) =>
         new Promise<boolean>((resolve) => {
-          setDialog({ kind: 'confirm', options, resolve });
+          const nextDialog: PendingDialog = { kind: 'confirm', options, resolve };
+          const pending = pendingDialogRef.current;
+          if (pending?.kind === 'confirm') pending.resolve(false);
+          if (pending?.kind === 'prompt') pending.resolve(null);
+          if (!pending) previousFocusRef.current = document.activeElement as HTMLElement | null;
+          pendingDialogRef.current = nextDialog;
+          setDialog(nextDialog);
         }),
       prompt: (options) =>
         new Promise<string | null>((resolve) => {
-          setPromptValue(options.defaultValue ?? '');
-          setDialog({ kind: 'prompt', options, resolve });
+          const nextDialog: PendingDialog = { kind: 'prompt', options, resolve };
+          const pending = pendingDialogRef.current;
+          if (pending?.kind === 'confirm') pending.resolve(false);
+          if (pending?.kind === 'prompt') pending.resolve(null);
+          if (!pending) previousFocusRef.current = document.activeElement as HTMLElement | null;
+          const initialValue = options.defaultValue ?? '';
+          promptValueRef.current = initialValue;
+          setPromptValue(initialValue);
+          pendingDialogRef.current = nextDialog;
+          setDialog(nextDialog);
         }),
     }),
     [pushToast],
@@ -93,25 +117,57 @@ export const FeedbackProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const closeDialog = useCallback(
     (accepted: boolean) => {
-      setDialog((current) => {
-        if (!current) return null;
-        if (current.kind === 'confirm') {
-          current.resolve(accepted);
-        } else {
-          current.resolve(accepted ? promptValue : null);
-        }
-        return null;
-      });
+      const current = pendingDialogRef.current;
+      if (!current) return;
+      pendingDialogRef.current = null;
+      setDialog(null);
+      if (current.kind === 'confirm') current.resolve(accepted);
+      else current.resolve(accepted ? promptValueRef.current : null);
+
+      const previousFocus = previousFocusRef.current;
+      previousFocusRef.current = null;
+      window.requestAnimationFrame(() => previousFocus?.focus());
     },
-    [promptValue],
+    [],
   );
 
   useEffect(() => {
     if (!dialog) return;
+    const dialogElement = dialogElementRef.current;
+    const initialFocus = dialogElement?.querySelector<HTMLElement>('[data-dialog-initial-focus]');
+    initialFocus?.focus();
+
     const handleKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
         closeDialog(false);
+        return;
+      }
+      if (event.key !== 'Tab' || !dialogElement) return;
+
+      const focusable = Array.from(
+        dialogElement.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialogElement.focus();
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const activeElement = document.activeElement;
+      if (!dialogElement.contains(activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && activeElement === last) {
+        event.preventDefault();
+        first.focus();
       }
     };
     window.addEventListener('keydown', handleKey);
@@ -135,7 +191,7 @@ export const FeedbackProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               <span className="pxm-toast-title">{item.title}</span>
               {item.description && <span className="pxm-toast-description">{item.description}</span>}
             </div>
-            <button className="pxm-toast-close" onClick={() => dismissToast(item.id)} aria-label="알림 닫기">
+            <button type="button" className="pxm-toast-close" onClick={() => dismissToast(item.id)} aria-label="알림 닫기">
               <X size={13} />
             </button>
           </div>
@@ -144,11 +200,19 @@ export const FeedbackProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
       {dialog && (
         <div className="pxm-dialog-backdrop" onMouseDown={(event) => event.target === event.currentTarget && closeDialog(false)}>
-          <div className="pxm-dialog" role="dialog" aria-modal="true" aria-labelledby="pxm-dialog-title">
+          <div
+            ref={dialogElementRef}
+            className="pxm-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="pxm-dialog-title"
+            aria-describedby={dialog.options.description ? 'pxm-dialog-description' : undefined}
+            tabIndex={-1}
+          >
             <h2 className="pxm-dialog-title" id="pxm-dialog-title">
               {dialog.options.title}
             </h2>
-            {dialog.options.description && <p className="pxm-dialog-description">{dialog.options.description}</p>}
+            {dialog.options.description && <p className="pxm-dialog-description" id="pxm-dialog-description">{dialog.options.description}</p>}
 
             {dialog.kind === 'prompt' && (
               <label className="pxm-dialog-field">
@@ -156,9 +220,13 @@ export const FeedbackProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 <input
                   className="pxm-dialog-input"
                   autoFocus
+                  data-dialog-initial-focus
                   value={promptValue}
                   placeholder={dialog.options.placeholder}
-                  onChange={(event) => setPromptValue(event.target.value)}
+                  onChange={(event) => {
+                    promptValueRef.current = event.target.value;
+                    setPromptValue(event.target.value);
+                  }}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' && !promptInvalid) {
                       event.preventDefault();
@@ -170,7 +238,11 @@ export const FeedbackProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             )}
 
             <div className="pxm-dialog-actions">
-              <Button variant="secondary" onClick={() => closeDialog(false)}>
+              <Button
+                variant="secondary"
+                onClick={() => closeDialog(false)}
+                {...(dialog.kind === 'confirm' ? { 'data-dialog-initial-focus': true } : {})}
+              >
                 {dialog.options.cancelLabel ?? '취소'}
               </Button>
               <Button
