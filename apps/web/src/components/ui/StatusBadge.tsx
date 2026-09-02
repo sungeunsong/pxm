@@ -14,7 +14,11 @@ const TONE_BY_STATUS: Record<string, StatusBadgeTone> = {
   ACTIVE: 'success', COMPLETED: 'success', SENT: 'success', APPROVED: 'success', HEALTHY: 'success',
   RUNNING: 'info', CREATED: 'info',
   WAITING: 'warning', PENDING: 'warning', OPEN: 'warning', DISABLED: 'warning', WARNING: 'warning',
-  FAILED: 'danger', REJECTED: 'danger', DELETED: 'danger', EXPIRED: 'danger', DEAD_LETTER: 'danger', TERMINATED: 'danger',
+  // 반려는 정상적인 결재 결과지 오류가 아니다. 부정 결과로만 구분한다.
+  REJECTED: 'warning',
+  // 종료·취소는 운영자가 의도한 종결 상태다.
+  TERMINATED: 'neutral', CANCELED: 'neutral',
+  FAILED: 'danger', DELETED: 'danger', EXPIRED: 'danger', DEAD_LETTER: 'danger',
   PAUSED: 'accent',
 };
 

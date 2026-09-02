@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 import './primitives.css';
+import { isTopModalLayer, popModalLayer, pushModalLayer } from '../../lib/modal-layer';
 
 export interface DrawerProps {
   title: ReactNode;
@@ -45,7 +46,12 @@ export function Drawer({
     const drawer = drawerRef.current;
     drawer?.querySelector<HTMLElement>('[data-drawer-initial-focus]')?.focus();
 
+    // 이 Drawer 위에 확인 다이얼로그가 열리면 그 쪽이 최상단이 된다.
+    // 그때는 Esc/Tab을 넘겨야 Esc 한 번에 둘 다 닫히지 않는다.
+    const layer = pushModalLayer('drawer');
+
     const handleKey = (event: KeyboardEvent) => {
+      if (!isTopModalLayer(layer)) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         onCloseRef.current();
@@ -76,6 +82,7 @@ export function Drawer({
     window.addEventListener('keydown', handleKey);
     return () => {
       window.removeEventListener('keydown', handleKey);
+      popModalLayer(layer);
       restoreFrameRef.current = window.requestAnimationFrame(() => {
         previousFocusRef.current?.focus();
         previousFocusRef.current = null;

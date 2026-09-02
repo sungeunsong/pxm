@@ -10,6 +10,7 @@ import {
   type ToastOptions,
 } from './feedback-context';
 import './feedback.css';
+import { isTopModalLayer, popModalLayer, pushModalLayer } from '../../lib/modal-layer';
 
 /**
  * 브라우저 기본 alert/confirm/prompt를 대체하는 공용 피드백 레이어.
@@ -137,7 +138,11 @@ export const FeedbackProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const initialFocus = dialogElement?.querySelector<HTMLElement>('[data-dialog-initial-focus]');
     initialFocus?.focus();
 
+    // Drawer 위에 열릴 수 있다. 나중에 push되므로 이 다이얼로그가 최상단이 된다.
+    const layer = pushModalLayer('dialog');
+
     const handleKey = (event: KeyboardEvent) => {
+      if (!isTopModalLayer(layer)) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         closeDialog(false);
@@ -171,7 +176,10 @@ export const FeedbackProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
     };
     window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
+    return () => {
+      window.removeEventListener('keydown', handleKey);
+      popModalLayer(layer);
+    };
   }, [dialog, closeDialog]);
 
   const promptRequired = dialog?.kind === 'prompt' ? dialog.options.required !== false : false;
