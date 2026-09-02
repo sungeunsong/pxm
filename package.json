@@ -7,6 +7,7 @@
     "db:mongo:reset": "docker compose -f infra/docker-compose.yml down -v && docker compose -f infra/docker-compose.yml up -d mongodb",
     "db:mongo:init": "cd apps/api && MONGODB_URL=${MONGODB_URL:-mongodb://127.0.0.1:27017/?replicaSet=rs0} MONGO_DB_NAME=${MONGO_DB_NAME:-pxm_db} node scripts/init-mongo-indexes.mjs",
     "db:mongo:check": "cd apps/api && MONGODB_URL=${MONGODB_URL:-mongodb://127.0.0.1:27017/?replicaSet=rs0} MONGO_DB_NAME=${MONGO_DB_NAME:-pxm_db} node scripts/check-mongo-runtime-contracts.mjs",
+    "db:workflow-publish-metadata:repair": "cd apps/api && node scripts/repair-workflow-publish-metadata.mjs",
     "plugin:install": "cd apps/api && node scripts/install-plugin-manifest.mjs",
     "plugin:conformance": "cd apps/api && node scripts/plugin-conformance.mjs",
     "plugin:control": "cd apps/api && node scripts/plugin-control.mjs",

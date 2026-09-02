@@ -13,6 +13,7 @@ import type {
   ExternalPrincipalMappingStatus,
   UpdateExternalPrincipalMapping,
 } from '../ports/db.ports';
+import { candidateActivePublishedVersion, resolveWorkflowLifecycle } from '../workflow-lifecycle';
 
 @Injectable()
 export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleRepositoryPort, WorkflowInputPresetRepositoryPort, AuthzRepositoryPort {
@@ -168,17 +169,23 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
     const current = await this.getDefinition(id);
     if (!current) return null;
     const now = new Date().toISOString();
-    const previousActiveVersion = current.metadata?.active_published_version ?? null;
-    const activeVersion =
-      lifecycle.active_published_version ??
-      previousActiveVersion ??
-      (lifecycle.status === 'PUBLISHED' ? current.version : null);
+    const candidateVersion = candidateActivePublishedVersion(current, lifecycle);
+    await this.ensureDefinitionVersionTable();
+    const snapshotExists = Number.isInteger(candidateVersion) && Number(candidateVersion) > 0
+      ? (await this.pool.query(
+        `SELECT 1 FROM v2_process_definition_versions
+         WHERE definition_id = $1::uuid AND version = $2
+         LIMIT 1`,
+        [id, candidateVersion],
+      )).rowCount === 1
+      : false;
+    const resolved = resolveWorkflowLifecycle(current, lifecycle, snapshotExists, now);
     const metadata = {
       ...(current.metadata || {}),
       lifecycle_status: lifecycle.status,
-      active_published_version: activeVersion,
-      published_at: lifecycle.status === 'PUBLISHED' ? now : current.metadata?.published_at || null,
-      published_by: lifecycle.status === 'PUBLISHED' ? lifecycle.actor_id || null : current.metadata?.published_by || null,
+      active_published_version: resolved.activePublishedVersion,
+      published_at: resolved.publishedAt,
+      published_by: resolved.publishedBy,
     };
     await this.pool.query(
       `UPDATE v2_process_definitions

@@ -87,7 +87,12 @@ export const TemplateListModal: React.FC<TemplateListModalProps> = ({
       ? { title: `v${template.version}을 배포할까요?`, description: '배포하면 이 버전이 외부 실행 대상이 됩니다.', confirmLabel: '배포' }
       : action === 'disable'
         ? { title: '실행을 중지할까요?', description: '신규 API 실행과 자동 실행이 중지됩니다. 이미 진행 중인 인스턴스는 계속 처리됩니다.', confirmLabel: '중지', tone: 'danger' as const }
-        : { title: `배포 버전 v${template.active_published_version}을 다시 활성화할까요?`, confirmLabel: '활성화' };
+        : {
+          title: typeof template.active_published_version === 'number'
+            ? `배포 버전 v${template.active_published_version}을 다시 활성화할까요?`
+            : '기존 배포 버전을 다시 활성화할까요?',
+          confirmLabel: '활성화',
+        };
     if (!(await confirmDialog(dialog))) return;
     try {
       const updated = await templatesApi[action](template.id);

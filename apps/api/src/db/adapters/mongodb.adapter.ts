@@ -12,6 +12,7 @@ import type {
   ExternalPrincipalMappingStatus,
   UpdateExternalPrincipalMapping,
 } from '../ports/db.ports';
+import { candidateActivePublishedVersion, resolveWorkflowLifecycle } from '../workflow-lifecycle';
 
 @Injectable()
 export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleRepositoryPort, WorkflowInputPresetRepositoryPort, AuthzRepositoryPort {
@@ -214,23 +215,23 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
     const current = await this.getDefinition(id);
     if (!current) return null;
     const now = new Date().toISOString();
-    const previousActiveVersion = current.active_published_version ?? null;
-    const activeVersion =
-      lifecycle.active_published_version ??
-      previousActiveVersion ??
-      (lifecycle.status === 'PUBLISHED' ? current.version : null);
+    const candidateVersion = candidateActivePublishedVersion(current, lifecycle);
+    const snapshotExists = Number.isInteger(candidateVersion) && Number(candidateVersion) > 0
+      ? Boolean(await this.db.collection('v2_process_definition_versions').findOne({ definition_id: id, version: candidateVersion }, { projection: { _id: 1 } }))
+      : false;
+    const resolved = resolveWorkflowLifecycle(current, lifecycle, snapshotExists, now);
     await this.db.collection<any>('v2_process_definitions').updateOne(
       { _id: id, status: { $ne: 'DELETED' } },
       {
         $set: {
           lifecycle_status: lifecycle.status,
-          active_published_version: activeVersion,
-          published_at: lifecycle.status === 'PUBLISHED' ? now : current.published_at || null,
-          published_by: lifecycle.status === 'PUBLISHED' ? lifecycle.actor_id || null : current.published_by || null,
+          active_published_version: resolved.activePublishedVersion,
+          published_at: resolved.publishedAt,
+          published_by: resolved.publishedBy,
           'metadata.lifecycle_status': lifecycle.status,
-          'metadata.active_published_version': activeVersion,
-          'metadata.published_at': lifecycle.status === 'PUBLISHED' ? now : current.published_at || null,
-          'metadata.published_by': lifecycle.status === 'PUBLISHED' ? lifecycle.actor_id || null : current.published_by || null,
+          'metadata.active_published_version': resolved.activePublishedVersion,
+          'metadata.published_at': resolved.publishedAt,
+          'metadata.published_by': resolved.publishedBy,
           updated_at: now,
         },
       },

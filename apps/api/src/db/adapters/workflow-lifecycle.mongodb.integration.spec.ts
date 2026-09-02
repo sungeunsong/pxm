@@ -35,6 +35,12 @@ describeMongo('Mongo workflow deployment lifecycle', () => {
       active_published_version: 1,
       actor_id: 'admin',
     });
+    const firstPublication = await adapter.getDefinition(definitionId);
+    expect(firstPublication).toEqual(expect.objectContaining({
+      active_published_version: 1,
+      published_at: expect.any(String),
+      published_by: 'admin',
+    }));
     expect(await adapter.getPublishedDefinition(definitionId)).toEqual(expect.objectContaining({ version: 1, nodes: nodesV1 }));
 
     const nodesV2 = [{ id: 'start', data: { nodeType: 'start', label: 'Draft start' } }];
@@ -52,12 +58,48 @@ describeMongo('Mongo workflow deployment lifecycle', () => {
       active_published_version: 2,
       actor_id: 'admin',
     });
+    const secondPublication = await adapter.getDefinition(definitionId);
+    expect(secondPublication).toEqual(expect.objectContaining({
+      active_published_version: 2,
+      published_at: expect.any(String),
+      published_by: 'admin',
+    }));
     expect(await adapter.getPublishedDefinition(definitionId)).toEqual(expect.objectContaining({ version: 2, nodes: nodesV2 }));
 
     await adapter.setDefinitionLifecycle(definitionId, {
       status: 'DISABLED',
       actor_id: 'admin',
     });
+    const disabled = await adapter.getDefinition(definitionId);
+    expect(disabled).toEqual(expect.objectContaining({
+      lifecycle_status: 'DISABLED',
+      active_published_version: 2,
+      published_at: secondPublication.published_at,
+      published_by: secondPublication.published_by,
+    }));
     expect(await adapter.getPublishedDefinition(definitionId)).toBeNull();
+
+    await adapter.setDefinitionLifecycle(definitionId, {
+      status: 'PUBLISHED',
+      active_published_version: 2,
+      actor_id: 'reactivating-admin',
+    });
+    expect(await adapter.getDefinition(definitionId)).toEqual(expect.objectContaining({
+      lifecycle_status: 'PUBLISHED',
+      active_published_version: 2,
+      published_at: secondPublication.published_at,
+      published_by: secondPublication.published_by,
+    }));
+
+    await expect(adapter.setDefinitionLifecycle(definitionId, {
+      status: 'PUBLISHED',
+      active_published_version: 99,
+      actor_id: 'admin',
+    })).rejects.toThrow('Workflow version v99 does not exist');
+    expect(await adapter.getDefinition(definitionId)).toEqual(expect.objectContaining({
+      lifecycle_status: 'PUBLISHED',
+      active_published_version: 2,
+      published_at: secondPublication.published_at,
+    }));
   });
 });

@@ -153,6 +153,43 @@ describe('Workflow deployment lifecycle', () => {
     );
   });
 
+  it('reactivates the retained published version and its triggers', async () => {
+    workflowRepo.getDefinition.mockResolvedValue({
+      id: 'workflow-1',
+      name: 'Purchase approval',
+      version: 4,
+      lifecycle_status: 'DISABLED',
+      active_published_version: 3,
+    });
+    workflowRepo.setDefinitionLifecycle.mockResolvedValue({
+      id: 'workflow-1',
+      name: 'Purchase approval',
+      version: 4,
+      lifecycle_status: 'PUBLISHED',
+      active_published_version: 3,
+      nodes: [],
+      edges: [],
+    });
+    workflowRepo.getPublishedDefinition.mockResolvedValue({
+      id: 'workflow-1',
+      name: 'Purchase approval',
+      version: 3,
+      nodes: [{ id: 'start', data: { nodeType: 'start' } }],
+      edges: [],
+    });
+
+    const reactivated = await service.reactivate('workflow-1', 'admin');
+
+    expect(workflowRepo.setDefinitionLifecycle).toHaveBeenCalledWith('workflow-1', {
+      status: 'PUBLISHED',
+      active_published_version: 3,
+      actor_id: 'admin',
+    });
+    expect(schedules.syncDefinitionSchedules).toHaveBeenCalledWith('workflow-1', 'Purchase approval', expect.any(Array));
+    expect(dbWatch.syncDefinitionWatchJobs).toHaveBeenCalledWith('workflow-1', 'Purchase approval', expect.any(Array));
+    expect(reactivated).toEqual(expect.objectContaining({ active_published_version: 3 }));
+  });
+
   it('restores a version as a draft change without moving the published pointer', async () => {
     workflowRepo.getDefinition.mockResolvedValue({
       id: 'workflow-1',
