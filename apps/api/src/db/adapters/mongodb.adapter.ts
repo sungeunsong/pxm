@@ -13,6 +13,7 @@ import type {
   UpdateExternalPrincipalMapping,
 } from '../ports/db.ports';
 import { candidateActivePublishedVersion, resolveWorkflowLifecycle } from '../workflow-lifecycle';
+import { buildWorkflowInstanceStats } from '../instance-stats';
 
 @Injectable()
 export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleRepositoryPort, WorkflowInputPresetRepositoryPort, AuthzRepositoryPort {
@@ -861,6 +862,27 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
       });
     }
     return result;
+  }
+
+  async getInstanceStats(actor?: WorkflowHistoryActor) {
+    const rows = await this.db.collection<any>('v2_process_instances').aggregate([
+      { $match: buildMongoHistoryFilter(actor) },
+      {
+        $project: {
+          state: {
+            $cond: [
+              { $eq: ['$is_paused', true] },
+              'PAUSED',
+              { $toUpper: { $ifNull: ['$state', { $ifNull: ['$status', 'UNKNOWN'] }] } },
+            ],
+          },
+        },
+      },
+      { $group: { _id: '$state', count: { $sum: 1 } } },
+      { $project: { _id: 0, state: '$_id', count: 1 } },
+    ]).toArray();
+
+    return buildWorkflowInstanceStats(rows, actor);
   }
 
   async listChildInstances(parentInstanceId: string): Promise<any[]> {

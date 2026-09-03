@@ -164,10 +164,22 @@
   border-bottom: 1px solid var(--border-subtle);
 }
 
+.dashboard-panel .panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
 .panel-header h3 {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
+}
+
+.dashboard-panel .panel-header > span {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
 }
 
 .panel-body {

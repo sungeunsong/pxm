@@ -174,6 +174,7 @@ export abstract class WorkflowInstanceRepositoryPort {
   abstract executeInstanceMutation(input: WorkflowInstanceMutation): Promise<void>;
   abstract createInstance(id: string, definitionId: string, status: string, ctx: any, access?: WorkflowInstanceAccess): Promise<void>;
   abstract listInstances(actor?: WorkflowHistoryActor): Promise<any[]>;
+  abstract getInstanceStats(actor?: WorkflowHistoryActor): Promise<WorkflowInstanceStats>;
   abstract listChildInstances(parentInstanceId: string): Promise<any[]>;
   abstract getInstance(id: string): Promise<any>;
   abstract updateInstanceStatus(id: string, status: string): Promise<void>;
@@ -182,6 +183,22 @@ export abstract class WorkflowInstanceRepositoryPort {
   abstract createToken(token: { id: string; instanceId: string; nodeId: string; status: string; parentTokenId?: string; scopeKey?: string }): Promise<void>;
   abstract createJob(job: { instanceId: string; tokenId?: string | null; type: string; runAt: Date; payload: any }): Promise<void>;
 }
+
+export type WorkflowInstanceState =
+  | 'CREATED'
+  | 'RUNNING'
+  | 'WAITING'
+  | 'PAUSED'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'TERMINATED'
+  | 'UNKNOWN';
+
+export type WorkflowInstanceStats = {
+  total: number;
+  by_state: Record<WorkflowInstanceState, number>;
+  scope: 'all' | 'authorized';
+};
 
 export abstract class WorkflowTaskRepositoryPort {
   abstract createTask(id: string, instanceId: string, nodeId: string, assignee: string, status: string, payload: any): Promise<void>;

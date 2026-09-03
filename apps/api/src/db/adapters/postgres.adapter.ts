@@ -14,6 +14,7 @@ import type {
   UpdateExternalPrincipalMapping,
 } from '../ports/db.ports';
 import { candidateActivePublishedVersion, resolveWorkflowLifecycle } from '../workflow-lifecycle';
+import { buildWorkflowInstanceStats } from '../instance-stats';
 
 @Injectable()
 export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleRepositoryPort, WorkflowInputPresetRepositoryPort, AuthzRepositoryPort {
@@ -660,6 +661,25 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
       ctx: r.context,
       ...accessProjection(r),
     }));
+  }
+
+  async getInstanceStats(actor?: WorkflowHistoryActor) {
+    const scope = buildPostgresHistoryScope(actor);
+    const { rows } = await this.pool.query(
+      `SELECT CASE
+         WHEN i.is_paused = true THEN 'PAUSED'
+         WHEN UPPER(COALESCE(i.state, 'UNKNOWN')) IN ('CREATED', 'RUNNING', 'WAITING', 'COMPLETED', 'FAILED', 'TERMINATED')
+           THEN UPPER(COALESCE(i.state, 'UNKNOWN'))
+         ELSE 'UNKNOWN'
+       END AS state,
+       COUNT(*)::int AS count
+       FROM v2_process_instances i
+       ${scope.where}
+       GROUP BY 1`,
+      scope.params,
+    );
+
+    return buildWorkflowInstanceStats(rows, actor);
   }
 
   async listChildInstances(parentInstanceId: string): Promise<any[]> {

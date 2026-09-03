@@ -64,6 +64,33 @@ describe('instance history scope', () => {
     expect(query.mock.calls[0][0]).toContain('i.process_definition_id::text = ANY($1::text[])');
     expect(query.mock.calls[0][1]).toEqual([['workflow-1']]);
   });
+
+  it('uses the MongoDB history filter inside the database aggregation pipeline', async () => {
+    const aggregate = jest.fn().mockReturnValue({ toArray: jest.fn().mockResolvedValue([]) });
+    const db = { collection: jest.fn().mockReturnValue({ aggregate }) } as unknown as Db;
+
+    await new MongodbAdapter(db).getInstanceStats(sessionUser);
+
+    expect(aggregate.mock.calls[0][0][0]).toEqual({
+      $match: {
+        $or: [
+          { requester_id: 'api-demo-user' },
+          { 'context.runtime.access.requester_id': 'api-demo-user' },
+        ],
+      },
+    });
+  });
+
+  it('uses the PostgreSQL history scope in the grouped stats query', async () => {
+    const query = jest.fn().mockResolvedValue({ rows: [] });
+    const pool = { query } as unknown as Pool;
+
+    await new PostgresAdapter(pool).getInstanceStats(sessionUser);
+
+    expect(query.mock.calls[0][0]).toContain("i.context->'runtime'->'access'->>'requester_id' = $1");
+    expect(query.mock.calls[0][0]).toContain('GROUP BY 1');
+    expect(query.mock.calls[0][1]).toEqual(['api-demo-user']);
+  });
 });
 
 function emptyMongoCursor() {

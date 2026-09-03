@@ -56,6 +56,18 @@ export class InstanceDto {
   @ApiPropertyOptional({ format: 'date-time' }) updated_at?: string;
 }
 
+export class InstanceStatsDto {
+  @ApiProperty({ example: 128 }) total!: number;
+  @ApiProperty({
+    type: 'object',
+    additionalProperties: { type: 'number' },
+    example: { CREATED: 2, RUNNING: 8, WAITING: 4, PAUSED: 1, COMPLETED: 108, FAILED: 3, TERMINATED: 2, UNKNOWN: 0 },
+  })
+  by_state!: Record<string, number>;
+  @ApiProperty({ enum: ['all', 'authorized'], description: 'all은 전체, authorized는 요청 actor가 접근 가능한 전체 실행 범위' })
+  scope!: 'all' | 'authorized';
+}
+
 export class InstanceResultDto {
   @ApiProperty({ format: 'uuid' }) instance_id!: string;
   @ApiProperty({ example: 'COMPLETED' }) status!: string;

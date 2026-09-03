@@ -7,7 +7,7 @@ import { InstancesService } from './instances.service';
 import { PUBLIC_API_VERSIONS } from '../public-api-version';
 import { ApiOkResponse, ApiOperation, ApiParam, ApiProduces, ApiTags } from '@nestjs/swagger';
 import { PublicApiController, PublicApiErrors } from '../openapi/public-api.decorators';
-import { InstanceDto, InstanceResultDto, TraceEventDto } from '../openapi/public-api.dto';
+import { InstanceDto, InstanceResultDto, InstanceStatsDto, TraceEventDto } from '../openapi/public-api.dto';
 
 type SseMessage = {
   id?: string;
@@ -40,6 +40,13 @@ export class InstancesController {
   @PublicApiErrors()
   async findAll(@Req() req: Request) {
     return this.instances.findAll(actorFromRequest(req));
+  }
+
+  @Get('/instances/stats')
+  @ApiOperation({ summary: '접근 가능한 전체 실행 상태 집계' })
+  @ApiOkResponse({ type: InstanceStatsDto })
+  async stats(@Req() req: Request) {
+    return this.instances.getStats(actorFromRequest(req));
   }
 
   @Get('/instances/:id')

@@ -30,10 +30,10 @@ interface HealthReport {
   };
 }
 
-interface DashboardData {
-  templatesCount: number;
-  instances: InstanceRow[];
-  pendingApprovals: number;
+interface InstanceStats {
+  total: number;
+  by_state: Record<InstanceState, number>;
+  scope: 'all' | 'authorized';
 }
 
 type Loadable<T> = { status: 'loading' } | { status: 'ready'; value: T } | { status: 'error'; message: string };
@@ -66,6 +66,26 @@ const getJson = async <T,>(url: string): Promise<T> => {
   return payload as T;
 };
 
+const requireArray = <T,>(value: unknown, label: string): T[] => {
+  if (!Array.isArray(value)) throw new Error(`${label} 응답 형식이 올바르지 않습니다.`);
+  return value as T[];
+};
+
+const requireInstanceStats = (value: InstanceStats): InstanceStats => {
+  const hasEveryState = Object.keys(STATE_LABEL).every((state) =>
+    Number.isFinite(value?.by_state?.[state as InstanceState]));
+  if (
+    !value ||
+    typeof value.total !== 'number' ||
+    !value.by_state ||
+    !hasEveryState ||
+    (value.scope !== 'all' && value.scope !== 'authorized')
+  ) {
+    throw new Error('실행 집계 응답 형식이 올바르지 않습니다.');
+  }
+  return value;
+};
+
 const formatRelativeTime = (value?: string): string => {
   if (!value) return '-';
   const timestamp = Date.parse(value);
@@ -86,37 +106,44 @@ const formatBytes = (bytes: number): string => {
 };
 
 export const DashboardPage: React.FC = () => {
-  const [data, setData] = useState<Loadable<DashboardData>>({ status: 'loading' });
+  const [templatesCount, setTemplatesCount] = useState<Loadable<number>>({ status: 'loading' });
+  const [instanceStats, setInstanceStats] = useState<Loadable<InstanceStats>>({ status: 'loading' });
+  const [recentInstances, setRecentInstances] = useState<Loadable<InstanceRow[]>>({ status: 'loading' });
+  const [pendingApprovals, setPendingApprovals] = useState<Loadable<number>>({ status: 'loading' });
   const [health, setHealth] = useState<Loadable<HealthReport>>({ status: 'loading' });
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null);
 
   const load = useCallback(async () => {
-    // 두 영역은 독립적으로 실패할 수 있으므로 따로 처리한다.
-    const summary = getJson<unknown[]>('/api/templates')
-      .then(async (templates) => {
-        const [instances, tasks] = await Promise.all([
-          getJson<InstanceRow[]>('/api/instances'),
-          getJson<unknown[]>('/api/tasks'),
-        ]);
-        return {
-          templatesCount: Array.isArray(templates) ? templates.length : 0,
-          instances: (Array.isArray(instances) ? instances : []).map((row) => ({
-            ...row,
-            state: normalizeState(row.state),
-            is_paused: row.is_paused === true,
-          })),
-          pendingApprovals: Array.isArray(tasks) ? tasks.length : 0,
-        } satisfies DashboardData;
-      })
-      .then((value) => setData({ status: 'ready', value }))
-      .catch((error) => setData({ status: 'error', message: errorMessage(error) }));
+    // 각 카드와 패널은 독립적으로 실패한다. 실패를 0건으로 바꾸지 않는다.
+    const templates = getJson<unknown[]>('/api/templates')
+      .then((value) => setTemplatesCount({ status: 'ready', value: requireArray(value, '워크플로우').length }))
+      .catch((error) => setTemplatesCount({ status: 'error', message: errorMessage(error) }));
+
+    const stats = getJson<InstanceStats>('/api/instances/stats')
+      .then((value) => setInstanceStats({ status: 'ready', value: requireInstanceStats(value) }))
+      .catch((error) => setInstanceStats({ status: 'error', message: errorMessage(error) }));
+
+    const recent = getJson<InstanceRow[]>('/api/instances')
+      .then((value) => setRecentInstances({
+        status: 'ready',
+        value: requireArray<InstanceRow>(value, '최근 실행').map((row) => ({
+          ...row,
+          state: normalizeState(row.state),
+          is_paused: row.is_paused === true,
+        })),
+      }))
+      .catch((error) => setRecentInstances({ status: 'error', message: errorMessage(error) }));
+
+    const tasks = getJson<unknown[]>('/api/tasks')
+      .then((value) => setPendingApprovals({ status: 'ready', value: requireArray(value, '결재 대기').length }))
+      .catch((error) => setPendingApprovals({ status: 'error', message: errorMessage(error) }));
 
     const readiness = getJson<HealthReport>('/api/health/ready')
       .then((value) => setHealth({ status: 'ready', value }))
       // /health/ready 는 준비되지 않으면 503으로 응답한다. 이것도 유효한 상태다.
       .catch((error) => setHealth({ status: 'error', message: errorMessage(error) }));
 
-    await Promise.all([summary, readiness]);
+    await Promise.all([templates, stats, recent, tasks, readiness]);
     setRefreshedAt(new Date());
   }, []);
 
@@ -128,11 +155,20 @@ export const DashboardPage: React.FC = () => {
     return () => window.clearInterval(timer);
   }, [load]);
 
-  const instances = data.status === 'ready' ? data.value.instances : [];
-  const countByState = (state: InstanceState) => instances.filter((row) => effectiveState(row) === state).length;
-  const recentInstances = [...instances]
-    .sort((a, b) => Date.parse(b.updated_at || b.created_at || '') - Date.parse(a.updated_at || a.created_at || ''))
-    .slice(0, 8);
+  const countByState = (state: InstanceState) => instanceStats.status === 'ready' ? instanceStats.value.by_state[state] : null;
+  const runningCount = instanceStats.status === 'ready'
+    ? instanceStats.value.by_state.RUNNING + instanceStats.value.by_state.CREATED
+    : null;
+  const instanceScopeLabel = instanceStats.status === 'ready'
+    ? `${instanceStats.value.scope === 'all' ? '전체' : '접근 가능'} `
+    : '';
+  const recentRows = recentInstances.status === 'ready'
+    ? [...recentInstances.value]
+      .sort((a, b) => Date.parse(b.updated_at || b.created_at || '') - Date.parse(a.updated_at || a.created_at || ''))
+      .slice(0, 8)
+    : [];
+  const summaryErrorMessages = [templatesCount, instanceStats, recentInstances, pendingApprovals]
+    .flatMap((item) => item.status === 'error' ? [item.message] : []);
 
   return (
     <div className="dashboard-page">
@@ -146,12 +182,12 @@ export const DashboardPage: React.FC = () => {
         </button>
       </div>
 
-      {data.status === 'error' && (
+      {summaryErrorMessages.length > 0 && (
         <div className="dashboard-error" role="alert">
           <AlertTriangle size={16} />
           <div>
-            <strong>현황을 불러오지 못했습니다.</strong>
-            <span>{data.message}</span>
+            <strong>일부 현황을 불러오지 못했습니다.</strong>
+            <span>{summaryErrorMessages.join(' · ')}</span>
           </div>
         </div>
       )}
@@ -160,40 +196,40 @@ export const DashboardPage: React.FC = () => {
         <div className="stats-row">
           <StatCard
             icon={<FileText size={18} />}
-            label="등록된 워크플로우"
-            value={data.status === 'ready' ? data.value.templatesCount : null}
+            label="조회 가능 워크플로우"
+            value={templatesCount.status === 'ready' ? templatesCount.value : null}
             unit="개"
-            state={data.status}
+            state={templatesCount.status}
           />
           <StatCard
             icon={<Activity size={18} />}
-            label="실행 중"
-            value={data.status === 'ready' ? countByState('RUNNING') + countByState('CREATED') : null}
+            label={`${instanceScopeLabel}실행 중`}
+            value={runningCount}
             unit="건"
-            state={data.status}
+            state={instanceStats.status}
           />
           <StatCard
             icon={<Clock size={18} />}
-            label="대기 중"
-            value={data.status === 'ready' ? countByState('WAITING') : null}
+            label={`${instanceScopeLabel}대기 중`}
+            value={countByState('WAITING')}
             unit="건"
-            state={data.status}
+            state={instanceStats.status}
           />
           <StatCard
             icon={<XCircle size={18} />}
-            label="실패"
-            value={data.status === 'ready' ? countByState('FAILED') : null}
+            label={`${instanceScopeLabel}실패`}
+            value={countByState('FAILED')}
             unit="건"
-            state={data.status}
-            tone={data.status === 'ready' && countByState('FAILED') > 0 ? 'danger' : 'default'}
+            state={instanceStats.status}
+            tone={instanceStats.status === 'ready' && instanceStats.value.by_state.FAILED > 0 ? 'danger' : 'default'}
           />
           <StatCard
             icon={<CheckCircle2 size={18} />}
             label="내 결재 대기"
-            value={data.status === 'ready' ? data.value.pendingApprovals : null}
+            value={pendingApprovals.status === 'ready' ? pendingApprovals.value : null}
             unit="건"
-            state={data.status}
-            tone={data.status === 'ready' && data.value.pendingApprovals > 0 ? 'accent' : 'default'}
+            state={pendingApprovals.status}
+            tone={pendingApprovals.status === 'ready' && pendingApprovals.value > 0 ? 'accent' : 'default'}
           />
         </div>
 
@@ -210,16 +246,17 @@ export const DashboardPage: React.FC = () => {
           <section className="dashboard-panel">
             <div className="panel-header">
               <h3>최근 실행</h3>
+              <span>접근 가능한 최근 50건 중 8건</span>
             </div>
             <div className="panel-body">
-              {data.status === 'loading' && <div className="panel-placeholder">불러오는 중…</div>}
-              {data.status === 'error' && <div className="panel-placeholder">실행 목록을 불러오지 못했습니다.</div>}
-              {data.status === 'ready' && recentInstances.length === 0 && (
+              {recentInstances.status === 'loading' && <div className="panel-placeholder">불러오는 중…</div>}
+              {recentInstances.status === 'error' && <div className="panel-placeholder">실행 목록을 불러오지 못했습니다.</div>}
+              {recentInstances.status === 'ready' && recentRows.length === 0 && (
                 <div className="panel-placeholder">아직 실행된 워크플로우가 없습니다.</div>
               )}
-              {data.status === 'ready' && recentInstances.length > 0 && (
+              {recentInstances.status === 'ready' && recentRows.length > 0 && (
                 <ul className="recent-instance-list">
-                  {recentInstances.map((instance) => {
+                  {recentRows.map((instance) => {
                     const state = effectiveState(instance);
                     return (
                       <li key={instance.id} className={`recent-instance state-${state.toLowerCase()}`}>

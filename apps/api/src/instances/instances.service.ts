@@ -115,6 +115,10 @@ export class InstancesService {
     return this.instanceRepo.listInstances(actor);
   }
 
+  async getStats(actor?: WorkflowHistoryActor) {
+    return this.instanceRepo.getInstanceStats(actor);
+  }
+
   async findOne(id: string, actor?: WorkflowHistoryActor) {
     return this.getReadableInstance(id, actor);
   }

@@ -447,13 +447,13 @@ CSS 13,169줄 중 토큰 사용은 1,494회. 하드코딩 hex가 아직 **1,220�
 
 `apps/api/src/db/adapters/mongodb.adapter.ts`의 `listInstances`가
 `.sort({created_at:-1}).limit(50)` 하드코딩입니다.
-대시보드 집계가 전체가 아니라 **최근 50건 기준**입니다.
-지금은 총량이 50 이하라 우연히 일치하지만, 넘어가면 "실패 2건"이 "최근 50건 중 2건"이 됩니다.
-→ `/api/instances/stats` 집계 엔드포인트 권장 (DB `$group` 한 번).
+PXM-34에서 목록은 최근 50건으로 유지하되, 대시보드 상태 카드는 별도
+`/api/instances/stats` DB 집계 결과를 사용하도록 분리했습니다.
+권한별 범위와 카드 문구는 [dashboard-metrics.md](dashboard-metrics.md)를 참고합니다.
 
 ### 7-3. 기타
 
-- `/api/tasks`는 actor-scoped → 대시보드의 "내 결재 대기"는 전사 수치가 아닙니다.
+- `/api/tasks`는 actor-scoped이며 대시보드에는 "내 결재 대기"로 명시합니다.
 - `InboxPage`가 3초마다 3개 엔드포인트를 폴링하고, 실패해도 사용자에게 표시하지 않습니다.
   (폴링이라 토스트는 스팸이 됩니다. 인라인 배너가 적절)
 - `PluginRegistryPage` 미사용 변수 6개 — 기준선부터 존재.

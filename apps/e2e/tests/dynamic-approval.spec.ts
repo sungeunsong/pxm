@@ -58,6 +58,30 @@ test.describe.serial('PXM 동적 결재 베타 회귀', () => {
     await clearMailpit();
   });
 
+  test('대시보드는 전체 집계 범위를 표시하고 집계 실패를 다른 카드와 분리한다', async ({ browser }) => {
+    await expect(admin.get('/instances/stats')).resolves.toEqual(expect.objectContaining({
+      total: expect.any(Number),
+      by_state: expect.objectContaining({ RUNNING: expect.any(Number), FAILED: expect.any(Number) }),
+      scope: 'all',
+    }));
+
+    const adminUi = await loginPage(browser, fixture.users.admin.id, process.env.PXM_E2E_ADMIN_PASSWORD || 'E2eAdminPassword!2026', 'dashboard');
+    const workflowCard = adminUi.page.locator('.stats-card').nth(0);
+    const runningCard = adminUi.page.locator('.stats-card').nth(1);
+    await expect(workflowCard).toContainText('조회 가능 워크플로우');
+    await expect(runningCard).toContainText('전체 실행 중');
+    await expect(workflowCard).toContainText(/\d+ 개/);
+    await expect(runningCard).toContainText(/\d+ 건/);
+    await expect(adminUi.page.locator('.dashboard-panel').filter({ hasText: '최근 실행' })).toContainText('접근 가능한 최근 50건 중 8건');
+
+    await adminUi.page.route('**/api/instances/stats', (route) => route.abort());
+    await adminUi.page.reload();
+    await expect(runningCard).toContainText('조회 실패');
+    await expect(workflowCard).toContainText(/\d+ 개/);
+
+    await adminUi.context.close();
+  });
+
   test('admin, group_manager, user는 허용된 화면과 API에만 접근한다', async ({ browser }) => {
     const adminUi = await loginPage(browser, fixture.users.admin.id, process.env.PXM_E2E_ADMIN_PASSWORD || 'E2eAdminPassword!2026', 'dashboard');
     const adminMenu = adminUi.page.locator('.sidebar-menu');
