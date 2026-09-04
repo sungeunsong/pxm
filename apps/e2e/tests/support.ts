@@ -234,11 +234,35 @@ export async function loginPage(browser: Browser, userId: string, password: stri
   return { context, page };
 }
 
+/**
+ * 되돌릴 수 없는 동작은 확인창을 거친다. 확인까지 눌러야 요청이 전송된다.
+ * 버튼을 눌렀다는 것만으로는 아무것도 보장되지 않는다.
+ *
+ * Drawer도 role="dialog"이므로 확인창 클래스로 좁힌다. getByRole('dialog')는 둘 다 잡는다.
+ */
+export async function confirmDialogAction(page: Page, confirmLabel: string) {
+  const dialog = page.locator('.pxm-dialog');
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: confirmLabel, exact: true }).click();
+  await expect(dialog).toBeHidden();
+}
+
+/**
+ * 결재 처리는 확인창을 거친 뒤 성공 토스트까지 확인해야 한다.
+ * 목록으로 돌아온 것만 보면 접수 실패를 놓친다.
+ */
+export async function submitDecision(page: Page, actionLabel: string, confirmLabel: string) {
+  await page.getByRole('button', { name: actionLabel }).click();
+  await confirmDialogAction(page, confirmLabel);
+  await expect(page.locator('.pxm-toast-title', { hasText: `${confirmLabel} 처리했습니다.` })).toBeVisible({
+    timeout: 15_000,
+  });
+}
+
 export async function approveInBrowser(page: Page, title: string, comment: string) {
   await openInboxTask(page, title);
   await page.locator('.form-textarea-comment').fill(comment);
-  await page.getByRole('button', { name: '승인 완료하기' }).click();
-  await expect(page.getByRole('heading', { name: '내 결재함' })).toBeVisible();
+  await submitDecision(page, '승인 완료하기', '승인');
 }
 
 export async function rejectInBrowser(page: Page, title: string, comment: string) {
@@ -246,8 +270,7 @@ export async function rejectInBrowser(page: Page, title: string, comment: string
   await page.locator('[data-testid="decision-reject"]').click();
   await page.locator('.form-textarea-comment').fill(comment);
   await page.getByLabel('반려 사유를 확인했습니다.').check();
-  await page.getByRole('button', { name: '반려 처리하기' }).click();
-  await expect(page.getByRole('heading', { name: '내 결재함' })).toBeVisible();
+  await submitDecision(page, '반려 처리하기', '반려');
 }
 
 export async function openInboxTask(page: Page, title: string) {

@@ -6,6 +6,7 @@ import {
   approvalPayload,
   approveInBrowser,
   clearMailpit,
+  confirmDialogAction,
   databaseConnection,
   externalApprover,
   fixture,
@@ -17,6 +18,7 @@ import {
   rejectInBrowser,
   seedFixture,
   startApproval,
+  submitDecision,
   taskHistory,
   userPassword,
   waitForHistory,
@@ -193,7 +195,7 @@ test.describe.serial('PXM 동적 결재 베타 회귀', () => {
     await openAndAssertApprovalDetails(approver.page, title, ['실무 검토', '최종 승인'], '1 / 2단계');
     await approver.page.locator('[data-testid="decision-hold"]').click();
     await approver.page.locator('.form-textarea-comment').fill('예산 자료를 추가로 확인합니다.');
-    await approver.page.getByRole('button', { name: '보류 적용하기' }).click();
+    await submitDecision(approver.page, '보류 적용하기', '보류');
 
     await expect(requester.page.locator('[data-testid="request-approval-history"]')).toContainText('보류', { timeout: 30_000 });
     await expect(requester.page.locator('[data-testid="request-approval-history"]')).toContainText('예산 자료를 추가로 확인합니다.');
@@ -261,6 +263,7 @@ test.describe.serial('PXM 동적 결재 베타 회귀', () => {
     const row = tracker.page.locator(`[data-testid="tracker-instance-row"][data-instance-id="${execution.instance_id}"]`);
     await expect(row).toContainText(title, { timeout: 30_000 });
     await row.locator('[data-testid="tracker-terminate"]').click();
+    await confirmDialogAction(tracker.page, '종료');
     await waitForInstance(admin, execution.instance_id, (instance) => instance.state === 'TERMINATED');
 
     const history = await waitForHistory(admin, execution.instance_id, (items) =>
@@ -430,8 +433,7 @@ async function openAndAssertApprovalDetails(page: Page, title: string, labels: s
 
 async function completeOpenedApproval(page: Page, comment: string) {
   await page.locator('.form-textarea-comment').fill(comment);
-  await page.getByRole('button', { name: '승인 완료하기' }).click();
-  await expect(page.getByRole('heading', { name: '내 결재함' })).toBeVisible();
+  await submitDecision(page, '승인 완료하기', '승인');
 }
 
 async function openExternalApproval(browser: Browser, url: string, comment: string) {
