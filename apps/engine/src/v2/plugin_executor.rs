@@ -495,7 +495,10 @@ fn build_http_response_output(
     }
 
     // content-type이 JSON일 때만 파싱하고, 파싱에 실패하면 원문 문자열을 유지한다.
-    let body = if content_type.to_ascii_lowercase().contains("application/json") {
+    let body = if content_type
+        .to_ascii_lowercase()
+        .contains("application/json")
+    {
         serde_json::from_str::<Value>(&raw_body).unwrap_or(Value::String(raw_body))
     } else {
         Value::String(raw_body)
@@ -1724,10 +1727,7 @@ mod tests {
     async fn http_executor_returns_response_body() {
         let url = spawn_single_response_server("application/json", r#"{"user":{"id":"u-1"}}"#);
 
-        let result = http_executor()
-            .execute(http_invocation(url))
-            .await
-            .unwrap();
+        let result = http_executor().execute(http_invocation(url)).await.unwrap();
 
         assert_eq!(result.status_code, 200);
         assert_eq!(result.output["ok"], json!(true));
@@ -1743,10 +1743,7 @@ mod tests {
     async fn http_executor_returns_text_body_as_string() {
         let url = spawn_single_response_server("text/plain", "granted");
 
-        let result = http_executor()
-            .execute(http_invocation(url))
-            .await
-            .unwrap();
+        let result = http_executor().execute(http_invocation(url)).await.unwrap();
 
         assert_eq!(result.output["body"], json!("granted"));
     }
@@ -1835,13 +1832,7 @@ mod tests {
     #[test]
     fn http_output_truncation_respects_char_boundary() {
         let raw = "가".repeat(TEST_BODY_LIMIT);
-        let output = build_http_response_output(
-            200,
-            json!({}),
-            "text/plain",
-            raw,
-            TEST_BODY_LIMIT,
-        );
+        let output = build_http_response_output(200, json!({}), "text/plain", raw, TEST_BODY_LIMIT);
 
         let body = output["body"].as_str().unwrap();
         assert!(body.len() <= TEST_BODY_LIMIT);

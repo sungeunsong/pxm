@@ -177,50 +177,93 @@ const CONDITION_OPERATORS: [(&str, ConditionOperator); 6] = [
 ];
 
 fn parse_condition(condition: &str) -> Result<(String, ConditionOperator, String)> {
-    for (token, operator) in CONDITION_OPERATORS {
-        let Some((left, right)) = condition.split_once(token) else {
-            continue;
-        };
-        let field = left.trim().to_string();
-        let literal = right
-            .trim()
-            .trim_matches('"')
-            .trim_matches('\'')
-            .to_string();
+    let condition = condition.trim();
+    let matched_operator = CONDITION_OPERATORS
+        .iter()
+        .copied()
+        .filter_map(|(token, operator)| condition.find(token).map(|index| (index, token, operator)))
+        .min_by_key(|(index, token, _)| (*index, std::cmp::Reverse(token.len())));
 
-        if field.is_empty() {
-            return Err(anyhow::anyhow!(
-                "condition '{condition}' is missing a field name on the left side"
-            ));
-        }
-        if literal.is_empty() {
-            return Err(anyhow::anyhow!(
-                "condition '{condition}' is missing a value on the right side"
-            ));
-        }
-        return Ok((field, operator, literal));
+    let Some((operator_index, token, operator)) = matched_operator else {
+        return Err(anyhow::anyhow!(
+            "condition '{condition}' has no supported operator. supported: ==, !=, >=, <=, >, <"
+        ));
+    };
+
+    let field = condition[..operator_index].trim();
+    if field.is_empty() {
+        return Err(anyhow::anyhow!(
+            "condition '{condition}' is missing a field name on the left side"
+        ));
+    }
+    if !field
+        .chars()
+        .all(|character| character.is_alphanumeric() || character == '_' || character == '-')
+    {
+        return Err(anyhow::anyhow!(
+            "condition '{condition}' has an invalid field name"
+        ));
     }
 
-    Err(anyhow::anyhow!(
-        "condition '{condition}' has no supported operator. supported: ==, !=, >=, <=, >, <"
-    ))
+    let raw_literal = condition[operator_index + token.len()..].trim();
+    if raw_literal.is_empty() {
+        return Err(anyhow::anyhow!(
+            "condition '{condition}' is missing a value on the right side"
+        ));
+    }
+
+    let literal = match raw_literal.as_bytes().first().copied() {
+        Some(quote @ (b'"' | b'\'')) => {
+            if raw_literal.len() < 2 || raw_literal.as_bytes().last().copied() != Some(quote) {
+                return Err(anyhow::anyhow!(
+                    "condition '{condition}' has an unterminated quoted value"
+                ));
+            }
+            let literal = &raw_literal[1..raw_literal.len() - 1];
+            if literal.as_bytes().contains(&quote) {
+                return Err(anyhow::anyhow!(
+                    "condition '{condition}' has an invalid quoted value"
+                ));
+            }
+            literal.to_string()
+        }
+        _ => {
+            if raw_literal.contains(['"', '\'', '='])
+                || raw_literal.chars().any(char::is_whitespace)
+                || ["&&", "||", "(", ")"]
+                    .iter()
+                    .any(|candidate| raw_literal.contains(candidate))
+                || CONDITION_OPERATORS
+                    .iter()
+                    .any(|(candidate, _)| raw_literal.contains(candidate))
+            {
+                return Err(anyhow::anyhow!(
+                    "condition '{condition}' has an invalid value on the right side"
+                ));
+            }
+            raw_literal.to_string()
+        }
+    };
+
+    Ok((field.to_string(), operator, literal))
 }
 
 /// `==`와 `!=`는 문자열, 숫자, 불리언, null을 모두 비교한다.
 /// 이전에는 `as_str()`만 봐서 `amount == 50`이나 `flag == true`가 항상 거짓이었다.
-fn condition_value_equals(actual: &Value, literal: &str) -> bool {
+fn condition_value_equals(actual: &Value, literal: &str) -> Option<bool> {
     match actual {
-        Value::String(text) => text == literal,
+        Value::String(text) => Some(text == literal),
         Value::Number(number) => literal
             .parse::<f64>()
-            .map(|expected| number.as_f64() == Some(expected))
-            .unwrap_or(false),
+            .ok()
+            .filter(|expected| expected.is_finite())
+            .map(|expected| number.as_f64() == Some(expected)),
         Value::Bool(flag) => literal
             .parse::<bool>()
-            .map(|expected| *flag == expected)
-            .unwrap_or(false),
-        Value::Null => literal.eq_ignore_ascii_case("null"),
-        _ => false,
+            .ok()
+            .map(|expected| *flag == expected),
+        Value::Null => literal.eq_ignore_ascii_case("null").then_some(true),
+        _ => None,
     }
 }
 
@@ -240,9 +283,17 @@ fn evaluate_condition(condition: &str, context: &Value) -> Result<bool> {
         ConditionOperator::Gt
         | ConditionOperator::Lt
         | ConditionOperator::Gte
-        | ConditionOperator::Lte => Some(literal.parse::<f64>().map_err(|_| {
-            anyhow::anyhow!("condition '{condition}' expects a number on the right side")
-        })?),
+        | ConditionOperator::Lte => {
+            let threshold = literal.parse::<f64>().map_err(|_| {
+                anyhow::anyhow!("condition '{condition}' expects a number on the right side")
+            })?;
+            if !threshold.is_finite() {
+                return Err(anyhow::anyhow!(
+                    "condition '{condition}' expects a finite number on the right side"
+                ));
+            }
+            Some(threshold)
+        }
         _ => None,
     };
 
@@ -251,8 +302,16 @@ fn evaluate_condition(condition: &str, context: &Value) -> Result<bool> {
     };
 
     Ok(match operator {
-        ConditionOperator::Eq => condition_value_equals(actual, &literal),
-        ConditionOperator::Ne => !condition_value_equals(actual, &literal),
+        ConditionOperator::Eq | ConditionOperator::Ne => {
+            let Some(equal) = condition_value_equals(actual, &literal) else {
+                return Ok(false);
+            };
+            match operator {
+                ConditionOperator::Eq => equal,
+                ConditionOperator::Ne => !equal,
+                _ => unreachable!("동등 비교 연산자만 남는다"),
+            }
+        }
         _ => {
             let Some(actual) = actual.as_f64() else {
                 return Ok(false);
@@ -1115,6 +1174,7 @@ fn select_gateway_edges<'a>(
         GatewayType::Parallel => Ok(outgoing_edges.to_vec()),
         GatewayType::Exclusive => {
             let mut default_edge = None;
+            let mut evaluated_edges = Vec::new();
             for edge in outgoing_edges {
                 if edge.is_default {
                     default_edge = Some(*edge);
@@ -1124,11 +1184,14 @@ fn select_gateway_edges<'a>(
                     Some(expr) => evaluate_condition(expr, context)?,
                     None => false,
                 };
-                if matched {
-                    return Ok(vec![*edge]);
-                }
+                evaluated_edges.push((*edge, matched));
             }
-            Ok(default_edge.into_iter().collect())
+            Ok(evaluated_edges
+                .into_iter()
+                .find_map(|(edge, matched)| matched.then_some(edge))
+                .or(default_edge)
+                .into_iter()
+                .collect())
         }
         GatewayType::Inclusive => {
             let mut matched = Vec::new();
@@ -1257,27 +1320,32 @@ fn resolve_approval_assignment(node: &NodeDef, context: &Value) -> Result<(Strin
                 .get("rules")
                 .or_else(|| node.config.get("approvalRules"))
                 .and_then(|v| v.as_array());
+            let mut matched_rule = None;
             if let Some(rules) = rules {
                 for rule in rules {
                     let condition = rule.get("condition").and_then(|v| v.as_str());
                     let assignee = rule.get("assignee").and_then(|v| v.as_str());
                     if let (Some(condition), Some(assignee)) = (condition, assignee) {
-                        if evaluate_condition(condition, context)? {
-                            return Ok((
-                                assignee.to_string(),
-                                json!({
-                                    "approval_model": "condition",
-                                    "matched_condition": condition,
-                                    "assignee": assignee,
-                                    "approver_channel": approver_channel,
-                                    "approval_channels": approval_channels,
-                                    "external_require_otp": external_require_otp,
-                                    "external_expires_in_hours": external_expires_in_hours
-                                }),
-                            ));
+                        let matched = evaluate_condition(condition, context)?;
+                        if matched && matched_rule.is_none() {
+                            matched_rule = Some((condition, assignee));
                         }
                     }
                 }
+            }
+            if let Some((condition, assignee)) = matched_rule {
+                return Ok((
+                    assignee.to_string(),
+                    json!({
+                        "approval_model": "condition",
+                        "matched_condition": condition,
+                        "assignee": assignee,
+                        "approver_channel": approver_channel,
+                        "approval_channels": approval_channels,
+                        "external_require_otp": external_require_otp,
+                        "external_expires_in_hours": external_expires_in_hours
+                    }),
+                ));
             }
 
             let assignee = approval_line
@@ -1821,9 +1889,9 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
 mod tests {
     use super::{
         execute_command_node, resolve_approval_assignment, resolve_approval_definition,
-        select_approval_edges, V2RetryPolicy,
+        select_approval_edges, select_gateway_edges, V2RetryPolicy,
     };
-    use crate::v2::types::{EdgeRule, NodeDef};
+    use crate::v2::types::{EdgeRule, GatewayType, NodeDef};
     use serde_json::json;
 
     #[test]
@@ -2144,17 +2212,30 @@ mod tests {
     /// `==`가 as_str()만 보던 탓에 숫자와 불리언 비교가 항상 거짓이었다.
     #[test]
     fn compares_strings_numbers_and_booleans() {
-        let context =
-            json!({"data": {"formData": {"amount": 50, "status": "approved", "flag": true}}});
+        let context = json!({"data": {"formData": {
+            "amount": 50,
+            "status": "approved",
+            "message": "ready >= pending",
+            "flag": true,
+            "empty": null,
+            "metadata": {"source": "form"}
+        }}});
         let cases = [
             ("status == approved", true),
             ("status != approved", false),
             ("status != rejected", true),
+            ("message == \"ready >= pending\"", true),
             ("amount == 50", true),
             ("amount != 50", false),
+            ("amount == abc", false),
+            ("amount != abc", false),
             ("flag == true", true),
             ("flag == false", false),
             ("flag != false", true),
+            ("flag != nope", false),
+            ("empty == null", true),
+            ("empty != null", false),
+            ("metadata != anything", false),
         ];
         for (expr, expected) in cases {
             assert_eq!(
@@ -2177,12 +2258,56 @@ mod tests {
     #[test]
     fn rejects_malformed_condition_expressions() {
         let context = json!({"data": {"formData": {"amount": 50}}});
-        for expr in ["amount", "amount >", "> 100", "amount ~ 100", "amount > abc", ""] {
+        for expr in [
+            "amount",
+            "amount >",
+            "> 100",
+            "amount ~ 100",
+            "amount > abc",
+            "amount > NaN",
+            "amount === 50",
+            "amount!==50",
+            "status == \"approved",
+            "status == \"approved\" junk",
+            "status == approved && flag == true",
+            "status == approved||flag",
+            "nested.amount == 50",
+            "field name == value",
+            "",
+        ] {
             assert!(
                 super::evaluate_condition(expr, &context).is_err(),
                 "조건식 {expr:?}는 오류여야 한다"
             );
         }
+    }
+
+    #[test]
+    fn rejects_malformed_exclusive_condition_after_an_earlier_match() {
+        let matched = EdgeRule {
+            id: 1,
+            source_node_id: "gateway".to_string(),
+            target_node_id: "matched".to_string(),
+            condition_expr: Some("amount > 10".to_string()),
+            is_default: false,
+            eval_order: 0,
+        };
+        let malformed = EdgeRule {
+            id: 2,
+            source_node_id: "gateway".to_string(),
+            target_node_id: "invalid".to_string(),
+            condition_expr: Some("amount === 50".to_string()),
+            is_default: false,
+            eval_order: 1,
+        };
+        let edges = vec![&matched, &malformed];
+
+        assert!(select_gateway_edges(
+            GatewayType::Exclusive,
+            &edges,
+            &json!({"data": {"formData": {"amount": 50}}}),
+        )
+        .is_err());
     }
 
     #[test]
@@ -2208,6 +2333,28 @@ mod tests {
     }
 
     #[test]
+    fn rejects_malformed_approval_condition_after_an_earlier_match() {
+        let node = NodeDef {
+            node_id: "approval".to_string(),
+            node_type: "approval".to_string(),
+            config: json!({
+                "approvalLine": {
+                    "mode": "condition",
+                    "rules": [
+                        {"condition": "amount > 100", "assignee": "finance"},
+                        {"condition": "amount === 150", "assignee": "invalid"}
+                    ],
+                    "defaultAssignee": "manager"
+                }
+            }),
+        };
+
+        assert!(
+            resolve_approval_assignment(&node, &json!({"formData": {"amount": 150}}),).is_err()
+        );
+    }
+
+    #[test]
     fn resolves_requester_selected_candidate() {
         let node = NodeDef {
             node_id: "approval".to_string(),
@@ -2223,7 +2370,8 @@ mod tests {
         };
 
         let (assignee, payload) =
-            resolve_approval_assignment(&node, &json!({"formData": {"approver": "director"}})).unwrap();
+            resolve_approval_assignment(&node, &json!({"formData": {"approver": "director"}}))
+                .unwrap();
         assert_eq!(assignee, "director");
         assert_eq!(payload["approval_model"], "requester_selected");
     }
@@ -2671,6 +2819,56 @@ async fn requeue_transient_job(
     Ok(())
 }
 
+async fn fail_node_for_invalid_configuration(
+    ctx: &V2RuntimeContext,
+    instance: &mut V2Instance,
+    token: &mut V2Token,
+    reason: &str,
+    error: &anyhow::Error,
+    tx: &mut dyn Tx,
+) -> Result<()> {
+    token.status = TokenStatus::Failed;
+    token.updated_at = Utc::now();
+    ctx.token_repo
+        .update_tokens(std::slice::from_ref(token), tx)
+        .await?;
+
+    instance.state = "FAILED".to_string();
+    ctx.instance_repo
+        .update_instance(instance.id, &instance.state, instance.context.clone(), tx)
+        .await?;
+
+    ctx.exec_log
+        .append_log(
+            instance.id,
+            Some(token.id),
+            Some(&token.node_id),
+            "NODE_FAILED",
+            json!({"reason": reason, "error": error.to_string()}),
+            tx,
+        )
+        .await?;
+    ctx.outbox
+        .append_event(
+            instance.id,
+            Some(token.id),
+            Some(&token.node_id),
+            "INSTANCE_FAILED",
+            json!({"reason": reason, "error": error.to_string()}),
+            tx,
+        )
+        .await?;
+    notify_waiting_parent_workflow_call(
+        ctx,
+        instance,
+        "FAILED",
+        json!({"reason": reason, "error": error.to_string()}),
+        tx,
+    )
+    .await?;
+    Ok(())
+}
+
 // ============================================================
 // 토큰 전이 루프 엔진 (Explicit Token State Machine)
 // ============================================================
@@ -2834,7 +3032,22 @@ async fn execute_token_flow(
                     .filter(|e| e.source_node_id == token.node_id)
                     .collect();
                 let selected_edges =
-                    select_gateway_edges(gateway_type, &next_edges, &instance.context)?;
+                    match select_gateway_edges(gateway_type, &next_edges, &instance.context) {
+                        Ok(edges) => edges,
+                        Err(error) => {
+                            fail_node_for_invalid_configuration(
+                                ctx,
+                                instance,
+                                &mut token,
+                                "invalid_gateway_condition",
+                                &error,
+                                tx,
+                            )
+                            .await?;
+                            active_tokens.clear();
+                            continue;
+                        }
+                    };
 
                 if !selected_edges.is_empty() {
                     let selected_targets: Vec<String> = selected_edges
@@ -3031,8 +3244,23 @@ async fn execute_token_flow(
 
                 let task_id = Uuid::new_v4();
                 let request_id = Uuid::new_v4();
-                let approval_definition =
-                    resolve_approval_definition(node, &instance.context)?;
+                let approval_definition = match resolve_approval_definition(node, &instance.context)
+                {
+                    Ok(definition) => definition,
+                    Err(error) => {
+                        fail_node_for_invalid_configuration(
+                            ctx,
+                            instance,
+                            &mut token,
+                            "invalid_approval_configuration",
+                            &error,
+                            tx,
+                        )
+                        .await?;
+                        active_tokens.clear();
+                        continue;
+                    }
+                };
                 let approval = ctx
                     .task_repo
                     .find_or_create_approval(
