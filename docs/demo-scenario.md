@@ -164,11 +164,15 @@ return score < 50 ? 'AUTO' : 'REVIEW';
 - `method`: `GET`, `url`: `http://127.0.0.1:3020/health`
 - `outputPath`: `provisioning`
 
-> "승인 결과를 접근제어 시스템에 반영합니다."
+> "승인이 끝나면 외부 시스템을 호출합니다."
 
-⚠️ **`url`과 `body`에도 실행 입력값을 넣을 수 없다** (PXM-45). 지금은 고정 호출만 가능해
-"누구에게 무슨 권한을 부여할지"를 외부로 전달하지 못한다. 시연에서는 연동이 일어난다는
-것까지만 보여주고, 질문이 나오면 제약을 설명한다.
+⚠️ **여기서 과장하지 않는다.** 현재 이 노드는 고정 URL을 호출할 뿐이고 신청자나 권한
+정보를 **보내지 않는다**. `url`과 `body`에 실행 입력값을 넣을 수 없기 때문이다 (PXM-45).
+
+정확한 설명은 이 정도다.
+
+> "승인 이후 외부 호출이 일어나고 응답이 컨텍스트에 저장되는 것까지는 동작합니다.
+> 실제 권한 부여 payload를 실어 보내는 건 아직 안 되고, 지금 작업 중입니다."
 
 응답은 `{status_code, ok, headers, body}` 구조로 `data.outputs.provisioning`에 저장된다.
 
@@ -327,7 +331,8 @@ return score < 50 ? 'AUTO' : 'REVIEW';
 - [ ] Mailpit 기동 및 외부 승인 메일 수신 확인
 - [ ] 인사 DB 역할: `demo_hr.employees`에 샘플 문서 준비 (사번, 재직 형태, 보안교육 이수 여부)
 - [ ] 접근제어 시스템 역할: `PORT=3020 node examples/external-http-plugin/echo-service.mjs` 기동
-      (`/api/debug/flaky`는 로그인이 필요해 HTTP 노드 대상으로 쓸 수 없다)
+      (`/api/debug/flaky`도 API Key 자격증명을 붙이면 호출되지만, echo 서비스가 인증 없이
+      독립적으로 떠서 시연에 단순하다)
 - [ ] 계정 4개 로그인 확인 — `admin`, `secadmin`, `approver1`, `requester1`
 - [ ] 브라우저 탭 미리 배치 — 콘솔(5174), playground(5175), Mailpit(8025)
 - [ ] `pnpm gate:beta` 통과
