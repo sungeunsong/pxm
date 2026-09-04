@@ -516,7 +516,7 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
             placeholder="outputs.serviceNode"
             value={data.outputPath || data.output_path || ''}
             onChange={(e) => onUpdate(node.id, { ...data, outputPath: e.target.value })}
-            helperText="테스트/실행 결과를 저장할 context path입니다. 예: httpResults.userLookup"
+            helperText="플러그인 실행 결과가 저장될 context path입니다. HTTP 노드는 status_code, ok, headers, body를 저장합니다. 예: httpResults.userLookup"
             fullWidth
           />
           {!selectedPlugin?.config_schema.properties?.timeout_ms && (

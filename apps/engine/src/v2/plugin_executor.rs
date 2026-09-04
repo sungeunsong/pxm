@@ -412,19 +412,101 @@ impl HttpRequestExecutor {
 
         let resp = request.send().await?;
         let status = resp.status().as_u16();
-        if (200..300).contains(&status) {
-            Ok(PluginExecutionResult {
-                status_code: status,
-                output: json!({
-                    "url": url,
-                    "plugin_id": invocation.plugin_id,
-                    "node_id": invocation.node_id,
-                }),
-            })
-        } else {
-            Err(anyhow!("plugin returned non-success status: {}", status))
+        if !(200..300).contains(&status) {
+            return Err(anyhow!("plugin returned non-success status: {}", status));
+        }
+
+        let headers = collect_response_headers(resp.headers());
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let raw_body = resp.text().await?;
+
+        Ok(PluginExecutionResult {
+            status_code: status,
+            output: build_http_response_output(
+                status,
+                headers,
+                &content_type,
+                raw_body,
+                http_response_body_limit_bytes(),
+            ),
+        })
+    }
+}
+
+/// 응답 본문이 인스턴스 컨텍스트에 그대로 저장되므로 상한을 둔다.
+const DEFAULT_HTTP_RESPONSE_BODY_LIMIT_BYTES: usize = 256 * 1024;
+
+fn http_response_body_limit_bytes() -> usize {
+    std::env::var("HTTP_RESPONSE_BODY_LIMIT_BYTES")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_HTTP_RESPONSE_BODY_LIMIT_BYTES)
+}
+
+fn collect_response_headers(headers: &reqwest::header::HeaderMap) -> Value {
+    let mut collected = serde_json::Map::new();
+    for (name, value) in headers.iter() {
+        if let Ok(value) = value.to_str() {
+            collected.insert(name.as_str().to_string(), Value::String(value.to_string()));
         }
     }
+    Value::Object(collected)
+}
+
+/// 문자 경계를 넘지 않는 범위에서 자른다.
+fn truncate_on_char_boundary(text: &str, limit: usize) -> &str {
+    if text.len() <= limit {
+        return text;
+    }
+    let mut end = limit;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
+/// API의 노드 테스트 경로(`plugins.service.ts`의 `testHttpRequest`)와 동일한 구조를 만든다.
+/// 디자이너에서 테스트한 결과와 실제 실행 결과가 달라서는 안 된다.
+fn build_http_response_output(
+    status: u16,
+    headers: Value,
+    content_type: &str,
+    raw_body: String,
+    body_limit_bytes: usize,
+) -> Value {
+    let ok = (200..300).contains(&status);
+
+    if raw_body.len() > body_limit_bytes {
+        let body_bytes = raw_body.len();
+        return json!({
+            "status_code": status,
+            "ok": ok,
+            "headers": headers,
+            "body": truncate_on_char_boundary(&raw_body, body_limit_bytes),
+            "body_truncated": true,
+            "body_bytes": body_bytes,
+        });
+    }
+
+    // content-type이 JSON일 때만 파싱하고, 파싱에 실패하면 원문 문자열을 유지한다.
+    let body = if content_type.to_ascii_lowercase().contains("application/json") {
+        serde_json::from_str::<Value>(&raw_body).unwrap_or(Value::String(raw_body))
+    } else {
+        Value::String(raw_body)
+    };
+
+    json!({
+        "status_code": status,
+        "ok": ok,
+        "headers": headers,
+        "body": body,
+    })
 }
 
 #[derive(Clone)]
@@ -1576,11 +1658,195 @@ fn compare_semver_desc(a: &str, b: &str) -> std::cmp::Ordering {
 #[cfg(test)]
 mod tests {
     use super::{
-        prepare_config, secret_ref_to_env_name, PluginManifest, PluginManifestRegistry,
-        PluginRetryPolicy, PluginSecretsPolicy,
+        build_http_response_output, prepare_config, secret_ref_to_env_name, HttpRequestExecutor,
+        PluginInvocation, PluginManifest, PluginManifestRegistry, PluginRetryPolicy,
+        PluginSecretsPolicy,
     };
     use serde_json::json;
     use std::path::Path;
+    use uuid::Uuid;
+
+    const TEST_BODY_LIMIT: usize = 64;
+
+    /// 고정 응답을 한 번 내려주는 로컬 서버를 띄우고 주소를 돌려준다.
+    fn spawn_single_response_server(content_type: &str, body: &'static str) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let content_type = content_type.to_string();
+
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buffer = [0u8; 2048];
+                let _ = stream.read(&mut buffer);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    content_type,
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+
+        format!("http://{addr}/lookup")
+    }
+
+    fn http_executor() -> HttpRequestExecutor {
+        let manifest: PluginManifest = serde_json::from_value(json!({
+            "plugin_id": "builtin.http_request",
+            "version": "1.0.0",
+            "executor_type": "builtin",
+            "executor_ref": "builtin.http_request"
+        }))
+        .unwrap();
+
+        HttpRequestExecutor {
+            http_client: reqwest::Client::new(),
+            manifest,
+        }
+    }
+
+    fn http_invocation(url: String) -> PluginInvocation {
+        PluginInvocation {
+            plugin_id: "builtin.http_request".to_string(),
+            instance_id: Uuid::new_v4(),
+            token_id: Uuid::new_v4(),
+            node_id: "http".to_string(),
+            config: json!({ "url": url, "method": "GET" }),
+            context: json!({}),
+            attempt: 1,
+        }
+    }
+
+    /// PXM-35 회귀: 실제 호출 결과에 응답 본문이 담겨야 한다.
+    #[tokio::test]
+    async fn http_executor_returns_response_body() {
+        let url = spawn_single_response_server("application/json", r#"{"user":{"id":"u-1"}}"#);
+
+        let result = http_executor()
+            .execute(http_invocation(url))
+            .await
+            .unwrap();
+
+        assert_eq!(result.status_code, 200);
+        assert_eq!(result.output["ok"], json!(true));
+        assert_eq!(result.output["status_code"], json!(200));
+        assert_eq!(result.output["body"]["user"]["id"], json!("u-1"));
+        assert_eq!(
+            result.output["headers"]["content-type"],
+            json!("application/json")
+        );
+    }
+
+    #[tokio::test]
+    async fn http_executor_returns_text_body_as_string() {
+        let url = spawn_single_response_server("text/plain", "granted");
+
+        let result = http_executor()
+            .execute(http_invocation(url))
+            .await
+            .unwrap();
+
+        assert_eq!(result.output["body"], json!("granted"));
+    }
+
+    /// API의 노드 테스트 응답과 같은 키를 갖는지 확인한다.
+    /// 두 경로의 구조가 달라진 것이 PXM-35의 원인이었다.
+    #[test]
+    fn http_output_matches_node_test_contract() {
+        let output = build_http_response_output(
+            200,
+            json!({"content-type": "application/json"}),
+            "application/json; charset=utf-8",
+            r#"{"user":{"id":"u-1"}}"#.to_string(),
+            TEST_BODY_LIMIT,
+        );
+
+        assert_eq!(output["status_code"], json!(200));
+        assert_eq!(output["ok"], json!(true));
+        assert_eq!(output["headers"]["content-type"], json!("application/json"));
+        assert_eq!(output["body"]["user"]["id"], json!("u-1"));
+        assert!(output.get("body_truncated").is_none());
+    }
+
+    #[test]
+    fn http_output_keeps_non_json_body_as_string() {
+        let output = build_http_response_output(
+            200,
+            json!({}),
+            "text/html; charset=utf-8",
+            "<html>ok</html>".to_string(),
+            TEST_BODY_LIMIT,
+        );
+
+        assert_eq!(output["body"], json!("<html>ok</html>"));
+    }
+
+    /// content-type이 JSON이어도 파싱에 실패하면 원문을 잃지 않는다.
+    #[test]
+    fn http_output_falls_back_to_raw_text_on_invalid_json() {
+        let output = build_http_response_output(
+            200,
+            json!({}),
+            "application/json",
+            "{not json".to_string(),
+            TEST_BODY_LIMIT,
+        );
+
+        assert_eq!(output["body"], json!("{not json"));
+    }
+
+    #[test]
+    fn http_output_handles_empty_body() {
+        let output = build_http_response_output(
+            204,
+            json!({}),
+            "application/json",
+            String::new(),
+            TEST_BODY_LIMIT,
+        );
+
+        assert_eq!(output["body"], json!(""));
+        assert_eq!(output["ok"], json!(true));
+    }
+
+    #[test]
+    fn http_output_truncates_body_over_limit() {
+        let raw = "a".repeat(TEST_BODY_LIMIT * 2);
+        let output = build_http_response_output(
+            200,
+            json!({}),
+            "application/json",
+            raw.clone(),
+            TEST_BODY_LIMIT,
+        );
+
+        assert_eq!(output["body_truncated"], json!(true));
+        assert_eq!(output["body_bytes"], json!(raw.len()));
+        assert_eq!(
+            output["body"].as_str().map(str::len),
+            Some(TEST_BODY_LIMIT),
+            "상한까지만 저장한다"
+        );
+    }
+
+    /// 잘라낸 지점이 멀티바이트 문자 중간이면 패닉이 난다.
+    #[test]
+    fn http_output_truncation_respects_char_boundary() {
+        let raw = "가".repeat(TEST_BODY_LIMIT);
+        let output = build_http_response_output(
+            200,
+            json!({}),
+            "text/plain",
+            raw,
+            TEST_BODY_LIMIT,
+        );
+
+        let body = output["body"].as_str().unwrap();
+        assert!(body.len() <= TEST_BODY_LIMIT);
+        assert!(body.chars().all(|c| c == '가'));
+    }
 
     #[test]
     fn maps_secret_uri_to_prefixed_env_name() {

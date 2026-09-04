@@ -332,14 +332,14 @@ export class PluginsService implements OnModuleInit {
 
     const contentType = response.headers.get('content-type') || '';
     const text = await response.text();
-    const body = contentType.includes('application/json') ? parseJsonLoose(text) : text;
 
-    return {
-      status_code: response.status,
-      ok: response.ok,
-      headers: Object.fromEntries(response.headers.entries()),
-      body,
-    };
+    return buildHttpTestOutput(
+      response.status,
+      response.ok,
+      Object.fromEntries(response.headers.entries()),
+      contentType,
+      text,
+    );
   }
 
   private async resolveCredentialConfig(
@@ -1050,6 +1050,57 @@ function stringifyHeaders(headers: Record<string, unknown>) {
       .filter(([, value]) => value !== undefined && value !== null)
       .map(([key, value]) => [key, String(value)]),
   );
+}
+
+/**
+ * Engine의 `build_http_response_output`과 같은 구조를 만든다.
+ * 디자이너 테스트 결과와 실제 실행 결과가 달라지면 안 된다 (PXM-35).
+ */
+export function buildHttpTestOutput(
+  statusCode: number,
+  ok: boolean,
+  headers: Record<string, string>,
+  contentType: string,
+  rawBody: string,
+  bodyLimitBytes: number = httpResponseBodyLimitBytes(),
+) {
+  const bodyBytes = Buffer.byteLength(rawBody, 'utf8');
+
+  if (bodyBytes > bodyLimitBytes) {
+    return {
+      status_code: statusCode,
+      ok,
+      headers,
+      body: truncateUtf8(rawBody, bodyLimitBytes),
+      body_truncated: true,
+      body_bytes: bodyBytes,
+    };
+  }
+
+  return {
+    status_code: statusCode,
+    ok,
+    headers,
+    body: contentType.includes('application/json') ? parseJsonLoose(rawBody) : rawBody,
+  };
+}
+
+const DEFAULT_HTTP_RESPONSE_BODY_LIMIT_BYTES = 256 * 1024;
+
+function httpResponseBodyLimitBytes(): number {
+  const configured = Number(process.env.HTTP_RESPONSE_BODY_LIMIT_BYTES);
+  return Number.isFinite(configured) && configured > 0
+    ? configured
+    : DEFAULT_HTTP_RESPONSE_BODY_LIMIT_BYTES;
+}
+
+/** 멀티바이트 문자 중간에서 잘리지 않도록 바이트 기준으로 자른다. */
+function truncateUtf8(value: string, limitBytes: number): string {
+  const buffer = Buffer.from(value, 'utf8');
+  if (buffer.byteLength <= limitBytes) {
+    return value;
+  }
+  return new TextDecoder('utf-8', { fatal: false }).decode(buffer.subarray(0, limitBytes)).replace(/�$/, '');
 }
 
 function parseJsonLoose(value: string): unknown {
