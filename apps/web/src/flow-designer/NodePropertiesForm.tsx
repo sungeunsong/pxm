@@ -1514,7 +1514,7 @@ function renderGatewayEdgeRules(
                     helperText={
                       isDefault
                         ? 'Default path는 조건식 없이 사용됩니다.'
-                        : '예: amount > 1000, status == approved'
+                        : '형식: 필드 연산자 값 (==, !=, >=, <=, >, <). 신청 입력(formData)의 최상위 필드만 참조합니다. 예: amount >= 1000, status == approved'
                     }
                     fullWidth
                   />

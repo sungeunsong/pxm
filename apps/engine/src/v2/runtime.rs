@@ -155,30 +155,118 @@ impl V2RetryPolicy {
 // ============================================================
 // 식 해석기 (Expression Evaluator)
 // ============================================================
-fn evaluate_condition(condition: &str, context: &Value) -> bool {
-    let form_data = get_form_data(context);
-    if let Some(data) = form_data {
-        if let Some((field, rest)) = condition.split_once("==") {
-            let field = field.trim();
-            let expected = rest.trim().trim_matches('"').trim_matches('\'');
-            if let Some(actual) = data.get(field).and_then(|v| v.as_str()) {
-                return actual == expected;
-            }
-        } else if let Some((field, rest)) = condition.split_once(">") {
-            let field = field.trim();
-            let threshold: f64 = rest.trim().parse().unwrap_or(0.0);
-            if let Some(actual) = data.get(field).and_then(|v| v.as_f64()) {
-                return actual > threshold;
-            }
-        } else if let Some((field, rest)) = condition.split_once("<") {
-            let field = field.trim();
-            let threshold: f64 = rest.trim().parse().unwrap_or(0.0);
-            if let Some(actual) = data.get(field).and_then(|v| v.as_f64()) {
-                return actual < threshold;
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ConditionOperator {
+    Eq,
+    Ne,
+    Gte,
+    Lte,
+    Gt,
+    Lt,
+}
+
+/// 긴 연산자를 먼저 검사해야 한다. `>=`를 `>`로 자르면 우변이 `"= 100"`이 되고,
+/// 그 파싱 실패를 기본값으로 흘리면 `amount > 0`을 평가하게 된다.
+const CONDITION_OPERATORS: [(&str, ConditionOperator); 6] = [
+    ("==", ConditionOperator::Eq),
+    ("!=", ConditionOperator::Ne),
+    (">=", ConditionOperator::Gte),
+    ("<=", ConditionOperator::Lte),
+    (">", ConditionOperator::Gt),
+    ("<", ConditionOperator::Lt),
+];
+
+fn parse_condition(condition: &str) -> Result<(String, ConditionOperator, String)> {
+    for (token, operator) in CONDITION_OPERATORS {
+        let Some((left, right)) = condition.split_once(token) else {
+            continue;
+        };
+        let field = left.trim().to_string();
+        let literal = right
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'')
+            .to_string();
+
+        if field.is_empty() {
+            return Err(anyhow::anyhow!(
+                "condition '{condition}' is missing a field name on the left side"
+            ));
+        }
+        if literal.is_empty() {
+            return Err(anyhow::anyhow!(
+                "condition '{condition}' is missing a value on the right side"
+            ));
+        }
+        return Ok((field, operator, literal));
+    }
+
+    Err(anyhow::anyhow!(
+        "condition '{condition}' has no supported operator. supported: ==, !=, >=, <=, >, <"
+    ))
+}
+
+/// `==`와 `!=`는 문자열, 숫자, 불리언, null을 모두 비교한다.
+/// 이전에는 `as_str()`만 봐서 `amount == 50`이나 `flag == true`가 항상 거짓이었다.
+fn condition_value_equals(actual: &Value, literal: &str) -> bool {
+    match actual {
+        Value::String(text) => text == literal,
+        Value::Number(number) => literal
+            .parse::<f64>()
+            .map(|expected| number.as_f64() == Some(expected))
+            .unwrap_or(false),
+        Value::Bool(flag) => literal
+            .parse::<bool>()
+            .map(|expected| *flag == expected)
+            .unwrap_or(false),
+        Value::Null => literal.eq_ignore_ascii_case("null"),
+        _ => false,
+    }
+}
+
+/// 게이트웨이 조건식을 평가한다.
+///
+/// 문법 오류는 `Err`로 올려 노드를 실패시킨다. 조용히 `false`로 흘리면 기본 경로를
+/// 타면서 워크플로우가 정상 완료되고, 잘못된 분기를 아무도 알아채지 못한다.
+/// 반면 참조한 필드가 없거나 타입이 맞지 않는 것은 실행 중 정상적으로 생길 수 있으므로
+/// `false`로 평가한다.
+///
+/// 참조 대상은 `data.formData`의 최상위 필드다. 노드 산출물 참조는 PXM-42에서 다룬다.
+fn evaluate_condition(condition: &str, context: &Value) -> Result<bool> {
+    let (field, operator, literal) = parse_condition(condition)?;
+
+    // 숫자 비교는 우변이 숫자여야 한다. 파싱 실패를 기본값으로 대체하지 않는다.
+    let threshold = match operator {
+        ConditionOperator::Gt
+        | ConditionOperator::Lt
+        | ConditionOperator::Gte
+        | ConditionOperator::Lte => Some(literal.parse::<f64>().map_err(|_| {
+            anyhow::anyhow!("condition '{condition}' expects a number on the right side")
+        })?),
+        _ => None,
+    };
+
+    let Some(actual) = get_form_data(context).and_then(|data| data.get(&field)) else {
+        return Ok(false);
+    };
+
+    Ok(match operator {
+        ConditionOperator::Eq => condition_value_equals(actual, &literal),
+        ConditionOperator::Ne => !condition_value_equals(actual, &literal),
+        _ => {
+            let Some(actual) = actual.as_f64() else {
+                return Ok(false);
+            };
+            let threshold = threshold.unwrap_or_default();
+            match operator {
+                ConditionOperator::Gt => actual > threshold,
+                ConditionOperator::Lt => actual < threshold,
+                ConditionOperator::Gte => actual >= threshold,
+                ConditionOperator::Lte => actual <= threshold,
+                _ => unreachable!("비교 연산자만 남는다"),
             }
         }
-    }
-    false
+    })
 }
 
 fn get_form_data(context: &Value) -> Option<&Value> {
@@ -1016,28 +1104,31 @@ fn gateway_type(node: &NodeDef) -> GatewayType {
     }
 }
 
+/// 조건식 문법 오류는 `Err`로 올린다. 잘못된 조건을 `false`로 흘리면
+/// 기본 경로를 타면서 잘못된 분기가 정상 완료로 보인다.
 fn select_gateway_edges<'a>(
     gateway_type: GatewayType,
     outgoing_edges: &'a [&'a EdgeRule],
     context: &Value,
-) -> Vec<&'a EdgeRule> {
+) -> Result<Vec<&'a EdgeRule>> {
     match gateway_type {
-        GatewayType::Parallel => outgoing_edges.to_vec(),
+        GatewayType::Parallel => Ok(outgoing_edges.to_vec()),
         GatewayType::Exclusive => {
             let mut default_edge = None;
             for edge in outgoing_edges {
                 if edge.is_default {
                     default_edge = Some(*edge);
-                } else if edge
-                    .condition_expr
-                    .as_deref()
-                    .map(|expr| evaluate_condition(expr, context))
-                    .unwrap_or(false)
-                {
-                    return vec![*edge];
+                    continue;
+                }
+                let matched = match edge.condition_expr.as_deref() {
+                    Some(expr) => evaluate_condition(expr, context)?,
+                    None => false,
+                };
+                if matched {
+                    return Ok(vec![*edge]);
                 }
             }
-            default_edge.into_iter().collect()
+            Ok(default_edge.into_iter().collect())
         }
         GatewayType::Inclusive => {
             let mut matched = Vec::new();
@@ -1049,7 +1140,7 @@ fn select_gateway_edges<'a>(
                     default_edge = Some(*edge);
                 } else if let Some(expr) = edge.condition_expr.as_deref() {
                     has_condition = true;
-                    if evaluate_condition(expr, context) {
+                    if evaluate_condition(expr, context)? {
                         matched.push(*edge);
                     }
                 } else if !has_condition {
@@ -1062,7 +1153,7 @@ fn select_gateway_edges<'a>(
                     matched.push(edge);
                 }
             }
-            matched
+            Ok(matched)
         }
     }
 }
@@ -1127,7 +1218,7 @@ fn expected_join_count(scope_key: Option<&str>, fallback: usize) -> usize {
         .max(1)
 }
 
-fn resolve_approval_assignment(node: &NodeDef, context: &Value) -> (String, Value) {
+fn resolve_approval_assignment(node: &NodeDef, context: &Value) -> Result<(String, Value)> {
     let approval_line = node.config.get("approvalLine").unwrap_or(&Value::Null);
     let legacy_approver_channel = node
         .config
@@ -1160,7 +1251,7 @@ fn resolve_approval_assignment(node: &NodeDef, context: &Value) -> (String, Valu
         .unwrap_or("fixed")
         .to_ascii_lowercase();
 
-    match model.as_str() {
+    Ok(match model.as_str() {
         "condition" | "condition_based" | "conditional" => {
             let rules = approval_line
                 .get("rules")
@@ -1171,8 +1262,8 @@ fn resolve_approval_assignment(node: &NodeDef, context: &Value) -> (String, Valu
                     let condition = rule.get("condition").and_then(|v| v.as_str());
                     let assignee = rule.get("assignee").and_then(|v| v.as_str());
                     if let (Some(condition), Some(assignee)) = (condition, assignee) {
-                        if evaluate_condition(condition, context) {
-                            return (
+                        if evaluate_condition(condition, context)? {
+                            return Ok((
                                 assignee.to_string(),
                                 json!({
                                     "approval_model": "condition",
@@ -1183,7 +1274,7 @@ fn resolve_approval_assignment(node: &NodeDef, context: &Value) -> (String, Valu
                                     "external_require_otp": external_require_otp,
                                     "external_expires_in_hours": external_expires_in_hours
                                 }),
-                            );
+                            ));
                         }
                     }
                 }
@@ -1273,7 +1364,7 @@ fn resolve_approval_assignment(node: &NodeDef, context: &Value) -> (String, Valu
                 }),
             )
         }
-    }
+    })
 }
 
 fn normalized_approval_channels(
@@ -1340,7 +1431,7 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
         .to_ascii_lowercase();
 
     if model != "dynamic" {
-        let (assignee, mut payload) = resolve_approval_assignment(node, context);
+        let (assignee, mut payload) = resolve_approval_assignment(node, context)?;
         let approval_channels = normalized_approval_channels(
             node.config.get("approvalChannels"),
             node.config
@@ -1743,7 +1834,7 @@ mod tests {
             config: json!({"approvalLine": {"mode": "fixed", "assignee": "manager"}}),
         };
 
-        let (assignee, payload) = resolve_approval_assignment(&node, &json!({}));
+        let (assignee, payload) = resolve_approval_assignment(&node, &json!({})).unwrap();
         assert_eq!(assignee, "manager");
         assert_eq!(payload["approval_model"], "fixed");
     }
@@ -2027,6 +2118,73 @@ mod tests {
         );
     }
 
+    /// PXM-41 회귀: 지원하지 않는 문법이 조용히 다른 조건으로 평가되면 안 된다.
+    /// `amount >= 100`이 `amount > 0`으로 평가되어 잘못된 분기를 타던 사례다.
+    #[test]
+    fn evaluates_comparison_operators_without_silent_fallback() {
+        let context = json!({"data": {"formData": {"amount": 50}}});
+        let cases = [
+            ("amount > 100", false),
+            ("amount > 10", true),
+            ("amount >= 100", false),
+            ("amount >= 50", true),
+            ("amount < 10", false),
+            ("amount <= 10", false),
+            ("amount <= 50", true),
+        ];
+        for (expr, expected) in cases {
+            assert_eq!(
+                super::evaluate_condition(expr, &context).unwrap(),
+                expected,
+                "조건식 {expr}"
+            );
+        }
+    }
+
+    /// `==`가 as_str()만 보던 탓에 숫자와 불리언 비교가 항상 거짓이었다.
+    #[test]
+    fn compares_strings_numbers_and_booleans() {
+        let context =
+            json!({"data": {"formData": {"amount": 50, "status": "approved", "flag": true}}});
+        let cases = [
+            ("status == approved", true),
+            ("status != approved", false),
+            ("status != rejected", true),
+            ("amount == 50", true),
+            ("amount != 50", false),
+            ("flag == true", true),
+            ("flag == false", false),
+            ("flag != false", true),
+        ];
+        for (expr, expected) in cases {
+            assert_eq!(
+                super::evaluate_condition(expr, &context).unwrap(),
+                expected,
+                "조건식 {expr}"
+            );
+        }
+    }
+
+    /// 없는 필드는 실행 중 정상적으로 생길 수 있으므로 false다. 오류가 아니다.
+    #[test]
+    fn treats_missing_field_as_false() {
+        let context = json!({"data": {"formData": {"amount": 50}}});
+        assert!(!super::evaluate_condition("missing == x", &context).unwrap());
+        assert!(!super::evaluate_condition("missing > 1", &context).unwrap());
+    }
+
+    /// 문법 오류는 false로 흘리지 않고 오류로 올려 노드를 실패시킨다.
+    #[test]
+    fn rejects_malformed_condition_expressions() {
+        let context = json!({"data": {"formData": {"amount": 50}}});
+        for expr in ["amount", "amount >", "> 100", "amount ~ 100", "amount > abc", ""] {
+            assert!(
+                super::evaluate_condition(expr, &context).is_err(),
+                "조건식 {expr:?}는 오류여야 한다"
+            );
+        }
+    }
+
     #[test]
     fn resolves_condition_based_approval_assignee() {
         let node = NodeDef {
@@ -2044,7 +2202,7 @@ mod tests {
         };
 
         let (assignee, payload) =
-            resolve_approval_assignment(&node, &json!({"formData": {"amount": 150}}));
+            resolve_approval_assignment(&node, &json!({"formData": {"amount": 150}})).unwrap();
         assert_eq!(assignee, "finance");
         assert_eq!(payload["matched_condition"], "amount > 100");
     }
@@ -2065,7 +2223,7 @@ mod tests {
         };
 
         let (assignee, payload) =
-            resolve_approval_assignment(&node, &json!({"formData": {"approver": "director"}}));
+            resolve_approval_assignment(&node, &json!({"formData": {"approver": "director"}})).unwrap();
         assert_eq!(assignee, "director");
         assert_eq!(payload["approval_model"], "requester_selected");
     }
@@ -2676,7 +2834,7 @@ async fn execute_token_flow(
                     .filter(|e| e.source_node_id == token.node_id)
                     .collect();
                 let selected_edges =
-                    select_gateway_edges(gateway_type, &next_edges, &instance.context);
+                    select_gateway_edges(gateway_type, &next_edges, &instance.context)?;
 
                 if !selected_edges.is_empty() {
                     let selected_targets: Vec<String> = selected_edges
