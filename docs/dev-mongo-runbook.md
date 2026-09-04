@@ -66,7 +66,7 @@ http://localhost:5173
 API health check:
 
 ```bash
-curl http://localhost:3000/api/health
+curl http://localhost:3011/api/health
 ```
 
 ## Custom Mongo connection

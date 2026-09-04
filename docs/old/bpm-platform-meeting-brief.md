@@ -1,6 +1,6 @@
 # BPM/PXM 플랫폼 설명 자료
 
-구현 진행 상태는 `docs/bpm-platform-implementation-plan.md`에서 투두 형태로 관리한다.
+구현 진행 상태는 `docs/old/bpm-platform-implementation-plan.md`에서 투두 형태로 관리한다.
 
 ## 1. 우리가 만든 것
 

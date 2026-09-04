@@ -1,6 +1,6 @@
 # BPM Platform Implementation Plan
 
-이 문서는 `docs/bpm-platform-meeting-brief.md`를 기준으로 실제 구현 진행 상태를 추적한다.
+이 문서는 `docs/old/bpm-platform-meeting-brief.md`를 기준으로 실제 구현 진행 상태를 추적한다.
 
 ## Status Legend
 

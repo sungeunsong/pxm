@@ -2,7 +2,7 @@
 
 **대상**: Codex · **브랜치**: `v2-redesign` · **범위**: `apps/web` · **작성**: 2026-09-02
 
-> 이전 문서 `docs/ui-ux-p0-handoff.md`를 대체합니다.
+> 이전 인수인계 문서(`ui-ux-p0-handoff.md`, 현재 삭제됨)를 대체합니다.
 
 ---
 

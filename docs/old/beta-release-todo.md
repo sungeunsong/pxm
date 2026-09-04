@@ -1,6 +1,6 @@
 # PXM 베타 출시 TODO
 
-기준 문서: `docs/beta-release-review-2026-08.md`
+기준 문서: `docs/old/beta-release-review-2026-08.md`
 
 이 문서는 베타 점검 결과를 실제 작업 단위로 전환한 목록이다. 기능 구현 여부가 아니라 아래의
 **완료 조건까지 충족했을 때만 체크**한다.
@@ -252,7 +252,7 @@ allowed_workflow_ids: [...]
 
 # 5. 운영 오픈
 
-상세 항목과 담당 역할은 `docs/beta-open-checklist.md`를 기준으로 한다.
+상세 항목과 담당 역할은 `docs/old/beta-open-checklist.md`를 기준으로 한다.
 
 - [ ] HTTPS 인증서 적용과 만료 알림 증빙
 - [ ] MongoDB 인증·internal network·전용 계정 운영 기동 증빙

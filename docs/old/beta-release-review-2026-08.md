@@ -3,7 +3,7 @@
 이 문서는 실행 중인 PXM을 실제로 조작하며 수행한 점검 결과다. 판단 근거와 재현 절차를 함께 남겨,
 읽는 사람이 결과를 다시 확인하고 바로 수정 작업에 들어갈 수 있도록 한다.
 
-실행 단위 작업과 완료 조건은 `docs/beta-release-todo.md`에서 관리한다.
+실행 단위 작업과 완료 조건은 `docs/old/beta-release-todo.md`에서 관리한다.
 
 ## 제품 전제 (우선순위 판단의 기준)
 
@@ -219,7 +219,7 @@ allowed_workflow_ids: [...]  # allowlist일 때만 사용
 **시연 중 누군가 이걸 알아채면 제품 전체의 신뢰가 무너진다.** 로그인 직후 첫 화면이라 노출 확률이
 가장 높다. 실데이터 연결이 이번 범위에서 부담되면 **대시보드를 첫 화면에서 빼는 것이 낫다.**
 
-관련 계획 항목: `docs/bpm-platform-implementation-plan.md` "Next Recommended Work" 4번.
+관련 계획 항목: `docs/old/bpm-platform-implementation-plan.md` "Next Recommended Work" 4번.
 
 ## C-2. "내 결재함"이 기본 비활성이다
 
@@ -452,7 +452,7 @@ A-1~A-3과 단순 UI 제거 작업은 작지만, API 버전 전략·접근 정�
 
 # 부록 — JS Node module import 현황
 
-`docs/bpm-platform-implementation-plan.md`의 미완 항목(`:493`, `:563`, `:578`)에 대한 실측 결과다.
+`docs/old/bpm-platform-implementation-plan.md`의 미완 항목(`:493`, `:563`, `:578`)에 대한 실측 결과다.
 설계 문서는 아직 없지만 **"기본 차단"은 이미 구현되어 있다.**
 
 `apps/engine/src/v2/runtime.rs:218-270`은 `node` 자식 프로세스에서 `node:vm` 컨텍스트를 만들고

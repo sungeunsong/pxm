@@ -6,7 +6,7 @@
 
 ## 실행 환경
 
-Approval 노드는 기본 Flow Designer에서 사용할 수 있다. 별도 샘플 결재함까지 확인하는 경우에만 `VITE_ENABLE_APPROVAL_SAMPLE_UI=true pnpm dev:web`으로 Web을 실행한다.
+Approval 노드와 결재함 화면은 모두 기본 제공된다. 별도 기능 플래그 없이 `pnpm dev:web`으로 실행한다.
 
 필요한 로컬 서비스:
 
@@ -22,7 +22,7 @@ pnpm dev:web
 기본 접속 주소:
 
 - Web: `http://localhost:5173`
-- API: `http://localhost:3000/api`
+- API: `http://localhost:3011/api`
 - Plugin host: `http://localhost:3031`
 - MongoDB: `mongodb://127.0.0.1:27017/?replicaSet=rs0`
 
@@ -99,7 +99,7 @@ Start -> Manager Approval -> Slack Notice(service plugin) -> End
 사전 조건:
 
 - MongoDB가 실행 중이어야 한다.
-- API가 `http://localhost:3000/api`에서 실행 중이어야 한다.
+- API가 `http://localhost:3011/api`에서 실행 중이어야 한다.
 - Engine이 MongoDB runtime으로 실행 중이어야 한다.
 - Hosted plugin 경로를 확인하려면 plugin-host가 실행 중이어야 한다.
 
@@ -118,7 +118,7 @@ DB_TYPE=mongodb PXM_PLUGIN_HOST_URL=http://127.0.0.1:3031 pnpm dev:engine:mongo
 1. API와 plugin-host가 응답하는지 확인한다.
 
 ```bash
-curl http://localhost:3000/api/plugins
+curl http://localhost:3011/api/plugins
 curl http://127.0.0.1:3031/health
 ```
 
@@ -206,7 +206,7 @@ NODE
 7. trace API로 workflow 진행 이력을 확인한다. `<instance_id>`는 3번 출력값을 사용한다.
 
 ```bash
-curl http://localhost:3000/api/instances/<instance_id>/trace
+curl http://localhost:3011/api/instances/<instance_id>/trace
 ```
 
 기대 결과:
