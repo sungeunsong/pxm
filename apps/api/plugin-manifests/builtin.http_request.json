@@ -9,18 +9,44 @@
   "config_schema": {
     "type": "object",
     "properties": {
-      "url": { "type": "string", "title": "Request URL" },
+      "url": {
+        "type": "string",
+        "title": "Request URL",
+        "description": "호출할 주소입니다. 실행 데이터를 {{formData.필드}} 또는 {{data.outputs.노드결과}}로 참조할 수 있습니다. 넣은 값은 자동으로 URL 인코딩되며, scheme과 host는 고정해야 합니다 (예: http://acl.local/grant/{{formData.emp_id}})."
+      },
       "method": {
         "type": "string",
         "title": "HTTP Method",
-        "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"],
-        "default": "GET"
+        "enum": [
+          "GET",
+          "POST",
+          "PUT",
+          "PATCH",
+          "DELETE"
+        ],
+        "default": "GET",
+        "description": "HTTP 메서드입니다. 비우면 GET입니다."
       },
-      "headers": { "type": "object", "title": "Headers" },
-      "body": { "type": "object", "title": "JSON Body" },
-      "timeout_ms": { "type": "integer", "title": "Timeout (ms)", "default": 5000 }
+      "headers": {
+        "type": "object",
+        "title": "Headers",
+        "description": "요청 헤더 JSON입니다. 실행 데이터를 {{formData.필드}} 또는 {{data.outputs.노드결과}}로 참조할 수 있습니다."
+      },
+      "body": {
+        "type": "object",
+        "title": "JSON Body",
+        "description": "요청 본문 JSON입니다. 실행 데이터를 {{formData.필드}} 또는 {{data.outputs.노드결과}}로 참조할 수 있습니다. 값 전체가 참조 하나면 숫자·불리언·객체 타입이 그대로 유지됩니다."
+      },
+      "timeout_ms": {
+        "type": "integer",
+        "title": "Timeout (ms)",
+        "default": 5000,
+        "description": "요청 제한 시간(ms)입니다."
+      }
     },
-    "required": ["url"]
+    "required": [
+      "url"
+    ]
   },
   "executor_type": "builtin",
   "executor_ref": "builtin.http_request",
@@ -32,8 +58,12 @@
   "output_schema": {
     "type": "object",
     "properties": {
-      "status_code": { "type": "integer" },
-      "body": { "type": "object" }
+      "status_code": {
+        "type": "integer"
+      },
+      "body": {
+        "type": "object"
+      }
     }
   },
   "timeout_ms": 5000,
@@ -41,5 +71,9 @@
     "max_attempts": 3,
     "backoff_ms": 1000
   },
-  "tags": ["http", "webhook", "builtin"]
+  "tags": [
+    "http",
+    "webhook",
+    "builtin"
+  ]
 }

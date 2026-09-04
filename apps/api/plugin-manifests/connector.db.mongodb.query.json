@@ -24,21 +24,35 @@
         "title": "Database",
         "description": "Defaults to PXM_MONGODB_QUERY_DB_NAME, then MONGO_DB_NAME, when empty."
       },
-      "collection": { "type": "string", "title": "Collection" },
+      "collection": {
+        "type": "string",
+        "title": "Collection"
+      },
       "operation": {
         "type": "string",
         "title": "Operation",
-        "enum": ["find", "findOne"],
+        "enum": [
+          "find",
+          "findOne"
+        ],
         "default": "find"
       },
-      "filter": { "type": "object", "title": "Filter" },
+      "filter": {
+        "type": "object",
+        "title": "Filter",
+        "description": "조회 조건 JSON입니다. 실행 데이터를 {{formData.필드}} 또는 {{data.outputs.노드결과}}로 참조할 수 있습니다. 값 전체가 참조 하나면 숫자·불리언 타입이 유지됩니다 (예: {\"emp_id\": \"{{formData.emp_id}}\"}). 비우면 전체를 조회합니다."
+      },
       "output_path": {
         "type": "string",
         "title": "Output Path",
         "default": "dbResults.mongodb"
       }
     },
-    "required": ["connection_uri", "collection", "operation"]
+    "required": [
+      "connection_uri",
+      "collection",
+      "operation"
+    ]
   },
   "executor_type": "builtin",
   "executor_ref": "builtin.mongodb_query",
@@ -51,9 +65,15 @@
   "output_schema": {
     "type": "object",
     "properties": {
-      "rows": { "type": "array" },
-      "row_count": { "type": "integer" },
-      "row": { "type": "object" }
+      "rows": {
+        "type": "array"
+      },
+      "row_count": {
+        "type": "integer"
+      },
+      "row": {
+        "type": "object"
+      }
     }
   },
   "timeout_ms": 10000,
@@ -69,5 +89,10 @@
     "timeout_ms": 10000,
     "max_payload_bytes": 524288
   },
-  "tags": ["db", "database", "mongodb", "query"]
+  "tags": [
+    "db",
+    "database",
+    "mongodb",
+    "query"
+  ]
 }
