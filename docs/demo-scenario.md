@@ -92,10 +92,15 @@ start ─→ DB 조회 ─→ JS 위험도 계산 ─→ Gateway ─┬─(저�
 
 - `plugin_id`: `connector.db.mongodb.query`
 - `credential_id`: 장면 2에서 만든 `hr-db`
-- `collection`, `operation`(`find` / `findOne`), `filter`
-- `outputPath`: `applicant`
+- `database`: `demo_hr`, `collection`: `employees`, `operation`: `find`
+- `filter`: **`{}`** (아래 설명 참고)
+- `outputPath`: `hr`
 
-> "결과가 `data.outputs.applicant`에 들어가고, 다음 노드들이 이걸 읽습니다."
+> "결과가 `data.outputs.hr`에 들어가고, 다음 노드들이 이걸 읽습니다."
+
+⚠️ **`filter`에 신청자 사번을 넣을 수 없다.** Service 노드 설정은 정적이라 실행 입력값을
+참조하지 못한다 (PXM-45). 그래서 전체를 조회하고 다음 JS 노드에서 신청자를 골라낸다.
+시연 데이터가 3건이라 가능한 방식이며, 질문이 나오면 제약을 그대로 설명한다.
 
 **미리 답할 것**: 현재 DB 커넥터는 MongoDB이고 `find`/`findOne` 읽기만 지원한다.
 쓰기와 다른 DBMS는 플러그인으로 확장하는 구조다 (장면 3-6에서 이어서 설명).
@@ -105,12 +110,15 @@ start ─→ DB 조회 ─→ JS 위험도 계산 ─→ Gateway ─┬─(저�
 조회 결과와 신청 내용으로 위험도 점수를 계산한다.
 
 ```js
-const user = context.data.outputs.applicant.rows[0];
+const rows = context.data.outputs.hr.rows;
 const req = context.data.formData;
+const me = rows.find(r => r.emp_id === req.emp_id);
+if (!me) { throw new Error('직원 정보를 찾을 수 없습니다: ' + req.emp_id); }
 let score = 0;
 if (req.privilege_level === 'admin') score += 50;
-if (user.employment_type === 'partner') score += 30;
-if (!user.security_training_done) score += 20;
+if (me.employment_type === 'partner') score += 30;
+if (!me.security_training_done) score += 20;
+console.log('applicant=' + me.name + ' score=' + score);
 return score < 50 ? 'AUTO' : 'REVIEW';
 ```
 
@@ -122,8 +130,8 @@ return score < 50 ? 'AUTO' : 'REVIEW';
 `process`는 없다. `eval`과 `Function` 생성자도 막혀 있다. 타임아웃 기본 1초.
 
 ⚠️ **`outputPath`를 `formData.risk_level`로 두는 것이 중요하다.** 게이트웨이 조건식은
-`data.formData`의 최상위 필드만 읽고 `data.outputs`는 보지 못한다. 판정 결과를 문자열
-하나로 내보내는 것도 같은 이유다. 조건식은 `==`, `>`, `<`만 지원하고 불리언을 비교하지 못한다.
+`data.formData`의 최상위 필드만 읽고 `data.outputs`는 보지 못한다 (PXM-42).
+연산자는 `==`, `!=`, `>=`, `<=`, `>`, `<`를 지원하며 문자열·숫자·불리언을 비교한다.
 자세한 제약은 `docs/features.md`의 "게이트웨이 조건은 formData만 읽는다" 참고.
 
 ### 3-3. Gateway (exclusive)
@@ -152,13 +160,17 @@ return score < 50 ? 'AUTO' : 'REVIEW';
 ### 3-5. HTTP 노드 (service)
 
 - `plugin_id`: `builtin.http_request`
-- `credential_id`: `access-control-api`
-- `method`, `url`, `body`
+- `credential_id`: `access-control-api` (`authorization_header`로 주입된다)
+- `method`: `GET`, `url`: `http://127.0.0.1:3020/health`
+- `outputPath`: `provisioning`
 
 > "승인 결과를 접근제어 시스템에 반영합니다."
 
-⚠️ **`roadmap.md`의 R-00을 처리한 뒤에 시연한다.** 처리 전에는 응답 본문이 컨텍스트에
-들어오지 않아 "그 응답으로 분기 가능하냐"는 질문에 답할 수 없다.
+⚠️ **`url`과 `body`에도 실행 입력값을 넣을 수 없다** (PXM-45). 지금은 고정 호출만 가능해
+"누구에게 무슨 권한을 부여할지"를 외부로 전달하지 못한다. 시연에서는 연동이 일어난다는
+것까지만 보여주고, 질문이 나오면 제약을 설명한다.
+
+응답은 `{status_code, ok, headers, body}` 구조로 `data.outputs.provisioning`에 저장된다.
 
 ### 3-6. 확장 구조 한 마디 (30초, 화면 전환 없이)
 
@@ -309,12 +321,13 @@ return score < 50 ? 'AUTO' : 'REVIEW';
 
 시연 당일이 아니라 **하루 전**에 전부 통과시킨다.
 
-- [ ] `roadmap.md` R-00 (HTTP 노드 응답 캡처) 처리 완료
-- [ ] `roadmap.md` R-03 (테스트 데이터 정리) 처리 완료
+- [x] HTTP 노드 응답 캡처 (PXM-35) 처리 완료
+- [x] 테스트 데이터 정리 완료 (2026-09-04 개발 DB 초기화)
 - [ ] `demo:reset` → `demo:seed` 실행 후 전체 시나리오 1회 완주 (R-02)
 - [ ] Mailpit 기동 및 외부 승인 메일 수신 확인
-- [ ] 인사 DB 역할을 할 MongoDB 컬렉션에 샘플 문서 준비
-- [ ] 접근제어 시스템 역할을 할 수신 엔드포인트 준비 (`/debug/flaky` 활용 가능)
+- [ ] 인사 DB 역할: `demo_hr.employees`에 샘플 문서 준비 (사번, 재직 형태, 보안교육 이수 여부)
+- [ ] 접근제어 시스템 역할: `PORT=3020 node examples/external-http-plugin/echo-service.mjs` 기동
+      (`/api/debug/flaky`는 로그인이 필요해 HTTP 노드 대상으로 쓸 수 없다)
 - [ ] 계정 4개 로그인 확인 — `admin`, `secadmin`, `approver1`, `requester1`
 - [ ] 브라우저 탭 미리 배치 — 콘솔(5174), playground(5175), Mailpit(8025)
 - [ ] `pnpm gate:beta` 통과
