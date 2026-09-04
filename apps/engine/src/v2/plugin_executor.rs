@@ -325,7 +325,15 @@ impl PluginExecutorPort for PluginExecutorRegistry {
             )
         })?;
 
+        // 순서가 중요하다. secret 참조를 먼저 풀고(정적 설정만 대상), 그다음 실행 데이터를
+        // 치환한다. 반대로 하면 사용자 입력에 담긴 `secret://`가 비밀값으로 해석된다.
+        // 자격증명은 마지막에 주입해 치환 대상이 되지 않게 한다.
         invocation.config = handler.prepare_config(&invocation.config)?;
+        invocation.config = interpolate_config_with_context(
+            invocation.config.clone(),
+            &invocation.context,
+            handler.plugin_id(),
+        )?;
         invocation.config =
             resolve_credential_binding(invocation.config.clone(), &invocation, handler.plugin_id())
                 .await?;
@@ -436,6 +444,211 @@ impl HttpRequestExecutor {
             ),
         })
     }
+}
+
+// ============================================================
+// 노드 설정의 실행 데이터 참조 (PXM-45)
+// ============================================================
+
+/// 치환하지 않는 키. 참조 자체가 설정 식별자이거나 비밀값이 들어갈 자리다.
+const CONTEXT_REF_EXCLUDED_KEYS: [&str; 5] = [
+    "plugin_id",
+    "credential_id",
+    "credential_binding",
+    "secrets",
+    "secrets_ref",
+];
+
+/// 치환된 스칼라 하나의 최대 길이. 실행 데이터가 그대로 외부로 나가므로 상한을 둔다.
+const CONTEXT_REF_MAX_SCALAR_LEN: usize = 4096;
+
+fn interpolate_config_with_context(
+    config: Value,
+    context: &Value,
+    plugin_id: &str,
+) -> Result<Value> {
+    // URL은 치환 규칙이 다르다. 원본을 먼저 확보해 별도로 처리한다.
+    let raw_url = (plugin_id == "builtin.http_request")
+        .then(|| {
+            config
+                .get("url")
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+        })
+        .flatten();
+
+    let mut config = interpolate_value_with_context(&config, context)?;
+
+    if let Some(raw_url) = raw_url {
+        let url = interpolate_url_with_context(&raw_url, context)?;
+        if let Some(object) = config.as_object_mut() {
+            object.insert("url".to_string(), Value::String(url));
+        }
+    }
+    Ok(config)
+}
+
+/// URL 안의 참조는 퍼센트 인코딩하고, scheme과 host는 정적이어야 한다.
+///
+/// 호스트를 실행 데이터로 만들 수 있으면 신청자가 내부망 주소를 주입할 수 있다(SSRF).
+/// 값 인코딩만으로는 막을 수 없으므로 origin 자체를 설계 시점에 고정한다.
+fn interpolate_url_with_context(raw: &str, context: &Value) -> Result<String> {
+    let Some(refs) = parse_context_refs(raw)? else {
+        return Ok(raw.to_string());
+    };
+
+    let prefix = &raw[..refs[0].0];
+    let origin_closed = prefix.find("://").is_some_and(|scheme_end| {
+        prefix[scheme_end + 3..]
+            .find(['/', '?'])
+            .is_some_and(|boundary| boundary > 0)
+    });
+    if !origin_closed {
+        return Err(anyhow!(
+            "context reference in url '{raw}' must appear after the scheme and host. \
+             keep the origin static so the target cannot be redirected"
+        ));
+    }
+
+    let mut rendered = String::with_capacity(raw.len());
+    let mut cursor = 0usize;
+    for (start, end, path) in &refs {
+        rendered.push_str(&raw[cursor..*start]);
+        let value = resolve_context_ref(context, path)?;
+        let scalar = context_ref_scalar_to_string(&value, path)?;
+        rendered.push_str(&percent_encode_component(&scalar));
+        cursor = *end;
+    }
+    rendered.push_str(&raw[cursor..]);
+    Ok(rendered)
+}
+
+/// unreserved 문자만 남기고 인코딩한다. 경로·질의에 값을 넣어도 구조를 바꾸지 못하게 한다.
+fn percent_encode_component(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                encoded.push(*byte as char)
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
+}
+
+fn interpolate_value_with_context(value: &Value, context: &Value) -> Result<Value> {
+    match value {
+        Value::String(text) => interpolate_string_with_context(text, context),
+        Value::Array(items) => items
+            .iter()
+            .map(|item| interpolate_value_with_context(item, context))
+            .collect::<Result<Vec<_>>>()
+            .map(Value::Array),
+        Value::Object(object) => object
+            .iter()
+            .map(|(key, item)| {
+                if CONTEXT_REF_EXCLUDED_KEYS.contains(&key.as_str()) {
+                    return Ok((key.clone(), item.clone()));
+                }
+                Ok((key.clone(), interpolate_value_with_context(item, context)?))
+            })
+            .collect::<Result<serde_json::Map<String, Value>>>()
+            .map(Value::Object),
+        _ => Ok(value.clone()),
+    }
+}
+
+/// `{{ path }}` 참조를 실행 컨텍스트 값으로 바꾼다.
+///
+/// 문자열 전체가 참조 하나면 값의 타입을 보존한다. DB filter의 숫자·불리언 조건이
+/// 문자열로 바뀌면 조회가 조용히 어긋나기 때문이다.
+/// 문자열 안에 섞여 있으면 스칼라만 허용한다.
+/// 경로가 없으면 오류다. 빈 값으로 흘리면 조건 없는 조회나 잘못된 호출이 된다.
+fn interpolate_string_with_context(text: &str, context: &Value) -> Result<Value> {
+    let Some(refs) = parse_context_refs(text)? else {
+        return Ok(Value::String(text.to_string()));
+    };
+
+    if let Some(path) = whole_string_context_ref(text, &refs) {
+        return resolve_context_ref(context, path);
+    }
+
+    let mut rendered = String::with_capacity(text.len());
+    let mut cursor = 0usize;
+    for (start, end, path) in &refs {
+        rendered.push_str(&text[cursor..*start]);
+        let value = resolve_context_ref(context, path)?;
+        rendered.push_str(&context_ref_scalar_to_string(&value, path)?);
+        cursor = *end;
+    }
+    rendered.push_str(&text[cursor..]);
+    Ok(Value::String(rendered))
+}
+
+/// `{{ ... }}` 위치와 경로를 찾는다. 참조가 없으면 `None`.
+fn parse_context_refs(text: &str) -> Result<Option<Vec<(usize, usize, String)>>> {
+    let mut refs = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(open) = text[cursor..].find("{{") {
+        let start = cursor + open;
+        let Some(close) = text[start + 2..].find("}}") else {
+            return Err(anyhow!(
+                "context reference in '{text}' is not closed with '}}}}'"
+            ));
+        };
+        let end = start + 2 + close + 2;
+        let path = text[start + 2..start + 2 + close].trim().to_string();
+        if path.is_empty() {
+            return Err(anyhow!("context reference in '{text}' has an empty path"));
+        }
+        if path.contains('{') || path.contains('}') {
+            return Err(anyhow!("context reference '{path}' is malformed"));
+        }
+        refs.push((start, end, path));
+        cursor = end;
+    }
+
+    if refs.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(refs))
+}
+
+fn whole_string_context_ref<'a>(text: &str, refs: &'a [(usize, usize, String)]) -> Option<&'a str> {
+    match refs {
+        [(start, end, path)] if *start == 0 && *end == text.len() => Some(path.as_str()),
+        _ => None,
+    }
+}
+
+fn resolve_context_ref(context: &Value, path: &str) -> Result<Value> {
+    crate::v2::runtime::get_context_value_at_path(context, path)
+        .ok_or_else(|| anyhow!("context path '{path}' was not found in the instance context"))
+}
+
+fn context_ref_scalar_to_string(value: &Value, path: &str) -> Result<String> {
+    let rendered = match value {
+        Value::String(text) => text.clone(),
+        Value::Number(number) => number.to_string(),
+        Value::Bool(flag) => flag.to_string(),
+        Value::Null => String::new(),
+        _ => {
+            return Err(anyhow!(
+                "context path '{path}' resolved to an object or array. \
+                 embed a scalar, or use the whole value with a single reference"
+            ));
+        }
+    };
+
+    if rendered.len() > CONTEXT_REF_MAX_SCALAR_LEN {
+        return Err(anyhow!(
+            "context path '{path}' resolved to {} bytes which exceeds the {} byte limit",
+            rendered.len(),
+            CONTEXT_REF_MAX_SCALAR_LEN
+        ));
+    }
+    Ok(rendered)
 }
 
 /// 응답 본문이 인스턴스 컨텍스트에 그대로 저장되므로 상한을 둔다.
@@ -1661,9 +1874,9 @@ fn compare_semver_desc(a: &str, b: &str) -> std::cmp::Ordering {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_http_response_output, prepare_config, secret_ref_to_env_name, HttpRequestExecutor,
-        PluginInvocation, PluginManifest, PluginManifestRegistry, PluginRetryPolicy,
-        PluginSecretsPolicy,
+        build_http_response_output, interpolate_config_with_context, prepare_config,
+        secret_ref_to_env_name, HttpRequestExecutor, PluginInvocation, PluginManifest,
+        PluginManifestRegistry, PluginRetryPolicy, PluginSecretsPolicy,
     };
     use serde_json::json;
     use std::path::Path;
@@ -1837,6 +2050,123 @@ mod tests {
         let body = output["body"].as_str().unwrap();
         assert!(body.len() <= TEST_BODY_LIMIT);
         assert!(body.chars().all(|c| c == '가'));
+    }
+
+    // ---- PXM-45: 노드 설정의 실행 데이터 참조 ----
+
+    fn demo_context() -> serde_json::Value {
+        json!({"data": {
+            "formData": {"emp_id": "P-1002", "amount": 150, "urgent": true, "note": "a b&c"},
+            "outputs": {"hr": {"rows": [{"emp_id": "P-1002"}], "row_count": 1}}
+        }})
+    }
+
+    /// 문자열 전체가 참조 하나면 타입을 보존해야 한다.
+    /// DB filter의 숫자·불리언이 문자열로 바뀌면 조회가 조용히 어긋난다.
+    #[test]
+    fn whole_string_reference_preserves_value_type() {
+        let ctx = demo_context();
+        let config = json!({"filter": {"emp_id": "{{formData.emp_id}}", "amount": "{{formData.amount}}", "urgent": "{{formData.urgent}}"}});
+        let out =
+            interpolate_config_with_context(config, &ctx, "connector.db.mongodb.query").unwrap();
+
+        assert_eq!(out["filter"]["emp_id"], json!("P-1002"));
+        assert_eq!(
+            out["filter"]["amount"],
+            json!(150),
+            "숫자는 숫자로 남아야 한다"
+        );
+        assert_eq!(
+            out["filter"]["urgent"],
+            json!(true),
+            "불리언은 불리언으로 남아야 한다"
+        );
+    }
+
+    #[test]
+    fn whole_string_reference_can_resolve_objects() {
+        let ctx = demo_context();
+        let config = json!({"body": {"rows": "{{data.outputs.hr.rows}}"}});
+        let out = interpolate_config_with_context(config, &ctx, "builtin.http_request").unwrap();
+        assert_eq!(out["body"]["rows"][0]["emp_id"], json!("P-1002"));
+    }
+
+    #[test]
+    fn embedded_reference_renders_scalars() {
+        let ctx = demo_context();
+        let config =
+            json!({"body": {"message": "신청자 {{formData.emp_id}} 금액 {{formData.amount}}"}});
+        let out = interpolate_config_with_context(config, &ctx, "builtin.http_request").unwrap();
+        assert_eq!(out["body"]["message"], json!("신청자 P-1002 금액 150"));
+    }
+
+    /// 문자열 안에 객체를 끼워 넣으면 의미가 없다. 조용히 직렬화하지 않고 막는다.
+    #[test]
+    fn embedded_reference_rejects_objects() {
+        let ctx = demo_context();
+        let config = json!({"body": {"message": "rows={{data.outputs.hr.rows}}!"}});
+        assert!(interpolate_config_with_context(config, &ctx, "builtin.http_request").is_err());
+    }
+
+    /// 없는 경로를 빈 값으로 흘리면 조건 없는 조회나 잘못된 호출이 된다.
+    #[test]
+    fn missing_context_path_is_an_error() {
+        let ctx = demo_context();
+        let config = json!({"filter": {"emp_id": "{{formData.missing}}"}});
+        assert!(
+            interpolate_config_with_context(config, &ctx, "connector.db.mongodb.query").is_err()
+        );
+    }
+
+    #[test]
+    fn unclosed_reference_is_an_error() {
+        let ctx = demo_context();
+        let config = json!({"body": {"x": "{{formData.emp_id"}});
+        assert!(interpolate_config_with_context(config, &ctx, "builtin.http_request").is_err());
+    }
+
+    /// 자격증명과 식별자 자리는 치환 대상이 아니다.
+    #[test]
+    fn excluded_keys_are_never_interpolated() {
+        let ctx = demo_context();
+        let config =
+            json!({"plugin_id": "{{formData.emp_id}}", "credential_id": "{{formData.emp_id}}"});
+        let out = interpolate_config_with_context(config, &ctx, "builtin.http_request").unwrap();
+        assert_eq!(out["plugin_id"], json!("{{formData.emp_id}}"));
+        assert_eq!(out["credential_id"], json!("{{formData.emp_id}}"));
+    }
+
+    #[test]
+    fn url_reference_is_percent_encoded() {
+        let ctx = demo_context();
+        let config = json!({"url": "http://acl.local/grant/{{formData.note}}"});
+        let out = interpolate_config_with_context(config, &ctx, "builtin.http_request").unwrap();
+        assert_eq!(out["url"], json!("http://acl.local/grant/a%20b%26c"));
+    }
+
+    /// host를 실행 데이터로 만들 수 있으면 내부망 주소를 주입할 수 있다(SSRF).
+    #[test]
+    fn url_origin_must_be_static() {
+        let ctx = demo_context();
+        for raw in [
+            "{{formData.emp_id}}",
+            "http://{{formData.emp_id}}/grant",
+            "http://{{formData.emp_id}}",
+        ] {
+            let config = json!({ "url": raw });
+            assert!(
+                interpolate_config_with_context(config, &ctx, "builtin.http_request").is_err(),
+                "url {raw}는 거부되어야 한다"
+            );
+        }
+    }
+
+    #[test]
+    fn url_without_reference_is_unchanged() {
+        let ctx = demo_context();
+        let config = json!({"url": "http://127.0.0.1:3020/health"});
+        let out = interpolate_config_with_context(config, &ctx, "builtin.http_request").unwrap();
+        assert_eq!(out["url"], json!("http://127.0.0.1:3020/health"));
     }
 
     #[test]

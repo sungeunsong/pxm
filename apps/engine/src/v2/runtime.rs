@@ -875,7 +875,7 @@ fn set_context_value_at_path(context: &mut Value, output_path: &str, value: Valu
         .insert(parts[parts.len() - 1].to_string(), value);
 }
 
-fn get_context_value_at_path(context: &Value, input_path: &str) -> Option<Value> {
+pub(crate) fn get_context_value_at_path(context: &Value, input_path: &str) -> Option<Value> {
     let raw_path = input_path
         .trim()
         .strip_prefix("context.")

@@ -93,14 +93,12 @@ start ─→ DB 조회 ─→ JS 위험도 계산 ─→ Gateway ─┬─(저�
 - `plugin_id`: `connector.db.mongodb.query`
 - `credential_id`: 장면 2에서 만든 `hr-db`
 - `database`: `demo_hr`, `collection`: `employees`, `operation`: `find`
-- `filter`: **`{}`** (아래 설명 참고)
+- `filter`: **`{"emp_id": "{{formData.emp_id}}"}`**
 - `outputPath`: `hr`
 
-> "결과가 `data.outputs.hr`에 들어가고, 다음 노드들이 이걸 읽습니다."
+> "신청서에 적힌 사번으로 인사 DB를 조회합니다. `{{ }}`로 실행 데이터를 참조합니다."
 
-⚠️ **`filter`에 신청자 사번을 넣을 수 없다.** Service 노드 설정은 정적이라 실행 입력값을
-참조하지 못한다 (PXM-45). 그래서 전체를 조회하고 다음 JS 노드에서 신청자를 골라낸다.
-시연 데이터가 3건이라 가능한 방식이며, 질문이 나오면 제약을 그대로 설명한다.
+**보여줄 것**: 값 하나만 바꿔 실행하면 조회 결과가 달라지는 것. 설정은 그대로다.
 
 **미리 답할 것**: 현재 DB 커넥터는 MongoDB이고 `find`/`findOne` 읽기만 지원한다.
 쓰기와 다른 DBMS는 플러그인으로 확장하는 구조다 (장면 3-6에서 이어서 설명).
@@ -161,18 +159,21 @@ return score < 50 ? 'AUTO' : 'REVIEW';
 
 - `plugin_id`: `builtin.http_request`
 - `credential_id`: `access-control-api` (`authorization_header`로 주입된다)
-- `method`: `GET`, `url`: `http://127.0.0.1:3020/health`
+- `method`: `POST`, `url`: `http://127.0.0.1:3020/invoke`
+- `body`: 신청 내용을 그대로 실어 보낸다
+
+```json
+{ "emp_id": "{{formData.emp_id}}",
+  "privilege_level": "{{formData.privilege_level}}",
+  "target_system": "{{formData.target_system}}" }
+```
+
 - `outputPath`: `provisioning`
 
-> "승인이 끝나면 외부 시스템을 호출합니다."
+> "승인 결과를 접근제어 시스템에 전달합니다. 누구에게 어떤 권한인지 그대로 실어 보냅니다."
 
-⚠️ **여기서 과장하지 않는다.** 현재 이 노드는 고정 URL을 호출할 뿐이고 신청자나 권한
-정보를 **보내지 않는다**. `url`과 `body`에 실행 입력값을 넣을 수 없기 때문이다 (PXM-45).
-
-정확한 설명은 이 정도다.
-
-> "승인 이후 외부 호출이 일어나고 응답이 컨텍스트에 저장되는 것까지는 동작합니다.
-> 실제 권한 부여 payload를 실어 보내는 건 아직 안 되고, 지금 작업 중입니다."
+**말할 것**: URL에 값을 넣으면 퍼센트 인코딩되고, scheme과 host는 정적이어야 한다.
+호스트를 신청 데이터로 만들 수 있으면 내부망 주소를 주입할 수 있어서다.
 
 응답은 `{status_code, ok, headers, body}` 구조로 `data.outputs.provisioning`에 저장된다.
 
