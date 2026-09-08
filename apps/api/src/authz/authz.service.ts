@@ -1,6 +1,7 @@
-import { BadRequestException, ConflictException, ForbiddenException, HttpException, HttpStatus, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, HttpException, HttpStatus, Injectable, NotFoundException, Optional, UnauthorizedException } from '@nestjs/common';
 import { createHash, randomBytes } from 'crypto';
 import {
+  ApiKeyUsageQuery,
   AppendPxmApiKeyUsageLog,
   AuthzRepositoryPort,
   ExternalPrincipalMapping,
@@ -13,6 +14,7 @@ import {
   PxmServiceAccount,
   PxmUser,
   WorkflowRepositoryPort,
+  WorkflowInstanceRepositoryPort,
 } from '../db/ports/db.ports';
 import {
   ApiKeyResponseDto,
@@ -26,6 +28,10 @@ import {
 } from './dto/authz.dto';
 import { hashPassword } from './password';
 import { isIP } from 'net';
+import { SchedulesService } from '../schedules/schedules.service';
+import { DbWatchService } from '../db-watch/db-watch.service';
+import { ManagementAuditService } from '../audit/management-audit.service';
+import { CredentialsService } from '../credentials/credentials.service';
 
 const API_KEY_PREFIX = 'pxm_live_';
 const API_KEY_VISIBLE_PREFIX_LENGTH = 18;
@@ -40,6 +46,11 @@ export class AuthzService {
   constructor(
     private readonly authzRepo: AuthzRepositoryPort,
     private readonly workflowRepo: WorkflowRepositoryPort,
+    @Optional() private readonly instanceRepo?: WorkflowInstanceRepositoryPort,
+    @Optional() private readonly schedulesService?: SchedulesService,
+    @Optional() private readonly dbWatchService?: DbWatchService,
+    @Optional() private readonly managementAudit?: ManagementAuditService,
+    @Optional() private readonly credentialsService?: CredentialsService,
   ) {}
 
   async upsertGroup(dto: UpsertGroupDto): Promise<PxmGroup> {
@@ -66,20 +77,113 @@ export class AuthzService {
     return group;
   }
 
-  async deleteGroup(id: string, actor?: string | null): Promise<{ success: true }> {
-    const deleted = await this.authzRepo.softDeleteGroup(id, actor);
-    if (!deleted) {
-      throw new NotFoundException('Group not found');
-    }
-    return { success: true };
+  async getGroupDeletionImpact(id: string) {
+    const group = await this.getGroup(id);
+    if (group.status === 'deleted') throw new NotFoundException('Active group not found');
+    const workflowSummaries = (await this.workflowRepo.listDefinitions())
+      .filter((workflow) => (workflow.group_id || workflow.metadata?.group_id) === id);
+    const workflows = (await Promise.all(workflowSummaries.map((workflow) => this.workflowRepo.getDefinition(workflow.id))))
+      .filter(Boolean);
+    const nodes = workflows.flatMap((workflow) => workflow.nodes || []);
+    const credentialIds = new Set<string>();
+    for (const node of nodes) collectCredentialIds(node, credentialIds);
+    const [apiKeys, serviceAccounts, externalMappings, users, workflowRecordIds, auditUsage, credentialUsage] = await Promise.all([
+      this.authzRepo.listApiKeys(id),
+      this.authzRepo.listServiceAccounts(id),
+      this.authzRepo.listExternalPrincipalMappings({ group_id: id }),
+      this.authzRepo.listUsers(id),
+      this.authzRepo.listGroupWorkflowRecordIds(id),
+      this.managementAudit?.summarizeGroupUsage(id) || Promise.resolve([]),
+      this.credentialsService?.getGroupUsageEvidence(id) || Promise.resolve({ reference_count: 0, history_count: 0 }),
+    ]);
+    const definitionIds = [...new Set([...workflows.map((workflow) => workflow.id), ...workflowRecordIds])];
+    const workflowRecordCount = workflowRecordIds.length;
+    const runtime = this.instanceRepo
+      ? await this.instanceRepo.getGroupDeletionRuntimeImpact(definitionIds)
+      : { active_instance_count: 0, active_instance_ids: [], open_approval_count: 0 };
+    const usageReasons = [
+      ...(workflowRecordCount > 0 ? [{ code: 'workflow_history', label: '워크플로우 생성 이력', count: workflowRecordCount }] : []),
+      ...(apiKeys.length > 0 ? [{ code: 'api_key_history', label: 'API Key 발급 이력', count: apiKeys.length }] : []),
+      ...(serviceAccounts.length > 0 ? [{ code: 'service_account_history', label: '서비스 계정 이력', count: serviceAccounts.length }] : []),
+      ...(externalMappings.length > 0 ? [{ code: 'external_mapping_history', label: '외부 승인자 매핑 이력', count: externalMappings.length }] : []),
+      ...(users.length > 0 ? [{ code: 'membership', label: '현재 소속 사용자', count: users.length }] : []),
+      ...(credentialUsage.reference_count > 0 ? [{ code: 'credential_reference', label: 'Credential 연결', count: credentialUsage.reference_count }] : []),
+      ...(credentialUsage.history_count > 0 ? [{ code: 'credential_history', label: 'Credential 사용 이력', count: credentialUsage.history_count }] : []),
+      ...(auditUsage.length > 0 ? [{ code: 'management_history', label: '과거 관리·사용 이력', count: auditUsage.reduce((sum, row) => sum + row.count, 0) }] : []),
+    ];
+    const deletionMode = runtime.active_instance_count > 0
+      ? 'blocked'
+      : usageReasons.length === 0
+        ? 'permanent'
+        : 'recoverable';
+    return {
+      group: { id: group.id, name: group.name },
+      workflows: workflows.map((workflow) => ({ id: workflow.id, name: workflow.name, lifecycle_status: workflow.lifecycle_status || workflow.metadata?.lifecycle_status || 'DRAFT' })),
+      active_instance_count: runtime.active_instance_count,
+      active_instance_ids: runtime.active_instance_ids,
+      open_approval_count: runtime.open_approval_count,
+      schedule_trigger_count: nodes.filter((node) => node?.data?.nodeType === 'start' && node?.data?.triggerType === 'schedule').length,
+      db_watch_trigger_count: nodes.filter((node) => node?.data?.nodeType === 'start' && node?.data?.triggerType === 'db_watch').length,
+      referenced_credential_ids: [...credentialIds],
+      api_key_count: apiKeys.length,
+      active_api_key_count: apiKeys.filter((key) => key.status === 'active').length,
+      service_account_count: serviceAccounts.length,
+      external_mapping_count: externalMappings.length,
+      member_count: users.length,
+      usage_history_reasons: usageReasons,
+      deletion_mode: deletionMode,
+      permanent_deletion_allowed: deletionMode === 'permanent',
+      deletion_blocked: runtime.active_instance_count > 0,
+    };
   }
 
-  async restoreGroup(id: string, actor?: string | null): Promise<{ success: true }> {
+  async deleteGroup(id: string, actor?: string | null) {
+    const currentGroup = await this.authzRepo.getGroup(id);
+    if (!currentGroup) throw new NotFoundException('Group not found');
+    if (currentGroup.status === 'deleted') return { success: true as const, already_deleted: true, impact: null };
+    const impact = await this.getGroupDeletionImpact(id);
+    if (impact.deletion_blocked) {
+      throw new ConflictException({
+        message: 'Group has active workflow instances',
+        code: 'GROUP_HAS_ACTIVE_INSTANCES',
+        impact,
+      });
+    }
+    if (impact.deletion_mode === 'permanent') {
+      const deleted = await this.authzRepo.hardDeleteGroup(id);
+      if (!deleted) throw new ConflictException('Group changed while checking deletion impact');
+      return { success: true as const, already_deleted: false, deletion_mode: 'permanent' as const, impact };
+    }
+    for (const workflow of impact.workflows) {
+      await this.schedulesService?.syncDefinitionSchedules(workflow.id, workflow.name, []);
+      await this.dbWatchService?.syncDefinitionWatchJobs(workflow.id, workflow.name, []);
+    }
+    const deleted = await this.authzRepo.softDeleteGroup(id, actor);
+    if (!deleted) {
+      const racedGroup = await this.authzRepo.getGroup(id);
+      if (racedGroup?.status === 'deleted') return { success: true as const, already_deleted: true, impact: null };
+      throw new NotFoundException('Group not found');
+    }
+    return { success: true as const, already_deleted: false, deletion_mode: 'recoverable' as const, impact };
+  }
+
+  async restoreGroup(id: string, actor?: string | null) {
+    const currentGroup = await this.authzRepo.getGroup(id);
+    if (!currentGroup) throw new NotFoundException('Group not found');
+    if (currentGroup.status === 'active') return { success: true as const, already_active: true };
     const restored = await this.authzRepo.restoreGroup(id, actor);
     if (!restored) {
       throw new NotFoundException('Deleted group not found');
     }
-    return { success: true };
+    return { success: true as const, already_active: false };
+  }
+
+  async completeGroupRecoveryReview(id: string, actor?: string | null) {
+    const group = await this.getGroup(id);
+    if (group.status !== 'active') throw new ConflictException('Deleted group must be restored first');
+    const completed = await this.authzRepo.completeGroupRecoveryReview(id, actor);
+    if (!completed) throw new NotFoundException('Group not found');
+    return { success: true as const };
   }
 
   async upsertUser(dto: UpsertUserDto): Promise<PxmUser> {
@@ -564,6 +668,31 @@ export class AuthzService {
     return this.authzRepo.appendApiKeyUsageLog(log);
   }
 
+  async completeApiKeyUsageLog(
+    id: string,
+    completion: { status_code: number | null; duration_ms: number; completed_at: string; completion_state: 'completed' | 'aborted' },
+  ) {
+    return this.authzRepo.completeApiKeyUsageLog(id, completion);
+  }
+
+  async listApiKeyUsage(query: ApiKeyUsageQuery) {
+    const normalized = { ...query, from: query.from ? new Date(query.from).toISOString() : undefined, to: query.to ? new Date(query.to).toISOString() : undefined };
+    if (normalized.from && normalized.to && normalized.from > normalized.to) throw new BadRequestException('from must be before to');
+    const result = await this.authzRepo.listApiKeyUsage(normalized);
+    return {
+      ...result, page: query.page, pageSize: query.pageSize,
+      items: result.items.map(item => ({
+        id: item.id, api_key_id: item.api_key_id, owner_type: item.owner_type, owner_id: item.owner_id,
+        group_id: item.group_id, endpoint: item.endpoint.split('?')[0], request_id: item.request_id,
+        ip: item.ip, created_at: item.created_at, status_code: item.status_code,
+        duration_ms: item.duration_ms, completed_at: item.completed_at, completion_state: item.completion_state,
+        // External metadata is self-reported. Return only small identity fields, never arbitrary payloads.
+        business_actor: item.business_actor ? Object.fromEntries(['id', 'name', 'subject', 'provider'].flatMap(key =>
+          typeof item.business_actor?.[key] === 'string' ? [[key, item.business_actor[key].slice(0, 200)]] : [])) : null,
+      })),
+    };
+  }
+
   async assertApiKeyRequestAllowed(key: PxmApiKey, requestIp?: string | null): Promise<void> {
     const ip = normalizeRequestIp(requestIp);
     const ipAllowlist = key.ip_allowlist || [];
@@ -653,6 +782,21 @@ export class AuthzService {
   }
 }
 
+function collectCredentialIds(value: unknown, result: Set<string>): void {
+  if (!value || typeof value !== 'object') return;
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectCredentialIds(item, result));
+    return;
+  }
+  for (const [key, item] of Object.entries(value)) {
+    if ((key === 'credential_id' || key === 'credentialId' || key === 'dbWatchCredentialId') && typeof item === 'string' && item.trim()) {
+      result.add(item.trim());
+    } else {
+      collectCredentialIds(item, result);
+    }
+  }
+}
+
 function mapApiKey(key: PxmApiKey): ApiKeyResponseDto {
   return {
     id: key.id,
@@ -671,6 +815,7 @@ function mapApiKey(key: PxmApiKey): ApiKeyResponseDto {
     last_used_at: key.last_used_at || null,
     created_by: key.created_by || null,
     disabled_at: key.disabled_at || null,
+    disabled_reason: key.disabled_reason || null,
     created_at: key.created_at,
     updated_at: key.updated_at,
   };

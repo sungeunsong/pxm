@@ -126,6 +126,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/instances/{id}/terminate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 실행 종료
+         * @description workflow:execute scope와 대상 워크플로우 권한이 필요하며, 같은 소유자의 API Key로 시작한 실행만 종료할 수 있습니다. Key를 재발급해도 소유자가 같으면 종료할 수 있습니다. 이미 최종 상태인 실행은 성공 응답과 빈 terminated_instances를 반환합니다.
+         */
+        post: operations["Instances_terminate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/instances/{id}/trace": {
         parameters: {
             query?: never;
@@ -416,6 +436,16 @@ export interface components {
             completed_at?: Record<string, never> | null;
             /** Format: date-time */
             updated_at?: Record<string, never> | null;
+        };
+        TerminateInstanceResponseDto: {
+            /** @example true */
+            success: boolean;
+            /** Format: uuid */
+            instance_id: string;
+            /** @description 이번 요청에서 종료 상태로 바뀐 실행 ID. 이미 종료된 실행이면 빈 배열입니다. */
+            terminated_instances: string[];
+            /** @example false */
+            idempotent_replay: boolean;
         };
         TraceEventDto: {
             id: number;
@@ -944,6 +974,76 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["PublicApiErrorDto"];
                 };
+            };
+            /** @description 내부 정보가 제거된 서버 오류 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicApiErrorDto"];
+                };
+            };
+        };
+    };
+    Instances_terminate: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 호출자가 지정하는 요청 추적 ID. 생략하면 서버가 생성합니다. */
+                "X-Request-ID"?: string;
+                /** @description 1~200자의 중복 처리 방지 키 */
+                "Idempotency-Key"?: string;
+            };
+            path: {
+                /** @description 인스턴스 ID */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TerminateInstanceResponseDto"];
+                };
+            };
+            /** @description API Key가 없거나 유효하지 않음 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicApiErrorDto"];
+                };
+            };
+            /** @description 필요한 scope가 없음 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicApiErrorDto"];
+                };
+            };
+            /** @description 리소스가 없거나 접근 범위 밖임 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicApiErrorDto"];
+                };
+            };
+            /** @description 같은 Idempotency-Key가 다른 종료 요청에 사용됨 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description 내부 정보가 제거된 서버 오류 */
             500: {

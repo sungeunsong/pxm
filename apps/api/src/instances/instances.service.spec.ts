@@ -1,4 +1,4 @@
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { InstancesService } from './instances.service';
 
 describe('InstancesService pause control', () => {
@@ -138,6 +138,140 @@ describe('InstancesService pause control', () => {
         expect.objectContaining({ id: 'child-1', pause_origin_instance_id: 'parent-1' }),
       ],
     }));
+  });
+});
+
+describe('InstancesService public terminate authorization', () => {
+  const apiKeyActor = (overrides: Record<string, any> = {}) => ({
+    actor_type: 'user' as const,
+    actor_id: 'owner-1',
+    roles: ['user'],
+    scopes: ['workflow:execute'],
+    workspace_ids: ['default'],
+    group_ids: ['group-a'],
+    owned_workflow_ids: [],
+    allowed_workflow_ids: ['workflow-1'],
+    allowed_instance_ids: [],
+    api_key_id: 'key-1',
+    ...overrides,
+  });
+
+  const buildService = (instance: Record<string, any>) => {
+    const instanceRepo = {
+      getInstance: jest.fn().mockResolvedValue(instance),
+      listChildInstances: jest.fn().mockResolvedValue([]),
+      executeInstanceMutation: jest.fn().mockResolvedValue(undefined),
+      getIdempotentCommand: jest.fn().mockResolvedValue({ outcome: 'missing', result: {} }),
+      executeIdempotentCommand: jest.fn(),
+    };
+    return {
+      service: new InstancesService(instanceRepo as any, {} as any, {} as any, {} as any),
+      instanceRepo,
+    };
+  };
+
+  const runningInstance = {
+    id: 'instance-1',
+    process_definition_id: 'workflow-1',
+    state: 'RUNNING',
+    context: {
+      runtime: {
+        access: {
+          group_id: 'group-a',
+          caller: { type: 'user', id: 'owner-1', api_key_id: 'original-key' },
+        },
+      },
+    },
+  };
+
+  it('allows a rotated API key to terminate an instance started by the same owner', async () => {
+    const { service, instanceRepo } = buildService(runningInstance);
+
+    await expect(service.terminateInstance('instance-1', apiKeyActor({ api_key_id: 'rotated-key' }))).resolves.toEqual({
+      success: true,
+      instance_id: 'instance-1',
+      terminated_instances: ['instance-1'],
+      idempotent_replay: false,
+    });
+    expect(instanceRepo.executeInstanceMutation).toHaveBeenCalledWith(expect.objectContaining({
+      update_instances: [expect.objectContaining({ id: 'instance-1', status: 'TERMINATED' })],
+    }));
+  });
+
+  it('returns 403 when an API key lacks workflow:execute', async () => {
+    const { service, instanceRepo } = buildService(runningInstance);
+
+    await expect(service.terminateInstance('instance-1', apiKeyActor({ scopes: ['workflow:read'] })))
+      .rejects.toBeInstanceOf(ForbiddenException);
+    expect(instanceRepo.executeInstanceMutation).not.toHaveBeenCalled();
+  });
+
+  it('hides an instance in another group', async () => {
+    const { service, instanceRepo } = buildService({
+      ...runningInstance,
+      context: {
+        runtime: {
+          access: {
+            group_id: 'group-b',
+            caller: { type: 'user', id: 'owner-1', api_key_id: 'original-key' },
+          },
+        },
+      },
+    });
+
+    await expect(service.terminateInstance('instance-1', apiKeyActor()))
+      .rejects.toBeInstanceOf(NotFoundException);
+    expect(instanceRepo.executeInstanceMutation).not.toHaveBeenCalled();
+  });
+
+  it('hides an instance started by a different owner in the same workflow scope', async () => {
+    const { service, instanceRepo } = buildService(runningInstance);
+
+    await expect(service.terminateInstance('instance-1', apiKeyActor({ actor_id: 'owner-2' })))
+      .rejects.toBeInstanceOf(NotFoundException);
+    expect(instanceRepo.executeInstanceMutation).not.toHaveBeenCalled();
+  });
+
+  it('hides a legacy instance without a recorded starter owner', async () => {
+    const { service, instanceRepo } = buildService({
+      ...runningInstance,
+      context: { runtime: { access: { group_id: 'group-a' } } },
+    });
+
+    await expect(service.terminateInstance('instance-1', apiKeyActor()))
+      .rejects.toBeInstanceOf(NotFoundException);
+    expect(instanceRepo.executeInstanceMutation).not.toHaveBeenCalled();
+  });
+
+  it('matches service-account ownership separately from user ownership', async () => {
+    const { service } = buildService({
+      ...runningInstance,
+      context: {
+        runtime: {
+          access: {
+            group_id: 'group-a',
+            caller: { type: 'service_account', id: 'owner-1', api_key_id: 'original-key' },
+          },
+        },
+      },
+    });
+
+    await expect(service.terminateInstance('instance-1', apiKeyActor({
+      actor_type: 'service_account',
+      roles: [],
+      api_key_id: 'rotated-service-key',
+    }))).resolves.toEqual(expect.objectContaining({ terminated_instances: ['instance-1'] }));
+  });
+
+  it('treats a terminal instance as a successful no-op', async () => {
+    const { service } = buildService({ ...runningInstance, state: 'COMPLETED' });
+
+    await expect(service.terminateInstance('instance-1', apiKeyActor())).resolves.toEqual({
+      success: true,
+      instance_id: 'instance-1',
+      terminated_instances: [],
+      idempotent_replay: false,
+    });
   });
 });
 

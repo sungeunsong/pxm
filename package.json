@@ -42,6 +42,11 @@
     "dev:web": "cd apps/web && pnpm dev",
     "dev:api-playground": "pnpm --dir apps/api-playground dev",
     "build": "pnpm -r build",
-    "lint": "pnpm -r lint"
+    "lint": "pnpm -r lint",
+    "demo:seed": "node apps/api/scripts/demo/manage.mjs seed",
+    "demo:reset": "node apps/api/scripts/demo/manage.mjs reset",
+    "demo:service": "node apps/api/scripts/demo/service.mjs",
+    "demo:check": "node apps/api/scripts/demo/check.mjs",
+    "demo:verify": "pnpm --filter @pxm/e2e test:demo"
   }
 }

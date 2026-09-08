@@ -127,6 +127,200 @@ describe('AuthzService group memberships', () => {
   });
 });
 
+describe('AuthzService API key usage history', () => {
+  it('keeps the authenticated owner separate from sanitized self-reported business actor data', async () => {
+    const repo = {
+      listApiKeyUsage: jest.fn().mockResolvedValue({
+        total: 1,
+        items: [{
+          id: 'usage-1',
+          api_key_id: 'key-1',
+          owner_type: 'SERVICE_ACCOUNT',
+          owner_id: 'portal-service',
+          group_id: 'group-a',
+          endpoint: 'POST /api/v1/templates/workflow-1/start?secret=value',
+          workflow_id: 'workflow-1',
+          request_id: 'request-1',
+          ip: '127.0.0.1',
+          user_agent: 'test',
+          business_actor: {
+            id: 'employee-7',
+            name: 'Requester',
+            department: 'must-not-be-returned',
+            token: 'must-not-be-returned',
+          },
+          status_code: 201,
+          duration_ms: 42,
+          completed_at: '2026-09-07T01:00:00.042Z',
+          completion_state: 'completed',
+          created_at: '2026-09-07T01:00:00.000Z',
+        }],
+      }),
+    };
+    const service = new AuthzService(repo as any, {} as any);
+
+    const result = await service.listApiKeyUsage({
+      groupId: 'group-a', page: 1, pageSize: 20,
+    });
+
+    expect(repo.listApiKeyUsage).toHaveBeenCalledWith(expect.objectContaining({ groupId: 'group-a' }));
+    expect(result.items[0]).toMatchObject({
+      owner_id: 'portal-service',
+      endpoint: 'POST /api/v1/templates/workflow-1/start',
+      business_actor: { id: 'employee-7', name: 'Requester' },
+      status_code: 201,
+      duration_ms: 42,
+      completion_state: 'completed',
+    });
+    expect(result.items[0]).not.toHaveProperty('user_agent');
+    expect(result.items[0].business_actor).not.toHaveProperty('department');
+    expect(result.items[0].business_actor).not.toHaveProperty('token');
+  });
+
+  it('rejects a reversed date range before querying storage', async () => {
+    const repo = { listApiKeyUsage: jest.fn() };
+    const service = new AuthzService(repo as any, {} as any);
+
+    await expect(service.listApiKeyUsage({
+      groupId: 'group-a',
+      from: '2026-09-08T00:00:00.000Z',
+      to: '2026-09-07T00:00:00.000Z',
+      page: 1,
+      pageSize: 20,
+    })).rejects.toBeInstanceOf(BadRequestException);
+    expect(repo.listApiKeyUsage).not.toHaveBeenCalled();
+  });
+});
+
+describe('AuthzService group deletion lifecycle', () => {
+  const workflow = {
+    id: 'workflow-1', name: 'Scheduled workflow', group_id: 'group-a', lifecycle_status: 'PUBLISHED',
+    nodes: [
+      { id: 'start', data: { nodeType: 'start', triggerType: 'schedule' } },
+      { id: 'service', data: { nodeType: 'service', credential_id: 'credential-1' } },
+    ],
+  };
+
+  function buildService(activeInstanceCount = 0) {
+    const authzRepo = {
+      getGroup: jest.fn().mockResolvedValue({ id: 'group-a', name: 'Group A', status: 'active' }),
+      listApiKeys: jest.fn().mockResolvedValue([{ id: 'key-1', status: 'active' }]),
+      listServiceAccounts: jest.fn().mockResolvedValue([{ id: 'service-1' }]),
+      listExternalPrincipalMappings: jest.fn().mockResolvedValue([{ id: 'mapping-1' }]),
+      listUsers: jest.fn().mockResolvedValue([{ id: 'user-1' }]),
+      listGroupWorkflowRecordIds: jest.fn().mockResolvedValue(['workflow-1']),
+      hardDeleteGroup: jest.fn().mockResolvedValue(true),
+      completeGroupRecoveryReview: jest.fn().mockResolvedValue(true),
+      softDeleteGroup: jest.fn().mockResolvedValue(true),
+    };
+    const workflowRepo = {
+      listDefinitions: jest.fn().mockResolvedValue([workflow]),
+      getDefinition: jest.fn().mockResolvedValue(workflow),
+    };
+    const instanceRepo = {
+      getGroupDeletionRuntimeImpact: jest.fn().mockResolvedValue({
+        active_instance_count: activeInstanceCount,
+        active_instance_ids: activeInstanceCount ? ['instance-1'] : [],
+        open_approval_count: activeInstanceCount ? 1 : 0,
+      }),
+    };
+    const schedules = { syncDefinitionSchedules: jest.fn().mockResolvedValue(undefined) };
+    const dbWatch = { syncDefinitionWatchJobs: jest.fn().mockResolvedValue(undefined) };
+    return {
+      service: new AuthzService(authzRepo as any, workflowRepo as any, instanceRepo as any, schedules as any, dbWatch as any),
+      authzRepo, schedules, dbWatch,
+    };
+  }
+
+  it('shows workflows, triggers, credentials, principals, and runtime blockers before deletion', async () => {
+    const { service } = buildService(1);
+
+    await expect(service.getGroupDeletionImpact('group-a')).resolves.toEqual(expect.objectContaining({
+      workflows: [expect.objectContaining({ id: 'workflow-1' })],
+      active_instance_count: 1,
+      open_approval_count: 1,
+      schedule_trigger_count: 1,
+      db_watch_trigger_count: 0,
+      referenced_credential_ids: ['credential-1'],
+      active_api_key_count: 1,
+      service_account_count: 1,
+      external_mapping_count: 1,
+      member_count: 1,
+      deletion_mode: 'blocked',
+      deletion_blocked: true,
+    }));
+  });
+
+  it('blocks deletion without disabling triggers when an instance is active', async () => {
+    const { service, authzRepo, schedules } = buildService(1);
+
+    await expect(service.deleteGroup('group-a', 'admin-1')).rejects.toBeInstanceOf(ConflictException);
+    expect(schedules.syncDefinitionSchedules).not.toHaveBeenCalled();
+    expect(authzRepo.softDeleteGroup).not.toHaveBeenCalled();
+  });
+
+  it('disables automatic triggers before cascading the group deletion', async () => {
+    const { service, authzRepo, schedules, dbWatch } = buildService();
+
+    await expect(service.deleteGroup('group-a', 'admin-1')).resolves.toEqual(expect.objectContaining({ success: true }));
+    expect(schedules.syncDefinitionSchedules).toHaveBeenCalledWith('workflow-1', 'Scheduled workflow', []);
+    expect(dbWatch.syncDefinitionWatchJobs).toHaveBeenCalledWith('workflow-1', 'Scheduled workflow', []);
+    expect(authzRepo.softDeleteGroup).toHaveBeenCalledWith('group-a', 'admin-1');
+  });
+
+  it('permanently deletes only a group with no resources or usage history', async () => {
+    const { service, authzRepo, schedules } = buildService();
+    authzRepo.listApiKeys.mockResolvedValue([]);
+    authzRepo.listServiceAccounts.mockResolvedValue([]);
+    authzRepo.listExternalPrincipalMappings.mockResolvedValue([]);
+    authzRepo.listUsers.mockResolvedValue([]);
+    authzRepo.listGroupWorkflowRecordIds.mockResolvedValue([]);
+    (service as any).workflowRepo.listDefinitions.mockResolvedValue([]);
+
+    await expect(service.getGroupDeletionImpact('group-a')).resolves.toEqual(expect.objectContaining({
+      deletion_mode: 'permanent',
+      permanent_deletion_allowed: true,
+      usage_history_reasons: [],
+    }));
+    await expect(service.deleteGroup('group-a', 'admin-1')).resolves.toEqual(expect.objectContaining({
+      deletion_mode: 'permanent',
+    }));
+    expect(authzRepo.hardDeleteGroup).toHaveBeenCalledWith('group-a');
+    expect(authzRepo.softDeleteGroup).not.toHaveBeenCalled();
+    expect(schedules.syncDefinitionSchedules).not.toHaveBeenCalled();
+  });
+
+  it('keeps an otherwise empty group recoverable when an audit history exists', async () => {
+    const { authzRepo, schedules, dbWatch } = buildService();
+    authzRepo.listApiKeys.mockResolvedValue([]);
+    authzRepo.listServiceAccounts.mockResolvedValue([]);
+    authzRepo.listExternalPrincipalMappings.mockResolvedValue([]);
+    authzRepo.listUsers.mockResolvedValue([]);
+    authzRepo.listGroupWorkflowRecordIds.mockResolvedValue([]);
+    const workflowRepo = { listDefinitions: jest.fn().mockResolvedValue([]), getDefinition: jest.fn() };
+    const instanceRepo = { getGroupDeletionRuntimeImpact: jest.fn().mockResolvedValue({ active_instance_count: 0, active_instance_ids: [], open_approval_count: 0 }) };
+    const audit = { summarizeGroupUsage: jest.fn().mockResolvedValue([{ action: 'user.membership_removed', count: 1 }]) };
+    const service = new AuthzService(authzRepo as any, workflowRepo as any, instanceRepo as any, schedules as any, dbWatch as any, audit as any);
+
+    await expect(service.getGroupDeletionImpact('group-a')).resolves.toEqual(expect.objectContaining({
+      deletion_mode: 'recoverable',
+      permanent_deletion_allowed: false,
+      usage_history_reasons: [expect.objectContaining({ code: 'management_history', count: 1 })],
+    }));
+  });
+
+  it('treats a repeated deletion as an idempotent success', async () => {
+    const { service, authzRepo, schedules } = buildService();
+    authzRepo.getGroup.mockResolvedValue({ id: 'group-a', name: 'Group A', status: 'deleted' });
+
+    await expect(service.deleteGroup('group-a', 'admin-1')).resolves.toEqual({
+      success: true, already_deleted: true, impact: null,
+    });
+    expect(schedules.syncDefinitionSchedules).not.toHaveBeenCalled();
+    expect(authzRepo.softDeleteGroup).not.toHaveBeenCalled();
+  });
+});
+
 describe('AuthzService external principal mappings', () => {
   const activeUser = {
     id: 'pxm-user-1',

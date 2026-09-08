@@ -125,6 +125,24 @@ export class TemplatesController {
     return document;
   }
 
+  @Get(':id/attribution')
+  async attribution(@Param('id') id: string, @Req() req: Request) {
+    const template = await this.assertManageableTemplate(id, req);
+    const resolveActor = async (actorId?: string) => {
+      if (!actorId) return { id: null, display_name: null, status: 'unknown' };
+      if (actorId === 'system') return { id: actorId, display_name: '시스템', status: 'system' };
+      try {
+        const user = await this.authzService.getUser(actorId);
+        return { id: actorId, display_name: user.display_name, status: user.status };
+      } catch (error) {
+        if (!(error instanceof NotFoundException)) throw error;
+        return { id: actorId, display_name: null, status: 'missing' };
+      }
+    };
+    const [creator, updater] = await Promise.all([resolveActor(template.created_by), resolveActor(template.updated_by)]);
+    return { creator, updater, created_at: template.created_at, updated_at: template.updated_at, imported_from: template.imported_from || null };
+  }
+
   @Get(':id/versions')
   async versions(@Param('id') id: string, @Req() req: Request) {
     await this.assertManageableTemplate(id, req);

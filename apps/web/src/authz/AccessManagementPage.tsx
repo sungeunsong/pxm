@@ -10,6 +10,7 @@ import {
   type ApiKeyWorkflowAccess,
   type CreatedApiKey,
   type ExternalPrincipalMapping,
+  type GroupDeletionImpact,
   type PxmApiKey,
   type PxmGroup,
   type PxmGroupRole,
@@ -20,6 +21,7 @@ import {
 import { templatesApi, type WorkflowTemplate } from '../api/templates';
 import type { SessionUser } from '../api/session';
 import './AccessManagementPage.css';
+import { ApiKeyUsagePanel } from './ApiKeyUsagePanel';
 
 const scopeOptions: ApiKeyScope[] = ['workflow:execute', 'workflow:read', 'task:approve'];
 const scopeLabels: Record<ApiKeyScope, string> = {
@@ -29,6 +31,7 @@ const scopeLabels: Record<ApiKeyScope, string> = {
 };
 type AccessDetailTab = 'users' | 'serviceAccounts' | 'apiKeys' | 'externalMappings';
 type AccessPageSection = 'groups' | 'users';
+type GroupListMode = 'active' | 'deleted';
 
 export function AccessManagementPage({ currentUser }: { currentUser: SessionUser }) {
   const { confirm: confirmDialog } = useFeedback();
@@ -48,8 +51,12 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
   const [createdKey, setCreatedKey] = useState<CreatedApiKey | null>(null);
   const [activeTab, setActiveTab] = useState<AccessDetailTab>('users');
   const [pageSection, setPageSection] = useState<AccessPageSection>('groups');
+  const [deletionImpact, setDeletionImpact] = useState<GroupDeletionImpact | null>(null);
+  const [groupListMode, setGroupListMode] = useState<GroupListMode>('active');
 
   const activeGroups = groups.filter((group) => group.status !== 'deleted');
+  const deletedGroups = groups.filter((group) => group.status === 'deleted');
+  const visibleGroups = groupListMode === 'active' ? activeGroups : deletedGroups;
   const selectedGroup = groups.find((group) => group.id === selectedGroupId) || activeGroups[0] || null;
   const selectedGroupFilterId = selectedGroup?.id || '';
   const currentGroupId = selectedGroup?.status === 'active' ? selectedGroup.id : '';
@@ -131,6 +138,54 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
     }
   };
 
+  const inspectGroupDeletion = async () => {
+    if (!selectedGroup) return;
+    setSaving(true);
+    setError(null);
+    try {
+      setDeletionImpact(await authzApi.getGroupDeletionImpact(selectedGroup.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '삭제 영향 조회에 실패했습니다.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const confirmGroupDeletion = async () => {
+    if (!selectedGroup || !deletionImpact || deletionImpact.deletion_blocked) return;
+    const permanent = deletionImpact.deletion_mode === 'permanent';
+    const proceed = await confirmDialog({
+      title: permanent ? `${selectedGroup.name} 그룹을 영구 삭제할까요?` : `${selectedGroup.name} 그룹을 삭제할까요?`,
+      description: permanent
+        ? '연결 자원과 과거 사용 이력이 없는 그룹입니다. 삭제하면 복구할 수 없습니다.'
+        : `사용 이력이 있어 복구 가능한 삭제를 적용합니다. 워크플로우 ${deletionImpact.workflows.length}개와 활성 API Key ${deletionImpact.active_api_key_count}개가 비활성화됩니다.`,
+      confirmLabel: permanent ? '영구 삭제' : '복구 가능한 삭제',
+      tone: 'danger',
+    });
+    if (!proceed) return;
+    const completed = await run(() => authzApi.deleteGroup(selectedGroup.id));
+    if (completed) setDeletionImpact(null);
+  };
+
+  const restoreGroup = async () => {
+    if (!selectedGroup) return;
+    const completed = await run(() => authzApi.restoreGroup(selectedGroup.id));
+    if (completed) {
+      setGroupListMode('active');
+      try {
+        setDeletionImpact(await authzApi.getGroupDeletionImpact(selectedGroup.id));
+      } catch {
+        setDeletionImpact(null);
+      }
+    }
+  };
+
+  const completeRecoveryReview = async () => {
+    if (!selectedGroup) return;
+    const completed = await run(() => authzApi.completeGroupRecoveryReview(selectedGroup.id));
+    if (completed) setDeletionImpact(null);
+  };
+
   return (
     <div className="access-page">
       <div className="access-header">
@@ -184,52 +239,85 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
       {pageSection === 'groups' ? <div className="access-layout">
         <section className="access-panel group-panel">
           <PanelHeader icon={<UsersRound size={16} />} title="그룹" />
-          <GroupForm disabled={saving} onSave={(payload) => run(() => authzApi.saveGroup(payload))} />
-          {selectedGroup && (
-            <div className="selected-group-card">
-              <span>선택된 그룹</span>
-              <strong>{selectedGroup.name}</strong>
-              <small>{selectedGroup.id}</small>
-              <span className={`status-badge ${selectedGroup.status}`}>{selectedGroup.status}</span>
-            </div>
-          )}
+          {groupListMode === 'active' && <GroupForm disabled={saving} onSave={(payload) => run(() => authzApi.saveGroup(payload))} />}
+          <div className="group-list-filter" role="tablist" aria-label="그룹 상태">
+            <button className={groupListMode === 'active' ? 'active' : ''} onClick={() => { setGroupListMode('active'); setDeletionImpact(null); activeGroups[0] ? void loadData(activeGroups[0].id) : setSelectedGroupId(''); }}>활성 {activeGroups.length}</button>
+            <button className={groupListMode === 'deleted' ? 'active' : ''} onClick={() => { setGroupListMode('deleted'); setDeletionImpact(null); deletedGroups[0] ? void loadData(deletedGroups[0].id) : setSelectedGroupId(''); }}>삭제됨 {deletedGroups.length}</button>
+          </div>
           <div className="access-list">
-            {groups.map((group) => (
+            {visibleGroups.map((group) => (
               <button
                 key={group.id}
                 className={`access-list-row ${group.id === selectedGroup?.id ? 'selected' : ''}`}
-                onClick={() => void loadData(group.id)}
+                aria-pressed={group.id === selectedGroup?.id}
+                onClick={() => { setDeletionImpact(null); void loadData(group.id); }}
               >
                 <span>
                   <strong>{group.name}</strong>
                   <small>{group.id}</small>
                 </span>
-                <span className={`status-badge ${group.status}`}>{group.status}</span>
+                <span className={`status-badge ${group.status}`}>{group.recovery_review_required ? '복구 후 확인 필요' : group.status}</span>
               </button>
             ))}
           </div>
-          {groups.length === 0 && <div className="access-empty">등록된 그룹이 없습니다.</div>}
+          {visibleGroups.length === 0 && <div className="access-empty">{groupListMode === 'active' ? '활성 그룹이 없습니다.' : '삭제된 그룹이 없습니다.'}</div>}
           {selectedGroup && (
             <div className="access-row-actions">
               <Button
                 variant="ghost"
                 size="sm"
                 icon={<Trash2 size={14} />}
-                onClick={() => run(() => authzApi.deleteGroup(selectedGroup.id))}
+                onClick={() => void inspectGroupDeletion()}
                 disabled={selectedGroup.status === 'deleted'}
               >
-                삭제
+                삭제 영향 확인
               </Button>
               {selectedGroup.status === 'deleted' && (
                 <Button
                   variant="secondary"
                   size="sm"
                   icon={<RotateCcw size={14} />}
-                  onClick={() => run(() => authzApi.restoreGroup(selectedGroup.id))}
+                  onClick={() => void restoreGroup()}
                 >
                   복구
                 </Button>
               )}
+            </div>
+          )}
+          {selectedGroup?.status === 'active' && deletionImpact?.group.id === selectedGroup.id && (
+            <div className={`group-deletion-impact ${deletionImpact.deletion_blocked ? 'blocked' : ''}`}>
+              <strong>삭제 영향</strong>
+              <p>워크플로우 {deletionImpact.workflows.length}개 · 진행 중 실행 {deletionImpact.active_instance_count}개 · 미결 결재 {deletionImpact.open_approval_count}개</p>
+              <p>스케줄 {deletionImpact.schedule_trigger_count}개 · DB Watch {deletionImpact.db_watch_trigger_count}개 · 활성 API Key {deletionImpact.active_api_key_count}개</p>
+              <p>소속 사용자 {deletionImpact.member_count}명 · 서비스 계정 {deletionImpact.service_account_count}개 · 외부 승인자 매핑 {deletionImpact.external_mapping_count}개 · 참조 Credential {deletionImpact.referenced_credential_ids.length}개</p>
+              {deletionImpact.workflows.length > 0 && <ul>{deletionImpact.workflows.map(workflow => <li key={workflow.id}>{workflow.name} <small>{workflow.lifecycle_status}</small></li>)}</ul>}
+              {deletionImpact.deletion_blocked ? (
+                <p role="alert">진행 중 실행을 먼저 완료하거나 종료해야 그룹을 삭제할 수 있습니다.</p>
+              ) : deletionImpact.deletion_mode === 'permanent' ? (
+                <>
+                  <p><strong>영구 삭제가 적용됩니다.</strong> 연결 자원과 과거 사용 이력이 없어 삭제 후 복구할 수 없습니다.</p>
+                  <Button variant="danger" size="sm" icon={<Trash2 size={14} />} onClick={() => void confirmGroupDeletion()} disabled={saving}>사용 기록 없는 그룹 영구 삭제</Button>
+                </>
+              ) : (
+                <>
+                  <p><strong>복구 가능한 삭제가 적용됩니다.</strong> 아래 사용 이력 때문에 현재 비어 있어도 영구 삭제하지 않습니다.</p>
+                  <ul>{deletionImpact.usage_history_reasons.map(reason => <li key={reason.code}>{reason.label} {reason.count}건</li>)}</ul>
+                  <p>복구 시 그룹만 먼저 활성화됩니다. 워크플로우와 API Key, 자동 실행은 직접 확인해야 합니다.</p>
+                  <Button variant="danger" size="sm" icon={<Trash2 size={14} />} onClick={() => void confirmGroupDeletion()} disabled={saving}>복구 가능한 삭제</Button>
+                </>
+              )}
+            </div>
+          )}
+          {selectedGroup?.status === 'active' && selectedGroup.recovery_review_required && (
+            <div className="group-recovery-guide">
+              <strong>복구 후 확인이 필요합니다</strong>
+              <p>그룹과 기존 소속 정보만 복구했습니다. 워크플로우와 자동 실행은 비활성 상태이며, 그룹 삭제로 비활성화된 API Key는 다시 켤 수 없으므로 필요한 연동에는 새 키를 발급해야 합니다.</p>
+              {deletionImpact && <p>워크플로우 {deletionImpact.workflows.length}개 · API Key {deletionImpact.api_key_count}개 · 스케줄 {deletionImpact.schedule_trigger_count}개 · DB Watch {deletionImpact.db_watch_trigger_count}개</p>}
+              <div className="access-row-actions">
+                <Button variant="secondary" size="sm" onClick={() => { window.location.hash = '#/designer'; }}>워크플로우 확인</Button>
+                <Button variant="secondary" size="sm" onClick={() => setActiveTab('apiKeys')}>API Key 확인·재발급</Button>
+                <Button variant="primary" size="sm" onClick={() => void completeRecoveryReview()} disabled={saving}>복구 확인 완료</Button>
+              </div>
             </div>
           )}
         </section>
@@ -365,10 +453,14 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
                       <small>
                         {key.owner_type === 'USER' ? '사용자' : '서비스 계정'}:{key.owner_id}
                       </small>
+                      <small>발급자 ID: {key.created_by || '확인 불가'}</small>
+                      <small>발급: {new Date(key.created_at).toLocaleString('ko-KR')}</small>
+                      <small>최근 사용: {key.last_used_at ? new Date(key.last_used_at).toLocaleString('ko-KR') : '기록 없음'}</small>
                       <code>{key.key_prefix}...</code>
                     </div>
                     <div className="key-row-meta">
                       <span className={`status-badge ${key.status}`}>{key.status}</span>
+                      {key.disabled_reason?.startsWith('group_deleted:') && <span>그룹 삭제로 비활성화됨</span>}
                       <span>{key.scopes.map((scope) => scopeLabels[scope] || scope).join(', ') || '권한 없음'}</span>
                       <span>{key.workflow_access === 'all_in_group' ? '그룹 전체 워크플로우' : `선택 워크플로우 ${key.allowed_workflow_ids.length}개`}</span>
                       <span>{key.expires_at ? `만료 ${new Date(key.expires_at).toLocaleDateString()}` : '만료 없음'}</span>
@@ -393,6 +485,7 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
                 ))}
                 {groupKeys.length === 0 && <div className="access-empty">발급된 API Key가 없습니다.</div>}
               </div>
+              {selectedGroupFilterId && <ApiKeyUsagePanel key={selectedGroupFilterId} groupId={selectedGroupFilterId} keys={groupKeys} />}
             </>
           )}
 

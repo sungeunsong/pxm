@@ -7,7 +7,8 @@ import { correlationIdFromRequest } from '../observability/correlation-id.middle
 export class ApiKeyAuthMiddleware implements NestMiddleware {
   constructor(private readonly authzService: AuthzService) {}
 
-  async use(req: Request, _res: Response, next: NextFunction) {
+  async use(req: Request, res: Response, next: NextFunction) {
+    const startedAt = Date.now();
     const rawKey = bearerToken(req);
     if (!rawKey) {
       next();
@@ -33,7 +34,7 @@ export class ApiKeyAuthMiddleware implements NestMiddleware {
         business_actor: businessActor,
       };
 
-      await this.authzService.appendApiKeyUsageLog({
+      const usage = await this.authzService.appendApiKeyUsageLog({
         api_key_id: key.id,
         owner_type: key.owner_type,
         owner_id: key.owner_id,
@@ -44,13 +45,38 @@ export class ApiKeyAuthMiddleware implements NestMiddleware {
         ip: req.ip || null,
         user_agent: req.header('user-agent') || null,
         business_actor: businessActor,
+        completion_state: 'pending',
       });
+      registerUsageCompletion(res, usage.id, startedAt, this.authzService);
       next();
     } catch (error) {
       if (error instanceof HttpException) return next(error);
       next(new UnauthorizedException(error instanceof Error ? error.message : 'Invalid API key'));
     }
   }
+}
+
+function registerUsageCompletion(
+  res: Response,
+  usageId: string,
+  startedAt: number,
+  authzService: AuthzService,
+) {
+  let finalized = false;
+  const finalize = (completionState: 'completed' | 'aborted', statusCode: number | null) => {
+    if (finalized) return;
+    finalized = true;
+    void authzService.completeApiKeyUsageLog(usageId, {
+      status_code: statusCode,
+      duration_ms: Math.max(0, Date.now() - startedAt),
+      completed_at: new Date().toISOString(),
+      completion_state: completionState,
+    }).catch(() => undefined);
+  };
+  res.once('finish', () => finalize('completed', res.statusCode));
+  res.once('close', () => {
+    if (!res.writableFinished) finalize('aborted', null);
+  });
 }
 
 function bearerToken(req: Request): string | null {

@@ -19,6 +19,7 @@ describe('public API v1 boundary', () => {
     [InstancesController, 'findAll'],
     [InstancesController, 'findOne'],
     [InstancesController, 'result'],
+    [InstancesController, 'terminate'],
     [InstancesController, 'trace'],
     [InstancesController, 'stream'],
     [TasksController, 'getTasks'],
@@ -37,7 +38,6 @@ describe('public API v1 boundary', () => {
     [TemplatesController, 'deploy'],
     [TemplatesController, 'delete'],
     [InstancesController, 'retry'],
-    [InstancesController, 'terminate'],
     [TasksController, 'retryExternalApproval'],
   ])('keeps management route %s.%s off the versioned public API', (controller, method) => {
     expect(Reflect.getMetadata(VERSION_METADATA, (controller as any).prototype[method])).toBeUndefined();

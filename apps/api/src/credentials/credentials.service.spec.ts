@@ -82,3 +82,21 @@ describe('CredentialsService group sharing', () => {
     }, actor('group-a'))).rejects.toBeInstanceOf(BadRequestException);
   });
 });
+
+describe('CredentialsService group usage evidence', () => {
+  it('counts current references and removed sharing history separately', async () => {
+    const credentialCount = jest.fn().mockResolvedValue(1);
+    const auditCount = jest.fn().mockResolvedValue(2);
+    const db = {
+      collection: jest.fn((name: string) => ({
+        countDocuments: name === 'credential_profiles' ? credentialCount : auditCount,
+      })),
+    };
+    const service = new CredentialsService(db as any);
+
+    await expect(service.getGroupUsageEvidence('group-a')).resolves.toEqual({
+      reference_count: 1,
+      history_count: 2,
+    });
+  });
+});

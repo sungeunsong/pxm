@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { Pool } from 'pg';
+import { countPlaywrightTests } from './run-result.mjs';
 
 const packageDir = dirname(fileURLToPath(import.meta.url));
 const workspaceDir = resolve(packageDir, '../..');
@@ -17,6 +18,8 @@ const smtpPort = numberEnv('PXM_E2E_SMTP_PORT', 1126);
 const mailpitPort = numberEnv('PXM_E2E_MAILPIT_PORT', 8126);
 const mongoPort = numberEnv('PXM_E2E_MONGO_PORT', 27127);
 const postgresPort = numberEnv('PXM_E2E_POSTGRES_PORT', 55432);
+const demoServicePort = numberEnv('PXM_E2E_DEMO_SERVICE_PORT', 3320);
+const suite = process.env.PXM_E2E_SUITE === 'demo' ? 'demo' : 'regression';
 const mongoReplicaSet = 'pxmE2eRs';
 const mongoDatabaseName = `pxm_e2e_${runId}`;
 const mongoUrl = `mongodb://127.0.0.1:${mongoPort}/?replicaSet=${mongoReplicaSet}&directConnection=true`;
@@ -31,6 +34,7 @@ let mailpitStarted = false;
 let mongoStarted = false;
 let postgresStarted = false;
 let exitCode = 1;
+let phase = 'bootstrap';
 
 validateDatabaseName(databaseName);
 
@@ -77,6 +81,14 @@ try {
     PXM_E2E_MAILPIT_PORT: String(mailpitPort),
     PXM_E2E_MAILPIT_API_URL: `http://127.0.0.1:${mailpitPort}/api/v1`,
     PXM_E2E_DATABASE_NAME: databaseName,
+    API_BASE_URL: `http://127.0.0.1:${apiPort}/api`,
+    PXM_DEMO_USER: 'admin',
+    PXM_DEMO_PASSWORD: bootstrapPassword,
+    PXM_DEMO_SERVICE_PORT: String(demoServicePort),
+    PXM_DEMO_SERVICE_URL: `http://127.0.0.1:${demoServicePort}`,
+    PXM_DEMO_MAILPIT_API_URL: `http://127.0.0.1:${mailpitPort}/api/v1`,
+    PXM_DEMO_ACCESS_FILE: resolve(resultDir, 'demo-access.json'),
+    PXM_DEMO_ALLOW_E2E_DATABASE: suite === 'demo' ? 'true' : 'false',
   };
 
   const mongoInit = await runCommand('node', ['apps/api/scripts/init-mongo-indexes.mjs'], sharedEnv);
@@ -110,22 +122,49 @@ try {
     ...sharedEnv,
     VITE_API_TARGET: `http://127.0.0.1:${apiPort}`,
   }));
+  if (suite === 'demo') {
+    children.push(startProcess('demo-service', 'node', ['apps/api/scripts/demo/service.mjs'], sharedEnv));
+  }
 
   await Promise.all([
     waitForHttp(`http://127.0.0.1:${apiPort}/api/health`, 60_000),
     waitForHttp(`http://127.0.0.1:${webPort}`, 60_000),
+    ...(suite === 'demo' ? [waitForHttp(`http://127.0.0.1:${demoServicePort}/health`, 30_000)] : []),
   ]);
 
+  if (suite === 'demo') {
+    phase = 'scenario';
+    for (const [label, args] of [
+      ['reset', ['apps/api/scripts/demo/manage.mjs', 'reset']],
+      ['seed', ['apps/api/scripts/demo/manage.mjs', 'seed']],
+      ['scenario check', ['apps/api/scripts/demo/check.mjs']],
+    ]) {
+      const step = await runCommand('node', args, sharedEnv);
+      if (step.code !== 0) throw new Error(`Demo ${label} failed`);
+    }
+  }
+
+  phase = 'regression';
   const result = await runCommand('pnpm', [
-    '--filter', '@pxm/e2e', 'exec', 'playwright', 'test', '--config', 'playwright.config.ts',
+    '--filter', '@pxm/e2e', 'exec', 'playwright', 'test', '--config',
+    suite === 'demo' ? 'playwright.demo.config.ts' : 'playwright.config.ts',
   ], sharedEnv);
+  const executedTests = await readExecutedTestCount();
   exitCode = result.code ?? 1;
   if (exitCode === 0) {
+    process.stdout.write(`PXM ${suite} browser regression passed. Executed tests: ${executedTests}\n`);
     await rm(logDir, { recursive: true, force: true });
+  } else if (executedTests === 0) {
+    exitCode = 3;
+    process.stderr.write(`PXM browser regression did not run any tests. Runner/configuration failure. Artifacts: ${resultDir}\n`);
   } else {
-    process.stderr.write(`PXM browser regression failed. Artifacts: ${resultDir}\n`);
+    process.stderr.write(`PXM browser regression failed. Executed tests: ${executedTests}. Artifacts: ${resultDir}\n`);
   }
 } catch (error) {
+  exitCode = phase === 'bootstrap' ? 2 : phase === 'scenario' ? 1 : 3;
+  const category = phase === 'bootstrap' ? 'infrastructure bootstrap' : phase === 'scenario' ? 'demo scenario' : 'test runner';
+  const retry = phase === 'bootstrap' ? ' This failure may be retried.' : '';
+  process.stderr.write(`PXM E2E ${category} failed before a browser regression result was available.${retry}\n`);
   process.stderr.write(`${error instanceof Error ? error.stack || error.message : String(error)}\n`);
 } finally {
   await stopChildren();
@@ -302,7 +341,16 @@ function runCommand(command, args, env) {
   return new Promise((resolvePromise) => {
     const child = spawn(command, args, { cwd: workspaceDir, env, stdio: 'inherit' });
     child.once('exit', (code, signal) => resolvePromise({ code, signal }));
+    child.once('error', (error) => resolvePromise({ code: null, signal: null, error }));
   });
+}
+
+async function readExecutedTestCount() {
+  try {
+    return countPlaywrightTests(JSON.parse(await readFile(resolve(resultDir, 'results.json'), 'utf8')));
+  } catch {
+    return 0;
+  }
 }
 
 async function waitForHttp(url, timeoutMs) {

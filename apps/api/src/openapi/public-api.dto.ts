@@ -77,6 +77,14 @@ export class InstanceResultDto {
   @ApiPropertyOptional({ nullable: true, format: 'date-time' }) updated_at?: string | null;
 }
 
+export class TerminateInstanceResponseDto {
+  @ApiProperty({ example: true }) success!: boolean;
+  @ApiProperty({ format: 'uuid' }) instance_id!: string;
+  @ApiProperty({ type: [String], description: '이번 요청에서 종료 상태로 바뀐 실행 ID. 이미 종료된 실행이면 빈 배열입니다.' })
+  terminated_instances!: string[];
+  @ApiProperty({ example: false }) idempotent_replay!: boolean;
+}
+
 export class TraceEventDto {
   @ApiProperty() id!: number;
   @ApiPropertyOptional() event_type?: string;

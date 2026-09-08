@@ -22,6 +22,7 @@ API 코드와 DTO가 문서의 원본이다. 서버를 다시 실행하면 Swagg
 - `GET /api/v1/instances`
 - `GET /api/v1/instances/:id`
 - `GET /api/v1/instances/:id/result`
+- `POST /api/v1/instances/:id/terminate` (`workflow:execute` scope, 선택적 `Idempotency-Key`)
 - `GET /api/v1/instances/:id/trace`
 - `GET /api/v1/instances/:id/stream`
 
@@ -34,6 +35,13 @@ API 코드와 DTO가 문서의 원본이다. 서버를 다시 실행하면 Swagg
 - `GET /api/v1/instances/:instanceId/tasks`
 
 그룹, 사용자, API Key, credential, plugin, webhook 설정, 운영 복구 API는 관리 콘솔용 `/api` 경로에만 존재한다.
+인스턴스 `pause`와 `resume`도 운영자 제어 기능이므로 관리 콘솔용 `/api` 경로에만 둔다.
+
+종료 요청은 해당 키의 그룹과 허용 워크플로우에 속하면서, **같은 소유자(사용자 또는 서비스 계정)의
+API Key로 시작한 실행**만 처리한다. Key를 재발급해도 소유자가 같으면 종료할 수 있다. 다른 소유자가
+시작했거나 시작 소유자 정보가 없는 기존 실행, 그 밖의 범위 밖 실행은 `404`로 숨긴다.
+`workflow:execute` scope가 없으면 `403`을 반환한다. 이미 완료·실패·종료된 실행은 오류로 만들지 않고
+`terminated_instances: []`로 응답한다. 같은 `Idempotency-Key`를 다시 보내면 최초 응답을 재생한다.
 
 ## 오류 응답과 요청 추적
 

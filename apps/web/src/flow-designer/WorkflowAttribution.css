@@ -1,0 +1,8 @@
+.workflow-attribution { margin: 16px 0; padding: 14px; border: 1px solid var(--border-subtle); border-radius: 8px; }
+.workflow-attribution h4 { margin: 0 0 10px; font-size: 14px; }
+.workflow-attribution dl { display: grid; gap: 10px; margin: 0; }
+.workflow-attribution dl > div { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 8px; }
+.workflow-attribution dt { color: var(--text-secondary); font-size: 13px; }
+.workflow-attribution dd { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.workflow-attribution time { display: block; margin-top: 3px; color: var(--text-tertiary); font-size: 12px; }
+.workflow-attribution p { margin: 0; font-size: 13px; color: var(--text-secondary); }

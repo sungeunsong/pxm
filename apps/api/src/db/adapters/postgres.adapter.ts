@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Pool, PoolClient } from 'pg';
 import { PG_POOL } from '../pg.provider';
-import { WorkflowDefinitionMetadata, WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleJob, WorkflowScheduleRepositoryPort, WorkflowScheduleStatus, WorkflowHistoryActor, WorkflowInstanceAccess, WorkflowDefinitionVersion, WorkflowInputPreset, WorkflowInputPresetRepositoryPort, UpsertWorkflowInputPreset, AppendPxmApiKeyUsageLog, AuthzRepositoryPort, CreatePxmApiKey, CreatePxmSession, PxmApiKey, PxmApiKeyUsageLog, PxmGroup, PxmServiceAccount, PxmUser, PxmSession, PxmSessionSecurityPolicy, UpsertPxmGroup, UpsertPxmServiceAccount, UpsertPxmUser, UpsertPxmSessionSecurityPolicy, CompleteWorkflowTaskCommand, CompleteWorkflowTaskResult, ExternalApprovalClaim, ExternalApprovalDeliveryToken, ExternalApprovalOtp, ExternalApprovalTask, WorkflowTaskHistoryItem, WorkflowTaskHistoryPage, WorkflowTaskHistoryQuery, IdempotentWorkflowStart, IdempotentWorkflowStartResult, IdempotentInstanceCommand, IdempotentInstanceCommandResult, ExistingIdempotentInstanceCommandResult, WorkflowInstanceMutation } from '../ports/db.ports';
+import { ApiKeyUsageQuery, WorkflowDefinitionMetadata, WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleJob, WorkflowScheduleRepositoryPort, WorkflowScheduleStatus, WorkflowHistoryActor, WorkflowInstanceAccess, WorkflowDefinitionVersion, WorkflowInputPreset, WorkflowInputPresetRepositoryPort, UpsertWorkflowInputPreset, AppendPxmApiKeyUsageLog, AuthzRepositoryPort, CreatePxmApiKey, CreatePxmSession, PxmApiKey, PxmApiKeyUsageLog, PxmGroup, PxmServiceAccount, PxmUser, PxmSession, PxmSessionSecurityPolicy, UpsertPxmGroup, UpsertPxmServiceAccount, UpsertPxmUser, UpsertPxmSessionSecurityPolicy, CompleteWorkflowTaskCommand, CompleteWorkflowTaskResult, ExternalApprovalClaim, ExternalApprovalDeliveryToken, ExternalApprovalOtp, ExternalApprovalTask, WorkflowTaskHistoryItem, WorkflowTaskHistoryPage, WorkflowTaskHistoryQuery, IdempotentWorkflowStart, IdempotentWorkflowStartResult, IdempotentInstanceCommand, IdempotentInstanceCommandResult, ExistingIdempotentInstanceCommandResult, WorkflowInstanceMutation } from '../ports/db.ports';
 import {
   allowsApprovalChannel,
   approvalChannels,
@@ -661,6 +661,31 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
       ctx: r.context,
       ...accessProjection(r),
     }));
+  }
+
+  async getGroupDeletionRuntimeImpact(definitionIds: string[]) {
+    if (definitionIds.length === 0) {
+      return { active_instance_count: 0, active_instance_ids: [], open_approval_count: 0 };
+    }
+    const { rows } = await this.pool.query(
+      `WITH active_instances AS (
+         SELECT id FROM v2_process_instances
+         WHERE process_definition_id = ANY($1::uuid[])
+           AND UPPER(COALESCE(state, '')) NOT IN ('COMPLETED', 'FAILED', 'TERMINATED')
+       )
+       SELECT
+         (SELECT COUNT(*)::int FROM active_instances) AS active_instance_count,
+         (SELECT COALESCE(jsonb_agg(id), '[]'::jsonb) FROM (SELECT id FROM active_instances LIMIT 20) sample) AS active_instance_ids,
+         (SELECT COUNT(*)::int FROM v2_approval_requests ar
+          JOIN active_instances ai ON ai.id = ar.instance_id
+          WHERE ar.status IN ('PENDING', 'IN_PROGRESS')) AS open_approval_count`,
+      [definitionIds],
+    );
+    return {
+      active_instance_count: Number(rows[0]?.active_instance_count || 0),
+      active_instance_ids: (rows[0]?.active_instance_ids || []).map(String),
+      open_approval_count: Number(rows[0]?.open_approval_count || 0),
+    };
   }
 
   async getInstanceStats(actor?: WorkflowHistoryActor) {
@@ -2173,6 +2198,22 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
     return rows[0] ? mapGroupRow(rows[0]) : null;
   }
 
+  async listGroupWorkflowRecordIds(id: string): Promise<string[]> {
+    await this.ensureAuthzTables();
+    const { rows } = await this.pool.query(
+      `SELECT id FROM v2_process_definitions
+       WHERE metadata->>'group_id' = $1 OR metadata->'group_deletion'->>'group_id' = $1`,
+      [id],
+    );
+    return rows.map((row) => String(row.id));
+  }
+
+  async hardDeleteGroup(id: string): Promise<boolean> {
+    await this.ensureAuthzTables();
+    const { rowCount } = await this.pool.query(`DELETE FROM pxm_groups WHERE id = $1 AND status = 'active'`, [id]);
+    return (rowCount || 0) > 0;
+  }
+
   async softDeleteGroup(id: string, actor?: string | null): Promise<boolean> {
     await this.ensureAuthzTables();
     const client = await this.pool.connect();
@@ -2181,16 +2222,27 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
       const { rowCount } = await client.query(
         `
         UPDATE pxm_groups
-        SET status = 'deleted', deleted_at = NOW(), updated_by = $2, updated_at = NOW()
+        SET status = 'deleted', deleted_at = NOW(), recovery_review_required = false, updated_by = $2, updated_at = NOW()
         WHERE id = $1 AND status <> 'deleted'
         `,
         [id, actor || null],
       );
       if ((rowCount || 0) > 0) {
         await client.query(
+          `UPDATE v2_process_definitions
+           SET status = 'DELETED',
+               metadata = metadata || jsonb_build_object(
+                 'lifecycle_status', 'DISABLED',
+                 'group_deletion', jsonb_build_object('group_id', $1, 'deleted_at', NOW(), 'deleted_by', $2::text)
+               ),
+               updated_at = NOW()
+           WHERE metadata->>'group_id' = $1 AND status <> 'DELETED'`,
+          [id, actor || null],
+        );
+        await client.query(
           `
           UPDATE pxm_api_keys
-          SET status = 'disabled', disabled_at = NOW(), updated_at = NOW()
+          SET status = 'disabled', disabled_at = NOW(), disabled_reason = 'group_deleted:' || $1, updated_at = NOW()
           WHERE group_id = $1 AND status = 'active'
           `,
           [id],
@@ -2208,12 +2260,42 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
 
   async restoreGroup(id: string, actor?: string | null): Promise<boolean> {
     await this.ensureAuthzTables();
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rowCount } = await client.query(
+        `UPDATE pxm_groups
+         SET status = 'active', deleted_at = NULL, restored_at = NOW(), recovery_review_required = true, updated_by = $2, updated_at = NOW()
+         WHERE id = $1 AND status = 'deleted'`,
+        [id, actor || null],
+      );
+      if ((rowCount || 0) > 0) {
+        await client.query(
+          `UPDATE v2_process_definitions
+           SET status = 'ACTIVE',
+               metadata = metadata || jsonb_build_object(
+                 'lifecycle_status', 'DISABLED',
+                 'group_deletion', (metadata->'group_deletion') || jsonb_build_object('restored_at', NOW(), 'restored_by', $2::text)
+               ),
+               updated_at = NOW()
+           WHERE status = 'DELETED' AND metadata->'group_deletion'->>'group_id' = $1`,
+          [id, actor || null],
+        );
+      }
+      await client.query('COMMIT');
+      return (rowCount || 0) > 0;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async completeGroupRecoveryReview(id: string, actor?: string | null): Promise<boolean> {
     const { rowCount } = await this.pool.query(
-      `
-      UPDATE pxm_groups
-      SET status = 'active', deleted_at = NULL, updated_by = $2, updated_at = NOW()
-      WHERE id = $1 AND status = 'deleted'
-      `,
+      `UPDATE pxm_groups SET recovery_review_required = false, updated_by = $2, updated_at = NOW()
+       WHERE id = $1 AND status = 'active'`,
       [id, actor || null],
     );
     return (rowCount || 0) > 0;
@@ -2546,7 +2628,7 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
     const { rowCount } = await this.pool.query(
       `
       UPDATE pxm_api_keys
-      SET status = 'disabled', disabled_at = NOW(), updated_by = $2, updated_at = NOW()
+      SET status = 'disabled', disabled_at = NOW(), disabled_reason = 'manual', updated_by = $2, updated_at = NOW()
       WHERE id = $1 AND status <> 'disabled'
       `,
       [id, actor || null],
@@ -2573,6 +2655,37 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
       [id, log.api_key_id, log.owner_type, log.owner_id, log.group_id, log.endpoint, log.workflow_id || null, log.instance_id || null, log.request_id || null, log.ip || null, log.user_agent || null, JSON.stringify(log.business_actor || null)],
     );
     return mapApiKeyUsageLogRow(rows[0]);
+  }
+
+  async completeApiKeyUsageLog(
+    id: string,
+    completion: { status_code: number | null; duration_ms: number; completed_at: string; completion_state: 'completed' | 'aborted' },
+  ): Promise<void> {
+    await this.ensureAuthzTables();
+    await this.pool.query(
+      `UPDATE pxm_api_key_usage_logs
+       SET status_code = $2, duration_ms = $3, completed_at = $4, completion_state = $5
+       WHERE id = $1 AND completion_state = 'pending'`,
+      [id, completion.status_code, completion.duration_ms, completion.completed_at, completion.completion_state],
+    );
+  }
+
+  async listApiKeyUsage(query: ApiKeyUsageQuery): Promise<{ items: PxmApiKeyUsageLog[]; total: number }> {
+    await this.ensureAuthzTables();
+    const values: unknown[] = [];
+    const predicates: string[] = [];
+    for (const [column, value, operator] of [
+      ['group_id', query.groupId, '='], ['api_key_id', query.keyId, '='], ['owner_id', query.ownerId, '='],
+      ['created_at', query.from, '>='], ['created_at', query.to, '<='],
+    ] as const) {
+      if (value) { values.push(value); predicates.push(`${column} ${operator} $${values.length}`); }
+    }
+    const where = predicates.length ? `WHERE ${predicates.join(' AND ')}` : '';
+    const [rows, count] = await Promise.all([
+      this.pool.query(`SELECT * FROM pxm_api_key_usage_logs ${where} ORDER BY created_at DESC, id DESC LIMIT $${values.length + 1} OFFSET $${values.length + 2}`, [...values, query.pageSize, (query.page - 1) * query.pageSize]),
+      this.pool.query(`SELECT COUNT(*)::int AS total FROM pxm_api_key_usage_logs ${where}`, values),
+    ]);
+    return { items: rows.rows.map(mapApiKeyUsageLogRow), total: Number(count.rows[0].total) };
   }
 
   async countApiKeyUsageSince(apiKeyId: string, since: string): Promise<number> {
@@ -2621,10 +2734,14 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
         created_by TEXT NULL,
         updated_by TEXT NULL,
         deleted_at TIMESTAMPTZ NULL,
+        restored_at TIMESTAMPTZ NULL,
+        recovery_review_required BOOLEAN NOT NULL DEFAULT false,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+    await this.pool.query(`ALTER TABLE pxm_groups ADD COLUMN IF NOT EXISTS restored_at TIMESTAMPTZ NULL`);
+    await this.pool.query(`ALTER TABLE pxm_groups ADD COLUMN IF NOT EXISTS recovery_review_required BOOLEAN NOT NULL DEFAULT false`);
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS pxm_users (
         id TEXT PRIMARY KEY,
@@ -2725,10 +2842,12 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
         created_by TEXT NULL,
         updated_by TEXT NULL,
         disabled_at TIMESTAMPTZ NULL,
+        disabled_reason TEXT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+    await this.pool.query(`ALTER TABLE pxm_api_keys ADD COLUMN IF NOT EXISTS disabled_reason TEXT NULL`);
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS pxm_api_key_usage_logs (
         id TEXT PRIMARY KEY,
@@ -2743,9 +2862,17 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
         ip TEXT NULL,
         user_agent TEXT NULL,
         business_actor JSONB NULL,
+        status_code INTEGER NULL,
+        duration_ms INTEGER NULL,
+        completed_at TIMESTAMPTZ NULL,
+        completion_state TEXT NOT NULL DEFAULT 'pending',
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+    await this.pool.query(`ALTER TABLE pxm_api_key_usage_logs ADD COLUMN IF NOT EXISTS status_code INTEGER NULL`);
+    await this.pool.query(`ALTER TABLE pxm_api_key_usage_logs ADD COLUMN IF NOT EXISTS duration_ms INTEGER NULL`);
+    await this.pool.query(`ALTER TABLE pxm_api_key_usage_logs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ NULL`);
+    await this.pool.query(`ALTER TABLE pxm_api_key_usage_logs ADD COLUMN IF NOT EXISTS completion_state TEXT NOT NULL DEFAULT 'pending'`);
     await this.pool.query(`ALTER TABLE pxm_api_keys ADD COLUMN IF NOT EXISTS workflow_access TEXT NOT NULL DEFAULT 'allowlist'`);
     await this.pool.query(`ALTER TABLE pxm_api_keys ADD COLUMN IF NOT EXISTS ip_allowlist JSONB NOT NULL DEFAULT '[]'::jsonb`);
     await this.pool.query(`ALTER TABLE pxm_api_keys ADD COLUMN IF NOT EXISTS rate_limit_per_minute INTEGER NULL`);
@@ -2786,6 +2913,8 @@ function mapGroupRow(row: any): PxmGroup {
     created_by: row.created_by || null,
     updated_by: row.updated_by || null,
     deleted_at: row.deleted_at?.toISOString?.() || row.deleted_at || null,
+    restored_at: row.restored_at?.toISOString?.() || row.restored_at || null,
+    recovery_review_required: row.recovery_review_required === true,
     created_at: row.created_at?.toISOString?.() || row.created_at,
     updated_at: row.updated_at?.toISOString?.() || row.updated_at,
   };
@@ -2898,6 +3027,7 @@ function mapApiKeyRow(row: any): PxmApiKey {
     last_used_at: row.last_used_at?.toISOString?.() || row.last_used_at || null,
     created_by: row.created_by || null,
     disabled_at: row.disabled_at?.toISOString?.() || row.disabled_at || null,
+    disabled_reason: row.disabled_reason || null,
     created_at: row.created_at?.toISOString?.() || row.created_at,
     updated_at: row.updated_at?.toISOString?.() || row.updated_at,
   };
@@ -2917,6 +3047,10 @@ function mapApiKeyUsageLogRow(row: any): PxmApiKeyUsageLog {
     ip: row.ip || null,
     user_agent: row.user_agent || null,
     business_actor: row.business_actor || null,
+    status_code: Number.isInteger(row.status_code) ? row.status_code : null,
+    duration_ms: Number.isInteger(row.duration_ms) ? row.duration_ms : null,
+    completed_at: row.completed_at?.toISOString?.() || row.completed_at || null,
+    completion_state: row.completion_state || 'pending',
     created_at: row.created_at?.toISOString?.() || row.created_at,
   };
 }

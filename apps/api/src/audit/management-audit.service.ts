@@ -87,6 +87,20 @@ export class ManagementAuditService {
     }));
   }
 
+  async summarizeGroupUsage(groupId: string): Promise<Array<{ action: string; count: number }>> {
+    const rows = await this.collection.aggregate([
+      {
+        $match: {
+          group_id: groupId,
+          action: { $nin: ['group.created', 'group.updated'] },
+        },
+      },
+      { $group: { _id: '$action', count: { $sum: 1 } } },
+      { $sort: { _id: 1 } },
+    ]).toArray();
+    return rows.map((row) => ({ action: String(row._id), count: Number(row.count || 0) }));
+  }
+
   private get collection() {
     return this.db.collection<any>('management_audit_logs');
   }

@@ -279,8 +279,8 @@ export class TemplatesService {
       has_unpublished_changes: lifecycle.active_published_version !== Number(row.version || 1),
       published_at: lifecycle.published_at,
       published_by: lifecycle.published_by,
-      created_by: row.created_by || row.metadata?.created_by || 'admin',
-      updated_by: row.updated_by || row.metadata?.updated_by || 'admin',
+      created_by: row.created_by || row.metadata?.created_by || undefined,
+      updated_by: row.updated_by || row.metadata?.updated_by || undefined,
       created_at: row.created_at || new Date(),
       updated_at: row.updated_at || new Date(),
     };

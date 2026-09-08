@@ -1,6 +1,25 @@
 import { ManagementAuditService, sanitizeAuditDetails } from './management-audit.service';
 
 describe('management audit redaction', () => {
+  it('summarizes only group usage actions and ignores create or rename events', async () => {
+    const toArray = jest.fn().mockResolvedValue([{ _id: 'workflow.created', count: 2 }]);
+    const sort = jest.fn().mockReturnValue({ toArray });
+    const group = jest.fn().mockReturnValue({ sort });
+    const match = jest.fn().mockReturnValue({ group });
+    const aggregate = jest.fn().mockReturnValue({ match, group, sort, toArray });
+    aggregate.mockReturnValue({ toArray });
+    const service = new ManagementAuditService({ collection: () => ({ aggregate }) } as any);
+
+    await expect(service.summarizeGroupUsage('group-a')).resolves.toEqual([
+      { action: 'workflow.created', count: 2 },
+    ]);
+    expect(aggregate).toHaveBeenCalledWith([
+      { $match: { group_id: 'group-a', action: { $nin: ['group.created', 'group.updated'] } } },
+      { $group: { _id: '$action', count: { $sum: 1 } } },
+      { $sort: { _id: 1 } },
+    ]);
+  });
+
   it('redacts secrets recursively without removing useful metadata', () => {
     expect(sanitizeAuditDetails({
       action: 'credential.updated',

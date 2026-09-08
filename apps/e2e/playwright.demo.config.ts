@@ -3,12 +3,11 @@ import { defineConfig, devices } from '@playwright/test';
 const webPort = Number(process.env.PXM_E2E_WEB_PORT || 5274);
 
 export default defineConfig({
-  testDir: './tests',
+  testDir: './demo-tests',
   fullyParallel: false,
   workers: 1,
-  timeout: 60_000,
+  timeout: 90_000,
   expect: { timeout: 15_000 },
-  retries: process.env.CI ? 1 : 0,
   reporter: [
     ['list'],
     ['html', { outputFolder: 'test-results/report', open: 'never' }],
@@ -22,13 +21,5 @@ export default defineConfig({
     video: 'retain-on-failure',
     actionTimeout: 15_000,
   },
-  projects: [
-    {
-      name: 'chromium',
-      use: {
-        ...devices['Desktop Chrome'],
-        headless: process.env.PXM_E2E_HEADED !== 'true',
-      },
-    },
-  ],
+  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
 });

@@ -196,12 +196,15 @@ fn parse_condition(condition: &str) -> Result<(String, ConditionOperator, String
             "condition '{condition}' is missing a field name on the left side"
         ));
     }
-    if !field
-        .chars()
-        .all(|character| character.is_alphanumeric() || character == '_' || character == '-')
+    if !field.split('.').all(|segment| {
+        !segment.is_empty()
+            && segment.chars().all(|character| {
+                character.is_alphanumeric() || character == '_' || character == '-'
+            })
+    }) || (field.contains('.') && !is_explicit_condition_path(field))
     {
         return Err(anyhow::anyhow!(
-            "condition '{condition}' has an invalid field name"
+            "condition '{condition}' has an invalid field name; nested input must start with formData and node output must start with data.outputs"
         ));
     }
 
@@ -248,6 +251,14 @@ fn parse_condition(condition: &str) -> Result<(String, ConditionOperator, String
     Ok((field.to_string(), operator, literal))
 }
 
+fn is_explicit_condition_path(field: &str) -> bool {
+    field.starts_with("formData.")
+        || field.starts_with("data.formData.")
+        || field.starts_with("data.outputs.")
+        || field.starts_with("context.data.formData.")
+        || field.starts_with("context.data.outputs.")
+}
+
 /// `==`와 `!=`는 문자열, 숫자, 불리언, null을 모두 비교한다.
 /// 이전에는 `as_str()`만 봐서 `amount == 50`이나 `flag == true`가 항상 거짓이었다.
 fn condition_value_equals(actual: &Value, literal: &str) -> Option<bool> {
@@ -274,7 +285,8 @@ fn condition_value_equals(actual: &Value, literal: &str) -> Option<bool> {
 /// 반면 참조한 필드가 없거나 타입이 맞지 않는 것은 실행 중 정상적으로 생길 수 있으므로
 /// `false`로 평가한다.
 ///
-/// 참조 대상은 `data.formData`의 최상위 필드다. 노드 산출물 참조는 PXM-42에서 다룬다.
+/// 단일 필드는 기존 formData 규칙을 유지한다. 중첩 경로는 입력(`formData.*`)과
+/// 노드 결과(`data.outputs.*`)의 출처를 명시하고 공통 컨텍스트 resolver로 읽는다.
 fn evaluate_condition(condition: &str, context: &Value) -> Result<bool> {
     let (field, operator, literal) = parse_condition(condition)?;
 
@@ -297,13 +309,21 @@ fn evaluate_condition(condition: &str, context: &Value) -> Result<bool> {
         _ => None,
     };
 
-    let Some(actual) = get_form_data(context).and_then(|data| data.get(&field)) else {
+    let actual = if field.contains('.') {
+        get_context_value_at_path(context, &field)
+    } else {
+        // Do not fall through to outputs: an existing missing form field must stay false.
+        get_form_data(context)
+            .and_then(|data| data.get(&field))
+            .cloned()
+    };
+    let Some(actual) = actual else {
         return Ok(false);
     };
 
     Ok(match operator {
         ConditionOperator::Eq | ConditionOperator::Ne => {
-            let Some(equal) = condition_value_equals(actual, &literal) else {
+            let Some(equal) = condition_value_equals(&actual, &literal) else {
                 return Ok(false);
             };
             match operator {
@@ -2254,6 +2274,38 @@ mod tests {
         assert!(!super::evaluate_condition("missing > 1", &context).unwrap());
     }
 
+    #[test]
+    fn gateway_reads_node_outputs_and_nested_input_with_shared_path_rules() {
+        let context = json!({"data": {
+            "formData": {"flag": "FORM", "applicant": {"level": 3}},
+            "outputs": {"flag": "OUTPUT", "only_output": "GO", "risk": {"level": "REVIEW", "score": 80}}
+        }});
+        for expression in [
+            "data.outputs.risk.level == REVIEW",
+            "context.data.outputs.risk.score >= 80",
+            "formData.applicant.level > 2",
+            "data.formData.applicant.level == 3",
+            "flag == FORM",
+        ] {
+            assert!(
+                super::evaluate_condition(expression, &context).unwrap(),
+                "{expression}"
+            );
+        }
+        for expression in [
+            "only_output == GO",
+            "flag == OUTPUT",
+            "data.outputs.missing != anything",
+            "formData.applicant.missing > 0",
+            "data.outputs.risk.level > 50",
+        ] {
+            assert!(
+                !super::evaluate_condition(expression, &context).unwrap(),
+                "{expression}"
+            );
+        }
+    }
+
     /// 문법 오류는 false로 흘리지 않고 오류로 올려 노드를 실패시킨다.
     #[test]
     fn rejects_malformed_condition_expressions() {
@@ -2271,7 +2323,11 @@ mod tests {
             "status == \"approved\" junk",
             "status == approved && flag == true",
             "status == approved||flag",
-            "nested.amount == 50",
+            "risk.score == 80",
+            "nested..amount == 50",
+            ".amount == 50",
+            "nested. == 50",
+            "data.outputs.rows[0] == value",
             "field name == value",
             "",
         ] {

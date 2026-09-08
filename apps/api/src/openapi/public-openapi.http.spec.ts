@@ -11,6 +11,7 @@ const EXPECTED_PUBLIC_PATHS = [
   '/api/v1/instances/{id}',
   '/api/v1/instances/{id}/result',
   '/api/v1/instances/{id}/stream',
+  '/api/v1/instances/{id}/terminate',
   '/api/v1/instances/{id}/trace',
   '/api/v1/instances/{instanceId}/tasks',
   '/api/v1/tasks',

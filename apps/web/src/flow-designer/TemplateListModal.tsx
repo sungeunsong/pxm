@@ -244,7 +244,7 @@ export const TemplateListModal: React.FC<TemplateListModalProps> = ({
                         </span>
                         <span className="template-meta-item">
                           <Calendar size={14} />
-                          {new Date(template.created_at).toLocaleDateString('ko-KR')}
+                          생성 {new Date(template.created_at).toLocaleDateString('ko-KR')} · 생성자 ID: {template.created_by || '확인 불가'}
                         </span>
                       </div>
                     </div>

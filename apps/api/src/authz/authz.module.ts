@@ -8,9 +8,11 @@ import { AuthzController } from './authz.controller';
 import { AuthzService } from './authz.service';
 import { ManagementAuditModule } from '../audit/management-audit.module';
 import { CredentialsModule } from '../credentials/credentials.module';
+import { SchedulesModule } from '../schedules/schedules.module';
+import { DbWatchModule } from '../db-watch/db-watch.module';
 
 @Module({
-  imports: [DbModule, ManagementAuditModule, CredentialsModule],
+  imports: [DbModule, ManagementAuditModule, CredentialsModule, SchedulesModule, DbWatchModule],
   controllers: [AuthzController, SessionAuthController],
   providers: [AuthzService, ApiKeyAuthMiddleware, SessionAuthMiddleware, SessionAuthService],
   exports: [AuthzService],

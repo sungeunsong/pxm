@@ -4,6 +4,12 @@
 **목적**: PXM이 지원하는 기능을 한 시나리오 안에서 전부 보여준다
 **소요**: 30분 (단축 시 15분 구성은 문서 마지막 참고)
 
+반복 실습과 자동 준비는 [demo-practice.md](demo-practice.md)를 따른다. `pnpm demo:seed`는
+이 각본의 종합 흐름과 별도의 기본 결재 실습을 생성한다. 자동 준비 계정은 `demo-secadmin`,
+`demo-approver1`, `demo-requester1`이며 그룹은 `데모 · 보안운영팀`이다. 직원 DB는 같은 개발 DB의
+`pxm_demo_employees`, 모의 권한 반영 서버는 `pnpm demo:service`를 쓴다. 아래 수동 구성 예시의
+계정·DB·자격증명 이름과 다르므로 자동 준비 시에는 실습 안내서의 값을 따른다.
+
 지원 기능 전체 목록은 `docs/features.md`, 시연 전 처리할 작업은 `docs/roadmap.md`에 있다.
 
 ---
@@ -117,24 +123,23 @@ if (req.privilege_level === 'admin') score += 50;
 if (me.employment_type === 'partner') score += 30;
 if (!me.security_training_done) score += 20;
 console.log('applicant=' + me.name + ' score=' + score);
-return score < 50 ? 'AUTO' : 'REVIEW';
+return { level: score < 50 ? 'AUTO' : 'REVIEW', score };
 ```
 
-- `outputPath`: **`formData.risk_level`**
+- `outputPath`: **`risk`**
 
 > "복잡한 판정 로직을 노드로 다 그리지 않고 여기서 처리합니다."
 
 **말할 것**: 샌드박스에서 실행된다. `input`, `context`, `console`만 주입되고 `require`와
 `process`는 없다. `eval`과 `Function` 생성자도 막혀 있다. 타임아웃 기본 1초.
 
-⚠️ **`outputPath`를 `formData.risk_level`로 두는 것이 중요하다.** 게이트웨이 조건식은
-`data.formData`의 최상위 필드만 읽고 `data.outputs`는 보지 못한다 (PXM-42).
-연산자는 `==`, `!=`, `>=`, `<=`, `>`, `<`를 지원하며 문자열·숫자·불리언을 비교한다.
-자세한 제약은 `docs/features.md`의 "게이트웨이 조건은 formData만 읽는다" 참고.
+계산 결과는 `data.outputs.risk`에 저장한다. 조건식에서 `data.outputs.risk.level`처럼
+노드 결과의 중첩 경로를 직접 참조할 수 있다(PXM-42). 기존 `amount >= 1000` 형태의
+신청 입력 최상위 필드 조건도 그대로 지원한다.
 
 ### 3-3. Gateway (exclusive)
 
-- 조건: `risk_level == AUTO` → 자동 승인 경로
+- 조건: `data.outputs.risk.level == AUTO` → 자동 승인 경로
 - 나머지 → 결재 경로 (`is_default`)
 
 > "게이트웨이는 배타(하나만) / 병렬(전부 분기 후 조인) / 포함(조건 만족하는 전부) 세 가지입니다."

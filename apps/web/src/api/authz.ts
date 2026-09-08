@@ -11,8 +11,30 @@ export type PxmGroup = {
   name: string;
   description?: string;
   status: 'active' | 'deleted';
+  restored_at?: string | null;
+  recovery_review_required?: boolean;
   created_at: string;
   updated_at: string;
+};
+
+export type GroupDeletionImpact = {
+  group: { id: string; name: string };
+  workflows: Array<{ id: string; name: string; lifecycle_status: string }>;
+  active_instance_count: number;
+  active_instance_ids: string[];
+  open_approval_count: number;
+  schedule_trigger_count: number;
+  db_watch_trigger_count: number;
+  referenced_credential_ids: string[];
+  api_key_count: number;
+  active_api_key_count: number;
+  service_account_count: number;
+  external_mapping_count: number;
+  member_count: number;
+  usage_history_reasons: Array<{ code: string; label: string; count: number }>;
+  deletion_mode: 'blocked' | 'permanent' | 'recoverable';
+  permanent_deletion_allowed: boolean;
+  deletion_blocked: boolean;
 };
 
 export type PxmUser = {
@@ -38,6 +60,7 @@ export type PxmServiceAccount = {
 };
 
 export type PxmApiKey = {
+  created_by?: string | null;
   id: string;
   name: string;
   owner_type: ApiKeyOwnerType;
@@ -53,6 +76,7 @@ export type PxmApiKey = {
   expires_at?: string | null;
   last_used_at?: string | null;
   disabled_at?: string | null;
+  disabled_reason?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -117,12 +141,19 @@ export const authzApi = {
     return readJson(response, 'group save failed');
   },
 
-  async deleteGroup(id: string): Promise<void> {
+  async deleteGroup(id: string): Promise<{ deletion_mode: 'permanent' | 'recoverable' }> {
     const response = await fetch(`${API_BASE_URL}/groups/${encodeURIComponent(id)}?actor=admin`, {
       method: 'DELETE',
       credentials: 'include',
     });
-    await readJson(response, 'group delete failed');
+    return readJson(response, 'group delete failed');
+  },
+
+  async getGroupDeletionImpact(id: string): Promise<GroupDeletionImpact> {
+    const response = await fetch(`${API_BASE_URL}/groups/${encodeURIComponent(id)}/deletion-impact`, {
+      credentials: 'include',
+    });
+    return readJson(response, 'group deletion impact load failed');
   },
 
   async restoreGroup(id: string): Promise<void> {
@@ -131,6 +162,14 @@ export const authzApi = {
       credentials: 'include',
     });
     await readJson(response, 'group restore failed');
+  },
+
+  async completeGroupRecoveryReview(id: string): Promise<void> {
+    const response = await fetch(`${API_BASE_URL}/groups/${encodeURIComponent(id)}/recovery-review/complete`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+    await readJson(response, 'group recovery review completion failed');
   },
 
   async listUsers(groupId?: string): Promise<PxmUser[]> {

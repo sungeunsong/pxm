@@ -7,6 +7,9 @@
     "pretest": "pnpm --filter api build",
     "test": "node --env-file-if-exists=../../.env run.mjs",
     "test:headed": "PXM_E2E_HEADED=true node --env-file-if-exists=../../.env run.mjs",
+    "pretest:demo": "pnpm --filter api build",
+    "test:demo": "PXM_E2E_SUITE=demo node --env-file-if-exists=../../.env run.mjs",
+    "test:runner": "node --test run-result.test.mjs",
     "install:browser": "playwright install chromium"
   },
   "dependencies": {

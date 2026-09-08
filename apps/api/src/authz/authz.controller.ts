@@ -3,6 +3,7 @@ import type { Request } from 'express';
 import { actorFromRequest } from '../instances/history-auth';
 import { AuthzService } from './authz.service';
 import {
+  ApiKeyUsageQueryDto,
   CreateApiKeyDto,
   CreateExternalPrincipalMappingDto,
   SetGroupMembershipDto,
@@ -68,9 +69,24 @@ export class AuthzController {
   ) {
     const authenticated = actorFromRequest(req); assertAdmin(authenticated);
     const result = await this.authzService.deleteGroup(id, authenticated.actor_id || actor);
-    await this.credentials.revokeGroupShares(id, authenticated.actor_id || actor || 'system');
-    await this.audit.append({ action: 'group.deleted', resource_type: 'group', resource_id: id, group_id: id, actor_id: authenticated.actor_id });
+    if (!result.already_deleted) {
+      await this.audit.append({ action: result.deletion_mode === 'permanent' ? 'group.permanently_deleted' : 'group.deleted', resource_type: 'group', resource_id: id, group_id: id, actor_id: authenticated.actor_id, details: { impact: result.impact } });
+    }
     return result;
+  }
+
+  @Post('groups/:id/recovery-review/complete')
+  async completeGroupRecoveryReview(@Param('id') id: string, @Req() req: Request) {
+    const authenticated = actorFromRequest(req); assertAdmin(authenticated);
+    const result = await this.authzService.completeGroupRecoveryReview(id, authenticated.actor_id);
+    await this.audit.append({ action: 'group.recovery_review_completed', resource_type: 'group', resource_id: id, group_id: id, actor_id: authenticated.actor_id });
+    return result;
+  }
+
+  @Get('groups/:id/deletion-impact')
+  async groupDeletionImpact(@Param('id') id: string, @Req() req: Request) {
+    const actor = actorFromRequest(req); assertAdmin(actor);
+    return this.authzService.getGroupDeletionImpact(id);
   }
 
   @Post('groups/:id/restore')
@@ -81,7 +97,9 @@ export class AuthzController {
   ) {
     const authenticated = actorFromRequest(req); assertAdmin(authenticated);
     const result = await this.authzService.restoreGroup(id, authenticated.actor_id || actor);
-    await this.audit.append({ action: 'group.restored', resource_type: 'group', resource_id: id, group_id: id, actor_id: authenticated.actor_id });
+    if (!result.already_active) {
+      await this.audit.append({ action: 'group.restored', resource_type: 'group', resource_id: id, group_id: id, actor_id: authenticated.actor_id });
+    }
     return result;
   }
 
@@ -311,6 +329,12 @@ export class AuthzController {
   @Get('api-keys')
   async listApiKeys(@Query('groupId') groupId: string | undefined, @Req() req: Request) {
     return this.authzService.listApiKeys(manageableGroupId(actorFromRequest(req), groupId));
+  }
+
+  @Get('api-keys/usage')
+  async apiKeyUsage(@Query() query: ApiKeyUsageQueryDto, @Req() req: Request) {
+    const groupId = manageableGroupId(actorFromRequest(req), query.groupId);
+    return this.authzService.listApiKeyUsage({ ...query, groupId });
   }
 
   @Put('api-keys/:id/disable')

@@ -221,37 +221,6 @@
   font-size: 16px;
 }
 
-.selected-group-card {
-  display: grid;
-  gap: 5px;
-  padding: 12px;
-  margin-bottom: 12px;
-  border: 1px solid #bfdbfe;
-  border-radius: 8px;
-  background: #eff6ff;
-}
-
-.selected-group-card > span:first-child {
-  color: #1d4ed8;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.selected-group-card strong {
-  color: #1e293b;
-  font-size: 14px;
-}
-
-.selected-group-card small {
-  color: #475569;
-  font-size: 14px;
-  overflow-wrap: anywhere;
-}
-
-.selected-group-card .status-badge {
-  justify-self: start;
-}
-
 .access-context {
   display: grid;
   gap: 4px;
@@ -282,6 +251,14 @@
   grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto;
   gap: 8px;
   margin-bottom: 12px;
+}
+
+.group-panel .access-form {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.group-panel .access-form > button {
+  justify-self: end;
 }
 
 .access-form.compact {
@@ -745,6 +722,29 @@
   gap: 8px;
 }
 
+.group-list-filter {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.group-list-filter button {
+  padding: 7px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
+}
+
+.group-list-filter button.active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 700;
+}
+
 .access-list-row,
 .entity-row,
 .key-row {
@@ -902,6 +902,56 @@
   display: flex;
   gap: 8px;
   margin-top: 10px;
+}
+
+.group-deletion-impact {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #f59e0b;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #78350f;
+  font-size: 13px;
+}
+
+.group-deletion-impact.blocked {
+  border-color: #ef4444;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.group-deletion-impact p {
+  margin: 6px 0;
+}
+
+.group-deletion-impact ul {
+  max-height: 140px;
+  margin: 8px 0;
+  padding-left: 18px;
+  overflow: auto;
+}
+
+.group-deletion-impact li small {
+  margin-left: 6px;
+  opacity: 0.75;
+}
+
+.group-recovery-guide {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #38bdf8;
+  border-radius: 8px;
+  background: #f0f9ff;
+  color: #0c4a6e;
+  font-size: 13px;
+}
+
+.group-recovery-guide p {
+  margin: 6px 0;
+}
+
+.group-recovery-guide .access-row-actions {
+  flex-wrap: wrap;
 }
 
 .access-empty {

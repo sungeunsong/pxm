@@ -223,6 +223,21 @@ export class CredentialsService implements OnModuleInit {
     return sharedCredentials.length;
   }
 
+  async getGroupUsageEvidence(groupId: string): Promise<{ reference_count: number; history_count: number }> {
+    const [referenceCount, historyCount] = await Promise.all([
+      this.credentials.countDocuments({ $or: [{ group_id: groupId }, { shared_group_ids: groupId }] }),
+      this.auditLogs.countDocuments({
+        $or: [
+          { group_id: groupId },
+          { usage_group_id: groupId },
+          { 'details.shared_group_ids': groupId },
+          { 'details.revoked_group_id': groupId },
+        ],
+      }),
+    ]);
+    return { reference_count: referenceCount, history_count: historyCount };
+  }
+
   async resolveSecret(
     id: string,
     usage: {

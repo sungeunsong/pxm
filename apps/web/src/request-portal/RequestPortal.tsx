@@ -16,6 +16,7 @@ import { InputPresetManager } from '../input-presets/InputPresetManager';
 import { authzApi, type PxmGroup } from '../api/authz';
 import type { SessionUser } from '../api/session';
 import './RequestPortal.css';
+import { WorkflowAttribution } from '../flow-designer/WorkflowAttribution';
 import { useFeedback } from '../components/feedback/feedback-context';
 import { errorMessage } from '../lib/error-message';
 
@@ -517,6 +518,8 @@ export const RequestPortal: React.FC<{
                   <DetailItem label="Service Nodes" value={String(selectedSummary.serviceNodes)} />
                 </div>
               )}
+
+              {!isRequester && <WorkflowAttribution workflowId={selectedTemplate.id} updatedAt={selectedTemplate.updated_at} />}
 
               {!isRequester && <div className="detail-section workflow-group-section">
                 <h4>관리 그룹</h4>

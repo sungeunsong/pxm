@@ -163,6 +163,7 @@ export type ApiKeyResponseDto = {
   last_used_at?: string | null;
   created_by?: string | null;
   disabled_at?: string | null;
+  disabled_reason?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -170,3 +171,13 @@ export type ApiKeyResponseDto = {
 export type CreatedApiKeyResponseDto = ApiKeyResponseDto & {
   api_key: string;
 };
+
+export class ApiKeyUsageQueryDto {
+  @IsOptional() @IsString() @MaxLength(128) groupId?: string;
+  @IsOptional() @IsString() @MaxLength(128) keyId?: string;
+  @IsOptional() @IsString() @MaxLength(128) ownerId?: string;
+  @IsOptional() @IsISO8601() from?: string;
+  @IsOptional() @IsISO8601() to?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100000) page: number = 1;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) pageSize: number = 20;
+}

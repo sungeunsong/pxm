@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateInstanceDto } from './dto/create-instance.dto';
 import { createHash, randomUUID } from 'crypto';
 import { OutboxRepositoryPort, WorkflowHistoryActor, WorkflowInstanceAccess, WorkflowInstanceRepositoryPort, WorkflowRepositoryPort } from '../db/ports/db.ports';
@@ -235,7 +235,7 @@ export class InstancesService {
   }
 
   async terminateInstance(id: string, actor?: WorkflowHistoryActor, idempotencyKey?: string) {
-    await this.ensureReadableInstance(id, actor);
+    await this.ensureTerminableInstance(id, actor);
     const key = normalizeIdempotencyKey(idempotencyKey);
     if (key) {
       const hashes = instanceCommandHashes(actor, id, 'terminate', key, { command: 'terminate' });
@@ -703,6 +703,26 @@ export class InstancesService {
     await this.getReadableInstance(id, actor);
   }
 
+  private async ensureTerminableInstance(id: string, actor?: WorkflowHistoryActor): Promise<void> {
+    if (!actor?.api_key_id) {
+      await this.ensureReadableInstance(id, actor);
+      return;
+    }
+    if (!(actor.scopes || []).includes('workflow:execute')) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: 'MISSING_SCOPE',
+        message: 'workflow:execute scope is required',
+        required_scope: 'workflow:execute',
+      });
+    }
+    const instance = await this.instanceRepo.getInstance(id);
+    if (!instance || !canApiKeyTerminateInstance(instance, actor)) {
+      throw new NotFoundException('Instance not found');
+    }
+  }
+
   private async getReadableInstance(id: string, actor?: WorkflowHistoryActor): Promise<any> {
     const instance = await this.getReadableInstanceOrNull(id, actor);
     if (!instance) {
@@ -799,6 +819,23 @@ function canReadInstance(instance: any, actor?: WorkflowHistoryActor): boolean {
   }
 
   return false;
+}
+
+function canApiKeyTerminateInstance(instance: any, actor: WorkflowHistoryActor): boolean {
+  const access = accessFromInstance(instance);
+  const definitionId = String(instance.process_definition_id || instance.definition_id || instance.template_id || '');
+  const instanceId = String(instance.id || instance._id || '');
+  const groupAllowed = !access.group_id || Boolean(actor.group_ids?.includes(access.group_id));
+  const targetAllowed = actor.allowed_instance_ids.includes(instanceId) || actor.allowed_workflow_ids.includes(definitionId);
+  const starter = access.caller;
+  const sameOwner = Boolean(
+    starter
+      && starter.type === actor.actor_type
+      && starter.id
+      && actor.actor_id
+      && starter.id === actor.actor_id,
+  );
+  return groupAllowed && targetAllowed && sameOwner;
 }
 
 function collectCommandNodes(context: any, trace: any[]): Map<string, any> {

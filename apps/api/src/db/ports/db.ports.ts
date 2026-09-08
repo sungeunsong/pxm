@@ -174,6 +174,11 @@ export abstract class WorkflowInstanceRepositoryPort {
   abstract executeInstanceMutation(input: WorkflowInstanceMutation): Promise<void>;
   abstract createInstance(id: string, definitionId: string, status: string, ctx: any, access?: WorkflowInstanceAccess): Promise<void>;
   abstract listInstances(actor?: WorkflowHistoryActor): Promise<any[]>;
+  abstract getGroupDeletionRuntimeImpact(definitionIds: string[]): Promise<{
+    active_instance_count: number;
+    active_instance_ids: string[];
+    open_approval_count: number;
+  }>;
   abstract getInstanceStats(actor?: WorkflowHistoryActor): Promise<WorkflowInstanceStats>;
   abstract listChildInstances(parentInstanceId: string): Promise<any[]>;
   abstract getInstance(id: string): Promise<any>;
@@ -578,6 +583,8 @@ export type PxmGroup = {
   created_by?: string | null;
   updated_by?: string | null;
   deleted_at?: string | null;
+  restored_at?: string | null;
+  recovery_review_required?: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -662,8 +669,19 @@ export type PxmApiKey = {
   last_used_at?: string | null;
   created_by?: string | null;
   disabled_at?: string | null;
+  disabled_reason?: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type ApiKeyUsageQuery = {
+  groupId?: string;
+  keyId?: string;
+  ownerId?: string;
+  from?: string;
+  to?: string;
+  page: number;
+  pageSize: number;
 };
 
 export type PxmApiKeyUsageLog = {
@@ -679,6 +697,10 @@ export type PxmApiKeyUsageLog = {
   ip?: string | null;
   user_agent?: string | null;
   business_actor?: Record<string, any> | null;
+  status_code?: number | null;
+  duration_ms?: number | null;
+  completed_at?: string | null;
+  completion_state: 'pending' | 'completed' | 'aborted';
   created_at: string;
 };
 
@@ -781,8 +803,11 @@ export abstract class AuthzRepositoryPort {
   abstract upsertGroup(group: UpsertPxmGroup): Promise<PxmGroup>;
   abstract listGroups(includeDeleted?: boolean): Promise<PxmGroup[]>;
   abstract getGroup(id: string): Promise<PxmGroup | null>;
+  abstract listGroupWorkflowRecordIds(id: string): Promise<string[]>;
+  abstract hardDeleteGroup(id: string): Promise<boolean>;
   abstract softDeleteGroup(id: string, actor?: string | null): Promise<boolean>;
   abstract restoreGroup(id: string, actor?: string | null): Promise<boolean>;
+  abstract completeGroupRecoveryReview(id: string, actor?: string | null): Promise<boolean>;
 
   abstract upsertUser(user: UpsertPxmUser): Promise<PxmUser>;
   abstract listUsers(groupId?: string): Promise<PxmUser[]>;
@@ -818,6 +843,11 @@ export abstract class AuthzRepositoryPort {
   abstract disableApiKey(id: string, actor?: string | null): Promise<boolean>;
   abstract touchApiKey(id: string, usedAt: string): Promise<void>;
   abstract appendApiKeyUsageLog(log: AppendPxmApiKeyUsageLog): Promise<PxmApiKeyUsageLog>;
+  abstract completeApiKeyUsageLog(
+    id: string,
+    completion: { status_code: number | null; duration_ms: number; completed_at: string; completion_state: 'completed' | 'aborted' },
+  ): Promise<void>;
+  abstract listApiKeyUsage(query: ApiKeyUsageQuery): Promise<{ items: PxmApiKeyUsageLog[]; total: number }>;
   abstract countApiKeyUsageSince(apiKeyId: string, since: string): Promise<number>;
   abstract createSession(session: CreatePxmSession): Promise<PxmSession>;
   abstract findSessionByTokenHash(tokenHash: string): Promise<PxmSession | null>;

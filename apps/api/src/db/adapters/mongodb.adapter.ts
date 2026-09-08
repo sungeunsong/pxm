@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ClientSession, Db, ObjectId } from 'mongodb';
 import { MONGO_DB } from '../mongo.provider';
-import { WorkflowDefinitionMetadata, WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleJob, WorkflowScheduleRepositoryPort, WorkflowScheduleStatus, WorkflowHistoryActor, WorkflowInstanceAccess, WorkflowDefinitionVersion, WorkflowInputPreset, WorkflowInputPresetRepositoryPort, UpsertWorkflowInputPreset, AppendPxmApiKeyUsageLog, AuthzRepositoryPort, CreatePxmApiKey, CreatePxmSession, PxmApiKey, PxmApiKeyUsageLog, PxmGroup, PxmServiceAccount, PxmUser, PxmSession, PxmSessionSecurityPolicy, UpsertPxmGroup, UpsertPxmServiceAccount, UpsertPxmUser, UpsertPxmSessionSecurityPolicy, CompleteWorkflowTaskCommand, CompleteWorkflowTaskResult, ExternalApprovalClaim, ExternalApprovalDeliveryToken, ExternalApprovalOtp, ExternalApprovalTask, WorkflowTaskHistoryItem, WorkflowTaskHistoryPage, WorkflowTaskHistoryQuery, IdempotentWorkflowStart, IdempotentWorkflowStartResult, IdempotentInstanceCommand, IdempotentInstanceCommandResult, ExistingIdempotentInstanceCommandResult, WorkflowInstanceMutation } from '../ports/db.ports';
+import { ApiKeyUsageQuery, WorkflowDefinitionMetadata, WorkflowRepositoryPort, WorkflowInstanceRepositoryPort, WorkflowTaskRepositoryPort, OutboxRepositoryPort, EngineQueueRepositoryPort, WorkflowScheduleJob, WorkflowScheduleRepositoryPort, WorkflowScheduleStatus, WorkflowHistoryActor, WorkflowInstanceAccess, WorkflowDefinitionVersion, WorkflowInputPreset, WorkflowInputPresetRepositoryPort, UpsertWorkflowInputPreset, AppendPxmApiKeyUsageLog, AuthzRepositoryPort, CreatePxmApiKey, CreatePxmSession, PxmApiKey, PxmApiKeyUsageLog, PxmGroup, PxmServiceAccount, PxmUser, PxmSession, PxmSessionSecurityPolicy, UpsertPxmGroup, UpsertPxmServiceAccount, UpsertPxmUser, UpsertPxmSessionSecurityPolicy, CompleteWorkflowTaskCommand, CompleteWorkflowTaskResult, ExternalApprovalClaim, ExternalApprovalDeliveryToken, ExternalApprovalOtp, ExternalApprovalTask, WorkflowTaskHistoryItem, WorkflowTaskHistoryPage, WorkflowTaskHistoryQuery, IdempotentWorkflowStart, IdempotentWorkflowStartResult, IdempotentInstanceCommand, IdempotentInstanceCommandResult, ExistingIdempotentInstanceCommandResult, WorkflowInstanceMutation } from '../ports/db.ports';
 import {
   approvalChannels,
   primaryApprovalChannel,
@@ -862,6 +862,26 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
       });
     }
     return result;
+  }
+
+  async getGroupDeletionRuntimeImpact(definitionIds: string[]) {
+    if (definitionIds.length === 0) {
+      return { active_instance_count: 0, active_instance_ids: [], open_approval_count: 0 };
+    }
+    const activeFilter = {
+      process_definition_id: { $in: definitionIds },
+      state: { $nin: ['COMPLETED', 'FAILED', 'TERMINATED'] },
+    };
+    const activeInstanceIds = await this.db.collection<any>('v2_process_instances').distinct('_id', activeFilter);
+    const openApprovalCount = await this.db.collection<any>('v2_approval_requests').countDocuments({
+      instance_id: { $in: activeInstanceIds },
+      status: { $in: ['PENDING', 'IN_PROGRESS'] },
+    });
+    return {
+      active_instance_count: activeInstanceIds.length,
+      active_instance_ids: activeInstanceIds.slice(0, 20).map(String),
+      open_approval_count: openApprovalCount,
+    };
   }
 
   async getInstanceStats(actor?: WorkflowHistoryActor) {
@@ -2403,6 +2423,8 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
           created_by: group.actor || null,
           created_at: now,
           deleted_at: null,
+          restored_at: null,
+          recovery_review_required: false,
         },
       },
       { upsert: true },
@@ -2426,48 +2448,95 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
     return doc ? mapGroupDoc(doc) : null;
   }
 
+  async listGroupWorkflowRecordIds(id: string): Promise<string[]> {
+    await this.ensureAuthzIndexes();
+    const rows = await this.db.collection<any>('v2_process_definitions').find(
+      { $or: [{ group_id: id }, { 'metadata.group_id': id }, { 'group_deletion.group_id': id }] },
+      { projection: { _id: 1 } },
+    ).toArray();
+    return rows.map((row) => String(row._id));
+  }
+
+  async hardDeleteGroup(id: string): Promise<boolean> {
+    await this.ensureAuthzIndexes();
+    const result = await this.db.collection<any>('pxm_groups').deleteOne({ _id: id, status: 'active' });
+    return result.deletedCount > 0;
+  }
+
   async softDeleteGroup(id: string, actor?: string | null): Promise<boolean> {
     await this.ensureAuthzIndexes();
     const now = new Date().toISOString();
-    const result = await this.db.collection<any>('pxm_groups').updateOne(
-      { _id: id, status: { $ne: 'deleted' } },
-      {
-        $set: {
-          status: 'deleted',
-          deleted_at: now,
-          updated_by: actor || null,
-          updated_at: now,
-        },
-      },
-    );
-    if (result.matchedCount > 0) {
-      await this.db.collection<any>('pxm_api_keys').updateMany(
-        { group_id: id, status: 'active' },
-        {
-          $set: {
-            status: 'disabled',
-            disabled_at: now,
-            updated_at: now,
+    const session = this.db.client.startSession();
+    let deleted = false;
+    try {
+      await session.withTransaction(async () => {
+        const result = await this.db.collection<any>('pxm_groups').updateOne(
+          { _id: id, status: { $ne: 'deleted' } },
+          { $set: { status: 'deleted', deleted_at: now, recovery_review_required: false, updated_by: actor || null, updated_at: now } },
+          { session },
+        );
+        deleted = result.matchedCount > 0;
+        if (!deleted) return;
+        await this.db.collection<any>('v2_process_definitions').updateMany(
+          { $or: [{ group_id: id }, { 'metadata.group_id': id }], status: { $ne: 'DELETED' } },
+          {
+            $set: {
+              status: 'DELETED', lifecycle_status: 'DISABLED', 'metadata.lifecycle_status': 'DISABLED',
+              group_deletion: { group_id: id, deleted_at: now, deleted_by: actor || null },
+              updated_at: now, updated_by: actor || null,
+            },
           },
-        },
-      );
+          { session },
+        );
+        await this.db.collection<any>('pxm_api_keys').updateMany(
+          { group_id: id, status: 'active' },
+          { $set: { status: 'disabled', disabled_at: now, disabled_reason: `group_deleted:${id}`, updated_at: now } },
+          { session },
+        );
+      });
+      return deleted;
+    } finally {
+      await session.endSession();
     }
-    return result.matchedCount > 0;
   }
 
   async restoreGroup(id: string, actor?: string | null): Promise<boolean> {
     await this.ensureAuthzIndexes();
     const now = new Date().toISOString();
+    const session = this.db.client.startSession();
+    let restored = false;
+    try {
+      await session.withTransaction(async () => {
+        const result = await this.db.collection<any>('pxm_groups').updateOne(
+          { _id: id, status: 'deleted' },
+          { $set: { status: 'active', deleted_at: null, restored_at: now, recovery_review_required: true, updated_by: actor || null, updated_at: now } },
+          { session },
+        );
+        restored = result.matchedCount > 0;
+        if (!restored) return;
+        await this.db.collection<any>('v2_process_definitions').updateMany(
+          { status: 'DELETED', 'group_deletion.group_id': id },
+          {
+            $set: {
+              status: 'ACTIVE', lifecycle_status: 'DISABLED', 'metadata.lifecycle_status': 'DISABLED',
+              'group_deletion.restored_at': now, 'group_deletion.restored_by': actor || null,
+              updated_at: now, updated_by: actor || null,
+            },
+          },
+          { session },
+        );
+      });
+      return restored;
+    } finally {
+      await session.endSession();
+    }
+  }
+
+  async completeGroupRecoveryReview(id: string, actor?: string | null): Promise<boolean> {
+    await this.ensureAuthzIndexes();
     const result = await this.db.collection<any>('pxm_groups').updateOne(
-      { _id: id, status: 'deleted' },
-      {
-        $set: {
-          status: 'active',
-          deleted_at: null,
-          updated_by: actor || null,
-          updated_at: now,
-        },
-      },
+      { _id: id, status: 'active' },
+      { $set: { recovery_review_required: false, updated_by: actor || null, updated_at: new Date().toISOString() } },
     );
     return result.matchedCount > 0;
   }
@@ -2810,6 +2879,7 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
       last_used_at: null,
       created_by: key.actor || null,
       disabled_at: null,
+      disabled_reason: null,
       created_at: now,
       updated_at: now,
     };
@@ -2845,6 +2915,7 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
         $set: {
           status: 'disabled',
           disabled_at: now,
+          disabled_reason: 'manual',
           updated_by: actor || null,
           updated_at: now,
         },
@@ -2864,10 +2935,40 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
     const doc = {
       _id: log.id || crypto.randomUUID(),
       ...log,
+      status_code: log.status_code ?? null,
+      duration_ms: log.duration_ms ?? null,
+      completed_at: log.completed_at ?? null,
+      completion_state: log.completion_state || 'pending',
       created_at: now,
     };
     await this.db.collection<any>('pxm_api_key_usage_logs').insertOne(doc);
     return mapApiKeyUsageLogDoc(doc);
+  }
+
+  async completeApiKeyUsageLog(
+    id: string,
+    completion: { status_code: number | null; duration_ms: number; completed_at: string; completion_state: 'completed' | 'aborted' },
+  ): Promise<void> {
+    await this.ensureAuthzIndexes();
+    await this.db.collection<any>('pxm_api_key_usage_logs').updateOne(
+      { _id: id, completion_state: 'pending' },
+      { $set: completion },
+    );
+  }
+
+  async listApiKeyUsage(query: ApiKeyUsageQuery): Promise<{ items: PxmApiKeyUsageLog[]; total: number }> {
+    await this.ensureAuthzIndexes();
+    const filter: Record<string, any> = {};
+    if (query.groupId) filter.group_id = query.groupId;
+    if (query.keyId) filter.api_key_id = query.keyId;
+    if (query.ownerId) filter.owner_id = query.ownerId;
+    if (query.from || query.to) filter.created_at = { ...(query.from ? { $gte: query.from } : {}), ...(query.to ? { $lte: query.to } : {}) };
+    const collection = this.db.collection<any>('pxm_api_key_usage_logs');
+    const [rows, total] = await Promise.all([
+      collection.find(filter).sort({ created_at: -1, _id: -1 }).skip((query.page - 1) * query.pageSize).limit(query.pageSize).toArray(),
+      collection.countDocuments(filter),
+    ]);
+    return { items: rows.map(mapApiKeyUsageLogDoc), total };
   }
 
   async countApiKeyUsageSince(apiKeyId: string, since: string): Promise<number> {
@@ -2942,6 +3043,8 @@ function mapGroupDoc(doc: any): PxmGroup {
     created_by: doc.created_by || null,
     updated_by: doc.updated_by || null,
     deleted_at: doc.deleted_at || null,
+    restored_at: doc.restored_at || null,
+    recovery_review_required: doc.recovery_review_required === true,
     created_at: doc.created_at,
     updated_at: doc.updated_at,
   };
@@ -3062,6 +3165,7 @@ function mapApiKeyDoc(doc: any): PxmApiKey {
     last_used_at: doc.last_used_at || null,
     created_by: doc.created_by || null,
     disabled_at: doc.disabled_at || null,
+    disabled_reason: doc.disabled_reason || null,
     created_at: doc.created_at,
     updated_at: doc.updated_at,
   };
@@ -3081,6 +3185,10 @@ function mapApiKeyUsageLogDoc(doc: any): PxmApiKeyUsageLog {
     ip: doc.ip || null,
     user_agent: doc.user_agent || null,
     business_actor: doc.business_actor || null,
+    status_code: Number.isInteger(doc.status_code) ? doc.status_code : null,
+    duration_ms: Number.isInteger(doc.duration_ms) ? doc.duration_ms : null,
+    completed_at: doc.completed_at || null,
+    completion_state: doc.completion_state || 'pending',
     created_at: doc.created_at,
   };
 }

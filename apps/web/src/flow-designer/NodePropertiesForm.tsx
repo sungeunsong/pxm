@@ -1514,7 +1514,7 @@ function renderGatewayEdgeRules(
                     helperText={
                       isDefault
                         ? 'Default path는 조건식 없이 사용됩니다.'
-                        : '형식: 필드 연산자 값 (==, !=, >=, <=, >, <). 신청 입력(formData)의 최상위 필드만 참조합니다. 공백이 있는 문자열은 따옴표로 감쌉니다. 예: amount >= 1000, status == "approval pending"'
+                        : '형식: 필드 연산자 값 (==, !=, >=, <=, >, <). 단일 필드는 신청 입력을 참조합니다. 중첩 입력: formData.applicant.level, 노드 결과: data.outputs.risk.score. risk.score 같은 축약 경로는 사용할 수 없습니다. 공백이 있는 문자열은 따옴표로 감쌉니다.'
                     }
                     fullWidth
                   />

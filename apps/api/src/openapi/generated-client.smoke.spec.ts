@@ -30,6 +30,12 @@ describe('generated OpenAPI client smoke flow', () => {
       findAll: jest.fn().mockResolvedValue([]),
       findOne: jest.fn().mockResolvedValue({ id: 'instance-1', state: 'RUNNING' }),
       ensureReadableInstance: jest.fn().mockResolvedValue(undefined),
+      terminateInstance: jest.fn().mockResolvedValue({
+        success: true,
+        instance_id: 'instance-1',
+        terminated_instances: ['instance-1'],
+        idempotent_replay: false,
+      }),
     };
     const outbox = {
       fetchTrace: jest.fn().mockResolvedValue([{ id: 1, event_type: 'STARTED', created_at: '2026-08-27T00:00:00.000Z' }]),
@@ -71,6 +77,12 @@ describe('generated OpenAPI client smoke flow', () => {
       });
       expect(trace.error).toBeUndefined();
       expect(trace.data?.[0]?.event_type).toBe('STARTED');
+
+      const terminated = await client.POST('/api/v1/instances/{id}/terminate', {
+        params: { path: { id: started.data!.instance_id }, header: { 'Idempotency-Key': 'generated-client-terminate' } },
+      });
+      expect(terminated.error).toBeUndefined();
+      expect(terminated.data?.terminated_instances).toEqual(['instance-1']);
     } finally {
       await app.close();
       if (previousBypass === undefined) delete process.env.AUTHZ_ALLOW_DEVELOPMENT_BYPASS;

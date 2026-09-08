@@ -5,9 +5,9 @@ import { OutboxService } from '../outbox/outbox.service';
 import { actorFromRequest, instanceAccessFromRequest } from './history-auth';
 import { InstancesService } from './instances.service';
 import { PUBLIC_API_VERSIONS } from '../public-api-version';
-import { ApiOkResponse, ApiOperation, ApiParam, ApiProduces, ApiTags } from '@nestjs/swagger';
+import { ApiConflictResponse, ApiHeader, ApiOkResponse, ApiOperation, ApiParam, ApiProduces, ApiTags } from '@nestjs/swagger';
 import { PublicApiController, PublicApiErrors } from '../openapi/public-api.decorators';
-import { InstanceDto, InstanceResultDto, InstanceStatsDto, TraceEventDto } from '../openapi/public-api.dto';
+import { InstanceDto, InstanceResultDto, InstanceStatsDto, TerminateInstanceResponseDto, TraceEventDto } from '../openapi/public-api.dto';
 
 type SseMessage = {
   id?: string;
@@ -105,6 +105,13 @@ export class InstancesController {
   }
 
   @Post('/instances/:id/terminate')
+  @Version(PUBLIC_API_VERSIONS)
+  @ApiOperation({ summary: '실행 종료', description: 'workflow:execute scope와 대상 워크플로우 권한이 필요하며, 같은 소유자의 API Key로 시작한 실행만 종료할 수 있습니다. Key를 재발급해도 소유자가 같으면 종료할 수 있습니다. 이미 최종 상태인 실행은 성공 응답과 빈 terminated_instances를 반환합니다.' })
+  @ApiParam({ name: 'id', description: '인스턴스 ID' })
+  @ApiHeader({ name: 'Idempotency-Key', required: false, description: '1~200자의 중복 처리 방지 키' })
+  @ApiOkResponse({ type: TerminateInstanceResponseDto })
+  @ApiConflictResponse({ description: '같은 Idempotency-Key가 다른 종료 요청에 사용됨' })
+  @PublicApiErrors()
   async terminate(@Param('id') id: string, @Headers('idempotency-key') idempotencyKey: string | undefined, @Req() req: Request, @Res({ passthrough: true }) res?: Response) {
     const result = await this.instances.terminateInstance(id, actorFromRequest(req), idempotencyKey);
     if (result.idempotent_replay) res?.setHeader('Idempotency-Replayed', 'true');

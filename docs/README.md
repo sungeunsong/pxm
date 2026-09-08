@@ -6,6 +6,7 @@
 |---|---|
 | [features.md](features.md) | **PXM이 지원하는 기능과 지원하지 않는 기능.** 기능 질문은 여기서 답한다 |
 | [roadmap.md](roadmap.md) | 남은 작업과 우선순위. 현재 전제도 여기에 있다 |
+| [demo-practice.md](demo-practice.md) | 반복 실습 준비, 계정, 기본·종합 결재 실습과 안전한 초기화 |
 | [demo-scenario.md](demo-scenario.md) | 시연 각본. 장면별 화면·설정·예상 질문과 사전 준비 체크리스트 |
 
 기능을 추가하거나 제거하면 `features.md`를 같은 커밋에서 갱신한다.

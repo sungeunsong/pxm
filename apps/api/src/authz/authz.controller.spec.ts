@@ -1,6 +1,38 @@
 import { ForbiddenException } from '@nestjs/common';
 import { AuthzController } from './authz.controller';
 
+describe('AuthzController group deletion policy', () => {
+  const adminRequest = {
+    workflowActor: {
+      actor_type: 'user', actor_id: 'admin-1', roles: ['admin'], scopes: [], workspace_ids: ['default'],
+      group_ids: [], group_roles: {}, owned_workflow_ids: [], allowed_workflow_ids: [],
+      allowed_instance_ids: [], api_key_id: null,
+    },
+  } as any;
+
+  it('records the actual deletion mode and preserves credential sharing configuration', async () => {
+    const result = { success: true, already_deleted: false, deletion_mode: 'recoverable', impact: { workflows: [] } };
+    const authzService = { deleteGroup: jest.fn().mockResolvedValue(result) };
+    const audit = { append: jest.fn().mockResolvedValue(undefined) };
+    const credentials = { revokeGroupShares: jest.fn() };
+    const controller = new AuthzController(authzService as any, audit as any, credentials as any);
+
+    await expect(controller.deleteGroup('group-a', undefined, adminRequest)).resolves.toBe(result);
+    expect(credentials.revokeGroupShares).not.toHaveBeenCalled();
+    expect(audit.append).toHaveBeenCalledWith(expect.objectContaining({ action: 'group.deleted' }));
+  });
+
+  it('records permanent deletion separately', async () => {
+    const result = { success: true, already_deleted: false, deletion_mode: 'permanent', impact: { workflows: [] } };
+    const authzService = { deleteGroup: jest.fn().mockResolvedValue(result) };
+    const audit = { append: jest.fn().mockResolvedValue(undefined) };
+    const controller = new AuthzController(authzService as any, audit as any, {} as any);
+
+    await controller.deleteGroup('group-a', undefined, adminRequest);
+    expect(audit.append).toHaveBeenCalledWith(expect.objectContaining({ action: 'group.permanently_deleted' }));
+  });
+});
+
 describe('AuthzController group membership management', () => {
   const managerRequest = {
     workflowActor: {
@@ -174,5 +206,49 @@ describe('AuthzController external principal mapping management', () => {
         after: expect.objectContaining({ status: 'disabled' }),
       },
     }));
+  });
+});
+
+describe('AuthzController API key usage history', () => {
+  const managerRequest = {
+    workflowActor: {
+      actor_type: 'user', actor_id: 'manager-1', roles: ['group_manager'], scopes: [], workspace_ids: ['default'],
+      group_ids: ['group-a', 'group-b'], group_roles: { 'group-a': 'group_manager', 'group-b': 'user' },
+      owned_workflow_ids: [], allowed_workflow_ids: [], allowed_instance_ids: [], api_key_id: null,
+    },
+  } as any;
+
+  it('limits a group manager usage query to a group they manage', async () => {
+    const result = { items: [], total: 0, page: 1, pageSize: 20 };
+    const authzService = { listApiKeyUsage: jest.fn().mockResolvedValue(result) };
+    const controller = new AuthzController(authzService as any, {} as any, {} as any);
+
+    await expect(controller.apiKeyUsage({ groupId: 'group-a', page: 1, pageSize: 20 }, managerRequest))
+      .resolves.toBe(result);
+    expect(authzService.listApiKeyUsage).toHaveBeenCalledWith(expect.objectContaining({ groupId: 'group-a' }));
+  });
+
+  it('rejects a usage query for a group the actor does not manage', async () => {
+    const authzService = { listApiKeyUsage: jest.fn() };
+    const controller = new AuthzController(authzService as any, {} as any, {} as any);
+
+    await expect(controller.apiKeyUsage({ groupId: 'group-b', page: 1, pageSize: 20 }, managerRequest))
+      .rejects.toBeInstanceOf(ForbiddenException);
+    expect(authzService.listApiKeyUsage).not.toHaveBeenCalled();
+  });
+
+  it('rejects an ordinary user usage query', async () => {
+    const userRequest = {
+      workflowActor: {
+        ...managerRequest.workflowActor,
+        actor_id: 'user-1', roles: ['user'], group_roles: { 'group-a': 'user' },
+      },
+    } as any;
+    const authzService = { listApiKeyUsage: jest.fn() };
+    const controller = new AuthzController(authzService as any, {} as any, {} as any);
+
+    await expect(controller.apiKeyUsage({ groupId: 'group-a', page: 1, pageSize: 20 }, userRequest))
+      .rejects.toBeInstanceOf(ForbiddenException);
+    expect(authzService.listApiKeyUsage).not.toHaveBeenCalled();
   });
 });
