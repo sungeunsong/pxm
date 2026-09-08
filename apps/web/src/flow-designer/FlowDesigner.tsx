@@ -1,6 +1,5 @@
 import React, { useMemo, useState, useRef } from 'react';
-import type { Node } from 'reactflow';
-import type { Edge } from 'reactflow';
+import type { Edge, Node, XYPosition } from 'reactflow';
 import { Braces, CheckSquare, CircleCheck, Clipboard, ClipboardPaste, Clock, Diamond, Inbox, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Play, Plus, Search, Star, Terminal, Workflow, X } from 'lucide-react';
 import { Button } from '../components/Button';
 import { Header } from '../components/Header';
@@ -311,6 +310,16 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
     );
   }, [activeDesignerTabId]);
 
+  const storeWorkflowClipboard = React.useCallback((selectedNodes: Node<CustomNodeData>[], selectedEdges: Edge[]) => {
+    setWorkflowClipboard({
+      sourceTabId: activeDesignerTabId,
+      sourceTemplateName: currentTemplateName || 'Untitled Workflow',
+      copiedAt: new Date().toISOString(),
+      nodes: selectedNodes.map(cloneNodeForClipboard),
+      edges: selectedEdges.map(cloneEdgeForClipboard),
+    });
+  }, [activeDesignerTabId, currentTemplateName]);
+
   const handleCopySelectedSubflow = React.useCallback(() => {
     const nodes = (flowCanvasRef.current?.getNodes() || canvasNodes) as Node<CustomNodeData>[];
     const edges = flowCanvasRef.current?.getEdges() || canvasEdges;
@@ -322,16 +331,10 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
 
     const selectedIds = new Set(selectedNodes.map((node) => node.id));
     const selectedEdges = edges.filter((edge) => selectedIds.has(edge.source) && selectedIds.has(edge.target));
-    setWorkflowClipboard({
-      sourceTabId: activeDesignerTabId,
-      sourceTemplateName: currentTemplateName || 'Untitled Workflow',
-      copiedAt: new Date().toISOString(),
-      nodes: selectedNodes.map(cloneNodeForClipboard),
-      edges: selectedEdges.map(cloneEdgeForClipboard),
-    });
-  }, [activeDesignerTabId, canvasEdges, canvasNodes, currentTemplateName, selectedNode, toast]);
+    storeWorkflowClipboard(selectedNodes, selectedEdges);
+  }, [canvasEdges, canvasNodes, selectedNode, storeWorkflowClipboard, toast]);
 
-  const handlePasteSubflow = React.useCallback(() => {
+  const handlePasteSubflow = React.useCallback((position?: XYPosition) => {
     if (!workflowClipboard) {
       return;
     }
@@ -341,7 +344,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
       ...currentNodes.map((node) => node.id),
       ...currentEdges.map((edge) => edge.id),
     ]);
-    const pasted = remapClipboardGraph(workflowClipboard, existingIds);
+    const pasted = remapClipboardGraph(workflowClipboard, existingIds, position);
     flowCanvasRef.current?.appendNodesAndEdges(pasted.nodes, pasted.edges);
     setCanvasNodes((nodes) => nodes.concat(pasted.nodes));
     setCanvasEdges((edges) => edges.concat(pasted.edges));
@@ -842,12 +845,13 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
     flowCanvasRef.current?.updateEdgeData(edgeId, data);
   };
 
-  const handleSelectedNodeTest = async () => {
-    if (!selectedNode || selectedNode.data.nodeType !== 'service') {
+  const handleSelectedNodeTest = async (nodeToTest: Node<CustomNodeData> | null = selectedNode) => {
+    if (!nodeToTest || nodeToTest.data.nodeType !== 'service') {
       return;
     }
 
-    const pluginId = selectedNode.data.plugin_id || CORE_PLUGIN_ID;
+    const pluginId = nodeToTest.data.plugin_id || CORE_PLUGIN_ID;
+    handleNodeSelect(nodeToTest);
     setIsNodeTestRunning(true);
     setNodeTestResult(null);
     setNodeTestError(null);
@@ -855,8 +859,8 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
     try {
       const result = await pluginsApi.test({
         plugin_id: pluginId,
-        node_id: selectedNode.id,
-        config: selectedNode.data as unknown as Record<string, unknown>,
+        node_id: nodeToTest.id,
+        config: nodeToTest.data as unknown as Record<string, unknown>,
         input: {},
       });
       setNodeTestResult(result);
@@ -1052,7 +1056,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
           <button
             type="button"
             className="workflow-tab-tool"
-            onClick={handlePasteSubflow}
+            onClick={() => handlePasteSubflow()}
             disabled={!workflowClipboard}
             title={
               workflowClipboard
@@ -1222,6 +1226,10 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
             onNodeSelect={handleNodeSelect}
             onNodesChange={handleCanvasNodesChange}
             onEdgesChange={handleCanvasEdgesChange}
+            canPaste={Boolean(workflowClipboard)}
+            onCopyGraph={storeWorkflowClipboard}
+            onPasteAt={handlePasteSubflow}
+            onTestNode={(node) => { void handleSelectedNodeTest(node); }}
             readOnly={Boolean(traceInstanceId)}
           />
         </main>
@@ -1574,7 +1582,7 @@ function cloneEdgeForClipboard(edge: Edge): Edge {
   };
 }
 
-function remapClipboardGraph(clipboard: WorkflowClipboard, existingIds: Set<string>) {
+function remapClipboardGraph(clipboard: WorkflowClipboard, existingIds: Set<string>, anchor?: XYPosition) {
   const idMap = new Map<string, string>();
   const timestamp = Date.now();
   const nextId = (prefix: string) => {
@@ -1587,6 +1595,8 @@ function remapClipboardGraph(clipboard: WorkflowClipboard, existingIds: Set<stri
     return candidate;
   };
 
+  const minX = Math.min(...clipboard.nodes.map((node) => node.position.x));
+  const minY = Math.min(...clipboard.nodes.map((node) => node.position.y));
   const nodes = clipboard.nodes.map((node, index) => {
     const nodeId = nextId(`copy-${node.id}`);
     idMap.set(node.id, nodeId);
@@ -1594,8 +1604,8 @@ function remapClipboardGraph(clipboard: WorkflowClipboard, existingIds: Set<stri
       ...cloneNodeForClipboard(node),
       id: nodeId,
       position: {
-        x: node.position.x + 56,
-        y: node.position.y + 56 + index * 4,
+        x: anchor ? anchor.x + node.position.x - minX : node.position.x + 56,
+        y: anchor ? anchor.y + node.position.y - minY : node.position.y + 56 + index * 4,
       },
       selected: index === 0,
       data: {

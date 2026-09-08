@@ -140,9 +140,102 @@ test('디자이너 더보기 메뉴가 탭과 캔버스 위에서 모두 클릭 
   await ui.context.close();
 });
 
+test('캔버스 컨텍스트 메뉴로 마우스 위치에서 노드를 편집한다', async ({ browser }) => {
+  const ui = await loginPage(browser, 'admin', process.env.PXM_DEMO_PASSWORD!, 'designer');
+  const pane = ui.page.locator('.react-flow__pane');
+  const wrapper = ui.page.locator('.flow-canvas-wrapper');
+  const paneBox = await pane.boundingBox();
+  expect(paneBox).not.toBeNull();
+  const target = { x: Math.round(paneBox!.width * 0.72), y: Math.round(paneBox!.height * 0.2) };
+
+  await pane.click({ button: 'right', position: target });
+  let menu = ui.page.getByTestId('canvas-context-menu');
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole('menuitem', { name: '붙여넣기 Ctrl+V', exact: true })).toBeDisabled();
+  await menu.getByRole('menuitem', { name: '노드 추가…', exact: true }).click();
+  await expect(menu).toHaveAttribute('aria-label', '기본 노드 추가');
+  await menu.getByRole('menuitem', { name: 'Timer', exact: true }).click();
+
+  const timerNodes = wrapper.locator('.react-flow__node').filter({ hasText: 'Timer' });
+  await expect(timerNodes).toHaveCount(1);
+  const timer = timerNodes.first();
+  const timerBox = await timer.boundingBox();
+  expect(timerBox).not.toBeNull();
+  expect(Math.abs(timerBox!.x - (paneBox!.x + target.x))).toBeLessThan(12);
+  expect(Math.abs(timerBox!.y - (paneBox!.y + target.y))).toBeLessThan(12);
+
+  await timer.click({ button: 'right' });
+  menu = ui.page.getByTestId('canvas-context-menu');
+  await expect(menu.getByRole('menuitem', { name: '속성 열기', exact: true })).toBeVisible();
+  await expect(menu.getByRole('menuitem', { name: '복사 Ctrl+C', exact: true })).toBeVisible();
+  await expect(menu.getByRole('menuitem', { name: '복제', exact: true })).toBeVisible();
+  await expect(menu.getByRole('menuitem', { name: '삭제 Delete', exact: true })).toBeVisible();
+  await menu.getByRole('menuitem', { name: '복제', exact: true }).click();
+  await expect(timerNodes).toHaveCount(2);
+
+  const copiedTimer = timerNodes.filter({ hasText: 'Timer copy' });
+  await copiedTimer.focus();
+  await ui.page.keyboard.press('Shift+F10');
+  await expect(ui.page.getByTestId('canvas-context-menu')).toBeVisible();
+  await ui.page.keyboard.press('Escape');
+  await expect(ui.page.getByTestId('canvas-context-menu')).toBeHidden();
+
+  await copiedTimer.click({ button: 'right', modifiers: ['Shift'] });
+  await expect(ui.page.getByTestId('canvas-context-menu')).toBeHidden();
+
+  await copiedTimer.click({ button: 'right' });
+  await ui.page.getByTestId('canvas-context-menu').getByRole('menuitem', { name: '삭제 Delete', exact: true }).click();
+  const dialog = ui.page.getByRole('dialog', { name: '이 노드를 삭제할까요?' });
+  await expect(dialog).toContainText('연결된 엣지는 없습니다.');
+  await dialog.getByRole('button', { name: '삭제', exact: true }).click();
+  await expect(timerNodes).toHaveCount(1);
+
+  await pane.click({ button: 'right', position: { x: paneBox!.width - 200, y: 50 } });
+  const edgeMenuBox = await ui.page.getByTestId('canvas-context-menu').boundingBox();
+  const wrapperBox = await wrapper.boundingBox();
+  expect(edgeMenuBox).not.toBeNull();
+  expect(wrapperBox).not.toBeNull();
+  expect(edgeMenuBox!.x).toBeGreaterThanOrEqual(wrapperBox!.x);
+  expect(edgeMenuBox!.y).toBeGreaterThanOrEqual(wrapperBox!.y);
+  expect(edgeMenuBox!.x + edgeMenuBox!.width).toBeLessThanOrEqual(wrapperBox!.x + wrapperBox!.width);
+  expect(edgeMenuBox!.y + edgeMenuBox!.height).toBeLessThanOrEqual(wrapperBox!.y + wrapperBox!.height);
+  await ui.context.close();
+});
+
+test('분기 엣지 컨텍스트 메뉴에서 설정과 삭제 동작을 구분한다', async ({ browser }) => {
+  const ui = await loginPage(browser, 'admin', process.env.PXM_DEMO_PASSWORD!, 'designer');
+  await ui.page.getByRole('button', { name: '더 보기' }).click();
+  await ui.page.getByRole('menuitem', { name: '불러오기' }).click();
+  await ui.page.locator('.template-info').filter({ hasText: '실습 2 · 협력사 접근 권한 신청' }).click();
+
+  await dispatchContextMenu(ui.page.locator('[data-testid="rf__edge-decision-provision"]'));
+  const gatewayMenu = ui.page.getByTestId('canvas-context-menu');
+  await expect(gatewayMenu.getByRole('menuitem', { name: '분기 설정 열기' })).toBeVisible();
+  await expect(gatewayMenu.getByRole('menuitem', { name: '연결 삭제' })).toBeVisible();
+  await ui.page.keyboard.press('Escape');
+
+  await dispatchContextMenu(ui.page.locator('[data-testid="rf__edge-internal-external"]'));
+  const approvalMenu = ui.page.getByTestId('canvas-context-menu');
+  await expect(approvalMenu.getByRole('menuitem', { name: '결과 경로 확인' })).toBeVisible();
+  await expect(approvalMenu.getByRole('menuitem', { name: '연결 삭제' })).toBeVisible();
+  await ui.context.close();
+});
+
 function rectanglesOverlap(
   first: { left: number; right: number; top: number; bottom: number },
   second: { left: number; right: number; top: number; bottom: number },
 ) {
   return first.left < second.right && first.right > second.left && first.top < second.bottom && first.bottom > second.top;
+}
+
+async function dispatchContextMenu(locator: import('@playwright/test').Locator) {
+  const box = await locator.boundingBox();
+  expect(box).not.toBeNull();
+  await locator.dispatchEvent('contextmenu', {
+    bubbles: true,
+    cancelable: true,
+    button: 2,
+    clientX: box!.x + box!.width / 2,
+    clientY: box!.y + box!.height / 2,
+  });
 }

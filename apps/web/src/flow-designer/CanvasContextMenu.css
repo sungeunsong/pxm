@@ -1,0 +1,78 @@
+.canvas-context-menu {
+  position: fixed;
+  z-index: var(--z-dropdown);
+  width: 236px;
+  padding: 5px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-xl);
+}
+
+.canvas-context-menu-title {
+  padding: 6px 9px 5px;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.canvas-context-menu button {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.canvas-context-menu button:hover,
+.canvas-context-menu button:focus-visible {
+  outline: 0;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.canvas-context-menu button:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+.canvas-context-menu button:disabled:hover {
+  background: transparent;
+}
+
+.canvas-context-menu button.danger {
+  color: var(--color-error);
+}
+
+.canvas-context-menu-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.canvas-context-menu-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-context-menu-shortcut {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+.canvas-context-menu-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border-subtle);
+}
