@@ -110,6 +110,36 @@ test('분기 업무 라벨과 승인 결과를 엣지 중앙에서 구분한다'
   await ui.context.close();
 });
 
+test('디자이너 더보기 메뉴가 탭과 캔버스 위에서 모두 클릭 가능하다', async ({ browser }) => {
+  const ui = await loginPage(browser, 'admin', process.env.PXM_DEMO_PASSWORD!, 'designer');
+  await ui.page.getByRole('button', { name: '더 보기' }).click();
+
+  const menu = ui.page.locator('.designer-overflow-menu');
+  const tabBar = ui.page.locator('.workflow-tab-bar');
+  await expect(menu).toBeVisible();
+  const menuBox = await menu.boundingBox();
+  const tabBox = await tabBar.boundingBox();
+  expect(menuBox).not.toBeNull();
+  expect(tabBox).not.toBeNull();
+  expect(menuBox!.y + menuBox!.height).toBeGreaterThan(tabBox!.y + tabBox!.height);
+
+  const menuItems = menu.getByRole('menuitem');
+  await expect(menuItems).toHaveCount(6);
+  for (let index = 0; index < await menuItems.count(); index += 1) {
+    const item = menuItems.nth(index);
+    const clickable = await item.evaluate((button) => {
+      const box = button.getBoundingClientRect();
+      const topElement = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      return topElement === button || (topElement !== null && button.contains(topElement));
+    });
+    expect(clickable).toBe(true);
+  }
+
+  await ui.page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
+  await ui.context.close();
+});
+
 function rectanglesOverlap(
   first: { left: number; right: number; top: number; bottom: number },
   second: { left: number; right: number; top: number; bottom: number },
