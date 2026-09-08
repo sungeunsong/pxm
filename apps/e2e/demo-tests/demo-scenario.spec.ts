@@ -50,3 +50,29 @@ test('발표 시연 경로: 관리 설정 확인부터 신청자 자동 처리�
     await ui.context.close();
   });
 });
+
+test('배율이 변경된 워크플로우 캔버스에서 노드를 마우스 위치에 드롭한다', async ({ browser }) => {
+  const ui = await loginPage(browser, 'admin', process.env.PXM_DEMO_PASSWORD!, 'designer');
+  await ui.page.getByRole('button', { name: '노드 팔레트 펼치기' }).click();
+
+  const canvas = ui.page.locator('.react-flow');
+  await expect(canvas).toBeVisible();
+  await ui.page.locator('.react-flow__controls-zoomout').click();
+  await ui.page.locator('.react-flow__controls-zoomout').click();
+
+  const canvasBox = await canvas.boundingBox();
+  expect(canvasBox).not.toBeNull();
+  const targetPosition = {
+    x: Math.round(canvasBox!.width * 0.55),
+    y: Math.round(canvasBox!.height * 0.5),
+  };
+  await ui.page.locator('.palette-node[title^="Timer"]').dragTo(canvas, { targetPosition });
+
+  const timerNode = canvas.locator('.react-flow__node').filter({ hasText: 'Timer' }).last();
+  await expect(timerNode).toBeVisible();
+  const nodeBox = await timerNode.boundingBox();
+  expect(nodeBox).not.toBeNull();
+  expect(Math.abs(nodeBox!.x - (canvasBox!.x + targetPosition.x))).toBeLessThan(12);
+  expect(Math.abs(nodeBox!.y - (canvasBox!.y + targetPosition.y))).toBeLessThan(12);
+  await ui.context.close();
+});

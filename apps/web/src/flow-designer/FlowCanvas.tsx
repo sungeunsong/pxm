@@ -348,16 +348,14 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
       const type = event.dataTransfer.getData('application/reactflow');
       if (!type) return;
 
-      const reactFlowBounds = (event.target as HTMLElement)
-        .closest('.react-flow')
-        ?.getBoundingClientRect();
+      const instance = reactFlowRef.current;
+      if (!instance) return;
 
-      if (!reactFlowBounds) return;
-
-      const position = {
-        x: event.clientX - reactFlowBounds.left - 90,
-        y: event.clientY - reactFlowBounds.top - 30,
-      };
+      // client 좌표를 현재 pan/zoom이 적용된 flow 좌표로 바꾼다.
+      const position = instance.screenToFlowPosition({
+        x: event.clientX,
+        y: event.clientY,
+      });
 
       const nodeData = JSON.parse(type) as CustomNodeData;
       const newNode: Node<CustomNodeData> = {
