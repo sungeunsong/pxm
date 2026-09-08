@@ -67,6 +67,25 @@ const MAX_ZOOM = 1.5;
 // 패널이 캔버스를 거의 다 덮는 좁은 화면에서 폭이 0 이하로 떨어지지 않게 한다.
 const MIN_FIT_WIDTH = 320;
 
+function normalizeBranchEdges(nodes: Node[], edges: Edge[]) {
+  const nodeTypeById = new Map(
+    nodes.map((node) => [node.id, (node.data as CustomNodeData).nodeType]),
+  );
+
+  return edges.map((edge) => {
+    const sourceType = nodeTypeById.get(edge.source);
+    if (sourceType !== 'gateway' && sourceType !== 'approval') return edge;
+    return {
+      ...edge,
+      type: 'conditionEdge',
+      data: {
+        ...(edge.data || {}),
+        branchSourceType: sourceType,
+      },
+    };
+  });
+}
+
 export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
   ({ onNodeSelect, onNodesChange: onNodesChangeProp, onEdgesChange: onEdgesChangeProp, readOnly = false }, ref) => {
     const { confirm: confirmDialog } = useFeedback();
@@ -163,23 +182,8 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
     // 노드와 엣지 설정하기 (템플릿 불러오기용)
     const setNodesAndEdges = useCallback(
       (newNodes: Node[], newEdges: Edge[]) => {
-        // 기존 엣지 타입 보정 로직 (Gateway Outgoing -> conditionEdge)
-        // nodes 리스트를 Map으로 만들어서 빠른 조회
-        const nodeTypeMap = new Map<string, string>();
-        newNodes.forEach(node => {
-           nodeTypeMap.set(node.id, (node.data as CustomNodeData).nodeType);
-        });
-
-        const adjustedEdges = newEdges.map(edge => {
-          const sourceType = nodeTypeMap.get(edge.source);
-          if (sourceType === 'gateway') {
-            return { ...edge, type: 'conditionEdge' };
-          }
-          return edge;
-        });
-
         setNodes(newNodes);
-        setEdges(adjustedEdges);
+        setEdges(normalizeBranchEdges(newNodes, newEdges));
         // 선택 해제
         onNodeSelect?.(null);
       },
@@ -188,8 +192,11 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
 
     const appendNodesAndEdges = useCallback(
       (newNodes: Node[], newEdges: Edge[]) => {
-        setNodes((currentNodes) => currentNodes.concat(newNodes));
-        setEdges((currentEdges) => currentEdges.concat(newEdges));
+        setNodes((currentNodes) => {
+          const combinedNodes = currentNodes.concat(newNodes);
+          setEdges((currentEdges) => currentEdges.concat(normalizeBranchEdges(combinedNodes, newEdges)));
+          return combinedNodes;
+        });
         onNodeSelect?.(newNodes[0] || null);
       },
       [setNodes, setEdges, onNodeSelect]
@@ -204,12 +211,15 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
             if (edge.source === nodeId) {
               let className = '';
               let edgeType = edge.type;
-              let style: any = { ...edge.style };
+              let style: React.CSSProperties = { ...edge.style };
+              const isBranchEdge = edge.type === 'conditionEdge' ||
+                edge.data?.branchSourceType === 'gateway' ||
+                edge.data?.branchSourceType === 'approval';
               
               if (status === 'running') {
                 // running 상태일 때 AnimatedEdge 사용
                 className = 'edge-active';
-                edgeType = 'animatedEdge';
+                edgeType = isBranchEdge ? 'conditionEdge' : 'animatedEdge';
                 style = {
                   ...style,
                   stroke: '#2196f3',
@@ -217,7 +227,7 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
                 };
               } else if (status === 'completed') {
                 className = 'edge-completed';
-                edgeType = edge.data?.isGateway ? 'conditionEdge' : 'smoothstep';
+                edgeType = isBranchEdge ? 'conditionEdge' : 'smoothstep';
                 style = {
                   ...style,
                   stroke: '#4caf50',
@@ -227,7 +237,7 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
                 };
               } else if (status === 'failed') {
                 className = 'edge-failed';
-                edgeType = edge.data?.isGateway ? 'conditionEdge' : 'smoothstep';
+                edgeType = isBranchEdge ? 'conditionEdge' : 'smoothstep';
                 style = {
                   ...style,
                   stroke: '#f44336',
@@ -236,7 +246,7 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
                 };
               } else if (status === 'waiting') {
                 className = 'edge-waiting';
-                edgeType = edge.data?.isGateway ? 'conditionEdge' : 'smoothstep';
+                edgeType = isBranchEdge ? 'conditionEdge' : 'smoothstep';
                 style = {
                   ...style,
                   stroke: '#FFC107',
@@ -251,6 +261,10 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
                 className,
                 style,
                 animated: false,
+                data: {
+                  ...(edge.data || {}),
+                  animated: isBranchEdge && status === 'running',
+                },
               };
             }
             return edge;
@@ -281,25 +295,23 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
       // source 노드의 타입을 찾아서 edge type 결정
       setNodes((currentNodes) => {
         const sourceNode = currentNodes.find((n) => n.id === params.source);
-        const isGateway = sourceNode?.data?.nodeType === 'gateway';
+        const sourceType = sourceNode?.data?.nodeType;
+        const isGateway = sourceType === 'gateway';
+        const isBranch = isGateway || sourceType === 'approval';
         
         setEdges((eds) => {
-          // Gateway인 경우, 이미 연결된 outgoing 엣지가 있는지 확인
-          let label = 'TRUE';
-          if (isGateway) {
-            const existingEdge = eds.find(e => e.source === params.source);
-            if (existingEdge) {
-              label = 'FALSE';
-            }
-          }
+          const outgoingCount = eds.filter((edge) => edge.source === params.source).length;
+          const label = isGateway ? `분기 ${outgoingCount + 1}` : undefined;
 
           return addEdge({
             ...params,
-            type: isGateway ? 'conditionEdge' : 'smoothstep',
+            type: isBranch ? 'conditionEdge' : 'smoothstep',
             animated: true,
             style: { stroke: 'var(--color-info)', strokeWidth: 2 },
-            // Gateway라면 라벨 설정 (첫 번째 TRUE, 두 번째 FALSE)
-            data: isGateway ? { label, animated: false } : undefined,
+            data: isBranch ? {
+              ...(label ? { label } : {}),
+              branchSourceType: sourceType,
+            } : undefined,
           }, eds);
         });
         

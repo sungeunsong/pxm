@@ -208,12 +208,7 @@
   opacity: 0.7;
 }
 
-/* ===== Gateway Node Specifics ===== */
-.custom-node-gateway {
-  padding-right: 50px; /* True/False 라벨을 위한 공간 확보 */
-}
-
-/* ===== Gateway Handles ===== */
+/* ===== Branch Handles ===== */
 .custom-handle-true {
   background: var(--color-success) !important;
   width: 14px !important;
@@ -226,26 +221,4 @@
   width: 14px !important;
   height: 14px !important;
   right: -7px !important;
-}
-
-.gateway-handle-label {
-  position: absolute;
-  right: 12px;
-  font-size: 12px;
-  font-weight: var(--font-weight-bold);
-  pointer-events: none;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.true-label {
-  top: 30%;
-  color: var(--color-success);
-  transform: translateY(-50%);
-}
-
-.false-label {
-  top: 70%;
-  color: var(--color-error);
-  transform: translateY(-50%);
 }

@@ -4,6 +4,7 @@ import type { EdgeProps } from 'reactflow';
 import './ConditionEdge.css';
 
 export const ConditionEdge: React.FC<EdgeProps> = ({
+  id,
   sourceX,
   sourceY,
   targetX,
@@ -12,6 +13,9 @@ export const ConditionEdge: React.FC<EdgeProps> = ({
   targetPosition,
   style = {},
   markerEnd,
+  label: edgeLabel,
+  sourceHandleId,
+  animated,
   data,
 }) => {
   const [edgePath, labelX, labelY] = getBezierPath({
@@ -23,42 +27,63 @@ export const ConditionEdge: React.FC<EdgeProps> = ({
     targetPosition,
   });
 
-  const label = data?.label;
-  const isAnimated = data?.animated;
-  
-  const labelUpperCase = label ? String(label).toUpperCase() : '';
-  const isTrue = labelUpperCase === 'TRUE';
-  const isFalse = labelUpperCase === 'FALSE';
-  const isCondition = isTrue || isFalse;
+  const isDefault = Boolean(data?.isDefault);
+  const label = resolveBranchLabel(edgeLabel, data?.label, sourceHandleId, isDefault);
+  const outcome = resolveBranchOutcome(sourceHandleId, label);
 
   let edgeClassName = 'react-flow__edge-path';
-  if (isTrue) edgeClassName += ' condition-edge-true';
-  if (isFalse) edgeClassName += ' condition-edge-false';
-  if (isAnimated) edgeClassName += ' condition-edge-animated';
+  if (outcome === 'positive') edgeClassName += ' condition-edge-positive';
+  if (outcome === 'negative') edgeClassName += ' condition-edge-negative';
+  if (isDefault) edgeClassName += ' condition-edge-default';
+  if (animated || data?.animated) edgeClassName += ' condition-edge-animated';
 
   return (
     <>
       <path
-        id={data?.id}
+        id={id}
         style={style}
         className={edgeClassName}
         d={edgePath}
         markerEnd={markerEnd}
       />
-      {isCondition && (
+      {label && (
         <EdgeLabelRenderer>
           <div
-            className={`condition-edge-label ${isTrue ? 'label-true' : 'label-false'}`}
+            className={`condition-edge-label label-${outcome}${isDefault ? ' is-default' : ''}`}
             style={{
               position: 'absolute',
               transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
-              pointerEvents: 'all',
             }}
+            title={label}
+            aria-label={isDefault ? `${label}, 기본 경로` : label}
+            data-testid="branch-edge-label"
           >
-            {labelUpperCase}
+            <span className="condition-edge-label-text">{label}</span>
+            {isDefault && <span className="condition-edge-default-badge">기본</span>}
           </div>
         </EdgeLabelRenderer>
       )}
     </>
   );
 };
+
+function resolveBranchLabel(
+  edgeLabel: React.ReactNode,
+  dataLabel: unknown,
+  sourceHandleId: string | null | undefined,
+  isDefault: boolean,
+) {
+  if (typeof edgeLabel === 'string' && edgeLabel.trim()) return edgeLabel.trim();
+  if (typeof dataLabel === 'string' && dataLabel.trim()) return dataLabel.trim();
+  if (sourceHandleId === 'approved') return '승인';
+  if (sourceHandleId === 'rejected') return '반려';
+  if (isDefault) return '기본 경로';
+  return '';
+}
+
+function resolveBranchOutcome(sourceHandleId: string | null | undefined, label: string) {
+  const normalized = label.trim().toLowerCase();
+  if (sourceHandleId === 'approved' || normalized === 'true' || normalized === '승인') return 'positive';
+  if (sourceHandleId === 'rejected' || normalized === 'false' || normalized === '반려') return 'negative';
+  return 'neutral';
+}

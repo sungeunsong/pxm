@@ -135,15 +135,7 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
       tags: definition.metadata?.tags || [],
       version_note: definition.metadata?.version_note || '',
       nodes: nodesRes.rows.map((n) => n.config),
-      edges: edgesRes.rows.map((e) => ({
-        id: e.id,
-        source: e.source_node_id,
-        target: e.target_node_id,
-        data: {
-          condition: e.condition_expr,
-          isDefault: e.is_default,
-        },
-      })),
+      edges: edgesRes.rows.map(restorePostgresUiEdge),
     };
   }
 
@@ -3309,6 +3301,21 @@ function postgresAllowsApprovalChannel(
       THEN ${payloadExpression}->'approval_channels' ? '${channel}'
     ELSE ${fallback}
   END)`;
+}
+
+export function restorePostgresUiEdge(row: any) {
+  const uiEdge = row.metadata?.ui_edge || {};
+  return {
+    ...uiEdge,
+    id: uiEdge.id || row.id,
+    source: row.source_node_id,
+    target: row.target_node_id,
+    data: {
+      ...(uiEdge.data || {}),
+      condition: uiEdge.data?.condition ?? row.condition_expr,
+      isDefault: Boolean(row.is_default),
+    },
+  };
 }
 
 function externalApprovalEmail(task: any): string {

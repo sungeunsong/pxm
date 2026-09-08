@@ -76,3 +76,43 @@ test('배율이 변경된 워크플로우 캔버스에서 노드를 마우스 �
   expect(Math.abs(nodeBox!.y - (canvasBox!.y + targetPosition.y))).toBeLessThan(12);
   await ui.context.close();
 });
+
+test('분기 업무 라벨과 승인 결과를 엣지 중앙에서 구분한다', async ({ browser }) => {
+  const ui = await loginPage(browser, 'admin', process.env.PXM_DEMO_PASSWORD!, 'designer');
+  await ui.page.getByRole('button', { name: '더 보기' }).click();
+  await ui.page.getByRole('menuitem', { name: '불러오기' }).click();
+  await ui.page.locator('.template-info').filter({ hasText: '실습 2 · 협력사 접근 권한 신청' }).click();
+
+  const labels = ui.page.getByTestId('branch-edge-label');
+  await expect(labels.filter({ hasText: '저위험' })).toHaveCount(1);
+  await expect(labels.filter({ hasText: '검토 필요' })).toHaveCount(1);
+  await expect(labels.filter({ hasText: '승인' })).toHaveCount(2);
+  await expect(labels.filter({ hasText: '반려' })).toHaveCount(2);
+  await expect(labels.filter({ hasText: '검토 필요' }).getByText('기본', { exact: true })).toBeVisible();
+  await expect(ui.page.locator('.gateway-handle-label')).toHaveCount(0);
+
+  const nodeBoxes = await ui.page.locator('.react-flow__node').evaluateAll((nodes) =>
+    nodes.map((node) => {
+      const box = node.getBoundingClientRect();
+      return { left: box.left, right: box.right, top: box.top, bottom: box.bottom };
+    }),
+  );
+  const labelBoxes = await labels.evaluateAll((items) =>
+    items.map((item) => {
+      const box = item.getBoundingClientRect();
+      return { left: box.left, right: box.right, top: box.top, bottom: box.bottom };
+    }),
+  );
+  for (const label of labelBoxes) {
+    expect(nodeBoxes.some((node) => rectanglesOverlap(label, node))).toBe(false);
+  }
+
+  await ui.context.close();
+});
+
+function rectanglesOverlap(
+  first: { left: number; right: number; top: number; bottom: number },
+  second: { left: number; right: number; top: number; bottom: number },
+) {
+  return first.left < second.right && first.right > second.left && first.top < second.bottom && first.bottom > second.top;
+}
