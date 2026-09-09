@@ -716,8 +716,10 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
       const text = await file.text();
       const document = JSON.parse(text);
       const imported = await templatesApi.import(document);
-      openTemplateInDesignerTab(imported);
-      toast.success('워크플로우를 가져왔습니다.', { description: imported.name });
+      const opened = await openTemplateInDesignerTab(imported);
+      if (opened) {
+        toast.success('워크플로우를 가져왔습니다.', { description: imported.name });
+      }
     } catch (error) {
       console.error('Failed to import workflow:', error);
       toast.error('워크플로우 가져오기에 실패했습니다.', { description: errorMessage(error) });
@@ -728,28 +730,53 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
     setIsHistoryModalOpen(true);
   };
 
-  const handleTemplateSelect = (template: WorkflowTemplate) => {
-    openTemplateInDesignerTab(template);
+  const handleTemplateSelect = async (template: WorkflowTemplate) => {
+    return openTemplateInDesignerTab(template);
   };
 
-  const openTemplateInDesignerTab = (template: WorkflowTemplate) => {
+  const openTemplateInDesignerTab = async (template: WorkflowTemplate) => {
+    const activeSnapshot = buildCurrentTabSnapshot(activeDesignerTabId);
     const existingTab = designerTabs.find((tab) => tab.templateId === template.id);
     persistActiveDesignerTab();
 
     if (existingTab) {
+      const existingSnapshot = existingTab.tabId === activeDesignerTabId ? activeSnapshot : existingTab;
+      if (existingSnapshot.isDirty) {
+        const discard = await confirmDialog({
+          title: '저장하지 않은 변경사항이 있습니다',
+          description: `"${getDesignerTabTitle(existingSnapshot)}"의 저장된 버전을 다시 불러오면 현재 변경사항이 사라집니다.`,
+          confirmLabel: '불러오고 버리기',
+          tone: 'danger',
+        });
+        if (!discard) return false;
+      }
       const refreshedTab = createDesignerTabFromTemplate(template, existingTab.tabId);
       setDesignerTabs((tabs) =>
-        tabs.map((tab) => (tab.tabId === existingTab.tabId ? refreshedTab : tab)),
+        tabs.map((tab) => {
+          if (tab.tabId === existingTab.tabId) return refreshedTab;
+          if (tab.tabId === activeSnapshot.tabId) return activeSnapshot;
+          return tab;
+        }),
       );
       setActiveDesignerTabId(existingTab.tabId);
       restoreDesignerTab(refreshedTab);
-      return;
+      return true;
     }
 
-    const newTab = createDesignerTabFromTemplate(template);
-    setDesignerTabs((tabs) => tabs.concat(newTab));
+    const automaticallyAssignedGroup = currentUser.role === 'group_manager' && availableGroups.length === 1
+      ? availableGroups[0]
+      : undefined;
+    const replaceActiveBlank = isPristineBlankDesignerTab(activeSnapshot, automaticallyAssignedGroup);
+    const newTab = createDesignerTabFromTemplate(
+      template,
+      replaceActiveBlank ? activeSnapshot.tabId : createDesignerTabId(),
+    );
+    setDesignerTabs((tabs) => replaceActiveBlank
+      ? tabs.map((tab) => (tab.tabId === activeSnapshot.tabId ? newTab : tab))
+      : tabs.map((tab) => (tab.tabId === activeSnapshot.tabId ? activeSnapshot : tab)).concat(newTab));
     setActiveDesignerTabId(newTab.tabId);
     restoreDesignerTab(newTab);
+    return true;
   };
 
   const handleHistorySelect = async (instanceId: string) => {
@@ -1399,6 +1426,40 @@ function createDesignerTabFromTemplate(template: WorkflowTemplate, tabId = creat
     edges: cloneWorkflowEdges(template.edges),
     isDirty: false,
   };
+}
+
+function isPristineBlankDesignerTab(tab: DesignerTab, automaticallyAssignedGroup?: PxmGroup) {
+  const hasOnlyAutomaticGroup = (
+    tab.group === '' && tab.groupId === ''
+  ) || (
+    automaticallyAssignedGroup !== undefined &&
+    tab.group === automaticallyAssignedGroup.name &&
+    tab.groupId === automaticallyAssignedGroup.id
+  );
+  if (
+    tab.templateId !== null ||
+    tab.templateName !== '' ||
+    tab.description !== '' ||
+    !hasOnlyAutomaticGroup ||
+    tab.tags !== '' ||
+    tab.versionNote !== '' ||
+    tab.edges.length !== DEFAULT_DESIGNER_EDGES.length ||
+    tab.nodes.length !== DEFAULT_DESIGNER_NODES.length
+  ) {
+    return false;
+  }
+
+  const node = tab.nodes[0];
+  const defaultNode = DEFAULT_DESIGNER_NODES[0];
+  return Boolean(
+    node &&
+    defaultNode &&
+    node.id === defaultNode.id &&
+    node.type === defaultNode.type &&
+    node.position.x === defaultNode.position.x &&
+    node.position.y === defaultNode.position.y &&
+    JSON.stringify(node.data) === JSON.stringify(defaultNode.data)
+  );
 }
 
 function createDesignerTabId() {

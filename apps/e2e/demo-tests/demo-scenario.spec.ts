@@ -140,6 +140,46 @@ test('디자이너 더보기 메뉴가 탭과 캔버스 위에서 모두 클릭 
   await ui.context.close();
 });
 
+test('손대지 않은 빈 탭만 불러온 워크플로우로 교체한다', async ({ browser }) => {
+  const ui = await loginPage(browser, 'admin', process.env.PXM_DEMO_PASSWORD!, 'designer');
+  const tabs = ui.page.locator('.workflow-tab');
+
+  await expect(tabs).toHaveCount(1);
+  await expect(ui.page.getByRole('tab', { name: 'Untitled Workflow', exact: true })).toBeVisible();
+
+  await openWorkflowFromDesigner(ui.page, '실습 2 · 협력사 접근 권한 신청');
+  await expect(tabs).toHaveCount(1);
+  await expect(ui.page.getByRole('tab', { name: /실습 2 · 협력사 접근 권한 신청/ })).toBeVisible();
+  await expect(ui.page.getByRole('tab', { name: 'Untitled Workflow', exact: true })).toHaveCount(0);
+
+  await ui.page.getByRole('button', { name: '새 워크플로우 탭' }).click();
+  await expect(tabs).toHaveCount(2);
+  await expect(ui.page.getByRole('tab', { name: 'Untitled Workflow', exact: true })).toBeVisible();
+
+  await openWorkflowFromDesigner(ui.page, '실습 1 · 기본 접근 권한 결재');
+  await expect(tabs).toHaveCount(2);
+  await expect(ui.page.getByRole('tab', { name: /실습 1 · 기본 접근 권한 결재/ })).toBeVisible();
+  await expect(ui.page.getByRole('tab', { name: 'Untitled Workflow', exact: true })).toHaveCount(0);
+
+  await ui.page.getByRole('button', { name: '새 워크플로우 탭' }).click();
+  await addTimerFromCanvasMenu(ui.page);
+  await openWorkflowFromDesigner(ui.page, '실습 2 · 협력사 접근 권한 신청');
+  await expect(tabs).toHaveCount(3);
+  await expect(ui.page.getByRole('tab', { name: 'Untitled Workflow', exact: true })).toBeVisible();
+
+  await addTimerFromCanvasMenu(ui.page);
+  await ui.page.getByRole('button', { name: '더 보기' }).click();
+  await ui.page.getByRole('menuitem', { name: '불러오기' }).click();
+  await ui.page.locator('.template-info').filter({ hasText: '실습 2 · 협력사 접근 권한 신청' }).click();
+  const discardDialog = ui.page.getByRole('dialog', { name: '저장하지 않은 변경사항이 있습니다' });
+  await expect(discardDialog).toContainText('저장된 버전을 다시 불러오면 현재 변경사항이 사라집니다.');
+  await discardDialog.getByRole('button', { name: '취소', exact: true }).click();
+  await expect(ui.page.getByRole('heading', { name: '템플릿 불러오기' })).toBeVisible();
+  await expect(ui.page.locator('.react-flow__node').filter({ hasText: 'Timer' })).toHaveCount(1);
+
+  await ui.context.close();
+});
+
 test('캔버스 컨텍스트 메뉴로 마우스 위치에서 노드를 편집한다', async ({ browser }) => {
   const ui = await loginPage(browser, 'admin', process.env.PXM_DEMO_PASSWORD!, 'designer');
   const pane = ui.page.locator('.react-flow__pane');
@@ -238,4 +278,24 @@ async function dispatchContextMenu(locator: import('@playwright/test').Locator) 
     clientX: box!.x + box!.width / 2,
     clientY: box!.y + box!.height / 2,
   });
+}
+
+async function openWorkflowFromDesigner(page: import('@playwright/test').Page, name: string) {
+  await page.getByRole('button', { name: '더 보기' }).click();
+  await page.getByRole('menuitem', { name: '불러오기' }).click();
+  await page.locator('.template-info').filter({ hasText: name }).click();
+}
+
+async function addTimerFromCanvasMenu(page: import('@playwright/test').Page) {
+  const pane = page.locator('.react-flow__pane');
+  const paneBox = await pane.boundingBox();
+  expect(paneBox).not.toBeNull();
+  await pane.click({
+    button: 'right',
+    position: { x: Math.round(paneBox!.width * 0.72), y: Math.round(paneBox!.height * 0.2) },
+  });
+  const menu = page.getByTestId('canvas-context-menu');
+  await menu.getByRole('menuitem', { name: '노드 추가…', exact: true }).click();
+  await menu.getByRole('menuitem', { name: 'Timer', exact: true }).click();
+  await expect(page.locator('.react-flow__node').filter({ hasText: 'Timer' })).toHaveCount(1);
 }

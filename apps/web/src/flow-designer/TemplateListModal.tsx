@@ -10,7 +10,7 @@ import './TemplateListModal.css';
 export interface TemplateListModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSelect: (template: WorkflowTemplate) => void;
+  onSelect: (template: WorkflowTemplate) => boolean | void | Promise<boolean | void>;
   allowedGroupIds?: string[];
 }
 
@@ -51,9 +51,11 @@ export const TemplateListModal: React.FC<TemplateListModalProps> = ({
     }
   };
 
-  const handleSelect = (template: WorkflowTemplate) => {
-    onSelect(template);
-    onClose();
+  const handleSelect = async (template: WorkflowTemplate) => {
+    const selected = await onSelect(template);
+    if (selected !== false) {
+      onClose();
+    }
   };
 
   const handleDelete = async (id: string, name: string) => {
