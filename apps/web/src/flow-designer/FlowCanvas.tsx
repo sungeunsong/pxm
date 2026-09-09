@@ -819,18 +819,21 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
           nodeColor={(node) => {
             const data = node.data as CustomNodeData;
             switch (data.nodeType) {
-              case 'start': return '#4caf50';
-              case 'service': return '#2196f3';
+              case 'start': return '#10b981';
+              case 'service': return '#3b82f6';
               case 'script': return '#14b8a6';
-              case 'timer': return '#ff9800';
-              case 'gateway': return '#9c27b0';
-              case 'approval': return '#ffc107';
+              case 'command': return '#64748b';
+              case 'timer': return '#f59e0b';
+              case 'gateway': return '#8b5cf6';
+              case 'approval': return '#ec4899';
               case 'workflow_call': return '#0891b2';
-              case 'end': return '#f44336';
-              default: return '#666';
+              case 'end': return '#ef4444';
+              default: return '#64748b';
             }
           }}
-          maskColor="rgba(0, 0, 0, 0.6)"
+          nodeStrokeColor="rgba(15, 23, 42, 0.52)"
+          nodeStrokeWidth={1.5}
+          maskColor="rgba(15, 23, 42, 0.14)"
         />
       </ReactFlow>
       {contextMenu && contextMenuItems.length > 0 && (

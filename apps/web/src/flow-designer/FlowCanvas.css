@@ -12,6 +12,8 @@
 /* ===== React Flow Overrides ===== */
 .react-flow {
   background: var(--bg-primary);
+  /* 캔버스는 transform으로 이동한다. 브라우저의 숨은 내부 스크롤이 드롭 좌표를 바꾸지 않게 한다. */
+  overflow: clip !important;
 }
 
 .react-flow__attribution {
@@ -61,17 +63,6 @@
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
-}
-
-.react-flow__minimap-mask {
-  fill: var(--bg-secondary);
-  fill-opacity: 0.6;
-}
-
-.react-flow__minimap-node {
-  fill: var(--bg-tertiary);
-  stroke: var(--border-strong);
-  stroke-width: 1;
 }
 
 /* ===== Edges ===== */

@@ -180,6 +180,32 @@ test('손대지 않은 빈 탭만 불러온 워크플로우로 교체한다', as
   await ui.context.close();
 });
 
+test('미니맵에서 노드 유형 색상과 현재 뷰포트를 구분한다', async ({ browser }) => {
+  const ui = await loginPage(browser, 'admin', process.env.PXM_DEMO_PASSWORD!, 'designer');
+  await openWorkflowFromDesigner(ui.page, '실습 2 · 협력사 접근 권한 신청');
+
+  const minimap = ui.page.locator('.flow-minimap');
+  const minimapNodes = minimap.locator('.react-flow__minimap-node');
+  await expect(minimap).toBeVisible();
+  await expect(minimapNodes).toHaveCount(9);
+
+  const nodeFills = await minimapNodes.evaluateAll((nodes) =>
+    nodes.map((node) => getComputedStyle(node).fill),
+  );
+  expect(new Set(nodeFills).size).toBeGreaterThanOrEqual(6);
+  expect(nodeFills).toContain('rgb(16, 185, 129)');
+  expect(nodeFills).toContain('rgb(59, 130, 246)');
+  expect(nodeFills).toContain('rgb(236, 72, 153)');
+  expect(nodeFills).toContain('rgb(239, 68, 68)');
+  expect(nodeFills).not.toContain('rgb(241, 245, 249)');
+
+  const mask = minimap.locator('.react-flow__minimap-mask');
+  await expect(mask).toHaveCSS('fill', 'rgba(15, 23, 42, 0.14)');
+  await expect(mask).toHaveCSS('fill-opacity', '1');
+
+  await ui.context.close();
+});
+
 test('캔버스 컨텍스트 메뉴로 마우스 위치에서 노드를 편집한다', async ({ browser }) => {
   const ui = await loginPage(browser, 'admin', process.env.PXM_DEMO_PASSWORD!, 'designer');
   const pane = ui.page.locator('.react-flow__pane');
