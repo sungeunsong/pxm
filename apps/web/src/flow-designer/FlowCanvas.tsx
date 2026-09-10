@@ -49,7 +49,7 @@ const initialNodes: Node<CustomNodeData>[] = [
     id: '1',
     type: 'custom',
     position: { x: 100, y: 100 },
-    data: { label: 'Start', nodeType: 'start', description: '워크플로우 시작' },
+    data: { label: 'Start', nodeType: 'start' },
   },
 ];
 
@@ -97,7 +97,7 @@ type CanvasMenuState = {
 };
 
 const BASIC_NODE_OPTIONS: Array<{ label: string; data: CustomNodeData }> = [
-  { label: 'Start', data: { nodeType: 'start', label: 'Start', description: '워크플로우 시작' } },
+  { label: 'Start', data: { nodeType: 'start', label: 'Start' } },
   { label: 'Timer', data: { nodeType: 'timer', label: 'Timer' } },
   {
     label: 'JS Node',
@@ -110,7 +110,7 @@ const BASIC_NODE_OPTIONS: Array<{ label: string; data: CustomNodeData }> = [
   {
     label: 'Command',
     data: {
-      nodeType: 'command', label: 'Command', description: 'Allowlist command 실행',
+      nodeType: 'command', label: 'Command',
       commandId: 'builtin.echo', commandArgumentsJson: '{\n  "message": "hello from command node"\n}',
       outputPath: 'commandResults.echo', commandTimeoutMs: 1000,
     },
@@ -120,7 +120,7 @@ const BASIC_NODE_OPTIONS: Array<{ label: string; data: CustomNodeData }> = [
   {
     label: 'Workflow Call',
     data: {
-      nodeType: 'workflow_call', label: 'Workflow Call', description: '다른 워크플로우 호출',
+      nodeType: 'workflow_call', label: 'Workflow Call',
       workflowCallMode: 'async', workflowInputMode: 'inherit_form_data', outputPath: 'workflowCalls.child',
     },
   },

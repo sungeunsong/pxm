@@ -3,7 +3,8 @@
    ============================================ */
 
 .custom-node {
-  min-width: 120px;
+  min-width: 168px;
+  max-width: 240px;
   background: var(--bg-elevated);
   border: 2px solid var(--border-strong);
   border-radius: var(--radius-lg);

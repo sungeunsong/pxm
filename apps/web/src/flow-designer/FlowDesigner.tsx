@@ -902,10 +902,10 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
   };
 
   const onDragStart = (event: React.DragEvent, nodeType: string, label: string, extraData?: Partial<CustomNodeData>) => {
+    // 설명은 비워 두고 카드에는 설정 요약(node-summary)을 보여준다
     const nodeData: CustomNodeData = {
       label,
       nodeType: nodeType as CustomNodeData['nodeType'],
-      description: `${label} 노드`,
       ...extraData,
     };
     event.dataTransfer.setData('application/reactflow', JSON.stringify(nodeData));
@@ -1156,7 +1156,6 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
                   draggable
                   onDragStart={(e) =>
                     onDragStart(e, 'command', 'Command', {
-                      description: 'Allowlist command 실행',
                       commandId: 'builtin.echo',
                       commandArgumentsJson: '{\n  "message": "hello from command node"\n}',
                       outputPath: 'commandResults.echo',
@@ -1181,7 +1180,6 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
                   draggable
                   onDragStart={(e) =>
                     onDragStart(e, 'workflow_call', 'Workflow Call', {
-                      description: '다른 워크플로우 호출',
                       workflowCallMode: 'async',
                       workflowInputMode: 'inherit_form_data',
                       outputPath: 'workflowCalls.child',
@@ -1386,7 +1384,7 @@ const DEFAULT_DESIGNER_NODES: Node<CustomNodeData>[] = [
     id: '1',
     type: 'custom',
     position: { x: 100, y: 100 },
-    data: { label: 'Start', nodeType: 'start', description: '워크플로우 시작' },
+    data: { label: 'Start', nodeType: 'start' },
   },
 ];
 

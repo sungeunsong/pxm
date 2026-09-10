@@ -4,6 +4,7 @@ import type { NodeProps } from 'reactflow';
 import { Loader, CheckCircle, XCircle, Clock } from 'lucide-react';
 import type { CustomNodeData } from './form-types';
 import { nodeTypeIcon } from './plugin-icons';
+import { nodeSummaryLine, nodeSummaryTitle } from './node-summary';
 import './CustomNode.css';
 import './NodeAnimations.css';
 import './design-system-custom.css';
@@ -24,6 +25,7 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({ data, selected
     }
   };
 
+  const summaryLine = nodeSummaryLine(data);
   const isGateway = data.nodeType === 'gateway';
   const isApproval = data.nodeType === 'approval';
 
@@ -57,8 +59,10 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({ data, selected
               </span>
             )}
           </div>
-          {data.description && (
-            <div className="custom-node-description">{data.description}</div>
+          {summaryLine && (
+            <div className="custom-node-description" title={nodeSummaryTitle(data)}>
+              {summaryLine}
+            </div>
           )}
         </div>
       </div>
