@@ -1178,6 +1178,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
         )}
         onRun={traceInstanceId ? undefined : () => handleRun()}
         onSave={traceInstanceId ? undefined : handleSave}
+        onAutoLayout={traceInstanceId ? undefined : () => flowCanvasRef.current?.autoLayout()}
         onLoad={traceInstanceId ? undefined : handleLoad}
         onImport={traceInstanceId ? undefined : handleImport}
         onExport={traceInstanceId ? undefined : handleExport}

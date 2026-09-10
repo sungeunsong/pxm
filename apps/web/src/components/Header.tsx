@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Clock, Download, FolderOpen, MoreHorizontal, Moon, Play, Save, Settings, Sun, Upload } from 'lucide-react';
+import { Clock, Download, FolderOpen, LayoutGrid, MoreHorizontal, Moon, Play, Save, Settings, Sun, Upload } from 'lucide-react';
 import { Button } from './Button';
 import './Header.css';
 
@@ -20,6 +20,8 @@ export interface HeaderProps {
   leading?: React.ReactNode;
   onRun?: () => void;
   onSave?: () => void;
+  /** 노드를 계층형으로 다시 배치한다 */
+  onAutoLayout?: () => void;
   onLoad?: () => void;
   onImport?: () => void;
   onExport?: () => void;
@@ -40,6 +42,7 @@ export const Header: React.FC<HeaderProps> = ({
   leading,
   onRun,
   onSave,
+  onAutoLayout,
   onLoad,
   onImport,
   onExport,
@@ -69,6 +72,7 @@ export const Header: React.FC<HeaderProps> = ({
   }, [menuOpen]);
 
   const overflow: OverflowItem[] = [
+    onAutoLayout && { label: '자동 정렬', icon: <LayoutGrid size={15} />, onClick: onAutoLayout },
     onLoad && { label: '불러오기', icon: <FolderOpen size={15} />, onClick: onLoad },
     onImport && { label: '파일에서 가져오기', icon: <Upload size={15} />, onClick: onImport },
     onExport && { label: '파일로 내보내기', icon: <Download size={15} />, onClick: onExport },

@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import 'reactflow/dist/style.css';
 import { useFeedback } from '../components/feedback/feedback-context';
+import { computeAutoLayout } from './auto-layout';
 import { CustomNode } from './CustomNode';
 import type { CustomNodeData } from './form-types';
 import './FlowCanvas.css';
@@ -80,6 +81,10 @@ export interface FlowCanvasRef {
    * minZoom을 주면 그보다 작게는 줄이지 않고 그래프 중심에 맞춘다 (발표 모드 가독성).
    */
   fitView: (rightInset?: number, options?: { minZoom?: number }) => void;
+  /** 계층형으로 다시 배치한다. 좌표만 바뀐다 */
+  autoLayout: () => void;
+  /** 자동 정렬 직전 배치로 되돌린다 */
+  undoAutoLayout: () => void;
   /** 현재 뷰포트. 발표 모드 진입 전 상태를 기억해 두는 용도다 */
   getViewport: () => Viewport | null;
   /** 기억해 둔 뷰포트로 되돌린다 */
@@ -162,7 +167,7 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
     onTestNode,
     readOnly = false,
   }, ref) => {
-    const { confirm: confirmDialog } = useFeedback();
+    const { confirm: confirmDialog, toast } = useFeedback();
     const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
     const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
     const reactFlowRef = React.useRef<ReactFlowInstance | null>(null);
@@ -266,6 +271,46 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
       });
       window.setTimeout(() => applyFit(rightInset, 250, minZoom), 80);
     }, [applyFit]);
+
+    // 자동 정렬은 좌표만 바꾼다. 되돌릴 수 있게 직전 좌표를 한 벌 들고 있는다.
+    // 저장하기 전까지는 서버의 원본 배치가 그대로이므로, 되돌리지 않고 탭을 닫아도 잃는 것이 없다.
+    // 스냅샷을 ref가 아니라 state로 두는 이유는 메뉴에 되돌리기 항목을 그릴지 판단해야 하기 때문이다.
+    const [layoutUndo, setLayoutUndo] = React.useState<Map<string, XYPosition> | null>(null);
+
+    const applyAutoLayout = useCallback(() => {
+      if (nodes.length < 2) {
+        toast.info('정렬할 노드가 없습니다.');
+        return;
+      }
+      const { nodes: laidOut, movedCount } = computeAutoLayout(nodes, edges);
+      if (movedCount === 0) {
+        toast.info('이미 정렬된 상태입니다.');
+        return;
+      }
+      setLayoutUndo(new Map(nodes.map((node) => [node.id, { ...node.position }])));
+      const positions = new Map(laidOut.map((node) => [node.id, node.position]));
+      setNodes((nds) => nds.map((node) => {
+        const position = positions.get(node.id);
+        return position ? { ...node, position } : node;
+      }));
+      fitView();
+      toast.success(`노드 ${movedCount}개를 다시 배치했습니다.`, {
+        description: '되돌리려면 Ctrl+Z 또는 캔버스 메뉴의 자동 정렬 되돌리기를 쓰세요.',
+      });
+    }, [edges, fitView, nodes, setNodes, toast]);
+
+    const undoAutoLayout = useCallback(() => {
+      setLayoutUndo((snapshot) => {
+        if (!snapshot) return null;
+        setNodes((nds) => nds.map((node) => {
+          const position = snapshot.get(node.id);
+          return position ? { ...node, position } : node;
+        }));
+        fitView();
+        toast.info('자동 정렬 전 배치로 되돌렸습니다.');
+        return null;
+      });
+    }, [fitView, setNodes, toast]);
 
     const getViewport = useCallback(() => reactFlowRef.current?.getViewport() || null, []);
 
@@ -380,10 +425,12 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
         appendNodesAndEdges,
         updateEdgesByNodeStatus,
         fitView,
+        autoLayout: applyAutoLayout,
+        undoAutoLayout,
         getViewport,
         setViewport: setViewportTo,
       }),
-      [updateNodeData, updateEdgeData, getNodes, getEdges, setNodesAndEdges, appendNodesAndEdges, updateEdgesByNodeStatus, fitView, getViewport, setViewportTo]
+      [updateNodeData, updateEdgeData, getNodes, getEdges, setNodesAndEdges, appendNodesAndEdges, updateEdgesByNodeStatus, fitView, applyAutoLayout, undoAutoLayout, getViewport, setViewportTo]
     );
 
   const onConnect = useCallback(
@@ -698,11 +745,18 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
       }));
       return;
     }
+    if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z') {
+      // 자동 정렬 직후에만 받는다. 일반 편집 실행취소는 아직 없다.
+      if (readOnly || !layoutUndo) return;
+      event.preventDefault();
+      undoAutoLayout();
+      return;
+    }
     if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
       event.preventDefault();
       openKeyboardMenu();
     }
-  }, [canPaste, nodes, onCopyGraph, onPasteAt, openKeyboardMenu, readOnly, selectedGraph]);
+  }, [canPaste, layoutUndo, nodes, onCopyGraph, onPasteAt, openKeyboardMenu, readOnly, selectedGraph, undoAutoLayout]);
 
   let contextMenuTitle = '';
   let contextMenuItems: CanvasContextMenuItem[] = [];
