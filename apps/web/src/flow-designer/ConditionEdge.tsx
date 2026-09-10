@@ -30,6 +30,11 @@ export const ConditionEdge: React.FC<EdgeProps> = ({
   const isDefault = Boolean(data?.isDefault);
   const label = resolveBranchLabel(edgeLabel, data?.label, sourceHandleId, isDefault);
   const outcome = resolveBranchOutcome(sourceHandleId, label);
+  // 두 노드가 가깝고 거의 같은 행이면 중간 공간에 라벨이 들어갈 수 없다.
+  // 그런 엣지는 선 위로, 나머지는 진행 방향의 반대쪽으로 소폭 옮긴다.
+  const isCrowdedHorizontalEdge = Math.abs(targetX - sourceX) < 96 && Math.abs(targetY - sourceY) < 72;
+  const labelOffsetX = isCrowdedHorizontalEdge || targetX === sourceX ? 0 : targetX > sourceX ? -18 : 18;
+  const labelOffsetY = isCrowdedHorizontalEdge ? -44 : 0;
 
   let edgeClassName = 'react-flow__edge-path';
   if (outcome === 'positive') edgeClassName += ' condition-edge-positive';
@@ -52,7 +57,7 @@ export const ConditionEdge: React.FC<EdgeProps> = ({
             className={`condition-edge-label label-${outcome}${isDefault ? ' is-default' : ''}`}
             style={{
               position: 'absolute',
-              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+              transform: `translate(-50%, -50%) translate(${labelX + labelOffsetX}px,${labelY + labelOffsetY}px)`,
             }}
             title={label}
             aria-label={isDefault ? `${label}, 기본 경로` : label}

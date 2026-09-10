@@ -59,7 +59,8 @@ function join(parts: Array<string | undefined | null>): string {
   return parts.filter((part): part is string => Boolean(part && part.length)).join(' · ');
 }
 
-// URL 전체 대신 호스트만 남긴다. 템플릿 표현식이 섞여 파싱이 안 되면 원문을 자른다
+// URL 전체 대신 호스트(상대 URL은 경로)만 남긴다.
+// 파싱할 수 없는 값에는 query, userinfo, 템플릿 변수가 섞일 수 있으므로 원문을 노출하지 않는다.
 function hostOf(url: string): string {
   if (!url) return '';
   if (!url.includes('{{')) {
@@ -70,7 +71,14 @@ function hostOf(url: string): string {
     }
   }
   const matched = url.match(/^[a-zA-Z][\w+.-]*:\/\/([^/?#]+)/);
-  return matched ? truncate(matched[1]) : truncate(url);
+  if (matched) {
+    const authorityWithoutUserInfo = matched[1].split('@').at(-1) || '';
+    return authorityWithoutUserInfo.includes('{{') ? 'URL 설정됨' : truncate(authorityWithoutUserInfo);
+  }
+  if (url.startsWith('/')) {
+    return truncate(url.split(/[?#]/, 1)[0]);
+  }
+  return 'URL 설정됨';
 }
 
 function durationLabel(raw: string): string {

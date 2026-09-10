@@ -9,7 +9,7 @@ import ReactFlow, {
   MiniMap,
 } from 'reactflow';
 import { getRectOfNodes, getTransformForBounds } from 'reactflow';
-import type { Node, Edge, Connection, NodeTypes, ReactFlowInstance, Viewport, XYPosition } from 'reactflow';
+import type { Node, Edge, Connection, NodeChange, NodeTypes, ReactFlowInstance, Viewport, XYPosition } from 'reactflow';
 import {
   CheckSquare,
   ChevronLeft,
@@ -23,6 +23,7 @@ import {
   Plus,
   Settings2,
   Trash2,
+  Undo2,
 } from 'lucide-react';
 import 'reactflow/dist/style.css';
 import { useFeedback } from '../components/feedback/feedback-context';
@@ -168,11 +169,21 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
     readOnly = false,
   }, ref) => {
     const { confirm: confirmDialog, toast } = useFeedback();
-    const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
+    const [nodes, setNodes, applyNodeChanges] = useNodesState(initialNodes);
     const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
     const reactFlowRef = React.useRef<ReactFlowInstance | null>(null);
     const wrapperRef = React.useRef<HTMLDivElement | null>(null);
     const [contextMenu, setContextMenu] = React.useState<CanvasMenuState | null>(null);
+    const [layoutUndo, setLayoutUndo] = React.useState<Map<string, XYPosition> | null>(null);
+    const [fitAfterLayoutUndo, setFitAfterLayoutUndo] = React.useState(false);
+
+    const onNodesChange = useCallback((changes: NodeChange[]) => {
+      // 자동 정렬 후 사용자가 배치를 편집하면 이전 스냅샷은 더 이상 안전한 실행 취소가 아니다.
+      if (changes.some((change) => change.type === 'remove' || change.type === 'add' || (change.type === 'position' && change.dragging))) {
+        setLayoutUndo(null);
+      }
+      applyNodeChanges(changes);
+    }, [applyNodeChanges]);
 
     // 노드 변경 시 부모에게 알림
     React.useEffect(() => {
@@ -275,8 +286,6 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
     // 자동 정렬은 좌표만 바꾼다. 되돌릴 수 있게 직전 좌표를 한 벌 들고 있는다.
     // 저장하기 전까지는 서버의 원본 배치가 그대로이므로, 되돌리지 않고 탭을 닫아도 잃는 것이 없다.
     // 스냅샷을 ref가 아니라 state로 두는 이유는 메뉴에 되돌리기 항목을 그릴지 판단해야 하기 때문이다.
-    const [layoutUndo, setLayoutUndo] = React.useState<Map<string, XYPosition> | null>(null);
-
     const applyAutoLayout = useCallback(() => {
       if (nodes.length < 2) {
         toast.info('정렬할 노드가 없습니다.');
@@ -300,17 +309,21 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
     }, [edges, fitView, nodes, setNodes, toast]);
 
     const undoAutoLayout = useCallback(() => {
-      setLayoutUndo((snapshot) => {
-        if (!snapshot) return null;
-        setNodes((nds) => nds.map((node) => {
-          const position = snapshot.get(node.id);
-          return position ? { ...node, position } : node;
-        }));
-        fitView();
-        toast.info('자동 정렬 전 배치로 되돌렸습니다.');
-        return null;
-      });
-    }, [fitView, setNodes, toast]);
+      if (!layoutUndo) return;
+      setNodes((nds) => nds.map((node) => {
+        const position = layoutUndo.get(node.id);
+        return position ? { ...node, position } : node;
+      }));
+      setLayoutUndo(null);
+      setFitAfterLayoutUndo(true);
+      toast.info('자동 정렬 전 배치로 되돌렸습니다.');
+    }, [layoutUndo, setNodes, toast]);
+
+    React.useEffect(() => {
+      if (!fitAfterLayoutUndo) return;
+      fitView();
+      setFitAfterLayoutUndo(false);
+    }, [fitAfterLayoutUndo, fitView]);
 
     const getViewport = useCallback(() => reactFlowRef.current?.getViewport() || null, []);
 
@@ -321,6 +334,8 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
     // 노드와 엣지 설정하기 (템플릿 불러오기용)
     const setNodesAndEdges = useCallback(
       (newNodes: Node[], newEdges: Edge[]) => {
+        // 탭 전환·템플릿 불러오기 후에 이전 탭의 자동 정렬을 되돌리지 않는다.
+        setLayoutUndo(null);
         setNodes(newNodes);
         setEdges(normalizeBranchEdges(newNodes, newEdges));
         // 선택 해제
@@ -796,6 +811,10 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
           },
         },
         { id: 'fit', label: '전체 화면에 맞춤', icon: <Maximize2 size={15} />, onSelect: () => fitView() },
+        ...(layoutUndo ? [{
+          id: 'undo-auto-layout', label: '자동 정렬 되돌리기', icon: <Undo2 size={15} />,
+          shortcut: 'Ctrl+Z', separatorBefore: true, onSelect: () => undoAutoLayout(),
+        }] : []),
       ];
   } else if (contextMenu?.kind === 'nodes' && contextMenu.nodes) {
     const targetNodes = contextMenu.nodes;

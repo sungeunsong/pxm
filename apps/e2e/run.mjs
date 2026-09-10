@@ -39,7 +39,16 @@ let phase = 'bootstrap';
 validateDatabaseName(databaseName);
 
 try {
-  await rm(resultDir, { recursive: true, force: true });
+  // test-results 아래에는 이슈별 before/after 검토 증빙도 보관한다.
+  // Playwright가 생성하는 일시 산출물만 지워 수동 증빙을 보존한다.
+  await mkdir(resultDir, { recursive: true });
+  await Promise.all([
+    rm(resolve(resultDir, 'artifacts'), { recursive: true, force: true }),
+    rm(resolve(resultDir, 'report'), { recursive: true, force: true }),
+    rm(resolve(resultDir, 'results.json'), { force: true }),
+    rm(resolve(resultDir, 'demo-access.json'), { force: true }),
+    rm(logDir, { recursive: true, force: true }),
+  ]);
   await mkdir(logDir, { recursive: true });
   if (process.env.PXM_E2E_EXTERNAL_POSTGRES !== 'true') {
     startPostgres();
