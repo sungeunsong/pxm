@@ -10,15 +10,14 @@ import './Header.css';
  * Run/Save/Load/Import/Export/History/Settings/Theme 8개를 같은 크기로 나열했다.
  * 앱 헤더가 이미 화면 이름을 말하고 있으므로 여기서는
  * **지금 편집 중인 워크플로우**와 주 액션(저장·실행)만 보여주고 나머지는 ··· 로 넣는다.
+ *
+ * 왼쪽에는 워크플로우 탭 줄(leading)이 들어온다. 활성 탭이 곧 지금 편집 중인
+ * 워크플로우이므로 이름·버전·배포 상태·미저장 표시를 이 바에서 한 번 더 적지 않는다.
  */
 
 export interface HeaderProps {
-  /** 편집 중인 워크플로우 이름. 비어 있으면 새 워크플로우로 표시한다. */
-  workflowName?: string;
-  /** 배포 v3 / 초안 같은 상태 문구 */
-  statusLabel?: string;
-  /** 저장되지 않은 변경이 있는지 */
-  dirty?: boolean;
+  /** 왼쪽 영역에 놓을 내용. 워크플로우 탭 줄이 여기로 들어온다. */
+  leading?: React.ReactNode;
   onRun?: () => void;
   onSave?: () => void;
   onLoad?: () => void;
@@ -38,9 +37,7 @@ interface OverflowItem {
 }
 
 export const Header: React.FC<HeaderProps> = ({
-  workflowName,
-  statusLabel,
-  dirty = false,
+  leading,
   onRun,
   onSave,
   onLoad,
@@ -86,13 +83,7 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header className="designer-header">
-      <div className="designer-header-left">
-        <h1 className="designer-workflow-name" title={workflowName || '새 워크플로우'}>
-          {workflowName || '새 워크플로우'}
-        </h1>
-        {statusLabel && <span className="designer-workflow-status">{statusLabel}</span>}
-        {dirty && <span className="designer-workflow-dirty">저장 안 됨</span>}
-      </div>
+      <div className="designer-header-left">{leading}</div>
 
       <div className="designer-header-right">
         {actions}

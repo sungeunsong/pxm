@@ -88,6 +88,8 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
   const [isPaletteOpen, setIsPaletteOpen] = useState(() => localStorage.getItem('pxm.designer.palette') === 'open');
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [isPresenting, setIsPresenting] = useState(false);
+  // 탭 줄이 액션 버튼과 한 줄을 나눠 쓰므로, 활성 탭이 스크롤 밖으로 밀릴 수 있다.
+  const activeTabRef = useRef<HTMLDivElement | null>(null);
   const [executionInstanceId, setExecutionInstanceId] = useState<string | null>(null);
   const [traceInstanceId, setTraceInstanceId] = useState<string | null>(null);
   const [executionFormSchema, setExecutionFormSchema] = useState<FormSchema | undefined>(undefined);
@@ -919,6 +921,16 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
     return () => window.removeEventListener('keydown', handleKeyDown);
   });
 
+  useEffect(() => {
+    const tab = activeTabRef.current;
+    const strip = tab?.parentElement;
+    if (!tab || !strip) return;
+    const tabRect = tab.getBoundingClientRect();
+    const stripRect = strip.getBoundingClientRect();
+    if (tabRect.left < stripRect.left) strip.scrollLeft -= stripRect.left - tabRect.left;
+    else if (tabRect.right > stripRect.right) strip.scrollLeft += tabRect.right - stripRect.right;
+  }, [activeDesignerTabId, designerTabs.length]);
+
   // 발표 중에 다른 화면으로 이동하면 전역 내비게이션이 접힌 채로 남는다.
   useEffect(() => () => onPresentationChange?.(false), [onPresentationChange]);
 
@@ -1061,13 +1073,91 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
   return (
     <div className={`flow-designer${traceInstanceId ? ' trace-mode' : ''}`}>
       <Header
-        workflowName={traceInstanceId ? `실행 추적 · ${currentTemplateName || '워크플로우'}` : currentTemplateName || undefined}
-        statusLabel={traceInstanceId ? undefined : activeDesignerTab?.lifecycleStatus === 'PUBLISHED'
-          ? publishedLabel(activeDesignerTab.activePublishedVersion)
-          : activeDesignerTab?.lifecycleStatus === 'DISABLED'
-            ? '배포 중지'
-            : currentTemplateId ? '초안' : undefined}
-        dirty={!traceInstanceId && Boolean(activeDesignerTab?.isDirty)}
+        leading={(
+        <div className="workflow-tab-bar in-header" role="tablist" aria-label="열린 워크플로우">
+          <div className="workflow-tabs">
+            {designerTabs.filter((tab) => !traceInstanceId || tab.tabId === activeDesignerTabId).map((tab) => (
+              <div
+                key={tab.tabId}
+                ref={tab.tabId === activeDesignerTabId ? activeTabRef : undefined}
+                className={`workflow-tab ${tab.tabId === activeDesignerTabId ? 'active' : ''}`}
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={tab.tabId === activeDesignerTabId}
+                  className="workflow-tab-main"
+                  onClick={() => handleSwitchDesignerTab(tab.tabId)}
+                  title={tab.isDirty ? `${getDesignerTabTitle(tab)} · 저장 안 됨` : getDesignerTabTitle(tab)}
+                >
+                  <span className="workflow-tab-status" aria-hidden="true">
+                    {tab.isDirty ? '●' : ''}
+                  </span>
+                  <span className="workflow-tab-title">{getDesignerTabTitle(tab)}</span>
+                  {tab.templateVersion && <span className="workflow-tab-version">v{tab.templateVersion}</span>}
+                  {tab.lifecycleStatus && (
+                    <span className={`workflow-tab-lifecycle ${tab.lifecycleStatus.toLowerCase()}`}>
+                      {tab.lifecycleStatus === 'PUBLISHED'
+                        ? publishedLabel(tab.activePublishedVersion)
+                        : tab.lifecycleStatus === 'DISABLED'
+                          ? '배포 중지'
+                          : '초안'}
+                    </span>
+                  )}
+                  {tab.hasUnpublishedChanges && <span className="workflow-tab-unpublished">미배포</span>}
+                </button>
+                {!traceInstanceId && <button
+                  type="button"
+                  className="workflow-tab-close"
+                  aria-label={`${getDesignerTabTitle(tab)} 탭 닫기`}
+                  title="탭 닫기"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleCloseDesignerTab(tab.tabId);
+                  }}
+                >
+                  <X size={13} />
+                </button>}
+              </div>
+            ))}
+          </div>
+          {!traceInstanceId && <button
+            type="button"
+            className="workflow-tab-add"
+            onClick={handleNewDesignerTab}
+            aria-label="새 워크플로우 탭"
+            title="새 워크플로우 탭"
+          >
+            <Plus size={15} />
+          </button>}
+          {!traceInstanceId && <div className="workflow-tab-tools" aria-label="워크플로우 복사 도구">
+            <button
+              type="button"
+              className="workflow-tab-tool"
+              onClick={handleCopySelectedSubflow}
+              title="선택 노드 복사"
+              aria-label="선택 노드 복사"
+            >
+              <Clipboard size={14} />
+            </button>
+            <button
+              type="button"
+              className="workflow-tab-tool"
+              onClick={() => handlePasteSubflow()}
+              disabled={!workflowClipboard}
+              title={
+                workflowClipboard
+                  ? `${workflowClipboard.sourceTemplateName}에서 복사한 ${workflowClipboard.nodes.length}개 노드 붙여넣기`
+                  : '복사한 노드가 없습니다'
+              }
+              aria-label="복사한 노드 붙여넣기"
+            >
+              <ClipboardPaste size={14} />
+              {workflowClipboard && <span>{workflowClipboard.nodes.length}</span>}
+            </button>
+          </div>}
+        </div>
+        )}
         actions={(
           <>
             {traceInstanceId && <div className="trace-mode-badge"><span>READ ONLY</span><strong>{currentTemplateName || '워크플로우'} · {shortInstanceId(traceInstanceId)}</strong></div>}
@@ -1096,88 +1186,6 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
         darkMode={darkMode}
         onToggleDarkMode={handleToggleDarkMode}
       />
-      <div className="workflow-tab-bar" role="tablist" aria-label="열린 워크플로우">
-        <div className="workflow-tabs">
-          {designerTabs.filter((tab) => !traceInstanceId || tab.tabId === activeDesignerTabId).map((tab) => (
-            <div
-              key={tab.tabId}
-              className={`workflow-tab ${tab.tabId === activeDesignerTabId ? 'active' : ''}`}
-            >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={tab.tabId === activeDesignerTabId}
-                className="workflow-tab-main"
-                onClick={() => handleSwitchDesignerTab(tab.tabId)}
-                title={getDesignerTabTitle(tab)}
-              >
-                <span className="workflow-tab-status" aria-hidden="true">
-                  {tab.isDirty ? '●' : ''}
-                </span>
-                <span className="workflow-tab-title">{getDesignerTabTitle(tab)}</span>
-                {tab.templateVersion && <span className="workflow-tab-version">v{tab.templateVersion}</span>}
-                {tab.lifecycleStatus && (
-                  <span className={`workflow-tab-lifecycle ${tab.lifecycleStatus.toLowerCase()}`}>
-                    {tab.lifecycleStatus === 'PUBLISHED'
-                      ? publishedLabel(tab.activePublishedVersion)
-                      : tab.lifecycleStatus === 'DISABLED'
-                        ? '배포 중지'
-                        : '초안'}
-                  </span>
-                )}
-                {tab.hasUnpublishedChanges && <span className="workflow-tab-unpublished">미배포</span>}
-              </button>
-              {!traceInstanceId && <button
-                type="button"
-                className="workflow-tab-close"
-                aria-label={`${getDesignerTabTitle(tab)} 탭 닫기`}
-                title="탭 닫기"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  handleCloseDesignerTab(tab.tabId);
-                }}
-              >
-                <X size={13} />
-              </button>}
-            </div>
-          ))}
-        </div>
-        {!traceInstanceId && <button
-          type="button"
-          className="workflow-tab-add"
-          onClick={handleNewDesignerTab}
-          aria-label="새 워크플로우 탭"
-          title="새 워크플로우 탭"
-        >
-          <Plus size={15} />
-        </button>}
-        {!traceInstanceId && <div className="workflow-tab-tools" aria-label="워크플로우 복사 도구">
-          <button
-            type="button"
-            className="workflow-tab-tool"
-            onClick={handleCopySelectedSubflow}
-            title="선택 노드 복사"
-            aria-label="선택 노드 복사"
-          >
-            <Clipboard size={14} />
-          </button>
-          <button
-            type="button"
-            className="workflow-tab-tool"
-            onClick={() => handlePasteSubflow()}
-            disabled={!workflowClipboard}
-            title={
-              workflowClipboard
-                ? `${workflowClipboard.sourceTemplateName}에서 복사한 ${workflowClipboard.nodes.length}개 노드 붙여넣기`
-                : '복사한 노드가 없습니다'
-            }
-            aria-label="복사한 노드 붙여넣기"
-          >
-            <ClipboardPaste size={14} />
-            {workflowClipboard && <span>{workflowClipboard.nodes.length}</span>}
-          </button>
-        </div>}
-      </div>
       <input
         ref={importFileInputRef}
         type="file"
@@ -1546,7 +1554,7 @@ function createDesignerTabId() {
 }
 
 function getDesignerTabTitle(tab: DesignerTab) {
-  const title = tab.templateName || 'Untitled Workflow';
+  const title = tab.templateName || '새 워크플로우';
   return tab.traceInstanceId ? `${title} · ${shortInstanceId(tab.traceInstanceId)}` : title;
 }
 

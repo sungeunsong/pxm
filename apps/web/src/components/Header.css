@@ -6,8 +6,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 64px;
-  padding: 0 var(--space-xl);
+  gap: var(--space-md);
+  height: 52px;
+  padding: 0 var(--space-lg);
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-subtle);
   position: sticky;
@@ -15,42 +16,14 @@
   z-index: var(--z-header, 200);
 }
 
-/* ===== Left Section: 지금 편집 중인 워크플로우 ===== */
+/* ===== Left Section: 워크플로우 탭 줄 ===== */
+/* 남는 폭을 모두 쓰고, 탭이 넘치면 탭 줄 안에서 가로 스크롤한다. */
 .designer-header-left {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
+  flex: 1 1 auto;
   min-width: 0;
-}
-
-.designer-workflow-name {
-  margin: 0;
-  font-size: var(--font-size-base);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.designer-workflow-status,
-.designer-workflow-dirty {
-  flex: 0 0 auto;
-  padding: 2px 8px;
-  border-radius: var(--radius-full);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  white-space: nowrap;
-}
-
-.designer-workflow-status {
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-}
-
-.designer-workflow-dirty {
-  background: rgba(245, 158, 11, 0.12);
-  color: #8a5a0a;
 }
 
 /* ===== Right Section ===== */
@@ -104,13 +77,5 @@
 @media (max-width: 768px) {
   .designer-header {
     padding: 0 var(--space-md);
-  }
-
-  .designer-workflow-name {
-    font-size: var(--font-size-sm);
-  }
-
-  .designer-workflow-status {
-    display: none;
   }
 }

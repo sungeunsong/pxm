@@ -26,6 +26,16 @@
   overflow: hidden;
 }
 
+/* 헤더 안으로 들어간 탭 줄은 자기 배경과 경계선을 갖지 않는다. */
+.workflow-tab-bar.in-header {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+  border-bottom: 0;
+}
+
 .workflow-tabs {
   display: flex;
   align-items: center;
@@ -50,6 +60,11 @@
 .workflow-tab.active {
   background: var(--bg-elevated);
   border-color: var(--border-strong);
+}
+
+/* 워크플로우 이름을 탭에서만 보여주므로, 지금 편집 중인 탭에는 폭을 더 준다. */
+.workflow-tab.active {
+  grid-template-columns: minmax(160px, 320px) 28px;
 }
 
 .trace-mode .workflow-tab {
