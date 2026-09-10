@@ -21,6 +21,11 @@ export function popModalLayer(id: symbol): void {
   if (index >= 0) stack.splice(index, 1);
 }
 
+/** 열려 있는 레이어가 하나라도 있는가. 화면 단축키가 모달 위에서 겹쳐 도는 것을 막는 용도다. */
+export function hasModalLayer(): boolean {
+  return stack.length > 0;
+}
+
 /** 이 레이어가 최상단인가. 최상단만 Esc/Tab을 처리해야 한다. */
 export function isTopModalLayer(id: symbol): boolean {
   return stack.length > 0 && stack[stack.length - 1] === id;

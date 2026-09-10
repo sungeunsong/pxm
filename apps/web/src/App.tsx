@@ -262,6 +262,8 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
   const [selectedRequestInstanceId, setSelectedRequestInstanceId] = useState<string | null>(null);
   const [accountOpen, setAccountOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('pxm.sidebar.collapsed') === 'true');
+  // 발표 모드는 일시적인 상태다. 사용자가 저장해 둔 사이드바 선택을 덮어쓰지 않도록 따로 둔다.
+  const [presenting, setPresenting] = useState(false);
   const navigationSections = sidebarSections(user.role);
 
   const toggleSidebar = () => setSidebarCollapsed((current) => {
@@ -322,7 +324,7 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
   return (
     <div className="app-container">
       {/* 1. Left Sidebar (Deep Navy) */}
-      <aside className={`app-sidebar${sidebarCollapsed ? ' collapsed' : ''}`}>
+      <aside className={`app-sidebar${sidebarCollapsed || presenting ? ' collapsed' : ''}`}>
         <div className="sidebar-logo">
           <div className="sidebar-logo-text">
             <img src="/brand/pxm-app-icon.png" alt="" /><span>PXM</span>
@@ -405,6 +407,7 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
             <div style={{ height: '100%' }}>
               <FlowDesigner 
                 currentUser={user}
+                onPresentationChange={setPresenting}
                 onSwitchToInbox={() => setActiveTab('inbox')}
                 onExitTrace={() => {
                   setSelectedInstanceId(null);

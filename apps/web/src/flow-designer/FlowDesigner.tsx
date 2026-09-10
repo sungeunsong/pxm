@@ -1,11 +1,12 @@
-import React, { useMemo, useState, useRef } from 'react';
-import type { Edge, Node, XYPosition } from 'reactflow';
-import { Braces, CheckSquare, CircleCheck, Clipboard, ClipboardPaste, Clock, Diamond, Inbox, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Play, Plus, Search, Star, Terminal, Workflow, X } from 'lucide-react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
+import type { Edge, Node, Viewport, XYPosition } from 'reactflow';
+import { Braces, CheckSquare, ChevronsLeftRight, ChevronsRightLeft, CircleCheck, Clipboard, ClipboardPaste, Clock, Diamond, Inbox, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Play, Plus, Search, Star, Terminal, Workflow, X } from 'lucide-react';
 import { Button } from '../components/Button';
 import { Header } from '../components/Header';
 import { Input } from '../components/Input';
 import { useFeedback } from '../components/feedback/feedback-context';
 import { errorMessage } from '../lib/error-message';
+import { hasModalLayer } from '../lib/modal-layer';
 import { FlowCanvas } from './FlowCanvas';
 import type { FlowCanvasRef } from './FlowCanvas';
 import type { CustomNodeData, FormSchema } from './form-types';
@@ -30,6 +31,8 @@ export interface FlowDesignerProps {
   onExitTrace?: () => void;
   initialMonitorInstanceId?: string;
   currentUser: SessionUser;
+  /** 발표 모드 동안 전역 내비게이션을 접어 달라고 앱에 알린다 */
+  onPresentationChange?: (presenting: boolean) => void;
 }
 
 type DesignerTab = {
@@ -61,7 +64,7 @@ type WorkflowClipboard = {
   edges: Edge[];
 };
 
-export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onExitTrace, initialMonitorInstanceId, currentUser }) => {
+export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onExitTrace, initialMonitorInstanceId, currentUser, onPresentationChange }) => {
   const { toast, confirm: confirmDialog, prompt: promptDialog } = useFeedback();
   const [darkMode, setDarkMode] = useState(true);
   const [selectedNode, setSelectedNode] = useState<Node<CustomNodeData> | null>(null);
@@ -84,6 +87,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
   // 팔레트는 기본 rail(아이콘)로 접어 캔버스를 넓게 쓴다. 선택은 기억한다.
   const [isPaletteOpen, setIsPaletteOpen] = useState(() => localStorage.getItem('pxm.designer.palette') === 'open');
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+  const [isPresenting, setIsPresenting] = useState(false);
   const [executionInstanceId, setExecutionInstanceId] = useState<string | null>(null);
   const [traceInstanceId, setTraceInstanceId] = useState<string | null>(null);
   const [executionFormSchema, setExecutionFormSchema] = useState<FormSchema | undefined>(undefined);
@@ -848,6 +852,76 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
     return !current;
   });
 
+  // ===== 발표 모드 =====
+  // 전역 내비게이션·팔레트·속성 패널을 한 번에 접고 그래프를 화면에 맞춘다.
+  // 접기 전 상태와 뷰포트만 기억할 뿐 워크플로우 데이터는 건드리지 않는다.
+  const presentationSnapshotRef = useRef<{
+    paletteOpen: boolean;
+    propertiesOpen: boolean;
+    viewport: Viewport | null;
+  } | null>(null);
+
+  const enterPresentation = () => {
+    presentationSnapshotRef.current = {
+      paletteOpen: isPaletteOpen,
+      propertiesOpen: isPropertiesPanelOpen,
+      viewport: flowCanvasRef.current?.getViewport() || null,
+    };
+    // 접기 상태는 화면에만 반영하고 localStorage에 남기지 않는다. 발표는 일시적인 상태다.
+    setIsPaletteOpen(false);
+    setIsPropertiesPanelOpen(false);
+    setIsPresenting(true);
+    onPresentationChange?.(true);
+    // 패널이 접히고 캔버스가 넓어진 뒤에 맞춰야 실제 폭 기준으로 계산된다.
+    window.setTimeout(() => {
+      flowCanvasRef.current?.fitView(0, { minZoom: PRESENTATION_MIN_ZOOM });
+    }, PANEL_TRANSITION_MS);
+  };
+
+  const exitPresentation = () => {
+    const snapshot = presentationSnapshotRef.current;
+    presentationSnapshotRef.current = null;
+    setIsPresenting(false);
+    onPresentationChange?.(false);
+    if (!snapshot) return;
+    setIsPaletteOpen(snapshot.paletteOpen);
+    setIsPropertiesPanelOpen(snapshot.propertiesOpen);
+    previousPanelOpenRef.current = snapshot.propertiesOpen;  // 복원은 fitView를 다시 부르지 않는다
+    if (snapshot.viewport) {
+      const viewport = snapshot.viewport;
+      window.setTimeout(() => flowCanvasRef.current?.setViewport(viewport), PANEL_TRANSITION_MS);
+    }
+  };
+
+  const togglePresentation = () => {
+    if (isPresenting) exitPresentation();
+    else enterPresentation();
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+      if (isTypingTarget(event.target)) return;
+      // 다이얼로그·Drawer가 떠 있으면 Esc는 그쪽 몫이다.
+      if (hasModalLayer()) return;
+
+      if (event.key === 'Escape' && isPresenting) {
+        event.preventDefault();
+        exitPresentation();
+        return;
+      }
+      if (event.shiftKey && (event.key === 'P' || event.key === 'p')) {
+        event.preventDefault();
+        togglePresentation();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  });
+
+  // 발표 중에 다른 화면으로 이동하면 전역 내비게이션이 접힌 채로 남는다.
+  useEffect(() => () => onPresentationChange?.(false), [onPresentationChange]);
+
   const handleNodeSelect = (node: Node | null) => {
     if (node?.id !== selectedNode?.id) {
       setNodeTestResult(null);
@@ -997,12 +1071,19 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
         actions={(
           <>
             {traceInstanceId && <div className="trace-mode-badge"><span>READ ONLY</span><strong>{currentTemplateName || '워크플로우'} · {shortInstanceId(traceInstanceId)}</strong></div>}
-            {!traceInstanceId && currentTemplateId && <Button variant="ghost" icon={<Braces />} onClick={() => { window.location.hash = `#/presets?workflow=${encodeURIComponent(currentTemplateId)}`; }}>
+            {!traceInstanceId && currentTemplateId && !isPresenting && <Button variant="ghost" icon={<Braces />} onClick={() => { window.location.hash = `#/presets?workflow=${encodeURIComponent(currentTemplateId)}`; }}>
               실행 프리셋
             </Button>}
-            {onSwitchToInbox && <Button variant="ghost" icon={<Inbox />} onClick={() => onSwitchToInbox()}>
+            {onSwitchToInbox && !isPresenting && <Button variant="ghost" icon={<Inbox />} onClick={() => onSwitchToInbox()}>
               내 결재함
             </Button>}
+            <Button
+              variant={isPresenting ? 'secondary' : 'ghost'}
+              icon={isPresenting ? <ChevronsRightLeft /> : <ChevronsLeftRight />}
+              onClick={togglePresentation}
+              title={isPresenting ? '패널 다시 열기 (Esc)' : '캔버스 넓게 보기 (Shift+P)'}
+              aria-label={isPresenting ? '패널 다시 열기' : '캔버스 넓게 보기'}
+            />
           </>
         )}
         onRun={traceInstanceId ? undefined : () => handleRun()}
@@ -1473,6 +1554,17 @@ function getDesignerTabTitle(tab: DesignerTab) {
 // 그 경우 'v null'을 찍는 대신 버전 없이 '배포'만 표시한다.
 // .properties-panel 의 clamp(360px, 26vw, 440px) 상한과 맞춘다.
 const PROPERTIES_PANEL_WIDTH = 440;
+// 발표 모드에서 노드 라벨과 분기 라벨이 읽히는 하한 배율. 다 담기지 않으면 그래프 중심을 잡는다.
+const PRESENTATION_MIN_ZOOM = 0.7;
+// 패널 접기/펼치기 CSS 전환이 끝나고 나서 캔버스 폭을 재야 한다.
+const PANEL_TRANSITION_MS = 220;
+
+// 입력 중에는 단축키를 가로채지 않는다.
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+}
 
 function publishedLabel(version?: number | null) {
   return typeof version === 'number' ? `배포 v${version}` : '배포';

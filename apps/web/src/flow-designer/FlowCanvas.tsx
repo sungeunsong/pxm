@@ -9,7 +9,7 @@ import ReactFlow, {
   MiniMap,
 } from 'reactflow';
 import { getRectOfNodes, getTransformForBounds } from 'reactflow';
-import type { Node, Edge, Connection, NodeTypes, ReactFlowInstance, XYPosition } from 'reactflow';
+import type { Node, Edge, Connection, NodeTypes, ReactFlowInstance, Viewport, XYPosition } from 'reactflow';
 import {
   CheckSquare,
   ChevronLeft,
@@ -77,8 +77,13 @@ export interface FlowCanvasRef {
   /**
    * 그래프를 화면에 맞춘다.
    * rightInset을 주면 그만큼을 뺀 폭(= 속성 패널에 가리지 않는 영역)에 맞춘다.
+   * minZoom을 주면 그보다 작게는 줄이지 않고 그래프 중심에 맞춘다 (발표 모드 가독성).
    */
-  fitView: (rightInset?: number) => void;
+  fitView: (rightInset?: number, options?: { minZoom?: number }) => void;
+  /** 현재 뷰포트. 발표 모드 진입 전 상태를 기억해 두는 용도다 */
+  getViewport: () => Viewport | null;
+  /** 기억해 둔 뷰포트로 되돌린다 */
+  setViewport: (viewport: Viewport, options?: { duration?: number }) => void;
 }
 
 const FIT_PADDING = 0.18;
@@ -224,7 +229,7 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
     const getEdges = useCallback(() => edges, [edges]);
     // 속성 패널은 캔버스 위에 겹쳐 뜨므로, 패널이 열려 있으면 그 폭을 뺀 영역에 맞춘다.
     // 화면을 옆으로 미는 방식은 반대편 노드를 캔버스 밖으로 밀어내므로 쓰지 않는다.
-    const applyFit = useCallback((rightInset: number, duration: number) => {
+    const applyFit = useCallback((rightInset: number, duration: number, minZoom = MIN_ZOOM) => {
       const instance = reactFlowRef.current;
       const container = wrapperRef.current;
       if (!instance || !container) return;
@@ -235,19 +240,38 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
       const height = container.clientHeight;
       if (width <= 0 || height <= 0) return;
 
+      const bounds = getRectOfNodes(nodes);
       const [x, y, zoom] = getTransformForBounds(
-        getRectOfNodes(nodes), width, height, MIN_ZOOM, MAX_ZOOM, FIT_PADDING,
+        bounds, width, height, MIN_ZOOM, MAX_ZOOM, FIT_PADDING,
       );
+
+      // 라벨이 읽히는 배율을 지켜야 하는 경우, 다 담기지 않더라도 그래프 중심을 잡아준다.
+      if (zoom < minZoom) {
+        instance.setViewport({
+          x: width / 2 - (bounds.x + bounds.width / 2) * minZoom,
+          y: height / 2 - (bounds.y + bounds.height / 2) * minZoom,
+          zoom: minZoom,
+        }, { duration });
+        return;
+      }
+
       instance.setViewport({ x, y, zoom }, { duration });
     }, []);
 
-    const fitView = useCallback((rightInset = 0) => {
+    const fitView = useCallback((rightInset = 0, options?: { minZoom?: number }) => {
+      const minZoom = options?.minZoom;
       // 노드 교체 직후에는 레이아웃이 아직 확정되지 않아 두 번 맞춘다.
       window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => applyFit(rightInset, 350));
+        window.requestAnimationFrame(() => applyFit(rightInset, 350, minZoom));
       });
-      window.setTimeout(() => applyFit(rightInset, 250), 80);
+      window.setTimeout(() => applyFit(rightInset, 250, minZoom), 80);
     }, [applyFit]);
+
+    const getViewport = useCallback(() => reactFlowRef.current?.getViewport() || null, []);
+
+    const setViewportTo = useCallback((viewport: Viewport, options?: { duration?: number }) => {
+      reactFlowRef.current?.setViewport(viewport, { duration: options?.duration ?? 300 });
+    }, []);
 
     // 노드와 엣지 설정하기 (템플릿 불러오기용)
     const setNodesAndEdges = useCallback(
@@ -356,8 +380,10 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
         appendNodesAndEdges,
         updateEdgesByNodeStatus,
         fitView,
+        getViewport,
+        setViewport: setViewportTo,
       }),
-      [updateNodeData, updateEdgeData, getNodes, getEdges, setNodesAndEdges, appendNodesAndEdges, updateEdgesByNodeStatus, fitView]
+      [updateNodeData, updateEdgeData, getNodes, getEdges, setNodesAndEdges, appendNodesAndEdges, updateEdgesByNodeStatus, fitView, getViewport, setViewportTo]
     );
 
   const onConnect = useCallback(
