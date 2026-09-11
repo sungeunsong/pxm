@@ -276,13 +276,18 @@ AES-256-GCM으로 암호화 저장하며 원문은 다시 조회할 수 없다. 
 | 분산 실행 안전성 | `FOR UPDATE SKIP LOCKED` job 획득 + advisory lock + lease + heartbeat |
 | 멱등성 | `Idempotency-Key` 재전송 시 같은 `instance_id` 반환. 인스턴스 명령에도 적용 |
 | 이벤트 로그 | Outbox append-only. 모든 상태 전이가 기록되며 SSE로 전달 |
-| 실행 추적 | `GET /api/v1/instances/:id/trace` 및 콘솔의 읽기 전용 그래프 추적 |
+| 실행 추적 | `GET /api/v1/instances/:id/trace` 및 콘솔의 읽기 전용 그래프 추적. 노드의 실행 중·대기·완료·실패와 실제로 지나간 연결을 구분해 표시 |
 | 인스턴스 제어 | terminate / pause / resume / 실패 지점 재시도(preview 포함) |
 | 운영 상태 | Job 적체, 장시간 WAITING, 만료 lease, Webhook·Outbox DLQ 진단과 안전 재처리 |
 | 실행 이상 점검 | 런타임 무결성 scan / repair |
 | 감사 로그 | 관리 작업 감사 기록 및 콘솔 조회 화면 |
 
 운영 화면 판정 기준(HEALTHY / WARNING / DANGER)은 `docs/operations-monitoring.md`.
+
+디자이너의 노드 유형은 아이콘 색으로, 현재 선택은 파란 외곽선으로 구분한다. 실시간 실행과 이력
+추적에서는 카드 테두리와 상태 아이콘을 사용해 실행 중(파랑), 대기(주황 점선), 완료(초록),
+실패(빨강)를 표시하며 미니맵과 캔버스 범례도 같은 의미를 쓴다. 실행 상태와 연결선 강조는
+워크플로우 정의와 분리된 화면 상태이므로 저장 데이터와 탭의 변경 여부에 포함되지 않는다.
 
 인스턴스 종료는 공개 `/api/v1/instances/:id/terminate`에서도 지원한다. `workflow:execute` scope와
 대상 워크플로우 권한이 있어야 하며 같은 사용자 또는 서비스 계정 소유자의 API Key로 시작한 실행만

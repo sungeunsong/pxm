@@ -235,6 +235,37 @@ test('미니맵에서 노드 유형 색상과 현재 뷰포트를 구분한다',
   await ui.context.close();
 });
 
+test('실행 이력은 노드 상태와 실제 경로를 저장 변경 없이 표시한다', async ({ browser }) => {
+  const ui = await loginPage(browser, 'admin', process.env.PXM_DEMO_PASSWORD!, 'designer');
+  await openWorkflowFromDesigner(ui.page, '실습 2 · 협력사 접근 권한 신청');
+
+  await ui.page.getByRole('button', { name: '더 보기' }).click();
+  await ui.page.getByRole('menuitem', { name: '실행 이력', exact: true }).click();
+  const completedRun = ui.page.locator('.instance-item')
+    .filter({ hasText: '실습 2 · 협력사 접근 권한 신청' })
+    .filter({ hasText: 'COMPLETED' })
+    .first();
+  await expect(completedRun).toBeVisible();
+  await completedRun.click();
+
+  const legend = ui.page.getByLabel('노드 실행 상태 범례');
+  await expect(legend).toBeVisible();
+  await expect(legend).toContainText('실행 중대기완료실패미실행');
+  await expect(ui.page.locator('.custom-node[data-execution-status="completed"]')).not.toHaveCount(0);
+
+  const runtimeFills = await ui.page.locator('.flow-minimap .react-flow__minimap-node').evaluateAll((nodes) =>
+    nodes.map((node) => getComputedStyle(node).fill),
+  );
+  expect(runtimeFills).toContain('rgb(22, 163, 74)');
+  expect(runtimeFills).toContain('rgb(148, 163, 184)');
+
+  const activeTab = ui.page.locator('.workflow-tab.active');
+  await expect(activeTab.locator('.workflow-tab-status')).toHaveText('');
+  await expect(activeTab.getByRole('tab')).not.toHaveAttribute('title', /저장 안 됨/);
+
+  await ui.context.close();
+});
+
 test('캔버스 컨텍스트 메뉴로 마우스 위치에서 노드를 편집한다', async ({ browser }) => {
   const ui = await loginPage(browser, 'admin', process.env.PXM_DEMO_PASSWORD!, 'designer');
   const pane = ui.page.locator('.react-flow__pane');

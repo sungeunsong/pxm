@@ -7,6 +7,7 @@ import ReactFlow, {
   Background,
   BackgroundVariant,
   MiniMap,
+  Panel,
 } from 'reactflow';
 import { getRectOfNodes, getTransformForBounds } from 'reactflow';
 import type { Node, Edge, Connection, NodeChange, NodeTypes, ReactFlowInstance, Viewport, XYPosition } from 'reactflow';
@@ -28,7 +29,7 @@ import 'reactflow/dist/style.css';
 import { useFeedback } from '../components/feedback/feedback-context';
 import { computeAutoLayout } from './auto-layout';
 import { CustomNode } from './CustomNode';
-import type { CustomNodeData } from './form-types';
+import type { CustomNodeData, ExecutionNodeStatus } from './form-types';
 import './FlowCanvas.css';
 
 import { ConditionEdge } from './ConditionEdge';
@@ -69,6 +70,7 @@ export interface FlowCanvasProps {
   onPasteAt?: (position: XYPosition) => void;
   onTestNode?: (node: Node<CustomNodeData>) => void;
   plugins?: PluginManifest[];
+  executionMode?: 'design' | 'live' | 'trace';
   readOnly?: boolean;
 }
 
@@ -79,7 +81,10 @@ export interface FlowCanvasRef {
   getEdges: () => Edge[];
   setNodesAndEdges: (nodes: Node[], edges: Edge[]) => void;
   appendNodesAndEdges: (nodes: Node[], edges: Edge[]) => void;
-  updateEdgesByNodeStatus: (nodeId: string, status: string) => void;
+  setNodeExecutionStatus: (nodeId: string, status: ExecutionNodeStatus) => void;
+  setExecutionStatuses: (statuses: Record<string, ExecutionNodeStatus>) => void;
+  getNodeExecutionStatus: (nodeId: string) => ExecutionNodeStatus | undefined;
+  clearExecutionState: () => void;
   /**
    * 그래프를 화면에 맞춘다.
    * rightInset을 주면 그만큼을 뺀 폭(= 속성 패널에 가리지 않는 영역)에 맞춘다.
@@ -130,6 +135,37 @@ function normalizeBranchEdges(nodes: Node[], edges: Edge[]) {
   });
 }
 
+function stripExecutionStatus(node: Node): Node {
+  const data = node.data as CustomNodeData;
+  if (!data.executionStatus) return node;
+  const definitionData = { ...data };
+  delete definitionData.executionStatus;
+  return { ...node, data: definitionData };
+}
+
+function decorateEdgeForExecution(edge: Edge, status: ExecutionNodeStatus, nodes: Node[]): Edge {
+  const sourceType = (nodes.find((node) => node.id === edge.source)?.data as CustomNodeData | undefined)?.nodeType;
+  const isBranchEdge = edge.type === 'conditionEdge' || sourceType === 'gateway' || sourceType === 'approval';
+  const statusStyle: React.CSSProperties = status === 'running'
+    ? { stroke: '#2563eb', strokeWidth: 3.5 }
+    : status === 'completed'
+      ? { stroke: '#16a34a', strokeWidth: 3, strokeDasharray: 'none', strokeDashoffset: '0' }
+      : status === 'failed'
+        ? { stroke: '#dc2626', strokeWidth: 3, strokeDasharray: '8 4' }
+        : { stroke: '#d97706', strokeWidth: 3, strokeDasharray: '4 4' };
+  return {
+    ...edge,
+    type: status === 'running' && !isBranchEdge ? 'animatedEdge' : isBranchEdge ? 'conditionEdge' : 'smoothstep',
+    className: `edge-${status === 'running' ? 'active' : status}`,
+    animated: false,
+    style: { ...edge.style, ...statusStyle },
+    data: {
+      ...(edge.data || {}),
+      animated: isBranchEdge && status === 'running',
+    },
+  };
+}
+
 export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
   ({
     onNodeSelect,
@@ -140,6 +176,7 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
     onPasteAt,
     onTestNode,
     plugins = [],
+    executionMode = 'design',
     readOnly = false,
   }, ref) => {
     const { confirm: confirmDialog, toast } = useFeedback();
@@ -150,10 +187,21 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
     const [contextMenu, setContextMenu] = React.useState<CanvasMenuState | null>(null);
     const [layoutUndo, setLayoutUndo] = React.useState<Map<string, XYPosition> | null>(null);
     const [fitAfterLayoutUndo, setFitAfterLayoutUndo] = React.useState(false);
+    const [executionStatuses, setExecutionStatusesState] = React.useState<Map<string, ExecutionNodeStatus>>(new Map());
     const nodeCatalog = React.useMemo(
       () => buildNodeCatalog(plugins, contextMenu?.kind === 'node-search' && Boolean(contextMenu.edge)),
       [contextMenu?.edge, contextMenu?.kind, plugins],
     );
+    const renderedNodes = React.useMemo(() => nodes.map((node) => {
+      const status = executionStatuses.get(node.id);
+      return status ? { ...node, data: { ...node.data, executionStatus: status } } : node;
+    }), [executionStatuses, nodes]);
+    const renderedEdges = React.useMemo(() => edges.map((edge) => {
+      // 도착 노드가 실행됐다는 사실로 실제로 지나간 연결을 식별한다.
+      // 출발 노드를 기준으로 칠하면 게이트웨이의 선택되지 않은 분기까지 모두 활성화된다.
+      const status = executionStatuses.get(edge.target);
+      return status ? decorateEdgeForExecution(edge, status, nodes) : edge;
+    }), [edges, executionStatuses, nodes]);
 
     const onNodesChange = useCallback((changes: NodeChange[]) => {
       // 자동 정렬 후 사용자가 배치를 편집하면 이전 스냅샷은 더 이상 안전한 실행 취소가 아니다.
@@ -314,8 +362,10 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
       (newNodes: Node[], newEdges: Edge[]) => {
         // 탭 전환·템플릿 불러오기 후에 이전 탭의 자동 정렬을 되돌리지 않는다.
         setLayoutUndo(null);
-        setNodes(newNodes);
-        setEdges(normalizeBranchEdges(newNodes, newEdges));
+        const definitionNodes = newNodes.map(stripExecutionStatus);
+        setExecutionStatusesState(new Map());
+        setNodes(definitionNodes);
+        setEdges(normalizeBranchEdges(definitionNodes, newEdges));
         // 선택 해제
         onNodeSelect?.(null);
       },
@@ -324,87 +374,37 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
 
     const appendNodesAndEdges = useCallback(
       (newNodes: Node[], newEdges: Edge[]) => {
+        const definitionNodes = newNodes.map(stripExecutionStatus);
         setNodes((currentNodes) => {
-          const combinedNodes = currentNodes.concat(newNodes);
+          const combinedNodes = currentNodes.concat(definitionNodes);
           setEdges((currentEdges) => currentEdges.concat(normalizeBranchEdges(combinedNodes, newEdges)));
           return combinedNodes;
         });
-        onNodeSelect?.(newNodes[0] || null);
+        onNodeSelect?.(definitionNodes[0] || null);
       },
       [setNodes, setEdges, onNodeSelect]
     );
 
-    // 노드 상태에 따른 엣지 업데이트
-    const updateEdgesByNodeStatus = useCallback(
-      (nodeId: string, status: string) => {
-        setEdges((eds) =>
-          eds.map((edge) => {
-            // 해당 노드에서 나가는 엣지
-            if (edge.source === nodeId) {
-              let className = '';
-              let edgeType = edge.type;
-              let style: React.CSSProperties = { ...edge.style };
-              const isBranchEdge = edge.type === 'conditionEdge' ||
-                edge.data?.branchSourceType === 'gateway' ||
-                edge.data?.branchSourceType === 'approval';
-              
-              if (status === 'running') {
-                // running 상태일 때 AnimatedEdge 사용
-                className = 'edge-active';
-                edgeType = isBranchEdge ? 'conditionEdge' : 'animatedEdge';
-                style = {
-                  ...style,
-                  stroke: '#2196f3',
-                  strokeWidth: 3.5,
-                };
-              } else if (status === 'completed') {
-                className = 'edge-completed';
-                edgeType = isBranchEdge ? 'conditionEdge' : 'smoothstep';
-                style = {
-                  ...style,
-                  stroke: '#4caf50',
-                  strokeWidth: 3,
-                  strokeDasharray: 'none',
-                  strokeDashoffset: '0',
-                };
-              } else if (status === 'failed') {
-                className = 'edge-failed';
-                edgeType = isBranchEdge ? 'conditionEdge' : 'smoothstep';
-                style = {
-                  ...style,
-                  stroke: '#f44336',
-                  strokeWidth: 3,
-                  strokeDasharray: '8 4',
-                };
-              } else if (status === 'waiting') {
-                className = 'edge-waiting';
-                edgeType = isBranchEdge ? 'conditionEdge' : 'smoothstep';
-                style = {
-                  ...style,
-                  stroke: '#FFC107',
-                  strokeWidth: 3,
-                  strokeDasharray: '0.05 0.05',
-                };
-              }
-              
-              return {
-                ...edge,
-                type: edgeType,
-                className,
-                style,
-                animated: false,
-                data: {
-                  ...(edge.data || {}),
-                  animated: isBranchEdge && status === 'running',
-                },
-              };
-            }
-            return edge;
-          })
-        );
-      },
-      [setEdges]
+    const setNodeExecutionStatus = useCallback((nodeId: string, status: ExecutionNodeStatus) => {
+      setExecutionStatusesState((current) => {
+        const next = new Map(current);
+        next.set(nodeId, status);
+        return next;
+      });
+    }, []);
+
+    const setExecutionStatuses = useCallback((statuses: Record<string, ExecutionNodeStatus>) => {
+      setExecutionStatusesState(new Map(Object.entries(statuses)));
+    }, []);
+
+    const getNodeExecutionStatus = useCallback(
+      (nodeId: string) => executionStatuses.get(nodeId),
+      [executionStatuses],
     );
+
+    const clearExecutionState = useCallback(() => {
+      setExecutionStatusesState(new Map());
+    }, []);
 
     // ref를 통해 메서드 노출
     React.useImperativeHandle(
@@ -416,14 +416,17 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
         getEdges,
         setNodesAndEdges,
         appendNodesAndEdges,
-        updateEdgesByNodeStatus,
+        setNodeExecutionStatus,
+        setExecutionStatuses,
+        getNodeExecutionStatus,
+        clearExecutionState,
         fitView,
         autoLayout: applyAutoLayout,
         undoAutoLayout,
         getViewport,
         setViewport: setViewportTo,
       }),
-      [updateNodeData, updateEdgeData, getNodes, getEdges, setNodesAndEdges, appendNodesAndEdges, updateEdgesByNodeStatus, fitView, applyAutoLayout, undoAutoLayout, getViewport, setViewportTo]
+      [updateNodeData, updateEdgeData, getNodes, getEdges, setNodesAndEdges, appendNodesAndEdges, setNodeExecutionStatus, setExecutionStatuses, getNodeExecutionStatus, clearExecutionState, fitView, applyAutoLayout, undoAutoLayout, getViewport, setViewportTo]
     );
 
   const onConnect = useCallback(
@@ -459,9 +462,9 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
 
   const onNodeClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
-      onNodeSelect?.(node);
+      onNodeSelect?.(nodes.find((item) => item.id === node.id) || node);
     },
-    [onNodeSelect]
+    [nodes, onNodeSelect]
   );
 
   const onPaneClick = useCallback(() => {
@@ -521,9 +524,11 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
     const position = contextPosition(event);
     if (!position) return;
     const currentSelection = nodes.filter((item) => item.selected) as Node<CustomNodeData>[];
+    const definitionNode = nodes.find((item) => item.id === node.id) as Node<CustomNodeData> | undefined;
+    if (!definitionNode) return;
     const targetNodes = node.selected && currentSelection.length > 1
       ? currentSelection
-      : [node as Node<CustomNodeData>];
+      : [definitionNode];
     selectNodes(targetNodes);
     setContextMenu({ kind: 'nodes', ...position, nodes: targetNodes });
   }, [contextPosition, nodes, selectNodes]);
@@ -537,10 +542,11 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
     event.stopPropagation();
     const position = contextPosition(event);
     if (!position) return;
-    const targetNodes = selectedNodes as Node<CustomNodeData>[];
+    const selectedIds = new Set(selectedNodes.map((node) => node.id));
+    const targetNodes = nodes.filter((node) => selectedIds.has(node.id)) as Node<CustomNodeData>[];
     selectNodes(targetNodes);
     setContextMenu({ kind: 'nodes', ...position, nodes: targetNodes });
-  }, [contextPosition, selectNodes]);
+  }, [contextPosition, nodes, selectNodes]);
 
   const onEdgeContextMenu = useCallback((event: React.MouseEvent, edge: Edge) => {
     if (event.shiftKey || readOnly) {
@@ -551,10 +557,12 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
     event.stopPropagation();
     const position = contextPosition(event);
     if (!position) return;
+    const definitionEdge = edges.find((item) => item.id === edge.id);
+    if (!definitionEdge) return;
     setNodes((items) => items.map((node) => ({ ...node, selected: false })));
     setEdges((items) => items.map((item) => ({ ...item, selected: item.id === edge.id })));
-    setContextMenu({ kind: 'edge', ...position, edge });
-  }, [contextPosition, readOnly, setEdges, setNodes]);
+    setContextMenu({ kind: 'edge', ...position, edge: definitionEdge });
+  }, [contextPosition, edges, readOnly, setEdges, setNodes]);
 
   const onPaneContextMenu = useCallback((event: React.MouseEvent) => {
     if (event.shiftKey) {
@@ -911,8 +919,8 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
     >
       <ReactFlow
         onInit={(instance) => { reactFlowRef.current = instance; }}
-        nodes={nodes}
-        edges={edges}
+        nodes={renderedNodes}
+        edges={renderedEdges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={readOnly ? undefined : onConnect}
@@ -955,6 +963,15 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
           className="flow-minimap"
           nodeColor={(node) => {
             const data = node.data as CustomNodeData;
+            if (executionMode !== 'design') {
+              switch (data.executionStatus) {
+                case 'running': return '#2563eb';
+                case 'waiting': return '#d97706';
+                case 'completed': return '#16a34a';
+                case 'failed': return '#dc2626';
+                default: return '#94a3b8';
+              }
+            }
             switch (data.nodeType) {
               case 'start': return '#10b981';
               case 'service': return '#3b82f6';
@@ -972,6 +989,15 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
           nodeStrokeWidth={1.5}
           maskColor="rgba(15, 23, 42, 0.14)"
         />
+        {executionMode !== 'design' && (
+          <Panel position="top-left" className="execution-node-legend" aria-label="노드 실행 상태 범례">
+            <span><i className="running" />실행 중</span>
+            <span><i className="waiting" />대기</span>
+            <span><i className="completed" />완료</span>
+            <span><i className="failed" />실패</span>
+            <span><i className="idle" />미실행</span>
+          </Panel>
+        )}
       </ReactFlow>
       {contextMenu && contextMenuItems.length > 0 && (
         <CanvasContextMenu

@@ -65,6 +65,40 @@
   box-shadow: var(--shadow-md);
 }
 
+.execution-node-legend {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-elevated) 94%, transparent);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  backdrop-filter: blur(6px);
+}
+
+.execution-node-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.execution-node-legend i {
+  width: 9px;
+  height: 9px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+}
+
+.execution-node-legend i.running { color: #2563eb; }
+.execution-node-legend i.waiting { color: #d97706; border-style: dashed; }
+.execution-node-legend i.completed { color: #16a34a; }
+.execution-node-legend i.failed { color: #dc2626; }
+.execution-node-legend i.idle { color: #94a3b8; }
+
 /* ===== Edges ===== */
 .react-flow__edge-path {
   stroke: var(--color-info);

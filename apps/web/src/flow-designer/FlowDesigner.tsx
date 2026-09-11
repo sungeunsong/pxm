@@ -9,7 +9,7 @@ import { errorMessage } from '../lib/error-message';
 import { hasModalLayer } from '../lib/modal-layer';
 import { FlowCanvas } from './FlowCanvas';
 import type { FlowCanvasRef } from './FlowCanvas';
-import type { CustomNodeData, FormSchema } from './form-types';
+import type { CustomNodeData, ExecutionNodeStatus, FormSchema } from './form-types';
 import { NodePropertiesForm } from './NodePropertiesForm';
 import type { NodePathSuggestion } from './NodePropertiesForm';
 import { TemplateListModal } from './TemplateListModal';
@@ -24,6 +24,8 @@ import { pluginsApi } from '../api/plugins';
 import type { PluginManifest, PluginTestResponse } from '../api/plugins';
 import { PluginIcon } from './plugin-icons';
 import { BASIC_NODE_OPTIONS } from './node-catalog';
+import { foldNodeExecutionStatuses, latestNumericEventId, nodeExecutionTransition } from './execution-visual-state';
+import type { CanvasExecutionEvent } from './execution-visual-state';
 import './FlowDesigner.css';
 
 export interface FlowDesignerProps {
@@ -112,8 +114,6 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
   const flowCanvasRef = useRef<FlowCanvasRef>(null);
   const importFileInputRef = useRef<HTMLInputElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
-  const eventQueueRef = useRef<Array<{nodeId: string, status: 'pending' | 'running' | 'completed' | 'failed'}>>([]); 
-  const isProcessingRef = useRef(false);
   const suppressCanvasDirtyRef = useRef(true);
 
   // SSE 연결 정리
@@ -245,7 +245,9 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
     setIsExecutionModalOpen(false);
     setIsExecutionPanelOpen(false);
     setExecutionInstanceId(null);
+    setTraceInstanceId(null);
     setExecutionFormSchema(undefined);
+    flowCanvasRef.current?.clearExecutionState();
     flowCanvasRef.current?.setNodesAndEdges(tab.nodes, tab.edges);
     // 노드를 교체한 뒤에는 항상 화면에 맞춘다.
     // (이게 없으면 18개짜리 워크플로우를 열어도 직전 viewport가 남아 첫 노드만 크게 보인다)
@@ -453,6 +455,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
       const result = await templatesApi.execute(currentTemplateId, cleanFormData);
       
       setExecutionInstanceId(result.instance_id);
+      flowCanvasRef.current?.clearExecutionState();
       // 실행 시작 후에는 패널로 표시
       setIsExecutionModalOpen(false);
       setIsExecutionPanelOpen(true);
@@ -466,7 +469,10 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
     }
   };
 
-  const connectSSE = (instanceId: string) => {
+  const connectSSE = (
+    instanceId: string,
+    options: { ignoreThroughEventId?: number } = {},
+  ) => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
     }
@@ -479,6 +485,8 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
       try {
         const data = JSON.parse(event.data);
         console.log('SSE Event (Canvas):', data);
+        const eventId = Number(data.id);
+        if (Number.isFinite(eventId) && eventId <= (options.ignoreThroughEventId || 0)) return;
 
         const nodes = flowCanvasRef.current?.getNodes() || [];
         let targetNodeId = data.node_id || data.payload?.node_id;
@@ -487,7 +495,9 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
         if (targetNodeId && !nodes.find(n => n.id === targetNodeId)) {
           if (data.type === 'NODE_FAILED' || data.type === 'NODE_COMPLETED') {
             // 1. 실행 중인 노드 찾기
-            let fallbackNode = nodes.find(n => n.data.executionStatus === 'running');
+            let fallbackNode = nodes.find((node) =>
+              flowCanvasRef.current?.getNodeExecutionStatus(node.id) === 'running',
+            );
 
             // 2. 타입 기반 추론 (targetNodeId에 타입 이름이 포함된 경우)
             if (!fallbackNode && typeof targetNodeId === 'string') {
@@ -513,12 +523,9 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
           }
         }
 
-        if (data.type === 'NODE_STARTED' && targetNodeId) {
-          updateNodeExecutionStatus(targetNodeId, 'running');
-        } else if (data.type === 'NODE_COMPLETED' && targetNodeId) {
-          updateNodeExecutionStatus(targetNodeId, 'completed');
-        } else if (data.type === 'NODE_FAILED' && targetNodeId) {
-          updateNodeExecutionStatus(targetNodeId, 'failed');
+        const transition = nodeExecutionTransition({ ...data, node_id: targetNodeId });
+        if (transition) {
+          updateNodeExecutionStatus(transition.nodeId, transition.status);
         }
 
         if (data.type === 'INSTANCE_COMPLETED' || data.type === 'INSTANCE_FAILED') {
@@ -533,7 +540,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
 
     const eventTypes = [
       'INSTANCE_CREATED', 'INSTANCE_RUNNING', 'INSTANCE_WAITING', 'INSTANCE_COMPLETED', 'INSTANCE_FAILED',
-      'NODE_STARTED', 'NODE_COMPLETED', 'NODE_FAILED',
+      'NODE_STARTED', 'NODE_COMPLETED', 'NODE_FAILED', 'NODE_WAITING', 'TASK_CREATED',
       'TIMER_SCHEDULED', 'TIMER_ESCALATED', 'RETRY_SCHEDULED', 'APPROVAL_REQUIRED',
     ];
 
@@ -548,48 +555,9 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
     };
   };
 
-  // 이벤트 큐 처리
-  const processEventQueue = React.useCallback(() => {
-    if (isProcessingRef.current || eventQueueRef.current.length === 0) {
-      return;
-    }
-
-    isProcessingRef.current = true;
-    const event = eventQueueRef.current.shift()!;
-    const { nodeId, status } = event;
-
-    if (status === 'completed') {
-      // 1. 엣지 애니메이션 시작
-      flowCanvasRef.current?.updateEdgesByNodeStatus(nodeId, 'running');
-      
-      // 2. 1.2초 후 노드 완료 표시
-      setTimeout(() => {
-        flowCanvasRef.current?.updateNodeData(nodeId, { executionStatus: status });
-        flowCanvasRef.current?.updateEdgesByNodeStatus(nodeId, status);
-        
-        // 3. 약간의 여유 시간 후 다음 이벤트 처리
-        setTimeout(() => {
-          isProcessingRef.current = false;
-          processEventQueue();
-        }, 300); // 다음 노드 시작 전 짧은 대기
-      }, 1200);
-    } else {
-      // running, failed 등은 즉시 처리
-      flowCanvasRef.current?.updateNodeData(nodeId, { executionStatus: status });
-      flowCanvasRef.current?.updateEdgesByNodeStatus(nodeId, status);
-      
-      setTimeout(() => {
-        isProcessingRef.current = false;
-        processEventQueue();
-      }, 100);
-    }
-  }, []);
-
-  const updateNodeExecutionStatus = React.useCallback((nodeId: string, status: 'pending' | 'running' | 'completed' | 'failed') => {
-    // 이벤트를 큐에 추가
-    eventQueueRef.current.push({ nodeId, status });
-    processEventQueue();
-  }, [processEventQueue]);
+  const updateNodeExecutionStatus = (nodeId: string, status: ExecutionNodeStatus) => {
+    flowCanvasRef.current?.setNodeExecutionStatus(nodeId, status);
+  };
 
   const handleSave = async () => {
     const nodes = flowCanvasRef.current?.getNodes() || [];
@@ -805,6 +773,12 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
         setCanvasEdges(runtimeContext.edges);
         window.setTimeout(() => flowCanvasRef.current?.fitView(), 0);
       }
+      const traceResponse = await fetch(`/api/instances/${instanceId}/trace`);
+      const tracePayload: unknown = traceResponse.ok ? await traceResponse.json() : [];
+      const traceEvents = Array.isArray(tracePayload)
+        ? tracePayload as CanvasExecutionEvent[]
+        : [];
+      flowCanvasRef.current?.setExecutionStatuses(foldNodeExecutionStatuses(traceEvents));
       setCurrentTemplateId(templateId);
       setCurrentTemplateName(templateName);
       setDesignerTabs((tabs) => tabs.map((tab) => tab.tabId === activeDesignerTabId ? {
@@ -822,7 +796,9 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
       setTraceInstanceId(instanceId);
       setIsExecutionPanelOpen(true);
       setIsPropertiesPanelOpen(true);
-      connectSSE(instanceId);
+      connectSSE(instanceId, {
+        ignoreThroughEventId: latestNumericEventId(traceEvents),
+      });
       setIsHistoryModalOpen(false);
       
     } catch (error) {
@@ -1332,6 +1308,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
             onPasteAt={handlePasteSubflow}
             onTestNode={(node) => { void handleSelectedNodeTest(node); }}
             plugins={plugins}
+            executionMode={traceInstanceId ? 'trace' : executionInstanceId ? 'live' : 'design'}
             readOnly={Boolean(traceInstanceId)}
           />
         </main>
@@ -1357,10 +1334,15 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
               formSchema={executionFormSchema}
               onFormSubmit={(formData) => handleRun(formData)}
               onClose={() => {
-                if (traceInstanceId && onExitTrace) {
-                  onExitTrace();
-                  return;
+                if (traceInstanceId) {
+                  flowCanvasRef.current?.clearExecutionState();
+                  setTraceInstanceId(null);
+                  if (onExitTrace) {
+                    onExitTrace();
+                    return;
+                  }
                 }
+                flowCanvasRef.current?.clearExecutionState();
                 setIsExecutionPanelOpen(false);
                 setExecutionInstanceId(null);
                 setExecutionFormSchema(undefined);

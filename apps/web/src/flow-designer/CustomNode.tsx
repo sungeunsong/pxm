@@ -6,24 +6,30 @@ import type { CustomNodeData } from './form-types';
 import { nodeTypeIcon } from './plugin-icons';
 import { nodeSummaryLine, nodeSummaryTitle } from './node-summary';
 import './CustomNode.css';
-import './NodeAnimations.css';
 import './design-system-custom.css';
+import './NodeAnimations.css';
 
 export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({ data, selected }) => {
-  const getExecutionStatusIcon = (status?: string) => {
+  const getExecutionStatusIcon = (status?: CustomNodeData['executionStatus']) => {
     switch (status) {
       case 'running':
-        return <Loader size={14} className="execution-status-icon running" />;
+        return <Loader size={14} className="execution-status-icon running" aria-hidden="true" />;
+      case 'waiting':
+        return <Clock size={14} className="execution-status-icon waiting" aria-hidden="true" />;
       case 'completed':
-        return <CheckCircle size={14} className="execution-status-icon completed" />;
+        return <CheckCircle size={14} className="execution-status-icon completed" aria-hidden="true" />;
       case 'failed':
-        return <XCircle size={14} className="execution-status-icon failed" />;
-      case 'pending':
-        return <Clock size={14} className="execution-status-icon pending" />;
+        return <XCircle size={14} className="execution-status-icon failed" aria-hidden="true" />;
       default:
         return null;
     }
   };
+  const statusLabel = data.executionStatus ? {
+    running: '실행 중',
+    waiting: '대기',
+    completed: '완료',
+    failed: '실패',
+  }[data.executionStatus] : '';
 
   const summaryLine = nodeSummaryLine(data);
   const isGateway = data.nodeType === 'gateway';
@@ -33,11 +39,8 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({ data, selected
     <div 
       className={`custom-node custom-node-${data.nodeType} ${selected ? 'selected' : ''} ${data.executionStatus ? `execution-${data.executionStatus}` : ''}`}
       style={{ position: 'relative' }}
+      data-execution-status={data.executionStatus}
     >
-      {data.executionStatus && data.executionStatus !== 'pending' && (
-        <div className={`status-ring status-${data.executionStatus}`} />
-      )}
-
       {data.nodeType !== 'start' && (
         <Handle
           type="target"
@@ -54,7 +57,7 @@ export const CustomNode: React.FC<NodeProps<CustomNodeData>> = ({ data, selected
           <div className="custom-node-label">
             {data.label}
             {data.executionStatus && (
-              <span className="execution-status-badge">
+              <span className="execution-status-badge" aria-label={`실행 상태: ${statusLabel}`} title={statusLabel}>
                 {getExecutionStatusIcon(data.executionStatus)}
               </span>
             )}

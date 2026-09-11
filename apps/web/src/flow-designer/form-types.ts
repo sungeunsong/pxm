@@ -55,7 +55,7 @@ export interface CustomNodeData {
   category?: string;
   
   // 실행 상태 (실시간 추적용)
-  executionStatus?: 'pending' | 'running' | 'completed' | 'failed';
+  executionStatus?: ExecutionNodeStatus;
   
   // Start 노드 전용
   formSchema?: FormSchema;       // 동적 폼 정의
@@ -136,6 +136,8 @@ export interface CustomNodeData {
   // End 노드 전용
   resultPath?: string;
 }
+
+export type ExecutionNodeStatus = 'running' | 'waiting' | 'completed' | 'failed';
 
 // 폼 검증 결과
 export interface ValidationResult {

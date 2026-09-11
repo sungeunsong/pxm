@@ -2,133 +2,34 @@
    Node & Edge Animations - 실행 상태 시각화
    ============================================ */
 
-/* ===== 노드 애니메이션 ===== */
-
-/* Running: 부드러운 펄스 + 글로우 */
-@keyframes ring-pulse {
-  0%, 100% {
-    opacity: 0.4;
-    transform: scale(1);
-    box-shadow: 0 0 0 0 rgba(33, 150, 243, 0.4);
-  }
-  50% {
-    opacity: 0.8;
-    transform: scale(1.08);
-    box-shadow: 0 0 20px 4px rgba(33, 150, 243, 0.6);
-  }
-}
-
-/* Waiting: 회전하는 점선 */
-@keyframes ring-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-/* Failed: 빨간 파동 */
-@keyframes ring-error-pulse {
-  0% {
-    box-shadow: 0 0 0 0 rgba(244, 67, 54, 0.7);
-    opacity: 1;
-  }
-  50% {
-    box-shadow: 0 0 0 12px rgba(244, 67, 54, 0);
-    opacity: 0.6;
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(244, 67, 54, 0);
-    opacity: 1;
-  }
-}
-
-/* Completed: 부드러운 페이드인 */
-@keyframes ring-success-appear {
-  from {
-    opacity: 0;
-    transform: scale(0.8);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-/* Status Ring 공통 스타일 */
-.status-ring {
-  position: absolute;
-  top: -6px;
-  left: -6px;
-  right: -6px;
-  bottom: -6px;
-  border-radius: calc(var(--radius-lg) + 4px);
-  pointer-events: none;
-  z-index: -1;
-}
-
-/* Running 상태 */
-.status-ring.status-running {
-  border: 3px solid rgba(33, 150, 243, 0.8);
-  background: radial-gradient(circle, rgba(33, 150, 243, 0.1) 0%, transparent 70%);
-  animation: ring-pulse 2s ease-in-out infinite;
-}
-
-/* Waiting 상태 */
-.status-ring.status-waiting {
-  border: 3px dashed rgba(255, 193, 7, 0.8);
-  background: radial-gradient(circle, rgba(255, 193, 7, 0.08) 0%, transparent 70%);
-  animation: ring-spin 8s linear infinite;
-}
-
-/* Completed 상태 */
-.status-ring.status-completed {
-  border: 3px solid rgba(76, 175, 80, 0.8);
-  background: radial-gradient(circle, rgba(76, 175, 80, 0.1) 0%, transparent 70%);
-  animation: ring-success-appear 0.5s ease-out;
-}
-
-/* Failed 상태 */
-.status-ring.status-failed {
-  border: 3px solid rgba(244, 67, 54, 0.8);
-  background: radial-gradient(circle, rgba(244, 67, 54, 0.1) 0%, transparent 70%);
-  animation: ring-error-pulse 2s infinite;
-}
-
 /* ===== 노드 자체 상태 스타일 ===== */
 
 /* Running 노드 - 밝게 강조 */
 .custom-node.execution-running {
-  background: linear-gradient(135deg, rgba(33, 150, 243, 0.15) 0%, rgba(33, 150, 243, 0.05) 100%);
-  border-color: rgba(33, 150, 243, 0.6);
-  box-shadow: 0 4px 16px rgba(33, 150, 243, 0.3);
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.12), rgba(37, 99, 235, 0.03)) !important;
+  border: 2px solid #2563eb !important;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.18) !important;
 }
 
 /* Waiting 노드 */
 .custom-node.execution-waiting {
-  background: linear-gradient(135deg, rgba(255, 193, 7, 0.15) 0%, rgba(255, 193, 7, 0.05) 100%);
-  border-color: rgba(255, 193, 7, 0.6);
-  box-shadow: 0 4px 16px rgba(255, 193, 7, 0.3);
+  background: linear-gradient(135deg, rgba(217, 119, 6, 0.12), rgba(217, 119, 6, 0.03)) !important;
+  border: 2px dashed #d97706 !important;
+  box-shadow: 0 4px 14px rgba(217, 119, 6, 0.16) !important;
 }
 
 /* Completed 노드 */
 .custom-node.execution-completed {
-  background: linear-gradient(135deg, rgba(76, 175, 80, 0.15) 0%, rgba(76, 175, 80, 0.05) 100%);
-  border-color: rgba(76, 175, 80, 0.6);
-  box-shadow: 0 4px 16px rgba(76, 175, 80, 0.2);
+  background: linear-gradient(135deg, rgba(22, 163, 74, 0.1), rgba(22, 163, 74, 0.02)) !important;
+  border: 2px solid #16a34a !important;
+  box-shadow: 0 4px 14px rgba(22, 163, 74, 0.14) !important;
 }
 
 /* Failed 노드 */
 .custom-node.execution-failed {
-  background: linear-gradient(135deg, rgba(244, 67, 54, 0.15) 0%, rgba(244, 67, 54, 0.05) 100%);
-  border-color: rgba(244, 67, 54, 0.6);
-  box-shadow: 0 4px 16px rgba(244, 67, 54, 0.3);
-}
-
-/* Pending 노드 - 약간 투명하게 */
-.custom-node.execution-pending {
-  opacity: 0.6;
+  background: linear-gradient(135deg, rgba(220, 38, 38, 0.11), rgba(220, 38, 38, 0.025)) !important;
+  border: 2px solid #dc2626 !important;
+  box-shadow: 0 4px 14px rgba(220, 38, 38, 0.18) !important;
 }
 
 /* ===== 엣지 애니메이션 ===== */
@@ -139,16 +40,6 @@
     stroke-dashoffset: 1;
   }
   to {
-    stroke-dashoffset: 0;
-  }
-}
-
-/* 흐르는 점 효과 */
-@keyframes edge-flow-dot {
-  0% {
-    stroke-dashoffset: 0.1;
-  }
-  100% {
     stroke-dashoffset: 0;
   }
 }
@@ -183,11 +74,10 @@
 
 /* 대기 중인 엣지 */
 .react-flow__edge-path.edge-waiting {
-  stroke: #f59e0b !important;
+  stroke: #d97706 !important;
   stroke-width: 3 !important;
-  stroke-dasharray: 0.05 0.05 !important;
-  animation: edge-flow-dot 2s linear infinite !important;
-  filter: drop-shadow(0 0 6px rgba(255, 193, 7, 0.7)) !important;
+  stroke-dasharray: 4 4 !important;
+  filter: drop-shadow(0 0 4px rgba(217, 119, 6, 0.45)) !important;
 }
 
 /* 기본 엣지 (아직 실행 안 된 경로) */
