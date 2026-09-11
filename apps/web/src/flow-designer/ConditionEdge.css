@@ -28,6 +28,27 @@
   animation: dashdraw 1s linear infinite;
 }
 
+/* 실행·이력 모드에서는 업무 분기 색보다 실제 실행 상태가 우선한다. */
+.condition-edge-execution-idle {
+  stroke: #94a3b8 !important;
+}
+
+.condition-edge-execution-running {
+  stroke: #2563eb !important;
+}
+
+.condition-edge-execution-waiting {
+  stroke: #d97706 !important;
+}
+
+.condition-edge-execution-completed {
+  stroke: #16a34a !important;
+}
+
+.condition-edge-execution-failed {
+  stroke: #dc2626 !important;
+}
+
 @keyframes dashdraw {
   from {
     stroke-dashoffset: 20;
@@ -73,6 +94,11 @@
   color: #b91c1c;
 }
 
+.condition-edge-label.execution-label {
+  border-color: var(--border-strong);
+  color: var(--text-secondary);
+}
+
 .condition-edge-label.is-default {
   border-style: dashed;
 }
@@ -93,4 +119,8 @@
 
 [data-theme="dark"] .condition-edge-label.label-negative {
   color: #fca5a5;
+}
+
+[data-theme="dark"] .condition-edge-label.execution-label {
+  color: var(--text-secondary);
 }

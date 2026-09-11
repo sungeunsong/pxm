@@ -279,7 +279,11 @@ test('실행 패널을 닫아도 캔버스 상태를 유지하고 명시적으�
   const legend = ui.page.getByLabel('노드 실행 상태 범례');
   await expect(executionPanel).toBeVisible();
   await expect(legend).toBeVisible();
-  await expect(ui.page.locator('.custom-node[data-execution-status]')).not.toHaveCount(0);
+  await expect(ui.page.locator('.custom-node[data-execution-status="completed"]')).toHaveCount(6);
+  await expect(ui.page.locator('[data-testid="rf__edge-decision-provision"] path')).toHaveCSS('stroke', 'rgb(22, 163, 74)');
+  await expect(ui.page.locator('[data-testid="rf__edge-decision-internal"] path')).toHaveCSS('stroke', 'rgb(148, 163, 184)');
+  await expect(ui.page.locator('[data-testid="rf__edge-external-provision"] path')).toHaveCSS('stroke', 'rgb(148, 163, 184)');
+  await expect(ui.page.locator('[data-testid="rf__edge-internal-rejected"] path')).toHaveCSS('stroke', 'rgb(148, 163, 184)');
 
   await executionPanel.locator('.execution-panel-close').click();
   await expect(executionPanel).toBeHidden();

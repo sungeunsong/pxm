@@ -41,6 +41,7 @@ export const ConditionEdge: React.FC<EdgeProps> = ({
   if (outcome === 'negative') edgeClassName += ' condition-edge-negative';
   if (isDefault) edgeClassName += ' condition-edge-default';
   if (animated || data?.animated) edgeClassName += ' condition-edge-animated';
+  if (data?.executionStatus) edgeClassName += ` condition-edge-execution-${data.executionStatus}`;
 
   return (
     <>
@@ -54,7 +55,7 @@ export const ConditionEdge: React.FC<EdgeProps> = ({
       {label && (
         <EdgeLabelRenderer>
           <div
-            className={`condition-edge-label label-${outcome}${isDefault ? ' is-default' : ''}`}
+            className={`condition-edge-label label-${outcome}${isDefault ? ' is-default' : ''}${data?.executionStatus ? ' execution-label' : ''}`}
             style={{
               position: 'absolute',
               transform: `translate(-50%, -50%) translate(${labelX + labelOffsetX}px,${labelY + labelOffsetY}px)`,

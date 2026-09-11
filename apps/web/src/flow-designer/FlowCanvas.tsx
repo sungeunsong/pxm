@@ -146,7 +146,9 @@ function stripExecutionStatus(node: Node): Node {
   return { ...node, data: definitionData };
 }
 
-function decorateEdgeForExecution(edge: Edge, status: ExecutionNodeStatus, nodes: Node[]): Edge {
+type EdgeExecutionStatus = ExecutionNodeStatus | 'idle';
+
+function decorateEdgeForExecution(edge: Edge, status: EdgeExecutionStatus, nodes: Node[]): Edge {
   const sourceType = (nodes.find((node) => node.id === edge.source)?.data as CustomNodeData | undefined)?.nodeType;
   const isBranchEdge = edge.type === 'conditionEdge' || sourceType === 'gateway' || sourceType === 'approval';
   const statusStyle: React.CSSProperties = status === 'running'
@@ -155,7 +157,9 @@ function decorateEdgeForExecution(edge: Edge, status: ExecutionNodeStatus, nodes
       ? { stroke: '#16a34a', strokeWidth: 3, strokeDasharray: 'none', strokeDashoffset: '0' }
       : status === 'failed'
         ? { stroke: '#dc2626', strokeWidth: 3, strokeDasharray: '8 4' }
-        : { stroke: '#d97706', strokeWidth: 3, strokeDasharray: '4 4' };
+        : status === 'waiting'
+          ? { stroke: '#d97706', strokeWidth: 3, strokeDasharray: '4 4' }
+          : { stroke: '#94a3b8', strokeWidth: 2, strokeDasharray: 'none', strokeDashoffset: '0' };
   return {
     ...edge,
     type: status === 'running' && !isBranchEdge ? 'animatedEdge' : isBranchEdge ? 'conditionEdge' : 'smoothstep',
@@ -165,6 +169,7 @@ function decorateEdgeForExecution(edge: Edge, status: ExecutionNodeStatus, nodes
     data: {
       ...(edge.data || {}),
       animated: isBranchEdge && status === 'running',
+      executionStatus: status,
     },
   };
 }
@@ -202,11 +207,14 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
       return status ? { ...node, data: { ...node.data, executionStatus: status } } : node;
     }), [executionStatuses, nodes]);
     const renderedEdges = React.useMemo(() => edges.map((edge) => {
-      // 도착 노드가 실행됐다는 사실로 실제로 지나간 연결을 식별한다.
-      // 출발 노드를 기준으로 칠하면 게이트웨이의 선택되지 않은 분기까지 모두 활성화된다.
-      const status = executionStatuses.get(edge.target);
-      return status ? decorateEdgeForExecution(edge, status, nodes) : edge;
-    }), [edges, executionStatuses, nodes]);
+      if (executionMode === 'design') return edge;
+      // 두 끝 노드가 모두 실행된 연결만 통과 경로로 본다. 도착 노드만 보면 여러 분기가
+      // 합류하는 그래프에서 실행되지 않은 분기까지 완료 색으로 표시된다.
+      const sourceVisited = executionStatuses.has(edge.source);
+      const targetStatus = executionStatuses.get(edge.target);
+      const status: EdgeExecutionStatus = sourceVisited && targetStatus ? targetStatus : 'idle';
+      return decorateEdgeForExecution(edge, status, nodes);
+    }), [edges, executionMode, executionStatuses, nodes]);
 
     const onNodesChange = useCallback((changes: NodeChange[]) => {
       // 자동 정렬 후 사용자가 배치를 편집하면 이전 스냅샷은 더 이상 안전한 실행 취소가 아니다.
