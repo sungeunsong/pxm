@@ -12,7 +12,6 @@ import { getRectOfNodes, getTransformForBounds } from 'reactflow';
 import type { Node, Edge, Connection, NodeChange, NodeTypes, ReactFlowInstance, Viewport, XYPosition } from 'reactflow';
 import {
   CheckSquare,
-  ChevronLeft,
   Clipboard,
   ClipboardPaste,
   CopyPlus,
@@ -36,6 +35,10 @@ import { ConditionEdge } from './ConditionEdge';
 import { AnimatedEdge } from './AnimatedEdge';
 import { CanvasContextMenu } from './CanvasContextMenu';
 import type { CanvasContextMenuItem } from './CanvasContextMenu';
+import type { PluginManifest } from '../api/plugins';
+import { buildNodeCatalog } from './node-catalog';
+import type { NodeCatalogItem } from './node-catalog';
+import { NodeQuickAddMenu } from './NodeQuickAddMenu';
 
 const nodeTypes: NodeTypes = {
   custom: CustomNode,
@@ -65,6 +68,7 @@ export interface FlowCanvasProps {
   onCopyGraph?: (nodes: Node<CustomNodeData>[], edges: Edge[]) => void;
   onPasteAt?: (position: XYPosition) => void;
   onTestNode?: (node: Node<CustomNodeData>) => void;
+  plugins?: PluginManifest[];
   readOnly?: boolean;
 }
 
@@ -99,44 +103,13 @@ const MAX_ZOOM = 1.5;
 const MIN_FIT_WIDTH = 320;
 
 type CanvasMenuState = {
-  kind: 'pane' | 'nodes' | 'edge' | 'add-node';
+  kind: 'pane' | 'nodes' | 'edge' | 'node-search';
   anchor: XYPosition;
   flowPosition: XYPosition;
   boundary: { left: number; top: number; right: number; bottom: number };
   nodes?: Node<CustomNodeData>[];
   edge?: Edge;
 };
-
-const BASIC_NODE_OPTIONS: Array<{ label: string; data: CustomNodeData }> = [
-  { label: 'Start', data: { nodeType: 'start', label: 'Start' } },
-  { label: 'Timer', data: { nodeType: 'timer', label: 'Timer' } },
-  {
-    label: 'JS Node',
-    data: {
-      nodeType: 'script', label: 'JS Node', scriptType: 'javascript',
-      code: "return { message: 'hello from js node', formData: input.formData };",
-      outputPath: 'scriptResults.jsNode', scriptTimeoutMs: 1000,
-    },
-  },
-  {
-    label: 'Command',
-    data: {
-      nodeType: 'command', label: 'Command',
-      commandId: 'builtin.echo', commandArgumentsJson: '{\n  "message": "hello from command node"\n}',
-      outputPath: 'commandResults.echo', commandTimeoutMs: 1000,
-    },
-  },
-  { label: 'Gateway', data: { nodeType: 'gateway', label: 'Gateway' } },
-  { label: 'Approval', data: { nodeType: 'approval', label: 'Approval' } },
-  {
-    label: 'Workflow Call',
-    data: {
-      nodeType: 'workflow_call', label: 'Workflow Call',
-      workflowCallMode: 'async', workflowInputMode: 'inherit_form_data', outputPath: 'workflowCalls.child',
-    },
-  },
-  { label: 'End', data: { nodeType: 'end', label: 'End' } },
-];
 
 function normalizeBranchEdges(nodes: Node[], edges: Edge[]) {
   const nodeTypeById = new Map(
@@ -166,6 +139,7 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
     onCopyGraph,
     onPasteAt,
     onTestNode,
+    plugins = [],
     readOnly = false,
   }, ref) => {
     const { confirm: confirmDialog, toast } = useFeedback();
@@ -176,6 +150,10 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
     const [contextMenu, setContextMenu] = React.useState<CanvasMenuState | null>(null);
     const [layoutUndo, setLayoutUndo] = React.useState<Map<string, XYPosition> | null>(null);
     const [fitAfterLayoutUndo, setFitAfterLayoutUndo] = React.useState(false);
+    const nodeCatalog = React.useMemo(
+      () => buildNodeCatalog(plugins, contextMenu?.kind === 'node-search' && Boolean(contextMenu.edge)),
+      [contextMenu?.edge, contextMenu?.kind, plugins],
+    );
 
     const onNodesChange = useCallback((changes: NodeChange[]) => {
       // 자동 정렬 후 사용자가 배치를 편집하면 이전 스냅샷은 더 이상 안전한 실행 취소가 아니다.
@@ -487,6 +465,7 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
   );
 
   const onPaneClick = useCallback(() => {
+    wrapperRef.current?.focus({ preventScroll: true });
     setContextMenu(null);
     onNodeSelect?.(null);
   }, [onNodeSelect]);
@@ -591,16 +570,58 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
     setContextMenu({ kind: 'pane', ...position });
   }, [contextPosition, setEdges, setNodes]);
 
-  const addBasicNode = useCallback((data: CustomNodeData, position: XYPosition) => {
+  const onPaneDoubleClick = useCallback((event: React.MouseEvent) => {
+    if (readOnly) return;
+    event.preventDefault();
+    const position = contextPosition(event);
+    if (!position) return;
+    setNodes((items) => items.map((node) => ({ ...node, selected: false })));
+    setEdges((items) => items.map((edge) => ({ ...edge, selected: false })));
+    onNodeSelect?.(null);
+    setContextMenu({ kind: 'node-search', ...position });
+  }, [contextPosition, onNodeSelect, readOnly, setEdges, setNodes]);
+
+  const addCatalogNode = useCallback((item: NodeCatalogItem, position: XYPosition, splitEdge?: Edge) => {
+    const existingIds = new Set([...nodes.map((node) => node.id), ...edges.map((edge) => edge.id)]);
+    const uniqueId = (prefix: string) => {
+      let index = 0;
+      let value = '';
+      do value = `${prefix}-${Date.now()}-${index++}`; while (existingIds.has(value));
+      existingIds.add(value);
+      return value;
+    };
+    const nodeId = uniqueId('node');
     const newNode: Node<CustomNodeData> = {
-      id: `node-${Date.now()}`,
+      id: nodeId,
       type: 'custom',
       position,
       selected: true,
-      data: { ...data },
+      data: { ...item.data },
     };
     setNodes((items) => [...items.map((node) => ({ ...node, selected: false })), newNode]);
-  }, [setNodes]);
+    if (splitEdge) {
+      const beforeEdge: Edge = {
+        ...splitEdge,
+        id: uniqueId(`edge-${splitEdge.source}-${nodeId}`),
+        target: nodeId,
+        targetHandle: undefined,
+        selected: false,
+      };
+      const afterEdge: Edge = {
+        id: uniqueId(`edge-${nodeId}-${splitEdge.target}`),
+        source: nodeId,
+        target: splitEdge.target,
+        targetHandle: splitEdge.targetHandle,
+        type: 'smoothstep',
+        animated: splitEdge.animated,
+        markerEnd: splitEdge.markerEnd,
+        style: splitEdge.style ? { ...splitEdge.style } : undefined,
+        selected: false,
+      };
+      setEdges((items) => items.filter((edge) => edge.id !== splitEdge.id).concat(beforeEdge, afterEdge));
+    }
+    setContextMenu(null);
+  }, [edges, nodes, setEdges, setNodes]);
 
   const duplicateNodes = useCallback((targetNodes: Node<CustomNodeData>[]) => {
     const graph = selectedGraph(targetNodes);
@@ -738,10 +759,30 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
     }
   }, [edges, nodes, readOnly]);
 
+  const openQuickAddAtCenter = useCallback(() => {
+    const wrapper = wrapperRef.current;
+    const instance = reactFlowRef.current;
+    if (!wrapper || !instance || readOnly) return;
+    const bounds = wrapper.getBoundingClientRect();
+    const clientX = bounds.left + bounds.width / 2;
+    const clientY = bounds.top + bounds.height / 2;
+    setContextMenu({
+      kind: 'node-search',
+      anchor: { x: clientX, y: clientY },
+      flowPosition: instance.screenToFlowPosition({ x: clientX, y: clientY }),
+      boundary: { left: bounds.left, top: bounds.top, right: bounds.right, bottom: bounds.bottom },
+    });
+  }, [readOnly]);
+
   const handleCanvasKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
     const selectedNodes = nodes.filter((node) => node.selected) as Node<CustomNodeData>[];
     const isCopy = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c';
     const isPaste = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'v';
+    if (!readOnly && event.key === 'Tab' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      openQuickAddAtCenter();
+      return;
+    }
     if (!readOnly && isCopy && selectedNodes.length > 0) {
       event.preventDefault();
       const graph = selectedGraph(selectedNodes);
@@ -771,33 +812,18 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
       event.preventDefault();
       openKeyboardMenu();
     }
-  }, [canPaste, layoutUndo, nodes, onCopyGraph, onPasteAt, openKeyboardMenu, readOnly, selectedGraph, undoAutoLayout]);
+  }, [canPaste, layoutUndo, nodes, onCopyGraph, onPasteAt, openKeyboardMenu, openQuickAddAtCenter, readOnly, selectedGraph, undoAutoLayout]);
 
   let contextMenuTitle = '';
   let contextMenuItems: CanvasContextMenuItem[] = [];
-  if (contextMenu?.kind === 'add-node') {
-    contextMenuTitle = '기본 노드 추가';
-    contextMenuItems = [
-      {
-        id: 'back', label: '캔버스 메뉴로', icon: <ChevronLeft size={15} />,
-        onSelect: () => setContextMenu({ ...contextMenu, kind: 'pane' }),
-      },
-      ...BASIC_NODE_OPTIONS.map((option, index) => ({
-        id: `add-${option.data.nodeType}`,
-        label: option.label,
-        icon: <Plus size={14} />,
-        separatorBefore: index === 0,
-        onSelect: () => addBasicNode(option.data, contextMenu.flowPosition),
-      })),
-    ];
-  } else if (contextMenu?.kind === 'pane') {
+  if (contextMenu?.kind === 'pane') {
     contextMenuTitle = '캔버스';
     contextMenuItems = readOnly
       ? [{ id: 'fit', label: '전체 화면에 맞춤', icon: <Maximize2 size={15} />, onSelect: () => fitView() }]
       : [
         {
           id: 'add', label: '노드 추가…', icon: <Plus size={15} />,
-          onSelect: () => setContextMenu({ ...contextMenu, kind: 'add-node' }),
+          onSelect: () => setContextMenu({ ...contextMenu, kind: 'node-search' }),
         },
         {
           id: 'paste', label: '붙여넣기', icon: <ClipboardPaste size={15} />, shortcut: 'Ctrl+V',
@@ -854,17 +880,23 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
     const sourceType = (nodes.find((node) => node.id === edge.source)?.data as CustomNodeData | undefined)?.nodeType;
     contextMenuTitle = '연결';
     contextMenuItems = [
+      {
+        id: 'insert-node', label: '사이에 노드 추가…', icon: <Plus size={15} />,
+        onSelect: () => setContextMenu({ ...contextMenu, kind: 'node-search' }),
+      },
       ...(sourceType === 'gateway' ? [{
         id: 'branch-settings', label: '분기 설정 열기', icon: <GitBranch size={15} />,
+        separatorBefore: true,
         onSelect: () => openSourceNode(edge),
       }] : []),
       ...(sourceType === 'approval' ? [{
         id: 'approval-route', label: '결과 경로 확인', icon: <CheckSquare size={15} />,
+        separatorBefore: true,
         onSelect: () => openSourceNode(edge),
       }] : []),
       {
         id: 'delete-edge', label: '연결 삭제', icon: <Trash2 size={15} />,
-        separatorBefore: sourceType === 'gateway' || sourceType === 'approval', tone: 'danger',
+        separatorBefore: true, tone: 'danger',
         onSelect: () => deleteEdge(edge),
       },
     ];
@@ -886,12 +918,18 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
         onConnect={readOnly ? undefined : onConnect}
         onNodeClick={onNodeClick}
         onPaneClick={onPaneClick}
+        onDoubleClick={(event) => {
+          if ((event.target as Element).classList.contains('react-flow__pane')) {
+            onPaneDoubleClick(event);
+          }
+        }}
         onNodeContextMenu={onNodeContextMenu}
         onSelectionContextMenu={onSelectionContextMenu}
         onEdgeContextMenu={onEdgeContextMenu}
         onPaneContextMenu={onPaneContextMenu}
         onMoveStart={() => setContextMenu(null)}
         onEdgeDoubleClick={readOnly ? undefined : onEdgeDoubleClick}
+        zoomOnDoubleClick={false}
         onDrop={readOnly ? undefined : onDrop}
         onDragOver={readOnly ? undefined : onDragOver}
         deleteKeyCode={readOnly ? null : ['Backspace', 'Delete']}
@@ -941,6 +979,16 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
           anchor={contextMenu.anchor}
           boundary={contextMenu.boundary}
           items={contextMenuItems}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
+      {contextMenu?.kind === 'node-search' && !readOnly && (
+        <NodeQuickAddMenu
+          title={contextMenu.edge ? '연결 사이에 노드 추가' : '노드 추가'}
+          anchor={contextMenu.anchor}
+          boundary={contextMenu.boundary}
+          items={nodeCatalog}
+          onSelect={(item) => addCatalogNode(item, contextMenu.flowPosition, contextMenu.edge)}
           onClose={() => setContextMenu(null)}
         />
       )}

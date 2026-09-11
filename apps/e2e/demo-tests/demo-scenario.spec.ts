@@ -248,8 +248,10 @@ test('캔버스 컨텍스트 메뉴로 마우스 위치에서 노드를 편집�
   await expect(menu).toBeVisible();
   await expect(menu.getByRole('menuitem', { name: '붙여넣기 Ctrl+V', exact: true })).toBeDisabled();
   await menu.getByRole('menuitem', { name: '노드 추가…', exact: true }).click();
-  await expect(menu).toHaveAttribute('aria-label', '기본 노드 추가');
-  await menu.getByRole('menuitem', { name: 'Timer', exact: true }).click();
+  const quickAdd = ui.page.getByTestId('node-quick-add');
+  await expect(quickAdd).toBeVisible();
+  await quickAdd.getByRole('combobox', { name: '추가할 노드 검색' }).fill('Timer');
+  await ui.page.keyboard.press('Enter');
 
   const timerNodes = wrapper.locator('.react-flow__node').filter({ hasText: 'Timer' });
   await expect(timerNodes).toHaveCount(1);
@@ -305,14 +307,71 @@ test('분기 엣지 컨텍스트 메뉴에서 설정과 삭제 동작을 구분�
 
   await dispatchContextMenu(ui.page.locator('[data-testid="rf__edge-decision-provision"]'));
   const gatewayMenu = ui.page.getByTestId('canvas-context-menu');
+  await expect(gatewayMenu.getByRole('menuitem', { name: '사이에 노드 추가…' })).toBeVisible();
   await expect(gatewayMenu.getByRole('menuitem', { name: '분기 설정 열기' })).toBeVisible();
   await expect(gatewayMenu.getByRole('menuitem', { name: '연결 삭제' })).toBeVisible();
   await ui.page.keyboard.press('Escape');
 
   await dispatchContextMenu(ui.page.locator('[data-testid="rf__edge-internal-external"]'));
   const approvalMenu = ui.page.getByTestId('canvas-context-menu');
+  await expect(approvalMenu.getByRole('menuitem', { name: '사이에 노드 추가…' })).toBeVisible();
   await expect(approvalMenu.getByRole('menuitem', { name: '결과 경로 확인' })).toBeVisible();
   await expect(approvalMenu.getByRole('menuitem', { name: '연결 삭제' })).toBeVisible();
+  await ui.context.close();
+});
+
+test('빈 캔버스 더블클릭과 Tab으로 기본·플러그인 노드를 검색해 추가한다', async ({ browser }) => {
+  const ui = await loginPage(browser, 'admin', process.env.PXM_DEMO_PASSWORD!, 'designer');
+  const pane = ui.page.locator('.react-flow__pane');
+  const viewport = ui.page.locator('.react-flow__viewport');
+  const paneBox = await pane.boundingBox();
+  expect(paneBox).not.toBeNull();
+  const beforeTransform = await viewport.getAttribute('style');
+  const position = { x: Math.round(paneBox!.width * 0.68), y: Math.round(paneBox!.height * 0.32) };
+
+  await pane.dblclick({ position });
+  const quickAdd = ui.page.getByTestId('node-quick-add');
+  await expect(quickAdd).toBeVisible();
+  await expect(viewport).toHaveAttribute('style', beforeTransform || '');
+  await expect(quickAdd.getByRole('combobox', { name: '추가할 노드 검색' })).toBeFocused();
+  await ui.page.keyboard.press('ArrowDown');
+  await ui.page.keyboard.press('Enter');
+  const timer = ui.page.locator('.react-flow__node').filter({ hasText: 'Timer' });
+  await expect(timer).toHaveCount(1);
+
+  await ui.page.locator('.flow-canvas-wrapper').focus();
+  await ui.page.keyboard.press('Tab');
+  await expect(quickAdd).toBeVisible();
+  await quickAdd.getByRole('combobox').fill('http');
+  const pluginOption = quickAdd.getByRole('option').filter({ hasText: 'HTTP Request' }).first();
+  await expect(pluginOption).toContainText('Builtin · builtin');
+  await ui.page.keyboard.press('Escape');
+  await expect(quickAdd).toBeHidden();
+
+  await timer.dblclick();
+  await expect(quickAdd).toBeHidden();
+  await ui.context.close();
+});
+
+test('분기 엣지 사이에 노드를 넣어도 조건 라벨을 앞 연결에 유지한다', async ({ browser }) => {
+  const ui = await loginPage(browser, 'admin', process.env.PXM_DEMO_PASSWORD!, 'designer');
+  await openWorkflowFromDesigner(ui.page, '실습 2 · 협력사 접근 권한 신청');
+  const nodes = ui.page.locator('.react-flow__node');
+  const edges = ui.page.locator('.react-flow__edge');
+  const beforeNodeCount = await nodes.count();
+  const beforeEdgeCount = await edges.count();
+
+  await dispatchContextMenu(ui.page.locator('[data-testid="rf__edge-decision-provision"]'));
+  await ui.page.getByTestId('canvas-context-menu').getByRole('menuitem', { name: '사이에 노드 추가…' }).click();
+  const quickAdd = ui.page.getByTestId('node-quick-add');
+  await expect(quickAdd.getByRole('option').filter({ hasText: 'Start' })).toBeDisabled();
+  await quickAdd.getByRole('combobox').fill('Timer');
+  await ui.page.keyboard.press('Enter');
+
+  await expect(nodes).toHaveCount(beforeNodeCount + 1);
+  await expect(edges).toHaveCount(beforeEdgeCount + 1);
+  await expect(ui.page.getByTestId('branch-edge-label').filter({ hasText: '저위험' })).toHaveCount(1);
+  await expect(ui.page.locator('.react-flow__node').filter({ hasText: 'Timer' })).toHaveCount(1);
   await ui.context.close();
 });
 
@@ -326,13 +385,22 @@ function rectanglesOverlap(
 async function dispatchContextMenu(locator: import('@playwright/test').Locator) {
   const box = await locator.boundingBox();
   expect(box).not.toBeNull();
-  await locator.dispatchEvent('contextmenu', {
-    bubbles: true,
-    cancelable: true,
-    button: 2,
-    clientX: box!.x + box!.width / 2,
-    clientY: box!.y + box!.height / 2,
-  });
+  const viewport = locator.page().viewportSize();
+  const clientX = viewport
+    ? Math.max(1, Math.min(box!.x + box!.width / 2, viewport.width - 1))
+    : box!.x + box!.width / 2;
+  const clientY = viewport
+    ? Math.max(1, Math.min(box!.y + box!.height / 2, viewport.height - 1))
+    : box!.y + box!.height / 2;
+  await locator.evaluate((element, point) => {
+    element.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      button: 2,
+      clientX: point.clientX,
+      clientY: point.clientY,
+    }));
+  }, { clientX, clientY });
 }
 
 async function readNodeTransforms(page: import('@playwright/test').Page) {
@@ -358,6 +426,8 @@ async function addTimerFromCanvasMenu(page: import('@playwright/test').Page) {
   });
   const menu = page.getByTestId('canvas-context-menu');
   await menu.getByRole('menuitem', { name: '노드 추가…', exact: true }).click();
-  await menu.getByRole('menuitem', { name: 'Timer', exact: true }).click();
+  const quickAdd = page.getByTestId('node-quick-add');
+  await quickAdd.getByRole('combobox').fill('Timer');
+  await page.keyboard.press('Enter');
   await expect(page.locator('.react-flow__node').filter({ hasText: 'Timer' })).toHaveCount(1);
 }

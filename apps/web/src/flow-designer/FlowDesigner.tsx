@@ -23,6 +23,7 @@ import type { SessionUser } from '../api/session';
 import { pluginsApi } from '../api/plugins';
 import type { PluginManifest, PluginTestResponse } from '../api/plugins';
 import { PluginIcon } from './plugin-icons';
+import { BASIC_NODE_OPTIONS } from './node-catalog';
 import './FlowDesigner.css';
 
 export interface FlowDesignerProps {
@@ -1013,6 +1014,11 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
     });
   };
 
+  const onBasicNodeDragStart = (event: React.DragEvent, nodeType: CustomNodeData['nodeType']) => {
+    const option = BASIC_NODE_OPTIONS.find((item) => item.data.nodeType === nodeType);
+    if (option) onDragStart(event, nodeType, option.label, option.data);
+  };
+
   const toggleFavoritePlugin = (pluginId: string) => {
     setFavoritePluginIds((current) => {
       const next = current.includes(pluginId)
@@ -1213,14 +1219,14 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
             <div className="palette-section palette-section-basic">
               <h4 className="palette-section-title">기본 노드</h4>
               <div className="palette-nodes">
-                <div className="palette-node" draggable title="Start · 워크플로우 시작 (Manual · Schedule · DB Watch)" onDragStart={(e) => onDragStart(e, 'start', 'Start')}>
+                <div className="palette-node" draggable title="Start · 워크플로우 시작 (Manual · Schedule · DB Watch)" onDragStart={(e) => onBasicNodeDragStart(e, 'start')}>
                   <div className="palette-node-icon" style={{ background: 'var(--node-start)' }}><Play size={16} fill="currentColor" /></div>
                   <div className="palette-node-text">
                     <span className="palette-node-label">Start</span>
                     <span className="palette-node-caption">Manual · Schedule · DB Watch</span>
                   </div>
                 </div>
-                <div className="palette-node" draggable title="Timer · 지정 시간 대기" onDragStart={(e) => onDragStart(e, 'timer', 'Timer')}>
+                <div className="palette-node" draggable title="Timer · 지정 시간 대기" onDragStart={(e) => onBasicNodeDragStart(e, 'timer')}>
                   <div className="palette-node-icon" style={{ background: 'var(--node-timer)' }}><Clock size={16} /></div>
                   <span className="palette-node-label">Timer</span>
                 </div>
@@ -1228,14 +1234,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
                   className="palette-node"
                   title="JS Node · JavaScript 실행"
                   draggable
-                  onDragStart={(e) =>
-                    onDragStart(e, 'script', 'JS Node', {
-                      scriptType: 'javascript',
-                      code: "return { message: 'hello from js node', formData: input.formData };",
-                      outputPath: 'scriptResults.jsNode',
-                      scriptTimeoutMs: 1000,
-                    })
-                  }
+                  onDragStart={(e) => onBasicNodeDragStart(e, 'script')}
                 >
                   <div className="palette-node-icon" style={{ background: 'var(--node-script)' }}><Braces size={16} /></div>
                   <span className="palette-node-label">JS Node</span>
@@ -1244,23 +1243,16 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
                   className="palette-node"
                   title="Command · 허용된 명령어 실행"
                   draggable
-                  onDragStart={(e) =>
-                    onDragStart(e, 'command', 'Command', {
-                      commandId: 'builtin.echo',
-                      commandArgumentsJson: '{\n  "message": "hello from command node"\n}',
-                      outputPath: 'commandResults.echo',
-                      commandTimeoutMs: 1000,
-                    })
-                  }
+                  onDragStart={(e) => onBasicNodeDragStart(e, 'command')}
                 >
                   <div className="palette-node-icon" style={{ background: 'var(--node-command)' }}><Terminal size={16} /></div>
                   <span className="palette-node-label">Command</span>
                 </div>
-                <div className="palette-node" draggable title="Gateway · 조건 분기" onDragStart={(e) => onDragStart(e, 'gateway', 'Gateway')}>
+                <div className="palette-node" draggable title="Gateway · 조건 분기" onDragStart={(e) => onBasicNodeDragStart(e, 'gateway')}>
                   <div className="palette-node-icon" style={{ background: 'var(--node-gateway)' }}><Diamond size={16} fill="currentColor" /></div>
                   <span className="palette-node-label">Gateway</span>
                 </div>
-                <div className="palette-node" draggable title="Approval · 결재 요청" onDragStart={(e) => onDragStart(e, 'approval', 'Approval')}>
+                <div className="palette-node" draggable title="Approval · 결재 요청" onDragStart={(e) => onBasicNodeDragStart(e, 'approval')}>
                   <div className="palette-node-icon" style={{ background: 'var(--node-approval)' }}><CheckSquare size={16} /></div>
                   <span className="palette-node-label">Approval</span>
                 </div>
@@ -1268,18 +1260,12 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
                   className="palette-node"
                   title="Workflow Call · 다른 워크플로우 호출"
                   draggable
-                  onDragStart={(e) =>
-                    onDragStart(e, 'workflow_call', 'Workflow Call', {
-                      workflowCallMode: 'async',
-                      workflowInputMode: 'inherit_form_data',
-                      outputPath: 'workflowCalls.child',
-                    })
-                  }
+                  onDragStart={(e) => onBasicNodeDragStart(e, 'workflow_call')}
                 >
                   <div className="palette-node-icon" style={{ background: 'var(--node-workflow-call)' }}><Workflow size={16} /></div>
                   <span className="palette-node-label">Workflow Call</span>
                 </div>
-                <div className="palette-node" draggable title="End · 워크플로우 종료" onDragStart={(e) => onDragStart(e, 'end', 'End')}>
+                <div className="palette-node" draggable title="End · 워크플로우 종료" onDragStart={(e) => onBasicNodeDragStart(e, 'end')}>
                   <div className="palette-node-icon" style={{ background: 'var(--node-end)' }}><CircleCheck size={16} /></div>
                   <span className="palette-node-label">End</span>
                 </div>
@@ -1345,6 +1331,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
             onCopyGraph={storeWorkflowClipboard}
             onPasteAt={handlePasteSubflow}
             onTestNode={(node) => { void handleSelectedNodeTest(node); }}
+            plugins={plugins}
             readOnly={Boolean(traceInstanceId)}
           />
         </main>
