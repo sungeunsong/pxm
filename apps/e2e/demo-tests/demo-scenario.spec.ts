@@ -266,6 +266,34 @@ test('실행 이력은 노드 상태와 실제 경로를 저장 변경 없이 �
   await ui.context.close();
 });
 
+test('실행 패널을 닫아도 캔버스 상태를 유지하고 명시적으로 지운다', async ({ browser }) => {
+  const ui = await loginPage(browser, 'admin', process.env.PXM_DEMO_PASSWORD!, 'designer');
+  await openWorkflowFromDesigner(ui.page, '실습 2 · 협력사 접근 권한 신청');
+
+  await ui.page.getByRole('button', { name: '실행', exact: true }).click();
+  const runForm = ui.page.locator('.execution-modal');
+  await runForm.getByRole('button', { name: '저위험 · 자동 처리', exact: true }).click();
+  await runForm.getByRole('button', { name: '제출', exact: true }).click();
+
+  const executionPanel = ui.page.locator('.execution-panel');
+  const legend = ui.page.getByLabel('노드 실행 상태 범례');
+  await expect(executionPanel).toBeVisible();
+  await expect(legend).toBeVisible();
+  await expect(ui.page.locator('.custom-node[data-execution-status]')).not.toHaveCount(0);
+
+  await executionPanel.locator('.execution-panel-close').click();
+  await expect(executionPanel).toBeHidden();
+  await expect(legend).toBeVisible();
+  await expect(ui.page.locator('.custom-node[data-execution-status]')).not.toHaveCount(0);
+  await expect(legend.getByRole('button', { name: '실행 상세', exact: true })).toBeVisible();
+
+  await legend.getByRole('button', { name: '실행 표시 지우기', exact: true }).click();
+  await expect(legend).toBeHidden();
+  await expect(ui.page.locator('.custom-node[data-execution-status]')).toHaveCount(0);
+
+  await ui.context.close();
+});
+
 test('캔버스 컨텍스트 메뉴로 마우스 위치에서 노드를 편집한다', async ({ browser }) => {
   const ui = await loginPage(browser, 'admin', process.env.PXM_DEMO_PASSWORD!, 'designer');
   const pane = ui.page.locator('.react-flow__pane');

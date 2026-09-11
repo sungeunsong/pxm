@@ -68,7 +68,7 @@
 .execution-node-legend {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   padding: 7px 10px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
@@ -79,7 +79,14 @@
   backdrop-filter: blur(6px);
 }
 
-.execution-node-legend span {
+.execution-node-legend-items,
+.execution-node-legend-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.execution-node-legend-items span {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -98,6 +105,30 @@
 .execution-node-legend i.completed { color: #16a34a; }
 .execution-node-legend i.failed { color: #dc2626; }
 .execution-node-legend i.idle { color: #94a3b8; }
+
+.execution-node-legend-actions {
+  gap: 3px;
+  padding-left: 7px;
+  border-left: 1px solid var(--border-subtle);
+}
+
+.execution-node-legend-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 5px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.execution-node-legend-actions button:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
 
 /* ===== Edges ===== */
 .react-flow__edge-path {

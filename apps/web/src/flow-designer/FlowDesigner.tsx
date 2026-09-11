@@ -231,6 +231,8 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
   );
 
   const restoreDesignerTab = React.useCallback((tab: DesignerTab) => {
+    eventSourceRef.current?.close();
+    eventSourceRef.current = null;
     suppressCanvasDirtyRef.current = true;
     setCurrentTemplateId(tab.templateId);
     setCurrentTemplateName(tab.templateName);
@@ -557,6 +559,15 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
 
   const updateNodeExecutionStatus = (nodeId: string, status: ExecutionNodeStatus) => {
     flowCanvasRef.current?.setNodeExecutionStatus(nodeId, status);
+  };
+
+  const clearExecutionDisplay = () => {
+    eventSourceRef.current?.close();
+    eventSourceRef.current = null;
+    flowCanvasRef.current?.clearExecutionState();
+    setIsExecutionPanelOpen(false);
+    setExecutionInstanceId(null);
+    setExecutionFormSchema(undefined);
   };
 
   const handleSave = async () => {
@@ -1309,6 +1320,13 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
             onTestNode={(node) => { void handleSelectedNodeTest(node); }}
             plugins={plugins}
             executionMode={traceInstanceId ? 'trace' : executionInstanceId ? 'live' : 'design'}
+            onOpenExecutionDetails={!traceInstanceId && executionInstanceId && !isExecutionPanelOpen
+              ? () => {
+                  setIsExecutionPanelOpen(true);
+                  setIsPropertiesPanelOpen(true);
+                }
+              : undefined}
+            onClearExecution={!traceInstanceId && executionInstanceId ? clearExecutionDisplay : undefined}
             readOnly={Boolean(traceInstanceId)}
           />
         </main>
@@ -1341,10 +1359,9 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
                     onExitTrace();
                     return;
                   }
+                  setExecutionInstanceId(null);
                 }
-                flowCanvasRef.current?.clearExecutionState();
                 setIsExecutionPanelOpen(false);
-                setExecutionInstanceId(null);
                 setExecutionFormSchema(undefined);
               }}
             />

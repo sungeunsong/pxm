@@ -24,6 +24,7 @@ import {
   Settings2,
   Trash2,
   Undo2,
+  X,
 } from 'lucide-react';
 import 'reactflow/dist/style.css';
 import { useFeedback } from '../components/feedback/feedback-context';
@@ -71,6 +72,8 @@ export interface FlowCanvasProps {
   onTestNode?: (node: Node<CustomNodeData>) => void;
   plugins?: PluginManifest[];
   executionMode?: 'design' | 'live' | 'trace';
+  onOpenExecutionDetails?: () => void;
+  onClearExecution?: () => void;
   readOnly?: boolean;
 }
 
@@ -177,6 +180,8 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
     onTestNode,
     plugins = [],
     executionMode = 'design',
+    onOpenExecutionDetails,
+    onClearExecution,
     readOnly = false,
   }, ref) => {
     const { confirm: confirmDialog, toast } = useFeedback();
@@ -991,11 +996,26 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
         />
         {executionMode !== 'design' && (
           <Panel position="top-left" className="execution-node-legend" aria-label="노드 실행 상태 범례">
-            <span><i className="running" />실행 중</span>
-            <span><i className="waiting" />대기</span>
-            <span><i className="completed" />완료</span>
-            <span><i className="failed" />실패</span>
-            <span><i className="idle" />미실행</span>
+            <div className="execution-node-legend-items">
+              <span><i className="running" />실행 중</span>
+              <span><i className="waiting" />대기</span>
+              <span><i className="completed" />완료</span>
+              <span><i className="failed" />실패</span>
+              <span><i className="idle" />미실행</span>
+            </div>
+            {(onOpenExecutionDetails || onClearExecution) && (
+              <div className="execution-node-legend-actions">
+                {onOpenExecutionDetails && (
+                  <button type="button" onClick={onOpenExecutionDetails}>실행 상세</button>
+                )}
+                {onClearExecution && (
+                  <button type="button" onClick={onClearExecution} aria-label="실행 표시 지우기" title="실행 표시 지우기">
+                    <X size={13} />
+                    표시 지우기
+                  </button>
+                )}
+              </div>
+            )}
           </Panel>
         )}
       </ReactFlow>
