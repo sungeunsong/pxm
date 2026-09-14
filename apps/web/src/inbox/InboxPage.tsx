@@ -123,6 +123,13 @@ const getApprovalChannels = (task: Task | null) => {
 const getProcessLabel = (task: Task | null) =>
   task?.template_name || readField(task, ['요청 프로세스', 'processName'], task?.process_definition_id || '-');
 
+const getApprovalDeadline = (task: Task | null) => {
+  const seconds = Number(task?.payload?.approval_deadline?.deadline_seconds);
+  if (!task?.created_at || !Number.isFinite(seconds) || seconds <= 0) return null;
+  const dueAt = new Date(new Date(task.created_at).getTime() + seconds * 1000);
+  return { dueAt, overdue: task.status === 'OPEN' && dueAt.getTime() <= Date.now() };
+};
+
 export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
   const { toast, confirm: confirmDialog } = useFeedback();
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -416,6 +423,7 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
       );
     }
 
+    const deadline = getApprovalDeadline(selectedTask);
     return (
       <div className="inbox-detail-page">
         <div className="inbox-detail-header">
@@ -495,6 +503,14 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
                       {getApprovalChannels(selectedTask)}
                     </span>
                   </div>
+                  {deadline && (
+                    <div className="info-cell">
+                      <span className="info-label">처리 기한</span>
+                      <span className={`info-val ${deadline.overdue ? 'approval-deadline-overdue' : ''}`}>
+                        {formatDateTime(deadline.dueAt.toISOString())}{deadline.overdue ? ' · 기한 초과' : ''}
+                      </span>
+                    </div>
+                  )}
                   {selectedTask.completed_via && (
                     <div className="info-cell">
                       <span className="info-label">실제 처리 채널</span>

@@ -1210,23 +1210,31 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
        LIMIT $3`,
       [after.created_at, after.id, limit],
     );
-    return rows.map((row) => {
-      const content = row.payload?.content || {};
-      return {
-        id: row.id,
-        instance_id: row.instance_id,
-        assignee: row.assignee,
-        status: row.status,
-        created_at: new Date(row.created_at).toISOString(),
-        workflow_name: row.workflow_name || null,
-        step_order: row.payload?.step_order == null ? null : Number(row.payload.step_order),
-        step_label: row.payload?.step_label || null,
-        title: String(content.title || row.workflow_name || '승인 요청'),
-        requester: content.requester ? String(content.requester) : null,
-        source_url: content.source_url ? String(content.source_url) : null,
-        email_hint: row.payload?.display_snapshot?.email || null,
-      };
-    });
+    return rows.map(mapApprovalNotificationTaskRow);
+  }
+
+  async fetchApprovalDeadlineTasks(after: { created_at: string; id: string }, limit: number) {
+    await this.ensureTaskRuntimeColumns();
+    const { rows } = await this.pool.query(
+      `SELECT t.id::text, t.instance_id::text, t.node_id, t.assignee, t.status,
+              date_trunc('milliseconds', t.created_at) AS created_at,
+              t.payload, d.name AS workflow_name
+       FROM v2_tasks t
+       JOIN v2_process_instances i ON i.id = t.instance_id
+       LEFT JOIN v2_process_definitions d ON d.id = i.process_definition_id
+       WHERE t.status = 'OPEN'
+         AND COALESCE((t.payload->'approval_deadline'->>'deadline_seconds')::bigint, 0) > 0
+         AND (date_trunc('milliseconds', t.created_at) > $1::timestamptz
+           OR (date_trunc('milliseconds', t.created_at) = $1::timestamptz AND t.id::text > $2))
+       ORDER BY date_trunc('milliseconds', t.created_at) ASC, t.id::text ASC
+       LIMIT $3`,
+      [after.created_at, after.id, limit],
+    );
+    return rows.map((row) => ({
+      ...mapApprovalNotificationTaskRow(row),
+      node_id: row.node_id,
+      payload: row.payload || {},
+    }));
   }
 
   async getTask(id: string): Promise<any> {
@@ -3279,6 +3287,24 @@ function mapTaskHistoryPostgres(task: any): WorkflowTaskHistoryItem {
     updated_at: new Date(task.updated_at || task.created_at).toISOString(),
     completed_at: completion?.completed_at ? new Date(completion.completed_at).toISOString() : null,
     hold: task.payload?.hold || null,
+  };
+}
+
+function mapApprovalNotificationTaskRow(row: any) {
+  const content = row.payload?.content || {};
+  return {
+    id: String(row.id),
+    instance_id: String(row.instance_id),
+    assignee: String(row.assignee),
+    status: row.status,
+    created_at: new Date(row.created_at).toISOString(),
+    workflow_name: row.workflow_name || null,
+    step_order: row.payload?.step_order == null ? null : Number(row.payload.step_order),
+    step_label: row.payload?.step_label || null,
+    title: String(content.title || row.workflow_name || '승인 요청'),
+    requester: content.requester ? String(content.requester) : null,
+    source_url: content.source_url ? String(content.source_url) : null,
+    email_hint: row.payload?.display_snapshot?.email || null,
   };
 }
 

@@ -5,6 +5,8 @@ export type NotificationDelivery = {
   recipient_id: string;
   recipient_hint?: string;
   channel: 'email';
+  kind: 'initial' | 'reminder' | 'escalation';
+  due_at?: string | null;
   status: 'PENDING' | 'RUNNING' | 'SENT' | 'FAILED' | 'DEAD_LETTER' | 'CANCELED';
   title: string;
   requester: string | null;

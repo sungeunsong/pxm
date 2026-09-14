@@ -62,6 +62,12 @@ const getEventTitle = (event: ExecutionEvent) => {
       return `${nodeName} 실패`;
     case 'TASK_CREATED':
       return `${nodeName} 승인 요청 생성`;
+    case 'APPROVAL_DEADLINE_REMINDER':
+      return `${nodeName} 처리 기한 독촉`;
+    case 'APPROVAL_DEADLINE_ESCALATED':
+      return `${nodeName} 상위 담당자 알림`;
+    case 'APPROVAL_DEADLINE_ESCALATION_UNROUTABLE':
+      return `${nodeName} 상위 알림 대상 없음`;
     case 'TIMER_SCHEDULED':
       return `${nodeName} 타이머 예약`;
     case 'GATEWAY_JOIN_WAITING':
@@ -79,6 +85,12 @@ const getEventDescription = (event: ExecutionEvent) => {
       return '해당 노드 실행이 정상 완료됐습니다.';
     case 'TASK_CREATED':
       return `담당자 ${event.payload?.assignee || 'admin'}에게 승인 작업이 생성됐습니다.`;
+    case 'APPROVAL_DEADLINE_REMINDER':
+      return '처리 기한이 지나 원래 승인자에게 보낼 독촉 알림을 등록했습니다.';
+    case 'APPROVAL_DEADLINE_ESCALATED':
+      return '유예 시간까지 처리되지 않아 그룹 관리자에게 보낼 알림을 등록했습니다.';
+    case 'APPROVAL_DEADLINE_ESCALATION_UNROUTABLE':
+      return '알림을 받을 활성 그룹 관리자나 최고관리자의 이메일을 찾지 못했습니다.';
     case 'INSTANCE_WAITING':
       return '승인 또는 외부 입력을 기다리는 상태입니다.';
     case 'INSTANCE_COMPLETED':
@@ -94,6 +106,7 @@ const getEventCategory = (event: ExecutionEvent) => {
   if (event.type.startsWith('INSTANCE_')) return '인스턴스';
   if (event.type.startsWith('NODE_')) return '노드';
   if (event.type.startsWith('TASK_')) return '승인';
+  if (event.type.startsWith('APPROVAL_DEADLINE_')) return '승인';
   if (event.type.startsWith('TIMER_')) return '타이머';
   if (event.type.startsWith('GATEWAY_')) return '게이트웨이';
   return '시스템';
@@ -243,6 +256,9 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
       'RETRY_SCHEDULED',
       'APPROVAL_REQUIRED',
       'TASK_CREATED',
+      'APPROVAL_DEADLINE_REMINDER',
+      'APPROVAL_DEADLINE_ESCALATED',
+      'APPROVAL_DEADLINE_ESCALATION_UNROUTABLE',
     ];
 
     eventTypes.forEach((eventType) => {

@@ -123,6 +123,11 @@ export interface CustomNodeData {
   approvalLineSource?: 'fixed' | 'dynamic';
   approvalRequestPath?: string;
   requireComment?: boolean;
+  approvalDeadlineEnabled?: boolean;
+  approvalDeadlineValue?: number | string;
+  approvalDeadlineUnit?: 'minutes' | 'hours' | 'days';
+  approvalEscalationGraceValue?: number | string;
+  approvalEscalationGraceUnit?: 'minutes' | 'hours' | 'days';
 
   // Workflow Call 노드 전용
   targetWorkflowId?: string;

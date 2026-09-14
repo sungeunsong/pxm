@@ -5,6 +5,8 @@ export type ApprovalNotificationMessage = {
   stepLabel: string | null;
   inboxUrl: string;
   sourceUrl: string | null;
+  kind: 'initial' | 'reminder' | 'escalation';
+  dueAt: string | null;
 };
 
 export abstract class ApprovalNotificationChannel {

@@ -1491,6 +1491,32 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
     }));
   }
 
+  async fetchApprovalDeadlineTasks(after: { created_at: string; id: string }, limit: number) {
+    const tasks = await this.db.collection<any>('v2_tasks').find({
+      status: 'OPEN',
+      'payload.approval_deadline.deadline_seconds': { $gt: 0 },
+      $or: [
+        { created_at: { $gt: after.created_at } },
+        { created_at: after.created_at, _id: { $gt: after.id } },
+      ],
+    }).sort({ created_at: 1, _id: 1 }).limit(limit).toArray();
+    return Promise.all(tasks.map(async (task) => {
+      const instance = await this.db.collection<any>('v2_process_instances').findOne(
+        { _id: task.instance_id }, { projection: { process_definition_id: 1 } },
+      );
+      const definition = instance?.process_definition_id
+        ? await this.db.collection<any>('v2_process_definitions').findOne(
+          { _id: instance.process_definition_id }, { projection: { name: 1 } },
+        )
+        : null;
+      return {
+        ...mapApprovalNotificationTask(task, definition?.name || null),
+        node_id: task.node_id,
+        payload: task.payload || {},
+      };
+    }));
+  }
+
   async getTask(id: string): Promise<any> {
     const t = await this.db.collection<any>('v2_tasks').findOne({ _id: id });
     if (!t) return null;

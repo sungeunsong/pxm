@@ -8,6 +8,27 @@ Task는 소급 발송하지 않으며, 시작 이후 새로 열린 순차 단계
 메일을 만들지 않는다. External Approval Dispatcher가 보내는 한 통의 메일에
 이메일 승인 링크와 PXM 결재함 링크를 함께 넣어 중복 발송을 막는다.
 
+## 처리 기한과 상위 알림
+
+Approval 노드에서 `처리 기한 사용`을 켜면 각 결재 Task가 `OPEN`으로 생성된 시각부터
+기한을 계산한다. 분·시간·일 단위를 직접 입력하거나 4시간, 8시간, 1일, 3일, 7일
+프리셋을 쓸 수 있다. 순차 결재는 각 단계가 열릴 때 그 단계의 시계를 새로 시작한다.
+
+1. 처리 기한이 지나도 Task가 `OPEN`이면 원래 승인자에게 독촉 메일을 한 번 보낸다.
+2. 설정한 유예 시간 뒤에도 `OPEN`이면 워크플로우 소유 그룹의 활성 그룹 관리자에게
+   상위 알림을 한 번씩 보낸다.
+3. 그룹 관리자에게 이메일이 없거나 활성 관리자가 없으면 활성 최고관리자에게 알린다.
+   그 대상도 없으면 발송 불가 상태를 이력에 남긴다.
+
+기한 초과로 자동 승인·반려하거나 승인자를 임의로 바꾸지 않는다. 사전 등록 대리자에게
+자동 위임하거나 관리자가 수동 재배정하는 기능도 현재 범위에는 포함하지 않는다.
+
+시간은 영업일이 아닌 경과 달력 시간으로 계산한다. Task 보류 또는 인스턴스 일시정지
+중에는 독촉과 상위 알림을 발송하지 않지만 시계는 계속 흐른다. 다시 진행했을 때 이미
+기한이 지났다면 그 시점에 해당 알림을 등록한다. 알림 등록은 실행 outbox에
+`APPROVAL_DEADLINE_REMINDER`, `APPROVAL_DEADLINE_ESCALATED` 또는
+`APPROVAL_DEADLINE_ESCALATION_UNROUTABLE` 이벤트로 기록된다.
+
 ## 전달 내용
 
 - 결재 제목
@@ -23,7 +44,7 @@ Task는 소급 발송하지 않으며, 시작 이후 새로 열린 순차 단계
 
 ## 멱등성과 취소 억제
 
-`task_id + email`은 발송 레코드의 유일키다. 같은 Task를 Dispatcher가 다시
+`task_id + 알림 종류 + 수신자 + email`은 발송 레코드의 유일키다. 같은 Task를 Dispatcher가 다시
 발견해도 발송 레코드는 하나만 생성된다. 발송 직전에 Task가 여전히 `OPEN`이고
 PXM 사용자 전용 채널인지 다시 확인한다. 따라서 ANY 단계에서 다른 승인자가 먼저
 처리해 `CANCELED`된 Task나 이미 완료된 Task에는 메일을 보내지 않는다.
@@ -50,9 +71,13 @@ POST /api/notifications/deliveries/:id/retry
 ```text
 APPROVAL_NOTIFICATION_POLL_MS=2000
 APPROVAL_NOTIFICATION_DISCOVERY_BATCH_SIZE=200
+APPROVAL_NOTIFICATION_DEADLINE_BATCH_SIZE=500
 APPROVAL_NOTIFICATION_BATCH_SIZE=20
 APPROVAL_NOTIFICATION_MAX_ATTEMPTS=5
 APPROVAL_NOTIFICATION_TIMEOUT_MS=10000
 PXM_PUBLIC_WEB_URL=https://pxm.example
 PXM_SMTP_URL=smtp://...
 ```
+
+SMTP가 설정되지 않아도 기한 도달과 상위 알림 대상은 기록되며 발송 건은 `PENDING`으로
+남는다. SMTP 설정 후 API를 다시 시작하면 대기 건을 발송한다.

@@ -39,6 +39,13 @@ Flow Designer에서 Approval 노드의 `결재라인 입력 방식`을 `실행 �
             "order": 1,
             "label": "팀장 전원",
             "mode": "ALL",
+            "deadline": {
+              "enabled": true,
+              "value": 8,
+              "unit": "hours",
+              "escalation_grace_value": 4,
+              "escalation_grace_unit": "hours"
+            },
             "approvers": [
               {
                 "principal": { "provider": "acrapoint", "subject": "EMP-100" },
@@ -81,6 +88,10 @@ Flow Designer에서 Approval 노드의 `결재라인 입력 방식`을 `실행 �
 - `content`에서 저장하는 필드는 `title`, `summary`, `requester`, `source_url`뿐이다.
 - 단계는 1부터 시작해 빈 번호 없이 연속이어야 한다.
 - `mode`는 `ALL` 또는 `ANY`이며 생략하면 `ALL`이다.
+- 노드에서 처리 기한을 켜면 모든 단계에 기본값으로 적용된다. 단계의 `deadline`은 그
+  단계에만 기본값을 덮어쓴다. `enabled: false`로 특정 단계의 기한을 끌 수 있으며,
+  켤 때는 `value`, `unit`, `escalation_grace_value`, `escalation_grace_unit`을 지정한다.
+  단위는 `minutes`, `hours`, `days`이고 각 기간은 최대 365일이다.
 - 각 단계의 `approvers`에는 한 명 이상의 승인자가 필요하고 동일 principal을 중복해
   넣을 수 없다.
 - 기존의 단계별 `assignee` 단일 형식도 하위 호환을 위해 지원한다.

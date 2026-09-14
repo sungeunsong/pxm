@@ -106,6 +106,9 @@ export const ExecutionModal: React.FC<ExecutionModalProps> = ({
       'TIMER_ESCALATED',
       'RETRY_SCHEDULED',
       'APPROVAL_REQUIRED',
+      'APPROVAL_DEADLINE_REMINDER',
+      'APPROVAL_DEADLINE_ESCALATED',
+      'APPROVAL_DEADLINE_ESCALATION_UNROUTABLE',
     ];
 
     eventTypes.forEach((eventType) => {

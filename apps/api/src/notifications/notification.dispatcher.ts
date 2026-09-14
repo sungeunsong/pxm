@@ -21,8 +21,7 @@ export class NotificationDispatcher implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit() {
     if (!this.channel.isConfigured()) {
-      this.logger.warn('Approval notification dispatcher is disabled because SMTP is not configured');
-      return;
+      this.logger.warn('SMTP is not configured; approval notifications will be recorded and remain pending');
     }
     const pollMs = positiveInt(process.env.APPROVAL_NOTIFICATION_POLL_MS, 2000);
     this.timer = setInterval(() => void this.tick(), Math.max(1000, pollMs));
@@ -37,6 +36,8 @@ export class NotificationDispatcher implements OnModuleInit, OnModuleDestroy {
     this.running = true;
     try {
       await this.notifications.discover(positiveInt(process.env.APPROVAL_NOTIFICATION_DISCOVERY_BATCH_SIZE, 200));
+      await this.notifications.discoverDeadlines(positiveInt(process.env.APPROVAL_NOTIFICATION_DEADLINE_BATCH_SIZE, 500));
+      if (!this.channel.isConfigured()) return;
       const claims = await this.notifications.claim(this.owner, positiveInt(process.env.APPROVAL_NOTIFICATION_BATCH_SIZE, 20));
       for (const claim of claims) await this.deliver(claim);
     } catch (error) {
@@ -49,15 +50,23 @@ export class NotificationDispatcher implements OnModuleInit, OnModuleDestroy {
   private async deliver(delivery: NotificationDelivery) {
     const started = Date.now();
     try {
+      const kind = delivery.kind || 'initial';
       const task = await this.notifications.currentTask(delivery);
       const channels = approvalChannels(task?.payload);
-      if (
-        !task ||
-        task.status !== 'OPEN' ||
-        !allowsApprovalChannel(task.payload, 'pxm_user') ||
-        channels.includes('external_email')
-      ) {
+      const invalidInitial = kind === 'initial' && (
+        !allowsApprovalChannel(task?.payload, 'pxm_user') || channels.includes('external_email')
+      );
+      const paused = await this.notifications.isInstancePaused(delivery.instance_id);
+      if (!task || task.status !== 'OPEN' || invalidInitial) {
         await this.notifications.markCanceled(delivery, 'approval task is no longer OPEN');
+        return;
+      }
+      if ((task.payload?.hold || paused) && kind !== 'initial') {
+        await this.notifications.defer(delivery, task.payload?.hold ? 'approval task is held' : 'workflow instance is paused');
+        return;
+      }
+      if (task.payload?.hold || paused) {
+        await this.notifications.markCanceled(delivery, 'approval task notification is suppressed');
         return;
       }
       const email = await this.notifications.recipientEmail(delivery, task);
@@ -67,8 +76,12 @@ export class NotificationDispatcher implements OnModuleInit, OnModuleDestroy {
         title: delivery.title,
         requester: delivery.requester,
         stepLabel: delivery.step_label || (delivery.step_order == null ? null : `${delivery.step_order}단계`),
-        inboxUrl: `${publicWebUrl()}/#/inbox?task=${encodeURIComponent(delivery.task_id)}`,
+        inboxUrl: kind === 'escalation'
+          ? `${publicWebUrl()}/#/tracker`
+          : `${publicWebUrl()}/#/inbox?task=${encodeURIComponent(delivery.task_id)}`,
         sourceUrl: delivery.source_url,
+        kind,
+        dueAt: delivery.due_at || null,
       }), positiveInt(process.env.APPROVAL_NOTIFICATION_TIMEOUT_MS, 10_000));
       await this.notifications.markSent(delivery, email, Date.now() - started);
     } catch (error) {

@@ -237,6 +237,10 @@ export abstract class WorkflowTaskRepositoryPort {
     after: { created_at: string; id: string },
     limit: number,
   ): Promise<ApprovalNotificationTask[]>;
+  abstract fetchApprovalDeadlineTasks(
+    after: { created_at: string; id: string },
+    limit: number,
+  ): Promise<ApprovalDeadlineTask[]>;
 }
 
 export type ApprovalNotificationTask = {
@@ -252,6 +256,11 @@ export type ApprovalNotificationTask = {
   requester: string | null;
   source_url: string | null;
   email_hint: string | null;
+};
+
+export type ApprovalDeadlineTask = ApprovalNotificationTask & {
+  node_id: string;
+  payload: Record<string, any>;
 };
 
 export type WorkflowTaskHistoryQuery = {

@@ -1501,6 +1501,73 @@ fn primary_approval_channel(channels: &[String]) -> String {
     }
 }
 
+fn approval_duration_seconds(value: Option<&Value>, unit: Option<&Value>, field: &str) -> Result<u64> {
+    let amount = value
+        .and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse::<u64>().ok()))
+        .ok_or_else(|| anyhow::anyhow!("{} must be a positive integer", field))?;
+    if amount == 0 {
+        anyhow::bail!("{} must be a positive integer", field);
+    }
+    let unit = unit.and_then(Value::as_str).unwrap_or("hours");
+    let multiplier = match unit {
+        "minutes" => 60,
+        "hours" => 60 * 60,
+        "days" => 24 * 60 * 60,
+        _ => anyhow::bail!("{} unit must be minutes, hours, or days", field),
+    };
+    let seconds = amount
+        .checked_mul(multiplier)
+        .ok_or_else(|| anyhow::anyhow!("{} is too large", field))?;
+    if seconds > 365 * 24 * 60 * 60 {
+        anyhow::bail!("{} must not exceed 365 days", field);
+    }
+    Ok(seconds)
+}
+
+fn resolve_approval_deadline(node: &NodeDef, step: Option<&serde_json::Map<String, Value>>) -> Result<Option<Value>> {
+    let override_deadline = step.and_then(|value| value.get("deadline")).and_then(Value::as_object);
+    let enabled = override_deadline
+        .and_then(|value| value.get("enabled"))
+        .and_then(Value::as_bool)
+        .or_else(|| node.config.get("approvalDeadlineEnabled").and_then(Value::as_bool))
+        .unwrap_or(false);
+    if !enabled {
+        return Ok(None);
+    }
+
+    let deadline_seconds = approval_duration_seconds(
+        override_deadline
+            .and_then(|value| value.get("value"))
+            .or_else(|| node.config.get("approvalDeadlineValue")),
+        override_deadline
+            .and_then(|value| value.get("unit"))
+            .or_else(|| node.config.get("approvalDeadlineUnit")),
+        "approval deadline",
+    )?;
+    let grace_seconds = approval_duration_seconds(
+        override_deadline
+            .and_then(|value| value.get("escalation_grace_value"))
+            .or_else(|| node.config.get("approvalEscalationGraceValue")),
+        override_deadline
+            .and_then(|value| value.get("escalation_grace_unit"))
+            .or_else(|| node.config.get("approvalEscalationGraceUnit")),
+        "approval escalation grace",
+    )?;
+    Ok(Some(json!({
+        "deadline_seconds": deadline_seconds,
+        "escalation_grace_seconds": grace_seconds,
+        "clock": "elapsed_calendar_time",
+        "suppress_while_task_held": true,
+        "suppress_while_instance_paused": true
+    })))
+}
+
+fn attach_approval_deadline(payload: &mut Value, deadline: Option<&Value>) {
+    if let (Some(payload), Some(deadline)) = (payload.as_object_mut(), deadline) {
+        payload.insert("approval_deadline".to_string(), deadline.clone());
+    }
+}
+
 fn context_value_at_path<'a>(context: &'a Value, path: &str) -> Option<&'a Value> {
     path.split('.')
         .filter(|part| !part.is_empty())
@@ -1520,6 +1587,8 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
 
     if model != "dynamic" {
         let (assignee, mut payload) = resolve_approval_assignment(node, context)?;
+        let approval_deadline = resolve_approval_deadline(node, None)?;
+        attach_approval_deadline(&mut payload, approval_deadline.as_ref());
         let approval_channels = normalized_approval_channels(
             node.config.get("approvalChannels"),
             node.config
@@ -1715,6 +1784,7 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
             anyhow::bail!("approval step {} mode must be ALL or ANY", order);
         }
         let label = step.get("label").cloned().unwrap_or(Value::Null);
+        let approval_deadline = resolve_approval_deadline(node, Some(step))?;
         let raw_approvers = step
             .get("approvers")
             .and_then(Value::as_array)
@@ -1827,7 +1897,7 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
             if !seen.insert(principal_key.clone()) {
                 anyhow::bail!("approval step {} has duplicate principal {}", order, principal_key);
             }
-            let payload = json!({
+            let mut payload = json!({
                 "approval_model": "dynamic",
                 "step_order": order,
                 "step_mode": mode,
@@ -1847,6 +1917,7 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
                 "external_require_otp": external_require_otp,
                 "external_expires_in_hours": external_expires_in_hours
             });
+            attach_approval_deadline(&mut payload, approval_deadline.as_ref());
             normalized_approvers.push(json!({
                 "assignee": assignee,
                 "approver_channel": approver_channel,
@@ -1871,6 +1942,7 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
             "order": order,
             "mode": mode,
             "label": label,
+            "deadline": approval_deadline,
             "approvers": normalized_approvers
         }));
         steps.push(V2ApprovalStepInput {
@@ -1908,7 +1980,7 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
 #[cfg(test)]
 mod tests {
     use super::{
-        execute_command_node, resolve_approval_assignment, resolve_approval_definition,
+        execute_command_node, resolve_approval_assignment, resolve_approval_deadline, resolve_approval_definition,
         select_approval_edges, select_gateway_edges, V2RetryPolicy,
     };
     use crate::v2::types::{EdgeRule, GatewayType, NodeDef};
@@ -1925,6 +1997,56 @@ mod tests {
         let (assignee, payload) = resolve_approval_assignment(&node, &json!({})).unwrap();
         assert_eq!(assignee, "manager");
         assert_eq!(payload["approval_model"], "fixed");
+    }
+
+    #[test]
+    fn resolves_node_approval_deadline_to_seconds() {
+        let node = NodeDef {
+            node_id: "approval".to_string(),
+            node_type: "approval".to_string(),
+            config: json!({
+                "approvalDeadlineEnabled": true,
+                "approvalDeadlineValue": 2,
+                "approvalDeadlineUnit": "days",
+                "approvalEscalationGraceValue": 4,
+                "approvalEscalationGraceUnit": "hours"
+            }),
+        };
+
+        let deadline = resolve_approval_deadline(&node, None).unwrap().unwrap();
+        assert_eq!(deadline["deadline_seconds"], 172_800);
+        assert_eq!(deadline["escalation_grace_seconds"], 14_400);
+        assert_eq!(deadline["clock"], "elapsed_calendar_time");
+    }
+
+    #[test]
+    fn dynamic_step_can_override_or_disable_node_approval_deadline() {
+        let node = NodeDef {
+            node_id: "approval".to_string(),
+            node_type: "approval".to_string(),
+            config: json!({
+                "approvalDeadlineEnabled": true,
+                "approvalDeadlineValue": 1,
+                "approvalDeadlineUnit": "days",
+                "approvalEscalationGraceValue": 2,
+                "approvalEscalationGraceUnit": "hours"
+            }),
+        };
+        let override_step = json!({
+            "deadline": {
+                "enabled": true,
+                "value": 30,
+                "unit": "minutes",
+                "escalation_grace_value": 15,
+                "escalation_grace_unit": "minutes"
+            }
+        });
+        let disabled_step = json!({ "deadline": { "enabled": false } });
+
+        let overridden = resolve_approval_deadline(&node, override_step.as_object()).unwrap().unwrap();
+        assert_eq!(overridden["deadline_seconds"], 1_800);
+        assert_eq!(overridden["escalation_grace_seconds"], 900);
+        assert!(resolve_approval_deadline(&node, disabled_step.as_object()).unwrap().is_none());
     }
 
     #[test]

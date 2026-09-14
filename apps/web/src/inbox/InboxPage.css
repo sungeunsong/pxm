@@ -1229,3 +1229,7 @@
   70% { box-shadow: 0 0 0 8px rgba(37, 99, 235, 0); }
   100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
 }
+.approval-deadline-overdue {
+  color: var(--color-error) !important;
+  font-weight: var(--font-weight-semibold);
+}

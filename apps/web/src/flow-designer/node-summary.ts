@@ -144,9 +144,12 @@ function serviceSummary(data: NodeData): string {
 }
 
 function approvalSummary(data: NodeData): string {
+  const deadline = data.approvalDeadlineEnabled
+    ? `${text(data, 'approvalDeadlineValue') || '1'}${({ minutes: '분', hours: '시간', days: '일' } as Record<string, string>)[text(data, 'approvalDeadlineUnit') || 'days']}`
+    : '';
   const lineSource =
     text(data, 'approvalLineSource') || (text(data, 'approvalType') === 'dynamic' ? 'dynamic' : 'fixed');
-  if (lineSource === 'dynamic') return '요청에서 결재선 전달';
+  if (lineSource === 'dynamic') return join(['요청에서 결재선 전달', deadline && `기한 ${deadline}`]);
 
   const channels = Array.isArray(data.approvalChannels) && data.approvalChannels.length
     ? data.approvalChannels
@@ -161,7 +164,7 @@ function approvalSummary(data: NodeData): string {
       : 'PXM 웹';
 
   const approvalType = text(data, 'approvalType');
-  return join(['고정', channelLabel, APPROVAL_TYPE_LABEL[approvalType] || APPROVAL_TYPE_LABEL.single]);
+  return join(['고정', channelLabel, APPROVAL_TYPE_LABEL[approvalType] || APPROVAL_TYPE_LABEL.single, deadline && `기한 ${deadline}`]);
 }
 
 function workflowCallSummary(data: NodeData): string {

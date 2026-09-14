@@ -7,6 +7,9 @@ import { deliveryStatusLabel } from '../lib/status-label';
 import { Drawer, EmptyState, PageHeader, StatusBadge } from '../components';
 
 const statuses = ['', 'PENDING', 'RUNNING', 'SENT', 'FAILED', 'DEAD_LETTER', 'CANCELED'];
+const notificationKindLabel = (kind: NotificationDelivery['kind']) => ({
+  initial: '신규 요청', reminder: '기한 독촉', escalation: '상위 알림',
+}[kind] || '신규 요청');
 
 export function NotificationManagementPage() {
   const { prompt: promptDialog } = useFeedback();
@@ -42,7 +45,7 @@ export function NotificationManagementPage() {
       className="notification-intro"
       aria-label="승인 알림 안내"
       icon={<Mail size={22} />}
-      description="새 결재 요청 이메일의 성공·실패와 재시도 결과를 확인합니다."
+      description="새 결재 요청과 기한 독촉·상위 알림 이메일의 발송 결과를 확인합니다."
       actions={<button onClick={load} disabled={loading}><RefreshCw size={15} className={loading ? 'spin' : ''}/>새로고침</button>}
     />
     <section className="notification-summary">
@@ -53,9 +56,9 @@ export function NotificationManagementPage() {
     </div>
     {error && <div className="notification-error">{error}</div>}
     <section className="notification-list">
-      <header><span>결재 제목</span><span>승인자</span><span>채널</span><span>상태</span><span>시도</span><span>갱신 시각</span><span>조치</span></header>
+      <header><span>결재 제목</span><span>수신자</span><span>알림 종류</span><span>상태</span><span>시도</span><span>갱신 시각</span><span>조치</span></header>
       {items.map(item => <article key={item.id} onClick={() => notificationsApi.detail(item.id).then(setSelected).catch(e => setError(e.message))}>
-        <strong>{item.title}</strong><span>{item.recipient_id}<small>{item.recipient_hint || ''}</small></span><span><Mail size={13}/> 이메일</span>
+        <strong>{item.title}</strong><span>{item.recipient_id}<small>{item.recipient_hint || ''}</small></span><span><Mail size={13}/> {notificationKindLabel(item.kind)}</span>
         <StatusBadge status={item.status} label={deliveryStatusLabel(item.status)} />
         <span>{item.attempt_count}/{item.max_attempts}</span><span>{new Date(item.updated_at).toLocaleString()}</span>
         <span>{['FAILED','DEAD_LETTER','CANCELED'].includes(item.status) && <button onClick={e => { e.stopPropagation(); void retry(item); }}><RotateCcw size={13}/>재발송</button>}</span>
@@ -63,7 +66,7 @@ export function NotificationManagementPage() {
       {!items.length && <EmptyState compact kind={loading ? 'loading' : 'empty'} title={loading ? '발송 이력을 불러오는 중입니다.' : '조건에 맞는 발송 이력이 없습니다.'} />}
     </section>
     {selected && <Drawer className="notification-drawer" width="sm" eyebrow="발송 상세" title={selected.title} onClose={() => setSelected(null)} closeLabel="발송 상세 닫기">
-      <dl><div><dt>Task</dt><dd>{selected.task_id}</dd></div><div><dt>승인자</dt><dd>{selected.recipient_id}</dd></div><div><dt>상태</dt><dd>{selected.status}</dd></div><div><dt>마지막 오류</dt><dd>{selected.last_error || '-'}</dd></div></dl>
+      <dl><div><dt>Task</dt><dd>{selected.task_id}</dd></div><div><dt>수신자</dt><dd>{selected.recipient_id}</dd></div><div><dt>알림 종류</dt><dd>{notificationKindLabel(selected.kind)}</dd></div>{selected.due_at && <div><dt>처리 기한</dt><dd>{new Date(selected.due_at).toLocaleString()}</dd></div>}<div><dt>상태</dt><dd>{selected.status}</dd></div><div><dt>마지막 오류</dt><dd>{selected.last_error || '-'}</dd></div></dl>
       <h4>시도 이력</h4>{selected.attempts.map(a => <div className="notification-attempt" key={a.id}><strong>#{a.attempt_number} {a.status}</strong><span>{a.duration_ms}ms</span><small>{a.error || new Date(a.completed_at).toLocaleString()}</small></div>)}
     </Drawer>}
   </div>;

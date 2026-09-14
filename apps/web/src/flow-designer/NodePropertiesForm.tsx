@@ -1109,6 +1109,10 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
       externalEmail.length > 0 &&
       !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(externalEmail);
     const workflowGroup = workflowGroups.find((group) => group.id === credentialGroupId);
+    const deadlineUnit = data.approvalDeadlineUnit || 'days';
+    const deadlineMax = deadlineUnit === 'minutes' ? 525600 : deadlineUnit === 'hours' ? 8760 : 365;
+    const graceUnit = data.approvalEscalationGraceUnit || 'hours';
+    const graceMax = graceUnit === 'minutes' ? 525600 : graceUnit === 'hours' ? 8760 : 365;
     return (
       <div className="property-section">
         <h4 className="property-section-title">승인 설정</h4>
@@ -1272,6 +1276,92 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
           checked={data.requireComment || false}
           onChange={(e) => onUpdate(node.id, { ...data, requireComment: e.target.checked })}
         />
+        <div className="approval-deadline-settings">
+          <Checkbox
+            label="처리 기한 사용"
+            checked={data.approvalDeadlineEnabled || false}
+            onChange={(e) => onUpdate(node.id, {
+              ...data,
+              approvalDeadlineEnabled: e.target.checked,
+              approvalDeadlineValue: data.approvalDeadlineValue || 1,
+              approvalDeadlineUnit: data.approvalDeadlineUnit || 'days',
+              approvalEscalationGraceValue: data.approvalEscalationGraceValue || 4,
+              approvalEscalationGraceUnit: data.approvalEscalationGraceUnit || 'hours',
+            })}
+          />
+          {data.approvalDeadlineEnabled && (
+            <>
+              <div className="approval-deadline-presets" aria-label="처리 기한 빠른 선택">
+                {[
+                  ['4시간', 4, 'hours'], ['8시간', 8, 'hours'], ['1일', 1, 'days'],
+                  ['3일', 3, 'days'], ['7일', 7, 'days'],
+                ].map(([label, value, unit]) => (
+                  <button
+                    type="button"
+                    key={String(label)}
+                    className={Number(data.approvalDeadlineValue) === value &&
+                      (data.approvalDeadlineUnit || 'days') === unit ? 'active' : ''}
+                    onClick={() => onUpdate(node.id, {
+                      ...data, approvalDeadlineValue: value, approvalDeadlineUnit: unit,
+                    })}
+                  >{label}</button>
+                ))}
+              </div>
+              <div className="approval-deadline-row">
+                <Input
+                  type="number" min={1} max={deadlineMax} label="처리 기한"
+                  value={data.approvalDeadlineValue ?? 1}
+                  onChange={(e) => onUpdate(node.id, {
+                    ...data,
+                    approvalDeadlineValue: Math.min(deadlineMax, Math.max(1, Number(e.target.value) || 1)),
+                  })}
+                  fullWidth
+                />
+                <Select
+                  label="단위" value={data.approvalDeadlineUnit || 'days'}
+                  onChange={(e) => onUpdate(node.id, {
+                    ...data,
+                    approvalDeadlineUnit: e.target.value as 'minutes' | 'hours' | 'days',
+                    approvalDeadlineValue: Math.min(
+                      e.target.value === 'minutes' ? 525600 : e.target.value === 'hours' ? 8760 : 365,
+                      Number(data.approvalDeadlineValue) || 1,
+                    ),
+                  })}
+                  options={[{ value: 'minutes', label: '분' }, { value: 'hours', label: '시간' }, { value: 'days', label: '일' }]}
+                  fullWidth
+                />
+              </div>
+              <div className="approval-deadline-row">
+                <Input
+                  type="number" min={1} max={graceMax} label="상위 알림 유예 시간"
+                  value={data.approvalEscalationGraceValue ?? 4}
+                  onChange={(e) => onUpdate(node.id, {
+                    ...data,
+                    approvalEscalationGraceValue: Math.min(graceMax, Math.max(1, Number(e.target.value) || 1)),
+                  })}
+                  fullWidth
+                />
+                <Select
+                  label="단위" value={data.approvalEscalationGraceUnit || 'hours'}
+                  onChange={(e) => onUpdate(node.id, {
+                    ...data,
+                    approvalEscalationGraceUnit: e.target.value as 'minutes' | 'hours' | 'days',
+                    approvalEscalationGraceValue: Math.min(
+                      e.target.value === 'minutes' ? 525600 : e.target.value === 'hours' ? 8760 : 365,
+                      Number(data.approvalEscalationGraceValue) || 1,
+                    ),
+                  })}
+                  options={[{ value: 'minutes', label: '분' }, { value: 'hours', label: '시간' }, { value: 'days', label: '일' }]}
+                  fullWidth
+                />
+              </div>
+              <div className="property-helper-text">
+                각 결재 단계가 열릴 때 기한을 새로 계산합니다. 기한이 지나면 승인자에게 알리고,
+                유예 시간 뒤에도 미처리 상태이면 그룹 관리자에게 알립니다. 승인자를 자동으로 바꾸거나 대신 처리하지 않습니다.
+              </div>
+            </>
+          )}
+        </div>
       </div>
     );
   };

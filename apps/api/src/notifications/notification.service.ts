@@ -4,7 +4,14 @@ import { Db } from 'mongodb';
 import { ManagementAuditService } from '../audit/management-audit.service';
 import { assertAdmin } from '../authz/management-auth';
 import { MONGO_DB } from '../db/mongo.provider';
-import { WorkflowTaskRepositoryPort, type WorkflowHistoryActor } from '../db/ports/db.ports';
+import {
+  AuthzRepositoryPort,
+  OutboxRepositoryPort,
+  WorkflowInstanceRepositoryPort,
+  WorkflowTaskRepositoryPort,
+  type ApprovalDeadlineTask,
+  type WorkflowHistoryActor,
+} from '../db/ports/db.ports';
 import type { NotificationQueryDto } from './dto/notification.dto';
 
 export type NotificationDelivery = {
@@ -12,6 +19,7 @@ export type NotificationDelivery = {
   task_id: string;
   instance_id: string;
   recipient_id: string;
+  kind: 'initial' | 'reminder' | 'escalation';
   channel: 'email';
   status: 'PENDING' | 'RUNNING' | 'SENT' | 'FAILED' | 'DEAD_LETTER' | 'CANCELED';
   title: string;
@@ -28,6 +36,7 @@ export type NotificationDelivery = {
   sent_at: string | null;
   created_at: string;
   updated_at: string;
+  due_at?: string | null;
 };
 
 @Injectable()
@@ -36,18 +45,30 @@ export class NotificationService implements OnModuleInit {
   constructor(
     @Inject(MONGO_DB) private readonly db: Db,
     private readonly tasks: WorkflowTaskRepositoryPort,
+    private readonly instances: WorkflowInstanceRepositoryPort,
+    private readonly authz: AuthzRepositoryPort,
+    private readonly outbox: OutboxRepositoryPort,
     private readonly audit: ManagementAuditService,
   ) {}
 
   async onModuleInit() {
+    await this.dropLegacyTaskChannelIndex();
     await Promise.all([
       this.deliveries.createIndex({ status: 1, next_attempt_at: 1, locked_until: 1 }),
-      this.deliveries.createIndex({ task_id: 1, channel: 1 }, { unique: true }),
+      this.deliveries.createIndex(
+        { task_id: 1, kind: 1, recipient_id: 1, channel: 1 },
+        { unique: true },
+      ),
       this.attempts.createIndex({ delivery_id: 1, started_at: -1 }),
     ]);
     await this.cursors.updateOne(
       { _id: 'approval-task-email' },
       { $setOnInsert: { last_created_at: this.startedAt, last_task_id: '', created_at: this.startedAt } },
+      { upsert: true },
+    );
+    await this.cursors.updateOne(
+      { _id: 'approval-deadline' },
+      { $setOnInsert: { last_created_at: '1970-01-01T00:00:00.000Z', last_task_id: '', created_at: this.startedAt } },
       { upsert: true },
     );
   }
@@ -62,10 +83,11 @@ export class NotificationService implements OnModuleInit {
       const now = new Date().toISOString();
       try {
         await this.deliveries.insertOne({
-          _id: `${task.id}:email`,
+          _id: `${task.id}:initial:${task.assignee}:email`,
           task_id: task.id,
           instance_id: task.instance_id,
           recipient_id: task.assignee,
+          kind: 'initial',
           channel: 'email',
           status: 'PENDING',
           title: task.title,
@@ -82,6 +104,7 @@ export class NotificationService implements OnModuleInit {
           sent_at: null,
           created_at: now,
           updated_at: now,
+          due_at: null,
         });
       } catch (error) {
         if (!isDuplicateKey(error)) throw error;
@@ -94,6 +117,81 @@ export class NotificationService implements OnModuleInit {
       });
     }
     return tasks.length;
+  }
+
+  async discoverDeadlines(limit = 500, now = new Date()) {
+    const cursor = await this.cursors.findOne({ _id: 'approval-deadline' });
+    const beginning = { created_at: '1970-01-01T00:00:00.000Z', id: '' };
+    let tasks = await this.tasks.fetchApprovalDeadlineTasks({
+      created_at: cursor?.last_created_at || beginning.created_at,
+      id: cursor?.last_task_id || beginning.id,
+    }, limit);
+    if (tasks.length === 0 && cursor?.last_task_id) {
+      tasks = await this.tasks.fetchApprovalDeadlineTasks(beginning, limit);
+    }
+    let created = 0;
+    for (const task of tasks) {
+      if (task.payload?.hold) continue;
+      const instance = await this.instances.getInstance(task.instance_id);
+      if (!instance || instance.status === 'PAUSED' || instance.state === 'PAUSED' || instance.is_paused === true) continue;
+      const deadline = approvalDeadline(task);
+      if (!deadline) continue;
+
+      if (now >= deadline.dueAt) {
+        const inserted = await this.insertDeadlineDelivery(task, 'reminder', task.assignee, deadline.dueAt);
+        if (inserted) {
+          created += 1;
+          await this.outbox.appendEvent(task.instance_id, 'APPROVAL_DEADLINE_REMINDER', {
+            task_id: task.id,
+            node_id: task.node_id,
+            assignee: task.assignee,
+            due_at: deadline.dueAt.toISOString(),
+          });
+        }
+      }
+
+      if (now >= deadline.escalateAt) {
+        const recipients = await this.escalationRecipients(instance);
+        if (recipients.length === 0) {
+          const inserted = await this.insertUnroutableEscalation(task, deadline.dueAt);
+          if (inserted) {
+            created += 1;
+            await this.outbox.appendEvent(task.instance_id, 'APPROVAL_DEADLINE_ESCALATION_UNROUTABLE', {
+              task_id: task.id,
+              node_id: task.node_id,
+              due_at: deadline.dueAt.toISOString(),
+              escalated_at: deadline.escalateAt.toISOString(),
+              reason: 'active group manager or platform administrator is not configured',
+            });
+          }
+          continue;
+        }
+        const insertedRecipients: string[] = [];
+        for (const recipient of recipients) {
+          if (await this.insertDeadlineDelivery(task, 'escalation', recipient.id, deadline.dueAt)) {
+            created += 1;
+            insertedRecipients.push(recipient.id);
+          }
+        }
+        if (insertedRecipients.length > 0) {
+          await this.outbox.appendEvent(task.instance_id, 'APPROVAL_DEADLINE_ESCALATED', {
+            task_id: task.id,
+            node_id: task.node_id,
+            original_assignee: task.assignee,
+            notified_manager_ids: insertedRecipients,
+            due_at: deadline.dueAt.toISOString(),
+            escalated_at: deadline.escalateAt.toISOString(),
+          });
+        }
+      }
+    }
+    const last = tasks.at(-1);
+    if (last) {
+      await this.cursors.updateOne({ _id: 'approval-deadline' }, {
+        $set: { last_created_at: last.created_at, last_task_id: last.id, updated_at: new Date().toISOString() },
+      });
+    }
+    return created;
   }
 
   async claim(owner: string, limit = 20): Promise<NotificationDelivery[]> {
@@ -123,14 +221,42 @@ export class NotificationService implements OnModuleInit {
     return this.tasks.getTask(delivery.task_id);
   }
 
+  async isInstancePaused(instanceId: string) {
+    const instance = await this.instances.getInstance(instanceId);
+    return !instance || instance.status === 'PAUSED' || instance.state === 'PAUSED' || instance.is_paused === true;
+  }
+
   async recipientEmail(delivery: NotificationDelivery, task: any): Promise<string | null> {
-    const user = await this.db.collection<any>('pxm_users').findOne({ _id: delivery.recipient_id });
-    const email = user?.active === false ? null : user?.email || task?.payload?.display_snapshot?.email;
+    const user = await this.authz.getUser(delivery.recipient_id);
+    const directEmail = delivery.kind === 'reminder' && delivery.recipient_id.includes('@')
+      ? delivery.recipient_id
+      : null;
+    const fallback = delivery.kind === 'escalation'
+      ? null
+      : task?.payload?.display_snapshot?.email || task?.payload?.external_email;
+    const email = user?.status === 'disabled' ? null : user?.email || directEmail || fallback;
     return typeof email === 'string' && email.includes('@') ? email.trim().toLowerCase() : null;
   }
 
   async markCanceled(delivery: NotificationDelivery, reason: string) {
     await this.finish(delivery, 'CANCELED', { error: reason });
+  }
+
+  async defer(delivery: NotificationDelivery, reason: string) {
+    await this.deliveries.updateOne(
+      { _id: delivery._id, status: 'RUNNING', locked_by: delivery.locked_by },
+      {
+        $set: {
+          status: 'PENDING',
+          next_attempt_at: new Date(Date.now() + 30_000).toISOString(),
+          last_error: reason,
+          locked_by: null,
+          locked_until: null,
+          updated_at: new Date().toISOString(),
+        },
+        $inc: { attempt_count: -1 },
+      },
+    );
   }
 
   async markSent(delivery: NotificationDelivery, recipientEmail: string, durationMs: number) {
@@ -206,6 +332,98 @@ export class NotificationService implements OnModuleInit {
     });
   }
 
+  private async insertDeadlineDelivery(
+    task: ApprovalDeadlineTask,
+    kind: 'reminder' | 'escalation',
+    recipientId: string,
+    dueAt: Date,
+  ) {
+    const now = new Date().toISOString();
+    try {
+      await this.deliveries.insertOne({
+        _id: `${task.id}:${kind}:${recipientId}:email`,
+        task_id: task.id,
+        instance_id: task.instance_id,
+        recipient_id: recipientId,
+        kind,
+        channel: 'email',
+        status: 'PENDING',
+        title: task.title,
+        requester: task.requester,
+        step_order: task.step_order,
+        step_label: task.step_label,
+        source_url: task.source_url,
+        attempt_count: 0,
+        max_attempts: positiveInt(process.env.APPROVAL_NOTIFICATION_MAX_ATTEMPTS, 5),
+        next_attempt_at: now,
+        last_error: null,
+        locked_by: null,
+        locked_until: null,
+        sent_at: null,
+        created_at: now,
+        updated_at: now,
+        due_at: dueAt.toISOString(),
+      });
+      return true;
+    } catch (error) {
+      if (isDuplicateKey(error)) return false;
+      throw error;
+    }
+  }
+
+  private async insertUnroutableEscalation(task: ApprovalDeadlineTask, dueAt: Date) {
+    const now = new Date().toISOString();
+    try {
+      await this.deliveries.insertOne({
+        _id: `${task.id}:escalation:unroutable:email`,
+        task_id: task.id,
+        instance_id: task.instance_id,
+        recipient_id: 'unroutable',
+        kind: 'escalation',
+        channel: 'email',
+        status: 'DEAD_LETTER',
+        title: task.title,
+        requester: task.requester,
+        step_order: task.step_order,
+        step_label: task.step_label,
+        source_url: task.source_url,
+        attempt_count: 0,
+        max_attempts: 0,
+        next_attempt_at: now,
+        last_error: 'active group manager or platform administrator is not configured',
+        locked_by: null,
+        locked_until: null,
+        sent_at: null,
+        created_at: now,
+        updated_at: now,
+        due_at: dueAt.toISOString(),
+      });
+      return true;
+    } catch (error) {
+      if (isDuplicateKey(error)) return false;
+      throw error;
+    }
+  }
+
+  private async escalationRecipients(instance: any) {
+    const groupId = instance.group_id || instance.context?.runtime?.access?.group_id || instance.context?.runtime?.snapshot?.group?.id;
+    const users = await this.authz.listUsers(groupId || undefined);
+    const managers = groupId ? users.filter((user) =>
+      user.status === 'active' && Boolean(user.email) && user.memberships.some((membership) =>
+        membership.group_id === groupId && membership.role === 'group_manager')) : [];
+    if (managers.length > 0) return managers;
+    return (groupId ? await this.authz.listUsers() : users)
+      .filter((user) => user.status === 'active' && user.role === 'admin' && Boolean(user.email));
+  }
+
+  private async dropLegacyTaskChannelIndex() {
+    try {
+      await this.deliveries.dropIndex('task_id_1_channel_1');
+    } catch (error) {
+      if (!isMissingIndex(error)) throw error;
+    }
+  }
+
   private get deliveries() { return this.db.collection<any>('approval_notification_deliveries'); }
   private get attempts() { return this.db.collection<any>('approval_notification_attempts'); }
   private get cursors() { return this.db.collection<any>('approval_notification_cursors'); }
@@ -213,7 +431,7 @@ export class NotificationService implements OnModuleInit {
 
 function safeDelivery(delivery: any) {
   const { _id, locked_by: _lockedBy, locked_until: _lockedUntil, source_url: sourceUrl, ...item } = delivery;
-  return { id: _id, ...item, has_source_url: Boolean(sourceUrl) };
+  return { id: _id, ...item, kind: item.kind || 'initial', has_source_url: Boolean(sourceUrl) };
 }
 function maskEmail(email: string) {
   const [name, domain] = email.split('@');
@@ -225,4 +443,18 @@ function positiveInt(value: unknown, fallback: number) {
 }
 function isDuplicateKey(error: unknown) {
   return Boolean(error && typeof error === 'object' && 'code' in error && (error as any).code === 11000);
+}
+function isMissingIndex(error: unknown) {
+  return Boolean(error && typeof error === 'object' && 'code' in error && [26, 27].includes((error as any).code));
+}
+
+function approvalDeadline(task: ApprovalDeadlineTask) {
+  const policy = task.payload?.approval_deadline;
+  const deadlineSeconds = Number(policy?.deadline_seconds);
+  const graceSeconds = Number(policy?.escalation_grace_seconds);
+  const createdAt = new Date(task.created_at);
+  if (!Number.isFinite(deadlineSeconds) || deadlineSeconds <= 0 || Number.isNaN(createdAt.getTime())) return null;
+  const dueAt = new Date(createdAt.getTime() + deadlineSeconds * 1000);
+  const escalateAt = new Date(dueAt.getTime() + (Number.isFinite(graceSeconds) && graceSeconds > 0 ? graceSeconds : 0) * 1000);
+  return { dueAt, escalateAt };
 }
