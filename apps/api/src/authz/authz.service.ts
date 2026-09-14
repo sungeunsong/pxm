@@ -269,14 +269,16 @@ export class AuthzService {
       assertCanManageGroup(actor, dto.group_id);
       if (!dto.reason?.trim()) throw new BadRequestException('reason is required when configuring delegation for another user');
     }
-    if (delegatorId === dto.delegate_id) throw new BadRequestException('delegate must be a different user');
+    if (delegatorId === dto.delegate_id) throw new BadRequestException('대리 결재자는 원래 승인자와 다른 사용자여야 합니다.');
     const [group, delegator, delegate] = await Promise.all([
       this.authzRepo.getGroup(dto.group_id), this.authzRepo.getUser(delegatorId), this.authzRepo.getUser(dto.delegate_id),
     ]);
     if (!group || group.status !== 'active') throw new BadRequestException('Active group is required');
     for (const [label, user] of [['delegator', delegator], ['delegate', delegate]] as const) {
       if (!user || user.status !== 'active' || !user.group_ids.includes(dto.group_id)) {
-        throw new BadRequestException(`${label} must be an active PXM user in the same group`);
+        throw new BadRequestException(label === 'delegator'
+          ? '원래 승인자는 선택한 그룹에 소속된 활성 PXM 사용자여야 합니다.'
+          : '대리 결재자는 선택한 그룹에 소속된 활성 PXM 사용자여야 합니다.');
       }
     }
     const startsAt = new Date(dto.starts_at); const endsAt = new Date(dto.ends_at);

@@ -56,8 +56,13 @@ export function ApprovalDelegationDrawer({ currentUser, onClose }: { currentUser
       authzApi.listApprovalDelegationCandidates(selectedGroup), authzApi.listApprovalDelegations(selectedGroup),
     ]);
     setUsers(nextUsers); setItems(nextItems);
-    if (!nextUsers.some((u) => u.id === delegatorId)) setDelegatorId(currentUser.id);
-    setDelegateId((current) => nextUsers.some((u) => u.id === current && u.id !== delegatorId) ? current : '');
+    const nextDelegatorId = nextUsers.some((user) => user.id === delegatorId)
+      ? delegatorId
+      : nextUsers.some((user) => user.id === currentUser.id)
+        ? currentUser.id
+        : nextUsers[0]?.id || '';
+    setDelegatorId(nextDelegatorId);
+    setDelegateId((current) => nextUsers.some((user) => user.id === current && user.id !== nextDelegatorId) ? current : '');
   };
 
   useEffect(() => { reload().catch((error) => toast.error('위임 목록을 불러오지 못했습니다.', { description: errorMessage(error) })); }, [groupId]);
@@ -110,7 +115,7 @@ export function ApprovalDelegationDrawer({ currentUser, onClose }: { currentUser
       <p className="delegation-guide">기간 중 결재 권한을 같은 그룹의 PXM 사용자에게 맡깁니다. 기간이 끝나거나 설정을 해제하면 미처리 건은 원래 승인자에게 자동으로 돌아갑니다.</p>
       <div className="delegation-form-grid">
         <label>그룹<select value={groupId} onChange={(e) => { setGroupId(e.target.value); setWorkflowIds([]); }}><option value="">선택</option>{groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}</select></label>
-        {canManageSelected && <label>원래 승인자<select value={delegatorId} onChange={(e) => { setDelegatorId(e.target.value); setDelegateId(''); }}><option value={currentUser.id}>나 ({currentUser.display_name})</option>{users.filter((u) => u.id !== currentUser.id).map((u) => <option key={u.id} value={u.id}>{u.display_name} ({u.id})</option>)}</select></label>}
+        {canManageSelected && <label>원래 승인자<select value={delegatorId} onChange={(e) => { setDelegatorId(e.target.value); setDelegateId(''); }}><option value="">선택</option>{users.map((u) => <option key={u.id} value={u.id}>{u.id === currentUser.id ? `나 (${u.display_name})` : `${u.display_name} (${u.id})`}</option>)}</select></label>}
         <label>대리 결재자<select value={delegateId} onChange={(e) => setDelegateId(e.target.value)}><option value="">선택</option>{users.filter((u) => u.id !== delegatorId).map((u) => <option key={u.id} value={u.id}>{u.display_name} ({u.id})</option>)}</select></label>
         <label>시작<input type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} /></label>
         <label>종료<input type="datetime-local" value={endsAt} onChange={(e) => setEndsAt(e.target.value)} /></label>
