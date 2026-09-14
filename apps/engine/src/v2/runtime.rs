@@ -1599,6 +1599,10 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
         let approver_channel = primary_approval_channel(&approval_channels);
         if let Some(payload) = payload.as_object_mut() {
             payload.insert(
+                "approval_delegation_allowed".to_string(),
+                Value::Bool(node.config.get("approvalDelegationAllowed").and_then(Value::as_bool).unwrap_or(true)),
+            );
+            payload.insert(
                 "approver_channel".to_string(),
                 Value::String(approver_channel.clone()),
             );
@@ -1918,6 +1922,12 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
                 "external_expires_in_hours": external_expires_in_hours
             });
             attach_approval_deadline(&mut payload, approval_deadline.as_ref());
+            if let Some(payload) = payload.as_object_mut() {
+                payload.insert(
+                    "approval_delegation_allowed".to_string(),
+                    Value::Bool(node.config.get("approvalDelegationAllowed").and_then(Value::as_bool).unwrap_or(true)),
+                );
+            }
             normalized_approvers.push(json!({
                 "assignee": assignee,
                 "approver_channel": approver_channel,
@@ -1997,6 +2007,16 @@ mod tests {
         let (assignee, payload) = resolve_approval_assignment(&node, &json!({})).unwrap();
         assert_eq!(assignee, "manager");
         assert_eq!(payload["approval_model"], "fixed");
+    }
+
+    #[test]
+    fn carries_the_node_delegation_policy_into_approval_tasks() {
+        let node = NodeDef {
+            node_id: "approval".to_string(), node_type: "approval".to_string(),
+            config: json!({"assignee": "manager", "approvalDelegationAllowed": false}),
+        };
+        let definition = resolve_approval_definition(&node, &json!({})).unwrap();
+        assert_eq!(definition.steps[0].tasks[0].payload["approval_delegation_allowed"], false);
     }
 
     #[test]

@@ -1,0 +1,21 @@
+.delegation-drawer-content { display: grid; gap: 18px; padding: 20px; }
+.delegation-guide,.delegation-hint,.delegation-empty { margin: 0; color: var(--text-tertiary); font-size: 13px; line-height: 1.55; }
+.delegation-guide { padding: 12px 14px; border-radius: 8px; background: color-mix(in srgb, var(--color-info) 8%, var(--bg-secondary)); }
+.delegation-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.delegation-form-grid label,.delegation-reason { display: grid; gap: 6px; color: var(--text-secondary); font-size: 12px; font-weight: 700; }
+.delegation-form-grid select,.delegation-form-grid input,.delegation-reason textarea { width: 100%; min-height: 38px; padding: 8px 10px; border: 1px solid var(--border-subtle); border-radius: 7px; background: var(--bg-secondary); color: var(--text-primary); box-sizing: border-box; }
+.delegation-reason textarea { min-height: 76px; resize: vertical; }
+.delegation-check,.delegation-workflows label { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 13px; }
+.delegation-hint { margin-top: -14px; padding-left: 24px; }
+.delegation-workflows { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; max-height: 150px; padding: 12px; overflow: auto; border: 1px solid var(--border-subtle); border-radius: 8px; }
+.delegation-current { display: grid; gap: 10px; padding-top: 16px; border-top: 1px solid var(--border-subtle); }
+.delegation-current h4 { margin: 0; }
+.delegation-current article { position: relative; display: grid; gap: 6px; padding: 12px; border: 1px solid var(--border-subtle); border-radius: 8px; }
+.delegation-current article>div { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.delegation-current article p { margin: 0; color: var(--text-tertiary); font-size: 12px; }
+.delegation-current article .btn { justify-self: end; }
+.delegation-reassign-item select,.delegation-reassign-item input { min-height: 34px; padding: 7px 9px; border: 1px solid var(--border-subtle); border-radius: 7px; background: var(--bg-secondary); color: var(--text-primary); }
+.delegation-status { padding: 3px 7px; border-radius: 999px; background: var(--bg-tertiary); color: var(--text-tertiary); font-size: 11px; }
+.delegation-status.active { background: color-mix(in srgb, var(--color-success) 10%, var(--bg-secondary)); color: var(--color-success); }
+.delegation-footer { display: flex; justify-content: flex-end; gap: 8px; }
+@media (max-width: 620px) { .delegation-form-grid,.delegation-workflows { grid-template-columns: 1fr; } }

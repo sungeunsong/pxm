@@ -81,12 +81,14 @@ export class NotificationService implements OnModuleInit {
     }, limit);
     for (const task of tasks) {
       const now = new Date().toISOString();
+      const instance = await this.instances.getInstance(task.instance_id);
+      const recipientId = instance ? await this.effectiveRecipient(task, instance, new Date(now)) : task.assignee;
       try {
         await this.deliveries.insertOne({
-          _id: `${task.id}:initial:${task.assignee}:email`,
+          _id: `${task.id}:initial:${recipientId}:email`,
           task_id: task.id,
           instance_id: task.instance_id,
-          recipient_id: task.assignee,
+          recipient_id: recipientId,
           kind: 'initial',
           channel: 'email',
           status: 'PENDING',
@@ -136,15 +138,17 @@ export class NotificationService implements OnModuleInit {
       if (!instance || instance.status === 'PAUSED' || instance.state === 'PAUSED' || instance.is_paused === true) continue;
       const deadline = approvalDeadline(task);
       if (!deadline) continue;
+      const effectiveAssignee = await this.effectiveRecipient(task, instance, now);
 
       if (now >= deadline.dueAt) {
-        const inserted = await this.insertDeadlineDelivery(task, 'reminder', task.assignee, deadline.dueAt);
+        const inserted = await this.insertDeadlineDelivery(task, 'reminder', effectiveAssignee, deadline.dueAt);
         if (inserted) {
           created += 1;
           await this.outbox.appendEvent(task.instance_id, 'APPROVAL_DEADLINE_REMINDER', {
             task_id: task.id,
             node_id: task.node_id,
-            assignee: task.assignee,
+            assignee: effectiveAssignee,
+            original_assignee: task.assignee,
             due_at: deadline.dueAt.toISOString(),
           });
         }
@@ -414,6 +418,18 @@ export class NotificationService implements OnModuleInit {
     if (managers.length > 0) return managers;
     return (groupId ? await this.authz.listUsers() : users)
       .filter((user) => user.status === 'active' && user.role === 'admin' && Boolean(user.email));
+  }
+
+  private async effectiveRecipient(task: { assignee: string; created_at: string; payload?: Record<string, any> }, instance: any, now: Date): Promise<string> {
+    if (task.payload?.approval_delegation_allowed === false) return task.assignee;
+    const groupId = instance.group_id || instance.context?.runtime?.access?.group_id || instance.ctx?.runtime?.access?.group_id;
+    const workflowId = String(instance.definition_id || instance.process_definition_id || '');
+    if (!groupId || !workflowId) return task.assignee;
+    const rows = await this.authz.listApprovalDelegations({ group_id: groupId, delegator_id: task.assignee });
+    const active = rows.find((item) => item.status === 'active' && new Date(item.starts_at) <= now && now < new Date(item.ends_at)
+      && (item.scope === 'all' || item.workflow_ids.includes(workflowId))
+      && (item.include_existing || new Date(task.created_at) >= new Date(item.starts_at)));
+    return active?.delegate_id || task.assignee;
   }
 
   private async dropLegacyTaskChannelIndex() {

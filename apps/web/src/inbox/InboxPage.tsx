@@ -6,12 +6,15 @@ import {
   Pause,
   RotateCcw,
   Search as SearchIcon,
+  UserRoundCog,
   X,
 } from 'lucide-react';
 import { Button } from '../components/Button';
 import { useFeedback } from '../components/feedback/feedback-context';
 import { errorMessage } from '../lib/error-message';
 import './InboxPage.css';
+import type { SessionUser } from '../api/session';
+import { ApprovalDelegationDrawer } from './ApprovalDelegationDrawer';
 
 interface Task {
   id: string;
@@ -58,6 +61,9 @@ interface Task {
     held_at: string;
   } | null;
   completed_at?: string | null;
+  completion_actor_id?: string | null;
+  delegation?: { id?: string; delegation_id?: string; original_assignee: string; delegate_id?: string; delegated_until?: string } | null;
+  reassignment_history?: Array<{ from: string; to: string; reason?: string | null; reassigned_at: string }>;
   created_at: string;
 }
 
@@ -72,6 +78,7 @@ function normalizeHistoryTask(item: any): Task {
 }
 
 export interface InboxPageProps {
+  currentUser: SessionUser;
   onSwitchToDesigner?: () => void;
 }
 
@@ -130,7 +137,7 @@ const getApprovalDeadline = (task: Task | null) => {
   return { dueAt, overdue: task.status === 'OPEN' && dueAt.getTime() <= Date.now() };
 };
 
-export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
+export const InboxPage: React.FC<InboxPageProps> = ({ currentUser, onSwitchToDesigner }) => {
   const { toast, confirm: confirmDialog } = useFeedback();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
@@ -143,6 +150,7 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
   const [comment, setComment] = useState('요청 내용을 확인하였습니다. 승인합니다.');
   const [rejectReasonChecked, setRejectReasonChecked] = useState(false);
   const [instanceHistory, setInstanceHistory] = useState<Task[]>([]);
+  const [delegationOpen, setDelegationOpen] = useState(false);
 
   const formatDate = (value?: string) => {
     if (!value) return '-';
@@ -295,9 +303,10 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
         <div>
           <p>승인 대기 중인 작업을 확인하고 상세 화면에서 처리합니다.</p>
         </div>
-        <button className="icon-action-btn" onClick={fetchTasks} title="새로고침">
-          <RotateCcw size={14} />
-        </button>
+        <div className="inbox-list-actions">
+          <Button variant="secondary" size="sm" icon={<UserRoundCog size={15} />} onClick={() => setDelegationOpen(true)}>대리 결재 설정</Button>
+          <button className="icon-action-btn" onClick={fetchTasks} title="새로고침"><RotateCcw size={14} /></button>
+        </div>
       </div>
 
       <div className="sub-tabs">
@@ -387,6 +396,7 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
                           ? '반려'
                           : '취소'}
                   </span>
+                  {task.delegation && <span className="delegated-task-badge">대리 결재</span>}
                 </td>
               </tr>
             ))}
@@ -510,6 +520,15 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
                         {formatDateTime(deadline.dueAt.toISOString())}{deadline.overdue ? ' · 기한 초과' : ''}
                       </span>
                     </div>
+                  )}
+                  {selectedTask.delegation && (
+                    <div className="info-cell">
+                      <span className="info-label">대리 결재</span>
+                      <span className="info-val">원래 승인자 {selectedTask.delegation.original_assignee}{selectedTask.completion_actor_id ? ` · 실제 처리자 ${selectedTask.completion_actor_id}` : selectedTask.delegation.delegated_until ? ` · ${formatDateTime(selectedTask.delegation.delegated_until)}까지` : ''}</span>
+                    </div>
+                  )}
+                  {!!selectedTask.reassignment_history?.length && (
+                    <div className="info-cell"><span className="info-label">담당자 재배정</span><span className="info-val">{selectedTask.reassignment_history.map((item) => `${item.from} → ${item.to}${item.reason ? ` (${item.reason})` : ''}`).join(', ')}</span></div>
                   )}
                   {selectedTask.completed_via && (
                     <div className="info-cell">
@@ -699,7 +718,7 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
                   </div>
                   <div className="v-log-content">
                     <div className="v-log-header">
-                      <span className="v-log-actor">{history.assignee || getRequester(selectedTask)}</span>
+                      <span className="v-log-actor">{history.completion_actor_id || history.assignee || getRequester(selectedTask)}</span>
                       <span className="v-log-badge blue">
                         {history.step_order ? `${history.step_order}단계 · ` : ''}
                         {history.status === 'OPEN' && (history.hold || history.payload?.hold) ? '보류' : history.status}
@@ -724,6 +743,7 @@ export const InboxPage: React.FC<InboxPageProps> = ({ onSwitchToDesigner }) => {
   return (
     <div className="inbox-dashboard-layout">
       {screen === 'list' ? renderList() : renderDetail()}
+      {delegationOpen && <ApprovalDelegationDrawer currentUser={currentUser} onClose={() => setDelegationOpen(false)} />}
     </div>
   );
 };

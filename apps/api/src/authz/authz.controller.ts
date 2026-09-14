@@ -5,6 +5,7 @@ import { AuthzService } from './authz.service';
 import {
   ApiKeyUsageQueryDto,
   CreateApiKeyDto,
+  CreateApprovalDelegationDto,
   CreateExternalPrincipalMappingDto,
   SetGroupMembershipDto,
   SetExternalPrincipalMappingStatusDto,
@@ -157,6 +158,47 @@ export class AuthzController {
   async listUserDirectory(@Query('groupId') groupId: string, @Req() req: Request) {
     assertCanManageGroup(actorFromRequest(req), groupId);
     return this.authzService.listUsers();
+  }
+
+  @Get('approval-delegation-candidates')
+  async approvalDelegationCandidates(@Query('groupId') groupId: string, @Req() req: Request) {
+    return this.authzService.listApprovalDelegationCandidates(groupId, actorFromRequest(req));
+  }
+
+  @Get('approval-delegations')
+  async listApprovalDelegations(@Query('groupId') groupId: string | undefined, @Req() req: Request) {
+    return this.authzService.listApprovalDelegations(groupId, actorFromRequest(req));
+  }
+
+  @Get('approval-delegations-preview')
+  previewApprovalDelegation(
+    @Query('groupId') groupId: string,
+    @Query('delegatorId') delegatorId: string,
+    @Query('scope') scope: 'all' | 'selected' = 'all',
+    @Query('workflowIds') workflowIds: string | undefined,
+    @Req() req: Request,
+  ) {
+    return this.authzService.previewApprovalDelegation(groupId, delegatorId, scope === 'selected' ? 'selected' : 'all', (workflowIds || '').split(',').filter(Boolean), actorFromRequest(req));
+  }
+
+  @Post('approval-delegations')
+  async createApprovalDelegation(@Body() dto: CreateApprovalDelegationDto, @Req() req: Request) {
+    const actor = actorFromRequest(req);
+    const result = await this.authzService.createApprovalDelegation(dto, actor);
+    await this.audit.append({
+      action: 'approval.delegation.created', resource_type: 'approval_delegation', resource_id: result.id,
+      group_id: result.group_id, actor_id: actor.actor_id,
+      details: { delegator_id: result.delegator_id, delegate_id: result.delegate_id, scope: result.scope, workflow_ids: result.workflow_ids, include_existing: result.include_existing, starts_at: result.starts_at, ends_at: result.ends_at, reason: result.reason },
+    });
+    return result;
+  }
+
+  @Delete('approval-delegations/:id')
+  async revokeApprovalDelegation(@Param('id') id: string, @Req() req: Request) {
+    const actor = actorFromRequest(req);
+    const result = await this.authzService.revokeApprovalDelegation(id, actor);
+    await this.audit.append({ action: 'approval.delegation.revoked', resource_type: 'approval_delegation', resource_id: id, group_id: result.group_id, actor_id: actor.actor_id, details: { delegator_id: result.delegator_id, delegate_id: result.delegate_id } });
+    return result;
   }
 
   @Put('groups/:groupId/members/:userId')

@@ -418,6 +418,39 @@ describe('TasksService', () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(taskRepo.requeueExternalApproval).not.toHaveBeenCalled();
   });
+
+  it('moves eligible open tasks to the active delegate and records the original approver on completion', async () => {
+    const delegatedTaskRepo = {
+      ...taskRepo,
+      listTasks: jest.fn().mockImplementation(async (assignee: string) => assignee === 'alice' ? [{
+        id: 'task-delegated', instance_id: 'instance-1', node_id: 'approval', assignee: 'alice', status: 'OPEN',
+        created_at: '2026-09-14T01:00:00.000Z', payload: { approval_channels: ['pxm_user'], approval_delegation_allowed: true },
+      }] : []),
+      getTask: jest.fn().mockResolvedValue({ id: 'task-delegated', instance_id: 'instance-1', node_id: 'approval', assignee: 'alice', status: 'OPEN', created_at: '2026-09-14T01:00:00.000Z', payload: { approval_channels: ['pxm_user'] } }),
+      completeTask: jest.fn().mockResolvedValue({ outcome: 'completed', task: {} }),
+    };
+    const delegatedInstanceRepo = { getInstance: jest.fn().mockResolvedValue({ definition_id: 'workflow-1', group_id: 'group-1' }) };
+    const authz = { listApprovalDelegations: jest.fn().mockResolvedValue([{
+      id: 'delegation-1', group_id: 'group-1', delegator_id: 'alice', delegate_id: 'bob', scope: 'all', workflow_ids: [],
+      include_existing: true, starts_at: '2026-09-14T00:00:00.000Z', ends_at: '2099-09-15T00:00:00.000Z', status: 'active',
+    }]) };
+    const delegatedService = new TasksService(delegatedTaskRepo as any, delegatedInstanceRepo as any, audit as any, authz as any);
+
+    const rows = await delegatedService.listOpenTasks(actor({ actor_id: 'bob', group_ids: ['group-1'] }));
+    expect(rows[0].delegation.original_assignee).toBe('alice');
+    await delegatedService.completeTask('task-delegated', { action: 'approve' }, actor({ actor_id: 'bob', group_ids: ['group-1'] }));
+    expect(delegatedTaskRepo.completeTask).toHaveBeenCalledWith(expect.objectContaining({
+      delegation: { delegation_id: 'delegation-1', original_assignee: 'alice', delegate_id: 'bob' },
+    }));
+  });
+
+  it('returns a task to the original approver after delegation expires', async () => {
+    const expiredRepo = { ...taskRepo, listTasks: jest.fn().mockResolvedValue([{ id: 'task-1', instance_id: 'instance-1', assignee: 'alice', status: 'OPEN', created_at: '2026-09-01T00:00:00.000Z', payload: {} }]) };
+    const authz = { listApprovalDelegations: jest.fn().mockResolvedValue([{ id: 'd', group_id: 'group-1', delegator_id: 'alice', delegate_id: 'bob', scope: 'all', workflow_ids: [], include_existing: true, starts_at: '2026-08-01T00:00:00.000Z', ends_at: '2026-08-02T00:00:00.000Z', status: 'active' }]) };
+    instanceRepo.getInstance.mockResolvedValue({ definition_id: 'workflow-1', group_id: 'group-1' });
+    const expiredService = new TasksService(expiredRepo as any, instanceRepo as any, audit as any, authz as any);
+    expect(await expiredService.listOpenTasks(actor({ actor_id: 'alice', group_ids: ['group-1'] }))).toHaveLength(1);
+  });
 });
 
 function actor(overrides: Partial<WorkflowHistoryActor>): WorkflowHistoryActor {

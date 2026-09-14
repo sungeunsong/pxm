@@ -128,6 +128,7 @@ export interface CustomNodeData {
   approvalDeadlineUnit?: 'minutes' | 'hours' | 'days';
   approvalEscalationGraceValue?: number | string;
   approvalEscalationGraceUnit?: 'minutes' | 'hours' | 'days';
+  approvalDelegationAllowed?: boolean;
 
   // Workflow Call 노드 전용
   targetWorkflowId?: string;

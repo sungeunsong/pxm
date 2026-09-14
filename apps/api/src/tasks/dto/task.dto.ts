@@ -20,3 +20,13 @@ export class HoldTaskDto {
   @MaxLength(2000)
   comment?: string;
 }
+
+export class ReassignTaskDto {
+  @IsString()
+  @MaxLength(128)
+  assignee!: string;
+
+  @IsString()
+  @MaxLength(1000)
+  reason!: string;
+}

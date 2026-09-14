@@ -117,6 +117,30 @@ export class ExternalApprovalMailer {
     });
   }
 
+  async sendDelegationNotification(input: {
+    to: string;
+    delegatorName: string;
+    delegateName: string;
+    startsAt: string;
+    endsAt: string;
+    revoked?: boolean;
+  }): Promise<void> {
+    const title = input.revoked ? '대리 결재 설정이 해제되었습니다.' : '대리 결재가 설정되었습니다.';
+    const lines = [
+      `원래 승인자: ${input.delegatorName}`,
+      `대리 결재자: ${input.delegateName}`,
+      `기간: ${input.startsAt} ~ ${input.endsAt}`,
+      input.revoked ? '미처리 결재는 원래 승인자에게 돌아갑니다.' : '기간이 끝나면 미처리 결재는 원래 승인자에게 자동으로 돌아갑니다.',
+    ];
+    await this.transport().sendMail({
+      from: process.env.PXM_SMTP_FROM || 'PXM <no-reply@localhost>',
+      to: input.to,
+      subject: `[PXM] ${title}`,
+      text: [title, '', ...lines].join('\n'),
+      html: `<p>${escapeHtml(title)}</p><ul>${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join('')}</ul>`,
+    });
+  }
+
   private transport(): Transporter {
     if (this.transporter) return this.transporter;
     const smtpUrl = process.env.PXM_SMTP_URL;

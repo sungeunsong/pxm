@@ -431,7 +431,7 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
           )}
 
           {activeTab === 'inbox' && (
-            <InboxPage onSwitchToDesigner={() => setActiveTab('designer')} />
+            <InboxPage currentUser={user} onSwitchToDesigner={() => setActiveTab('designer')} />
           )}
 
           {activeTab === 'credentials' && <CredentialsPage currentUser={user} />}

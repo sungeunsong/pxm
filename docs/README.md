@@ -28,6 +28,7 @@
 | [dynamic-sequential-approval.md](dynamic-sequential-approval.md) | 순차 다단계·복수 승인자·ALL/ANY 결재 |
 | [external-approval-email.md](external-approval-email.md) | 계정 없는 외부 승인자의 이메일 + OTP 결재 |
 | [approval-notifications.md](approval-notifications.md) | 승인자 알림 발송과 이력 |
+| [approval-delegation.md](approval-delegation.md) | 기간·범위별 대리 결재와 관리자 긴급 재배정 |
 
 ## 실행 엔진
 

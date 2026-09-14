@@ -49,6 +49,13 @@ export type PxmUser = {
   updated_at: string;
 };
 
+export type ApprovalDelegation = {
+  id: string; group_id: string; delegator_id: string; delegate_id: string;
+  scope: 'all' | 'selected'; workflow_ids: string[]; include_existing: boolean;
+  starts_at: string; ends_at: string; status: 'active' | 'revoked'; reason?: string | null;
+  created_by: string; created_at: string; revoked_at?: string | null;
+};
+
 export type PxmServiceAccount = {
   id: string;
   name: string;
@@ -125,6 +132,23 @@ const API_BASE_URL = '/api/authz';
 const jsonHeaders = { 'Content-Type': 'application/json' };
 
 export const authzApi = {
+  async listApprovalDelegationCandidates(groupId: string): Promise<PxmUser[]> {
+    return readJson(await fetch(`${API_BASE_URL}/approval-delegation-candidates?groupId=${encodeURIComponent(groupId)}`, { credentials: 'include' }), 'delegation candidates failed');
+  },
+  async listApprovalDelegations(groupId?: string): Promise<ApprovalDelegation[]> {
+    const query = groupId ? `?groupId=${encodeURIComponent(groupId)}` : '';
+    return readJson(await fetch(`${API_BASE_URL}/approval-delegations${query}`, { credentials: 'include' }), 'delegation list failed');
+  },
+  async previewApprovalDelegation(groupId: string, delegatorId: string, scope: 'all'|'selected', workflowIds: string[]): Promise<{ current_open_task_count: number }> {
+    const query = new URLSearchParams({ groupId, delegatorId, scope, workflowIds: workflowIds.join(',') });
+    return readJson(await fetch(`${API_BASE_URL}/approval-delegations-preview?${query}`, { credentials: 'include' }), 'delegation preview failed');
+  },
+  async createApprovalDelegation(payload: Omit<ApprovalDelegation, 'id'|'status'|'created_by'|'created_at'|'revoked_at'>): Promise<ApprovalDelegation & { current_open_task_count: number }> {
+    return readJson(await fetch(`${API_BASE_URL}/approval-delegations`, { method: 'POST', headers: jsonHeaders, credentials: 'include', body: JSON.stringify(payload) }), 'delegation create failed');
+  },
+  async revokeApprovalDelegation(id: string): Promise<ApprovalDelegation> {
+    return readJson(await fetch(`${API_BASE_URL}/approval-delegations/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'include' }), 'delegation revoke failed');
+  },
   async listGroups(includeDeleted = true, manageableOnly = false): Promise<PxmGroup[]> {
     const response = await fetch(`${API_BASE_URL}/groups?includeDeleted=${includeDeleted ? 'true' : 'false'}&manageableOnly=${manageableOnly ? 'true' : 'false'}`, {
       credentials: 'include',

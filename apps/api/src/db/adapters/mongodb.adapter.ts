@@ -7,6 +7,8 @@ import {
   primaryApprovalChannel,
 } from '../approval-channels';
 import type {
+  ApprovalDelegation,
+  CreateApprovalDelegation,
   CreateExternalPrincipalMapping,
   ExternalPrincipalMapping,
   ExternalPrincipalMappingStatus,
@@ -1547,6 +1549,18 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
     return task?.payload?.hold || null;
   }
 
+  async reassignTask(taskId: string, expectedAssignee: string, newAssignee: string, metadata: Record<string, any>): Promise<any | null> {
+    const now = new Date().toISOString();
+    return this.db.collection<any>('v2_tasks').findOneAndUpdate(
+      { _id: taskId, status: 'OPEN', assignee: expectedAssignee },
+      ({
+        $set: { assignee: newAssignee, updated_at: now },
+        $push: { 'payload.reassignment_history': { ...metadata, from: expectedAssignee, to: newAssignee, reassigned_at: now } },
+      } as any),
+      { returnDocument: 'after' },
+    );
+  }
+
   async listTaskHistory(query: WorkflowTaskHistoryQuery): Promise<WorkflowTaskHistoryPage> {
     const taskMatch: Record<string, any> = {};
     if (query.statuses?.length) taskMatch.status = { $in: query.statuses };
@@ -2609,6 +2623,47 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
     return doc ? mapUserDoc(doc) : null;
   }
 
+  async createApprovalDelegation(input: CreateApprovalDelegation): Promise<ApprovalDelegation> {
+    await this.ensureAuthzIndexes();
+    const doc = {
+      _id: input.id || crypto.randomUUID(),
+      group_id: input.group_id,
+      delegator_id: input.delegator_id,
+      delegate_id: input.delegate_id,
+      scope: input.scope,
+      workflow_ids: input.workflow_ids,
+      include_existing: input.include_existing,
+      starts_at: input.starts_at,
+      ends_at: input.ends_at,
+      status: 'active',
+      reason: input.reason || null,
+      created_by: input.created_by,
+      created_at: new Date().toISOString(),
+    };
+    await this.db.collection<any>('pxm_approval_delegations').insertOne(doc);
+    return mapApprovalDelegationDoc(doc);
+  }
+
+  async listApprovalDelegations(query: { group_id?: string; delegator_id?: string; delegate_id?: string } = {}): Promise<ApprovalDelegation[]> {
+    await this.ensureAuthzIndexes();
+    const filter: Record<string, string> = {};
+    if (query.group_id) filter.group_id = query.group_id;
+    if (query.delegator_id) filter.delegator_id = query.delegator_id;
+    if (query.delegate_id) filter.delegate_id = query.delegate_id;
+    const docs = await this.db.collection<any>('pxm_approval_delegations').find(filter).sort({ created_at: -1 }).toArray();
+    return docs.map(mapApprovalDelegationDoc);
+  }
+
+  async revokeApprovalDelegation(id: string, actorId: string): Promise<ApprovalDelegation | null> {
+    await this.ensureAuthzIndexes();
+    const doc = await this.db.collection<any>('pxm_approval_delegations').findOneAndUpdate(
+      { _id: id, status: 'active' },
+      { $set: { status: 'revoked', revoked_by: actorId, revoked_at: new Date().toISOString() } },
+      { returnDocument: 'after' },
+    );
+    return doc ? mapApprovalDelegationDoc(doc) : null;
+  }
+
   async getUserPasswordHash(id: string): Promise<string | null> {
     await this.ensureAuthzIndexes();
     const doc = await this.db.collection<any>('pxm_users').findOne({ _id: id }, { projection: { password_hash: 1 } });
@@ -3017,6 +3072,8 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
     if (this.authzIndexesReady) return;
     await this.db.collection<any>('pxm_groups').createIndex({ name: 1 }, { unique: true });
     await this.db.collection<any>('pxm_users').createIndex({ group_ids: 1 });
+    await this.db.collection<any>('pxm_approval_delegations').createIndex({ group_id: 1, delegator_id: 1, status: 1, starts_at: 1, ends_at: 1 });
+    await this.db.collection<any>('pxm_approval_delegations').createIndex({ delegate_id: 1, status: 1, starts_at: 1, ends_at: 1 });
     await this.db
       .collection<any>('v2_external_principal_mappings')
       .createIndex(
@@ -3096,6 +3153,18 @@ function mapUserDoc(doc: any): PxmUser {
     updated_by: doc.updated_by || null,
     created_at: doc.created_at,
     updated_at: doc.updated_at,
+  };
+}
+
+function mapApprovalDelegationDoc(doc: any): ApprovalDelegation {
+  return {
+    id: String(doc._id), group_id: String(doc.group_id), delegator_id: String(doc.delegator_id),
+    delegate_id: String(doc.delegate_id), scope: doc.scope === 'selected' ? 'selected' : 'all',
+    workflow_ids: Array.isArray(doc.workflow_ids) ? doc.workflow_ids.map(String) : [],
+    include_existing: doc.include_existing === true, starts_at: String(doc.starts_at), ends_at: String(doc.ends_at),
+    status: doc.status === 'revoked' ? 'revoked' : 'active', reason: doc.reason || null,
+    created_by: String(doc.created_by), created_at: String(doc.created_at),
+    revoked_by: doc.revoked_by || null, revoked_at: doc.revoked_at || null,
   };
 }
 
@@ -3365,6 +3434,7 @@ function taskCompletion(command: CompleteWorkflowTaskCommand, completedAt: strin
     idempotency_key: command.idempotency_key || null,
     authentication_method: authenticationMethod,
     completed_via: completedVia(command),
+    delegation: command.delegation || null,
     completed_at: completedAt,
   };
 }
@@ -3407,6 +3477,8 @@ function mapApprovalNotificationTask(task: any, workflowName: string | null) {
     email_hint: task.payload?.display_snapshot?.email
       ? String(task.payload.display_snapshot.email)
       : null,
+    node_id: String(task.node_id || ''),
+    payload: task.payload || {},
   };
 }
 
@@ -3452,6 +3524,9 @@ function mapTaskHistoryMongo(task: any): WorkflowTaskHistoryItem {
     approver_channel: primaryApprovalChannel(task.payload),
     approval_channels: approvalChannels(task.payload),
     assignee: String(task.assignee),
+    completion_actor_id: completion?.actor_id ? String(completion.actor_id) : null,
+    delegation: completion?.delegation || null,
+    reassignment_history: Array.isArray(task.payload?.reassignment_history) ? task.payload.reassignment_history : [],
     action: completion?.action === 'approve' || completion?.action === 'reject' ? completion.action : null,
     comment: typeof completion?.comment === 'string' ? completion.comment : null,
     result: completion?.result && typeof completion.result === 'object' ? completion.result : null,

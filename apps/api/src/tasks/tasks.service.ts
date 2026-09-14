@@ -5,14 +5,17 @@ import {
   Injectable,
   NotFoundException,
   UnauthorizedException,
+  Optional,
 } from '@nestjs/common';
 import {
   WorkflowHistoryActor,
+  AuthzRepositoryPort,
+  ApprovalDelegation,
   WorkflowInstanceRepositoryPort,
   WorkflowTaskRepositoryPort,
 } from '../db/ports/db.ports';
 import { ManagementAuditService } from '../audit/management-audit.service';
-import { CompleteTaskDto, HoldTaskDto } from './dto/task.dto';
+import { CompleteTaskDto, HoldTaskDto, ReassignTaskDto } from './dto/task.dto';
 import { TaskHistoryQueryDto } from './dto/task-history.dto';
 import {
   assertCanManageGroup,
@@ -30,21 +33,26 @@ export class TasksService {
     private readonly tasks: WorkflowTaskRepositoryPort,
     private readonly instances: WorkflowInstanceRepositoryPort,
     private readonly audit: ManagementAuditService,
+    @Optional() private readonly authz?: AuthzRepositoryPort,
   ) {}
 
   async listOpenTasks(actor: WorkflowHistoryActor) {
     this.assertAuthenticatedActor(actor);
     this.assertApiKeyApprovalScope(actor);
-    const tasks = await this.tasks.listTasks(actor.actor_id!);
+    const delegations = await this.authz?.listApprovalDelegations() || [];
+    const activeForDelegate = delegations.filter((item) => item.delegate_id === actor.actor_id && this.isActiveDelegation(item));
+    const assignees = [...new Set([actor.actor_id!, ...activeForDelegate.map((item) => item.delegator_id)])];
+    const tasks = (await Promise.all(assignees.map((assignee) => this.tasks.listTasks(assignee)))).flat();
     const visible = await Promise.all(
       tasks.map(async (task) => {
         const instance = await this.instances.getInstance(task.instance_id);
-        return instance && this.canAccessTask(actor, task, instance)
-          ? task
+        const access = instance ? this.resolveTaskAccess(actor, task, instance, delegations) : null;
+        return access?.allowed
+          ? { ...task, ...(access.delegation ? { delegation: { id: access.delegation.id, original_assignee: task.assignee, delegated_until: access.delegation.ends_at } } : {}) }
           : null;
       }),
     );
-    return visible.filter(Boolean);
+    return visible.filter(Boolean).filter((task, index, all) => all.findIndex((item) => item?.id === task?.id) === index);
   }
 
   async listHistory(
@@ -127,7 +135,8 @@ export class TasksService {
     if (['COMPLETED', 'FAILED', 'TERMINATED'].includes(instanceStatus)) {
       throw new ConflictException(`Approval is not allowed for a ${instanceStatus.toLowerCase()} instance`);
     }
-    if (!this.canAccessTask(actor, task, instance)) {
+    const access = this.resolveTaskAccess(actor, task, instance, await this.authz?.listApprovalDelegations() || []);
+    if (!access.allowed) {
       throw new ForbiddenException(
         'Task approval is not allowed for this actor',
       );
@@ -145,6 +154,7 @@ export class TasksService {
       result: dto.result || null,
       idempotency_key: normalizedKey,
       authentication_method: actor.api_key_id ? 'api_key' : 'pxm_session',
+      delegation: access.delegation ? { delegation_id: access.delegation.id, original_assignee: task.assignee, delegate_id: actor.actor_id! } : null,
     });
 
     if (result.outcome === 'not_found')
@@ -169,6 +179,7 @@ export class TasksService {
           comment: dto.comment?.trim() || null,
           result: dto.result || null,
           idempotency_key: normalizedKey,
+          delegation: access.delegation ? { delegation_id: access.delegation.id, original_assignee: task.assignee, delegate_id: actor.actor_id } : null,
         },
       });
     }
@@ -194,7 +205,8 @@ export class TasksService {
     if (!task) throw new NotFoundException('Task not found');
     const instance = await this.instances.getInstance(task.instance_id);
     if (!instance) throw new NotFoundException('Task instance not found');
-    if (!this.canAccessTask(actor, task, instance)) {
+    const access = this.resolveTaskAccess(actor, task, instance, await this.authz?.listApprovalDelegations() || []);
+    if (!access.allowed) {
       throw new ForbiddenException('Task hold is not allowed for this actor');
     }
     if (task.status !== 'OPEN') {
@@ -230,6 +242,30 @@ export class TasksService {
       status: 'OPEN',
       hold,
     };
+  }
+
+  async reassignTask(id: string, dto: ReassignTaskDto, actor: WorkflowHistoryActor) {
+    this.assertAuthenticatedActor(actor);
+    if (actor.api_key_id) throw new ForbiddenException('API key cannot reassign approval tasks');
+    const task = await this.tasks.getTask(id);
+    if (!task) throw new NotFoundException('Task not found');
+    if (task.status !== 'OPEN') throw new ConflictException('Only open tasks can be reassigned');
+    const instance = await this.instances.getInstance(task.instance_id);
+    if (!instance) throw new NotFoundException('Task instance not found');
+    const groupId = this.taskGroupId(instance);
+    assertCanManageGroup(actor, groupId);
+    if (!dto.reason?.trim()) throw new BadRequestException('reason is required');
+    if (!allowsApprovalChannel(task.payload, 'pxm_user')) throw new BadRequestException('External email-only approval cannot be reassigned');
+    const target = await this.authz?.getUser(dto.assignee);
+    if (!target || target.status !== 'active' || !groupId || !target.group_ids.includes(groupId)) {
+      throw new BadRequestException('assignee must be an active PXM user in the same group');
+    }
+    if (target.id === task.assignee) throw new BadRequestException('assignee is already assigned');
+    const reassigned = await this.tasks.reassignTask(id, task.assignee, target.id, { actor_id: actor.actor_id, reason: dto.reason.trim() });
+    if (!reassigned) throw new ConflictException('Task was changed before reassignment');
+    await this.audit.append({ action: 'task.reassigned', resource_type: 'task', resource_id: id, group_id: groupId, actor_id: actor.actor_id,
+      details: { instance_id: task.instance_id, previous_assignee: task.assignee, assignee: target.id, reason: dto.reason.trim() } });
+    return { success: true, task_id: id, previous_assignee: task.assignee, assignee: target.id };
   }
 
   async retryExternalApproval(id: string, actor: WorkflowHistoryActor) {
@@ -274,25 +310,39 @@ export class TasksService {
     };
   }
 
-  private canAccessTask(
+  private resolveTaskAccess(
     actor: WorkflowHistoryActor,
     task: any,
     instance: any,
-  ): boolean {
-    if (!allowsApprovalChannel(task.payload, 'pxm_user')) return false;
-    if (String(task.assignee || '') !== actor.actor_id) return false;
+    delegations: ApprovalDelegation[],
+  ): { allowed: boolean; delegation: ApprovalDelegation | null } {
+    if (!allowsApprovalChannel(task.payload, 'pxm_user')) return { allowed: false, delegation: null };
     const workflowId = String(
       instance.definition_id || instance.process_definition_id || '',
     );
-    const groupId =
-      instance.group_id || instance.context?.runtime?.access?.group_id || null;
+    const groupId = this.taskGroupId(instance);
+    const delegation = task.payload?.approval_delegation_allowed === false ? null : delegations.find((item) =>
+      item.delegator_id === String(task.assignee || '') && item.group_id === groupId && this.isActiveDelegation(item) &&
+      (item.scope === 'all' || item.workflow_ids.includes(workflowId)) &&
+      (item.include_existing || new Date(task.created_at) >= new Date(item.starts_at)),
+    ) || null;
+    const effectiveAssignee = delegation?.delegate_id || String(task.assignee || '');
+    if (effectiveAssignee !== actor.actor_id) return { allowed: false, delegation: null };
     if (actor.api_key_id) {
       if (!workflowId || !actor.allowed_workflow_ids.includes(workflowId))
-        return false;
-      return Boolean(groupId && (actor.group_ids || []).includes(groupId));
+        return { allowed: false, delegation: null };
+      return { allowed: Boolean(groupId && (actor.group_ids || []).includes(groupId)), delegation };
     }
-    if (actor.roles.includes('admin')) return true;
-    return Boolean(groupId && (actor.group_ids || []).includes(groupId));
+    if (actor.roles.includes('admin')) return { allowed: true, delegation };
+    return { allowed: Boolean(groupId && (actor.group_ids || []).includes(groupId)), delegation };
+  }
+
+  private isActiveDelegation(item: ApprovalDelegation, now = new Date()): boolean {
+    return item.status === 'active' && new Date(item.starts_at) <= now && now < new Date(item.ends_at);
+  }
+
+  private taskGroupId(instance: any): string | null {
+    return instance.group_id || instance.context?.runtime?.access?.group_id || instance.ctx?.runtime?.access?.group_id || null;
   }
 
   private canReadHistoryItem(

@@ -9,6 +9,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsEmail,
   IsIn,
   IsInt,
@@ -22,6 +23,18 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
+
+export class CreateApprovalDelegationDto {
+  @IsString() @MinLength(1) @MaxLength(128) group_id: string;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(128) delegator_id?: string;
+  @IsString() @MinLength(1) @MaxLength(128) delegate_id: string;
+  @IsIn(['all', 'selected']) scope: 'all' | 'selected' = 'all';
+  @IsOptional() @IsArray() @ArrayMaxSize(1000) @IsString({ each: true }) workflow_ids?: string[];
+  @IsBoolean() include_existing: boolean = false;
+  @IsISO8601() starts_at: string;
+  @IsISO8601() ends_at: string;
+  @IsOptional() @IsString() @MaxLength(1000) reason?: string;
+}
 
 export class CreateExternalPrincipalMappingDto {
   @IsString() @MinLength(1) @MaxLength(100) @Matches(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)

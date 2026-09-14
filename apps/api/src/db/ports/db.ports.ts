@@ -213,6 +213,7 @@ export abstract class WorkflowTaskRepositoryPort {
     taskId: string,
     hold: { actor_id: string; comment: string | null; held_at: string },
   ): Promise<any | null>;
+  abstract reassignTask(taskId: string, expectedAssignee: string, newAssignee: string, metadata: Record<string, any>): Promise<any | null>;
   abstract completeTask(command: CompleteWorkflowTaskCommand): Promise<CompleteWorkflowTaskResult>;
   abstract claimExternalApprovalTasks(owner: string, now: Date, claimUntil: Date, limit: number): Promise<ExternalApprovalClaim[]>;
   abstract setExternalApprovalDeliveryToken(taskId: string, owner: string, input: ExternalApprovalDeliveryToken): Promise<boolean>;
@@ -256,6 +257,8 @@ export type ApprovalNotificationTask = {
   requester: string | null;
   source_url: string | null;
   email_hint: string | null;
+  node_id?: string;
+  payload?: Record<string, any>;
 };
 
 export type ApprovalDeadlineTask = ApprovalNotificationTask & {
@@ -303,6 +306,9 @@ export type WorkflowTaskHistoryItem = {
   approver_channel: 'pxm_user' | 'external_email';
   approval_channels: Array<'pxm_user' | 'external_email'>;
   assignee: string;
+  completion_actor_id: string | null;
+  delegation: { delegation_id: string; original_assignee: string; delegate_id: string } | null;
+  reassignment_history: Array<{ from: string; to: string; actor_id?: string | null; reason?: string | null; reassigned_at: string }>;
   action: 'approve' | 'reject' | null;
   comment: string | null;
   result: Record<string, unknown> | null;
@@ -396,6 +402,11 @@ export type CompleteWorkflowTaskCommand = {
     token_hash: string;
     email: string;
     auth_method: 'email_link' | 'email_otp';
+  } | null;
+  delegation?: {
+    delegation_id: string;
+    original_assignee: string;
+    delegate_id: string;
   } | null;
 };
 
@@ -612,6 +623,26 @@ export type PxmUser = {
   updated_at: string;
 };
 
+export type ApprovalDelegation = {
+  id: string;
+  group_id: string;
+  delegator_id: string;
+  delegate_id: string;
+  scope: 'all' | 'selected';
+  workflow_ids: string[];
+  include_existing: boolean;
+  starts_at: string;
+  ends_at: string;
+  status: 'active' | 'revoked';
+  reason: string | null;
+  created_by: string;
+  created_at: string;
+  revoked_by?: string | null;
+  revoked_at?: string | null;
+};
+
+export type CreateApprovalDelegation = Omit<ApprovalDelegation, 'id' | 'status' | 'created_at' | 'revoked_by' | 'revoked_at'> & { id?: string };
+
 export type ExternalPrincipalMapping = {
   id: string;
   provider: string;
@@ -821,6 +852,9 @@ export abstract class AuthzRepositoryPort {
   abstract upsertUser(user: UpsertPxmUser): Promise<PxmUser>;
   abstract listUsers(groupId?: string): Promise<PxmUser[]>;
   abstract getUser(id: string): Promise<PxmUser | null>;
+  abstract createApprovalDelegation(input: CreateApprovalDelegation): Promise<ApprovalDelegation>;
+  abstract listApprovalDelegations(query?: { group_id?: string; delegator_id?: string; delegate_id?: string }): Promise<ApprovalDelegation[]>;
+  abstract revokeApprovalDelegation(id: string, actorId: string): Promise<ApprovalDelegation | null>;
   abstract getUserPasswordHash(id: string): Promise<string | null>;
   abstract updateUserPasswordHash(id: string, passwordHash: string, actor?: string | null): Promise<boolean>;
   abstract updateUserProfile(id: string, displayName: string, email?: string | null): Promise<PxmUser | null>;

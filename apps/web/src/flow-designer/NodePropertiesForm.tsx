@@ -1130,6 +1130,12 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
           helperText="동적 방식은 실행 시 결재 내용과 순차 결재라인을 함께 받습니다."
           fullWidth
         />
+        <Checkbox
+          label="대리 결재 허용"
+          checked={data.approvalDelegationAllowed !== false}
+          onChange={(e) => onUpdate(node.id, { ...data, approvalDelegationAllowed: e.target.checked })}
+          helperText="끄면 이 노드에서 생성된 결재는 사용자의 위임 설정을 적용하지 않습니다."
+        />
         <div className="approval-deadline-settings">
           <Checkbox
             label="처리 기한 사용"

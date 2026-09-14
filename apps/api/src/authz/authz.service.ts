@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, HttpExcepti
 import { createHash, randomBytes } from 'crypto';
 import {
   ApiKeyUsageQuery,
+  ApprovalDelegation,
   AppendPxmApiKeyUsageLog,
   AuthzRepositoryPort,
   ExternalPrincipalMapping,
@@ -15,11 +16,14 @@ import {
   PxmUser,
   WorkflowRepositoryPort,
   WorkflowInstanceRepositoryPort,
+  WorkflowHistoryActor,
+  WorkflowTaskRepositoryPort,
 } from '../db/ports/db.ports';
 import {
   ApiKeyResponseDto,
   CreateExternalPrincipalMappingDto,
   CreateApiKeyDto,
+  CreateApprovalDelegationDto,
   CreatedApiKeyResponseDto,
   UpdateExternalPrincipalMappingDto,
   UpsertGroupDto,
@@ -32,6 +36,8 @@ import { SchedulesService } from '../schedules/schedules.service';
 import { DbWatchService } from '../db-watch/db-watch.service';
 import { ManagementAuditService } from '../audit/management-audit.service';
 import { CredentialsService } from '../credentials/credentials.service';
+import { assertCanManageGroup } from './management-auth';
+import { ExternalApprovalMailer } from '../tasks/external-approval.mailer';
 
 const API_KEY_PREFIX = 'pxm_live_';
 const API_KEY_VISIBLE_PREFIX_LENGTH = 18;
@@ -51,6 +57,8 @@ export class AuthzService {
     @Optional() private readonly dbWatchService?: DbWatchService,
     @Optional() private readonly managementAudit?: ManagementAuditService,
     @Optional() private readonly credentialsService?: CredentialsService,
+    @Optional() private readonly taskRepo?: WorkflowTaskRepositoryPort,
+    @Optional() private readonly approvalMailer?: ExternalApprovalMailer,
   ) {}
 
   async upsertGroup(dto: UpsertGroupDto): Promise<PxmGroup> {
@@ -236,6 +244,101 @@ export class AuthzService {
 
   async listUsers(groupId?: string): Promise<PxmUser[]> {
     return this.authzRepo.listUsers(optionalString(groupId) || undefined);
+  }
+
+  async listApprovalDelegationCandidates(groupId: string, actor: WorkflowHistoryActor): Promise<PxmUser[]> {
+    this.assertDelegationGroupAccess(groupId, actor);
+    return (await this.authzRepo.listUsers(groupId)).filter((user) => user.status === 'active');
+  }
+
+  async listApprovalDelegations(groupId: string | undefined, actor: WorkflowHistoryActor): Promise<ApprovalDelegation[]> {
+    if (!actor.actor_id || actor.api_key_id) throw new ForbiddenException('PXM user session is required');
+    if (groupId) this.assertDelegationGroupAccess(groupId, actor);
+    const rows = await this.authzRepo.listApprovalDelegations(groupId ? { group_id: groupId } : {});
+    if (actor.roles.includes('admin')) return rows;
+    const managed = new Set((actor.group_ids || []).filter((id) => actor.group_roles?.[id] === 'group_manager'));
+    return rows.filter((row) => managed.has(row.group_id) || row.delegator_id === actor.actor_id || row.delegate_id === actor.actor_id);
+  }
+
+  async createApprovalDelegation(dto: CreateApprovalDelegationDto, actor: WorkflowHistoryActor) {
+    if (!actor.actor_id || actor.api_key_id) throw new ForbiddenException('PXM user session is required');
+    this.assertDelegationGroupAccess(dto.group_id, actor);
+    const delegatorId = dto.delegator_id?.trim() || actor.actor_id;
+    const actingForAnother = delegatorId !== actor.actor_id;
+    if (actingForAnother) {
+      assertCanManageGroup(actor, dto.group_id);
+      if (!dto.reason?.trim()) throw new BadRequestException('reason is required when configuring delegation for another user');
+    }
+    if (delegatorId === dto.delegate_id) throw new BadRequestException('delegate must be a different user');
+    const [group, delegator, delegate] = await Promise.all([
+      this.authzRepo.getGroup(dto.group_id), this.authzRepo.getUser(delegatorId), this.authzRepo.getUser(dto.delegate_id),
+    ]);
+    if (!group || group.status !== 'active') throw new BadRequestException('Active group is required');
+    for (const [label, user] of [['delegator', delegator], ['delegate', delegate]] as const) {
+      if (!user || user.status !== 'active' || !user.group_ids.includes(dto.group_id)) {
+        throw new BadRequestException(`${label} must be an active PXM user in the same group`);
+      }
+    }
+    const startsAt = new Date(dto.starts_at); const endsAt = new Date(dto.ends_at);
+    if (!(startsAt < endsAt) || endsAt <= new Date()) throw new BadRequestException('ends_at must be later than starts_at and in the future');
+    const workflowIds = [...new Set((dto.workflow_ids || []).map((id) => id.trim()).filter(Boolean))];
+    if (dto.scope === 'selected') {
+      if (!workflowIds.length) throw new BadRequestException('workflow_ids is required for selected scope');
+      const allowed = new Set(await this.authzRepo.listGroupWorkflowRecordIds(dto.group_id));
+      if (workflowIds.some((id) => !allowed.has(id))) throw new BadRequestException('workflow_ids must belong to the selected group');
+    }
+    const existing = await this.authzRepo.listApprovalDelegations({ group_id: dto.group_id, delegator_id: delegatorId });
+    if (existing.some((row) => row.status === 'active' && new Date(row.starts_at) < endsAt && new Date(row.ends_at) > startsAt)) {
+      throw new ConflictException('An overlapping delegation already exists for this user and group');
+    }
+    const delegation = await this.authzRepo.createApprovalDelegation({
+      group_id: dto.group_id, delegator_id: delegatorId, delegate_id: dto.delegate_id,
+      scope: dto.scope, workflow_ids: dto.scope === 'selected' ? workflowIds : [], include_existing: dto.include_existing,
+      starts_at: startsAt.toISOString(), ends_at: endsAt.toISOString(), reason: dto.reason?.trim() || null,
+      created_by: actor.actor_id,
+    });
+    const currentOpenCount = dto.include_existing
+      ? (await this.previewApprovalDelegation(dto.group_id, delegatorId, dto.scope, workflowIds, actor)).current_open_task_count
+      : 0;
+    if (delegator?.email && this.approvalMailer) {
+      await this.approvalMailer.sendDelegationNotification({ to: delegator.email, delegatorName: delegator.display_name, delegateName: delegate!.display_name, startsAt: delegation.starts_at, endsAt: delegation.ends_at }).catch(() => undefined);
+    }
+    return { ...delegation, current_open_task_count: currentOpenCount };
+  }
+
+  async revokeApprovalDelegation(id: string, actor: WorkflowHistoryActor): Promise<ApprovalDelegation> {
+    if (!actor.actor_id || actor.api_key_id) throw new ForbiddenException('PXM user session is required');
+    const delegation = (await this.authzRepo.listApprovalDelegations()).find((item) => item.id === id);
+    if (!delegation) throw new NotFoundException('Delegation not found');
+    if (delegation.delegator_id !== actor.actor_id) assertCanManageGroup(actor, delegation.group_id);
+    const revoked = await this.authzRepo.revokeApprovalDelegation(id, actor.actor_id);
+    if (!revoked) throw new ConflictException('Delegation is already revoked');
+    const [delegator, delegate] = await Promise.all([this.authzRepo.getUser(revoked.delegator_id), this.authzRepo.getUser(revoked.delegate_id)]);
+    if (delegator?.email && this.approvalMailer) {
+      await this.approvalMailer.sendDelegationNotification({ to: delegator.email, delegatorName: delegator.display_name, delegateName: delegate?.display_name || revoked.delegate_id, startsAt: revoked.starts_at, endsAt: revoked.ends_at, revoked: true }).catch(() => undefined);
+    }
+    return revoked;
+  }
+
+  async previewApprovalDelegation(groupId: string, delegatorId: string, scope: 'all' | 'selected', workflowIds: string[], actor: WorkflowHistoryActor) {
+    this.assertDelegationGroupAccess(groupId, actor);
+    if (delegatorId !== actor.actor_id) assertCanManageGroup(actor, groupId);
+    const open = await this.taskRepo?.listTasks(delegatorId) || [];
+    let count = 0;
+    for (const task of open) {
+      if (task.status !== 'OPEN' || task.payload?.approval_delegation_allowed === false) continue;
+      const instance = await this.instanceRepo?.getInstance(task.instance_id);
+      const taskGroupId = instance?.group_id || instance?.context?.runtime?.access?.group_id || instance?.ctx?.runtime?.access?.group_id;
+      const workflowId = String(instance?.definition_id || instance?.process_definition_id || '');
+      if (taskGroupId === groupId && (scope === 'all' || workflowIds.includes(workflowId))) count += 1;
+    }
+    return { current_open_task_count: count };
+  }
+
+  private assertDelegationGroupAccess(groupId: string, actor: WorkflowHistoryActor) {
+    if (!actor.actor_id || actor.api_key_id) throw new ForbiddenException('PXM user session is required');
+    if (actor.roles.includes('admin')) return;
+    if (!(actor.group_ids || []).includes(groupId)) throw new ForbiddenException('Group access is required');
   }
 
   async setUserMembership(

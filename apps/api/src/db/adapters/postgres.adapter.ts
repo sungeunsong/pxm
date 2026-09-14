@@ -8,6 +8,8 @@ import {
   primaryApprovalChannel,
 } from '../approval-channels';
 import type {
+  ApprovalDelegation,
+  CreateApprovalDelegation,
   CreateExternalPrincipalMapping,
   ExternalPrincipalMapping,
   ExternalPrincipalMappingStatus,
@@ -1195,7 +1197,7 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
   async fetchApprovalNotificationTasks(after: { created_at: string; id: string }, limit: number) {
     await this.ensureTaskRuntimeColumns();
     const { rows } = await this.pool.query(
-      `SELECT t.id::text, t.instance_id::text, t.assignee, t.status,
+      `SELECT t.id::text, t.instance_id::text, t.node_id, t.assignee, t.status,
               date_trunc('milliseconds', t.created_at) AS created_at,
               t.payload, d.name AS workflow_name
        FROM v2_tasks t
@@ -1257,6 +1259,18 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
       [JSON.stringify(hold), taskId],
     );
     return rows[0]?.hold || null;
+  }
+
+  async reassignTask(taskId: string, expectedAssignee: string, newAssignee: string, metadata: Record<string, any>): Promise<any | null> {
+    await this.ensureTaskRuntimeColumns();
+    const entry = { ...metadata, from: expectedAssignee, to: newAssignee, reassigned_at: new Date().toISOString() };
+    const { rows } = await this.pool.query(
+      `UPDATE v2_tasks SET assignee=$3,
+       payload=jsonb_set(COALESCE(payload, '{}'::jsonb), '{reassignment_history}', COALESCE(payload->'reassignment_history','[]'::jsonb) || $4::jsonb, true),
+       updated_at=NOW() WHERE id=$1::uuid AND status='OPEN' AND assignee=$2 RETURNING *`,
+      [taskId, expectedAssignee, newAssignee, JSON.stringify([entry])],
+    );
+    return rows[0] || null;
   }
 
   async listTaskHistory(query: WorkflowTaskHistoryQuery): Promise<WorkflowTaskHistoryPage> {
@@ -2347,6 +2361,32 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
     return rows[0] ? mapUserRow(rows[0]) : null;
   }
 
+  async createApprovalDelegation(input: CreateApprovalDelegation): Promise<ApprovalDelegation> {
+    await this.ensureAuthzTables();
+    const { rows } = await this.pool.query(
+      `INSERT INTO pxm_approval_delegations
+       (id,group_id,delegator_id,delegate_id,scope,workflow_ids,include_existing,starts_at,ends_at,status,reason,created_by)
+       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8::timestamptz,$9::timestamptz,'active',$10,$11) RETURNING *`,
+      [input.id || crypto.randomUUID(), input.group_id, input.delegator_id, input.delegate_id, input.scope,
+       JSON.stringify(input.workflow_ids), input.include_existing, input.starts_at, input.ends_at, input.reason || null, input.created_by],
+    );
+    return mapApprovalDelegationRow(rows[0]);
+  }
+
+  async listApprovalDelegations(query: { group_id?: string; delegator_id?: string; delegate_id?: string } = {}): Promise<ApprovalDelegation[]> {
+    await this.ensureAuthzTables();
+    const params: string[] = []; const where: string[] = [];
+    for (const [column, value] of Object.entries(query)) if (value) { params.push(value); where.push(`${column}=$${params.length}`); }
+    const { rows } = await this.pool.query(`SELECT * FROM pxm_approval_delegations ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC`, params);
+    return rows.map(mapApprovalDelegationRow);
+  }
+
+  async revokeApprovalDelegation(id: string, actorId: string): Promise<ApprovalDelegation | null> {
+    await this.ensureAuthzTables();
+    const { rows } = await this.pool.query(`UPDATE pxm_approval_delegations SET status='revoked', revoked_by=$2, revoked_at=NOW() WHERE id=$1 AND status='active' RETURNING *`, [id, actorId]);
+    return rows[0] ? mapApprovalDelegationRow(rows[0]) : null;
+  }
+
   async getUserPasswordHash(id: string): Promise<string | null> {
     await this.ensureAuthzTables();
     const { rows } = await this.pool.query(`SELECT password_hash FROM pxm_users WHERE id = $1`, [id]);
@@ -2759,6 +2799,14 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
     `);
     await this.pool.query(`ALTER TABLE pxm_users ADD COLUMN IF NOT EXISTS password_hash TEXT NULL`);
     await this.pool.query(`ALTER TABLE pxm_users ADD COLUMN IF NOT EXISTS memberships JSONB NOT NULL DEFAULT '[]'::jsonb`);
+    await this.pool.query(`CREATE TABLE IF NOT EXISTS pxm_approval_delegations (
+      id TEXT PRIMARY KEY, group_id TEXT NOT NULL, delegator_id TEXT NOT NULL, delegate_id TEXT NOT NULL,
+      scope TEXT NOT NULL, workflow_ids JSONB NOT NULL DEFAULT '[]'::jsonb, include_existing BOOLEAN NOT NULL DEFAULT false,
+      starts_at TIMESTAMPTZ NOT NULL, ends_at TIMESTAMPTZ NOT NULL, status TEXT NOT NULL DEFAULT 'active', reason TEXT NULL,
+      created_by TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), revoked_by TEXT NULL, revoked_at TIMESTAMPTZ NULL
+    )`);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_pxm_approval_delegations_owner ON pxm_approval_delegations (group_id, delegator_id, status, starts_at, ends_at)`);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_pxm_approval_delegations_delegate ON pxm_approval_delegations (delegate_id, status, starts_at, ends_at)`);
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS v2_external_principal_mappings (
         id TEXT NOT NULL UNIQUE,
@@ -2941,6 +2989,17 @@ function mapUserRow(row: any): PxmUser {
     updated_by: row.updated_by || null,
     created_at: row.created_at?.toISOString?.() || row.created_at,
     updated_at: row.updated_at?.toISOString?.() || row.updated_at,
+  };
+}
+
+function mapApprovalDelegationRow(row: any): ApprovalDelegation {
+  const iso = (value: any) => value?.toISOString?.() || String(value);
+  return {
+    id: String(row.id), group_id: String(row.group_id), delegator_id: String(row.delegator_id), delegate_id: String(row.delegate_id),
+    scope: row.scope === 'selected' ? 'selected' : 'all', workflow_ids: Array.isArray(row.workflow_ids) ? row.workflow_ids.map(String) : [],
+    include_existing: row.include_existing === true, starts_at: iso(row.starts_at), ends_at: iso(row.ends_at),
+    status: row.status === 'revoked' ? 'revoked' : 'active', reason: row.reason || null, created_by: String(row.created_by),
+    created_at: iso(row.created_at), revoked_by: row.revoked_by || null, revoked_at: row.revoked_at ? iso(row.revoked_at) : null,
   };
 }
 
@@ -3227,6 +3286,7 @@ function taskCompletion(command: CompleteWorkflowTaskCommand, completedAt: strin
     idempotency_key: command.idempotency_key || null,
     authentication_method: authenticationMethod,
     completed_via: completedVia(command),
+    delegation: command.delegation || null,
     completed_at: completedAt,
   };
 }
@@ -3265,6 +3325,9 @@ function mapTaskHistoryPostgres(task: any): WorkflowTaskHistoryItem {
     approver_channel: primaryApprovalChannel(task.payload),
     approval_channels: approvalChannels(task.payload),
     assignee: String(task.assignee),
+    completion_actor_id: completion?.actor_id ? String(completion.actor_id) : null,
+    delegation: completion?.delegation || null,
+    reassignment_history: Array.isArray(task.payload?.reassignment_history) ? task.payload.reassignment_history : [],
     action: completion?.action === 'approve' || completion?.action === 'reject' ? completion.action : null,
     comment: typeof completion?.comment === 'string' ? completion.comment : null,
     result: completion?.result && typeof completion.result === 'object' ? completion.result : null,
@@ -3305,6 +3368,8 @@ function mapApprovalNotificationTaskRow(row: any) {
     requester: content.requester ? String(content.requester) : null,
     source_url: content.source_url ? String(content.source_url) : null,
     email_hint: row.payload?.display_snapshot?.email || null,
+    node_id: row.node_id ? String(row.node_id) : '',
+    payload: row.payload || {},
   };
 }
 
