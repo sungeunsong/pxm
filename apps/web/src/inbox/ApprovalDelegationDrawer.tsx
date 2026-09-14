@@ -39,6 +39,7 @@ export function ApprovalDelegationDrawer({ currentUser, onClose }: { currentUser
   const canManageSelected = currentUser.role === 'admin' || currentUser.memberships.some((m) => m.group_id === groupId && m.role === 'group_manager');
   const selectedWorkflows = useMemo(() => workflows.filter((w) => w.group_id === groupId), [groupId, workflows]);
   const names = useMemo(() => new Map(users.map((user) => [user.id, user.display_name])), [users]);
+  const userName = (id: string) => id === currentUser.id ? currentUser.display_name : names.get(id) || id;
 
   useEffect(() => {
     Promise.all([authzApi.listGroups(false), fetch('/api/templates?activeOnly=false').then((res) => res.ok ? res.json() : [])])
@@ -126,8 +127,12 @@ export function ApprovalDelegationDrawer({ currentUser, onClose }: { currentUser
       <p className="delegation-hint">체크하지 않으면 시작 시각 이후 새로 생성되는 결재에만 적용됩니다.</p>
       {delegatorId !== currentUser.id && <label className="delegation-reason">설정 사유<textarea value={reason} onChange={(e) => setReason(e.target.value)} maxLength={1000} placeholder="갑작스러운 부재 등 설정 사유를 입력하세요." /></label>}
       <section className="delegation-current"><h4>위임 설정 내역</h4>{items.length === 0 ? <p className="delegation-empty">등록된 위임이 없습니다.</p> : items.map((item) => <article key={item.id}>
-        <div><strong>{names.get(item.delegator_id) || item.delegator_id} → {names.get(item.delegate_id) || item.delegate_id}</strong><span className={`delegation-status ${item.status}`}>{item.status === 'active' && new Date(item.ends_at) > new Date() ? '적용/예약' : item.status === 'revoked' ? '해제됨' : '기간 종료'}</span></div>
+        <div><strong>{userName(item.delegator_id)} → {userName(item.delegate_id)}</strong><span className={`delegation-status ${item.status}`}>{item.status === 'active' && new Date(item.ends_at) > new Date() ? '적용/예약' : item.status === 'revoked' ? '해제됨' : '기간 종료'}</span></div>
         <p>{new Date(item.starts_at).toLocaleString()} ~ {new Date(item.ends_at).toLocaleString()} · {item.scope === 'all' ? '전체 워크플로우' : `${item.workflow_ids.length}개 워크플로우`} · 기존 미결 {item.include_existing ? '포함' : '제외'}</p>
+        <dl className="delegation-audit-summary">
+          <div><dt>설정자</dt><dd>{userName(item.created_by)}</dd></div>
+          <div><dt>설정 사유</dt><dd>{item.reason || (item.created_by === item.delegator_id ? '본인 설정' : '기록 없음')}</dd></div>
+        </dl>
         {item.status === 'active' && new Date(item.ends_at) > new Date() && (item.delegator_id === currentUser.id || canManageSelected) && <Button size="sm" variant="ghost" onClick={() => revoke(item)}>해제</Button>}
       </article>)}</section>
       {canManageSelected && <section className="delegation-current"><h4>미결 결재 긴급 재배정</h4><p className="delegation-hint">예정하지 못한 부재에는 특정 결재의 담당자를 직접 바꿀 수 있습니다. 이 변경은 기간 종료 시 되돌아가지 않습니다.</p>

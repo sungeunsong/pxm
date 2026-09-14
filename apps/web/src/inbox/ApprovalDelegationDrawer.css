@@ -13,6 +13,10 @@
 .delegation-current article { position: relative; display: grid; gap: 6px; padding: 12px; border: 1px solid var(--border-subtle); border-radius: 8px; }
 .delegation-current article>div { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .delegation-current article p { margin: 0; color: var(--text-tertiary); font-size: 12px; }
+.delegation-audit-summary { display: grid; gap: 5px; margin: 2px 0 0; padding: 9px 10px; border-radius: 6px; background: var(--bg-tertiary); font-size: 12px; }
+.delegation-audit-summary div { display: grid !important; grid-template-columns: 64px 1fr; justify-content: initial !important; gap: 8px !important; }
+.delegation-audit-summary dt { color: var(--text-tertiary); }
+.delegation-audit-summary dd { margin: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
 .delegation-current article .btn { justify-self: end; }
 .delegation-reassign-item select,.delegation-reassign-item input { min-height: 34px; padding: 7px 9px; border: 1px solid var(--border-subtle); border-radius: 7px; background: var(--bg-secondary); color: var(--text-primary); }
 .delegation-status { padding: 3px 7px; border-radius: 999px; background: var(--bg-tertiary); color: var(--text-tertiary); font-size: 11px; }
