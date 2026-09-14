@@ -1,9 +1,10 @@
 export const marker = 'pxm-guided-demo-v1';
 export const groupId = 'pxm-guided-demo';
 export const users = [
-  { id: 'demo-secadmin', display_name: '데모 · 보안 관리자', role: 'group_manager' },
-  { id: 'demo-approver1', display_name: '데모 · 내부 승인자', role: 'user' },
-  { id: 'demo-requester1', display_name: '데모 · 신청자', role: 'user' },
+  { id: 'demo-secadmin', display_name: '데모 · 보안 관리자', email: 'demo-secadmin@pxm.local', role: 'group_manager' },
+  { id: 'demo-approver1', display_name: '데모 · 내부 승인자', email: 'demo-approver1@pxm.local', role: 'user' },
+  { id: 'demo-delegate1', display_name: '데모 · 대리 결재자', email: 'demo-delegate1@pxm.local', role: 'user' },
+  { id: 'demo-requester1', display_name: '데모 · 신청자', email: 'demo-requester1@pxm.local', role: 'user' },
 ];
 export const employees = [
   { emp_id: 'E-1001', name: '김사원', employment_type: 'employee', security_training_done: true },
@@ -31,6 +32,15 @@ export function fixtures(credentials, dbName, serviceUrl) {
     { key: 'basic', payload: { ...common, name: '실습 1 · 기본 접근 권한 결재', description: '신청 → 내부 승인/반려 → 결과 확인',
       nodes: [start(), approval('approval', 260, 160), end('approved', 520, 60, '승인 완료'), end('rejected', 520, 300, '반려 완료')],
       edges: [edge('start', 'approval'), edge('approval', 'approved', { sourceHandle: 'approved' }), edge('approval', 'rejected', { sourceHandle: 'rejected' })],
+    } },
+    { key: 'delegation', payload: { ...common, name: '실습 3 · 대리 결재와 기한 알림', description: '원래 승인자의 결재가 대리 결재자에게 전달되고 1분 뒤 기한 알림이 발생하는 실습',
+      nodes: [start(), approval('delegated-approval', 280, 160, false), end('approved', 560, 60, '승인 완료'), end('rejected', 560, 300, '반려 완료')]
+        .map(item => item.id === 'delegated-approval' ? { ...item, data: { ...item.data,
+          label: '대리 결재 대상 승인', approvalDeadlineEnabled: true, approvalDeadlineValue: 1,
+          approvalDeadlineUnit: 'minutes', approvalEscalationGraceValue: 1,
+          approvalEscalationGraceUnit: 'minutes', approvalDelegationAllowed: true,
+        } } : item),
+      edges: [edge('start', 'delegated-approval'), edge('delegated-approval', 'approved', { sourceHandle: 'approved' }), edge('delegated-approval', 'rejected', { sourceHandle: 'rejected' })],
     } },
     { key: 'integrated', payload: { ...common, name: '실습 2 · 협력사 접근 권한 신청', description: '직원 조회 → 위험도 분기 → 내부/외부 승인 → 모의 접근제어 시스템 반영',
       nodes: [start(),

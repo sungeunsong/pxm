@@ -61,6 +61,28 @@ async function ensureWorkflow(key, payload, manifest) {
     if (!old || old.name !== preset.name || old.scope !== 'group' || JSON.stringify(old.values) !== JSON.stringify(preset.values)) await request(`/templates/${current.id}/input-presets`, 'POST', body);
   }
 }
+async function ensureDelegation(manifest) {
+  const workflowId = manifest.workflows.delegation;
+  if (!workflowId) throw new Error('Delegation practice workflow is missing');
+  const current = await request(`/authz/approval-delegations?groupId=${groupId}`);
+  const fixture = current.find(item =>
+    item.status === 'active' && item.delegator_id === 'demo-approver1' && item.delegate_id === 'demo-delegate1'
+    && item.scope === 'selected' && item.workflow_ids?.includes(workflowId)
+    && new Date(item.ends_at) > new Date(),
+  );
+  if (fixture) return fixture;
+  return request('/authz/approval-delegations', 'POST', {
+    group_id: groupId,
+    delegator_id: 'demo-approver1',
+    delegate_id: 'demo-delegate1',
+    scope: 'selected',
+    workflow_ids: [workflowId],
+    include_existing: true,
+    starts_at: '2026-01-01T00:00:00.000Z',
+    ends_at: '2099-12-31T23:59:59.000Z',
+    reason: '데모 시나리오: 원래 승인자 휴가',
+  });
+}
 async function resetRuns(manifest) {
   const ids = Object.values(manifest.workflows);
   if (!ids.length) return;
@@ -135,12 +157,19 @@ try {
     for (const user of users) {
       const existing = directory.find(u => u.id === user.id);
       if (existing && (existing.group_ids.length !== 1 || existing.group_ids[0] !== groupId)) throw new Error(`User ID collision: ${user.id}`);
+      const passwordMissing = !access.accounts[user.id];
       const password = access.accounts[user.id] || randomPassword();
-      if (!existing || !access.accounts[user.id]) {
+      if (passwordMissing) {
         access.accounts[user.id] = password;
         await saveAccess(access);
-        await request('/authz/users', 'POST', { ...user, group_ids: [groupId], memberships: [{ group_id: groupId, role: user.role }], password });
       }
+      const needsUpdate = !existing || passwordMissing || existing.display_name !== user.display_name
+        || existing.email !== user.email || existing.role !== user.role
+        || existing.memberships?.length !== 1 || existing.memberships[0]?.group_id !== groupId || existing.memberships[0]?.role !== user.role;
+      if (needsUpdate) await request('/authz/users', 'POST', {
+        ...user, group_ids: [groupId], memberships: [{ group_id: groupId, role: user.role }],
+        ...(passwordMissing ? { password } : {}),
+      });
       const session = await login(user.id, password);
       await request('/auth/logout', 'POST', {}, session);
     }
@@ -157,6 +186,8 @@ try {
     }
     for (const employee of employees) await db.collection('pxm_demo_employees').updateOne({ _id: `${marker}:${employee.emp_id}` }, { $set: { ...employee, demo_marker: marker } }, { upsert: true });
     for (const { key, payload } of fixtures(manifest.credentials, dbName, serviceUrl)) await ensureWorkflow(key, payload, manifest);
+    const delegation = await ensureDelegation(manifest);
+    await db.collection('pxm_demo_manifests').updateOne({ _id: marker }, { $set: { delegation_id: delegation.id } });
     console.log(JSON.stringify({ group: group.name, group_id: groupId, workflows: manifest.workflows, credentials: manifest.credentials, accounts: ['admin (기존 계정)', ...users.map(u => u.id)], password_file: accessFile, web: 'http://localhost:5174', mailpit: 'http://localhost:8025', service: serviceUrl, next: 'pnpm demo:service 실행 후 docs/demo-practice.md 참고' }, null, 2));
   } finally { await db.collection('pxm_demo_manifests').updateOne({ _id: marker }, { $unset: { busy: '' } }); }
 } catch (error) { console.error(`[demo:${mode}] ${error.message}`); process.exitCode = 1; }
