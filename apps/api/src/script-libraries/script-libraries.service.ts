@@ -58,6 +58,34 @@ type WorkflowNodeLike = Record<string, unknown> & {
 export class ScriptLibrariesService {
   constructor(@Inject(MONGO_DB) private readonly db: Db) {}
 
+  async resolveLatest(packageNameInput?: string): Promise<ScriptLibraryRef> {
+    const packageName = normalizePackageName(packageNameInput);
+    const registry = npmRegistry();
+    try {
+      const { stdout } = await execFileAsync(
+        process.env.PXM_NPM_EXECUTABLE || 'npm',
+        [
+          'view',
+          `${packageName}@latest`,
+          'version',
+          '--json',
+          `--registry=${registry}`,
+        ],
+        {
+          timeout: 30_000,
+          maxBuffer: 1024 * 1024,
+        },
+      );
+      const version = normalizeExactVersion(parseNpmVersion(stdout));
+      return { package_name: packageName, version };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new BadRequestException(
+        `최신 버전을 확인하지 못했습니다. 패키지 이름과 npm 레지스트리 접근 권한을 확인해 주세요. ${message}`,
+      );
+    }
+  }
+
   async list(includeInactive = false): Promise<ScriptLibraryView[]> {
     const filter: Filter<ScriptLibraryDocument> = includeInactive
       ? {}
@@ -269,9 +297,7 @@ async function prepareNpmArtifact(packageName: string, version: string) {
       ),
       'utf8',
     );
-    const registry = (
-      process.env.PXM_NPM_REGISTRY_URL || 'https://registry.npmjs.org'
-    ).trim();
+    const registry = npmRegistry();
     await execFileAsync(
       process.env.PXM_NPM_EXECUTABLE || 'npm',
       [
@@ -373,6 +399,20 @@ function normalizeExactVersion(value?: string) {
     throw new BadRequestException('1.2.3과 같은 정확한 버전을 입력해 주세요.');
   }
   return version;
+}
+
+function parseNpmVersion(value: string): string {
+  const parsed: unknown = JSON.parse(value);
+  if (typeof parsed !== 'string') {
+    throw new Error('npm 레지스트리가 올바른 버전을 반환하지 않았습니다.');
+  }
+  return parsed;
+}
+
+function npmRegistry() {
+  return (
+    process.env.PXM_NPM_REGISTRY_URL || 'https://registry.npmjs.org'
+  ).trim();
 }
 
 function normalizeGroupIds(value: unknown): string[] {

@@ -39,6 +39,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const scriptLibrariesApi = {
   listAvailable: () => request<ScriptLibrary[]>(""),
   listAdmin: () => request<ScriptLibrary[]>("/admin"),
+  resolveLatest: (packageName: string) =>
+    request<ScriptLibraryRef>("/resolve-latest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ package_name: packageName }),
+    }),
   prepare: (packageName: string, version: string) =>
     request<ScriptLibrary>("", {
       method: "POST",

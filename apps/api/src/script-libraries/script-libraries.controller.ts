@@ -35,6 +35,15 @@ export class ScriptLibrariesController {
     return this.scriptLibraries.prepare(body, actorLabel(request));
   }
 
+  @Post('resolve-latest')
+  resolveLatest(
+    @Body() body: { package_name?: string },
+    @Req() request: Request,
+  ) {
+    requireAdmin(request);
+    return this.scriptLibraries.resolveLatest(body.package_name);
+  }
+
   @Post(':id/approve')
   approve(
     @Param('id') id: string,

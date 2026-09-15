@@ -1,5 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Check, Download, Library, RotateCw, ShieldOff } from "lucide-react";
+import {
+  Check,
+  Download,
+  Library,
+  RotateCw,
+  ShieldOff,
+  Sparkles,
+} from "lucide-react";
 import { Button, Checkbox, Input } from "../components";
 import { authzApi, type PxmGroup } from "../api/authz";
 import {
@@ -18,6 +25,7 @@ export const ScriptLibraryPage: React.FC = () => {
   const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [preparing, setPreparing] = useState(false);
+  const [resolvingLatest, setResolvingLatest] = useState(false);
   const [error, setError] = useState("");
 
   const load = async () => {
@@ -69,6 +77,26 @@ export const ScriptLibraryPage: React.FC = () => {
       );
     } finally {
       setPreparing(false);
+    }
+  };
+
+  const resolveLatest = async () => {
+    setResolvingLatest(true);
+    setError("");
+    try {
+      const resolved = await scriptLibrariesApi.resolveLatest(packageName);
+      setVersion(resolved.version);
+      toast.success(`최신 버전 ${resolved.version}을 확인했습니다.`, {
+        description: "준비를 누르면 이 버전으로 고정해 등록합니다.",
+      });
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "최신 버전을 확인하지 못했습니다.",
+      );
+    } finally {
+      setResolvingLatest(false);
     }
   };
 
@@ -160,6 +188,14 @@ export const ScriptLibraryPage: React.FC = () => {
             value={version}
             onChange={(event) => setVersion(event.target.value)}
           />
+          <Button
+            variant="secondary"
+            icon={<Sparkles size={15} />}
+            disabled={resolvingLatest || preparing || !packageName.trim()}
+            onClick={resolveLatest}
+          >
+            {resolvingLatest ? "조회 중..." : "최신 버전"}
+          </Button>
           <Button
             icon={<Download size={15} />}
             disabled={preparing || !packageName.trim() || !version.trim()}
