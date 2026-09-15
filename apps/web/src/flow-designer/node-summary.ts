@@ -183,8 +183,13 @@ function configSummary(data: NodeData): string {
       return serviceSummary(data);
     case 'script': {
       const outputPath = text(data, 'outputPath');
+      const libraryCount = Array.isArray(data.scriptLibraries) ? data.scriptLibraries.length : 0;
       if (!outputPath && !text(data, 'code')) return '';
-      return join(['JavaScript', outputPath ? `출력 ${truncate(outputPath)}` : '']);
+      return join([
+        'JavaScript',
+        libraryCount > 0 ? `라이브러리 ${libraryCount}개` : '',
+        outputPath ? `출력 ${truncate(outputPath)}` : '',
+      ]);
     }
     case 'command': {
       const commandId = truncate(text(data, 'commandId'));

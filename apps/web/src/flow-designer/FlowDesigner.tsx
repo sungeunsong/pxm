@@ -22,6 +22,7 @@ import { authzApi, type PxmGroup } from '../api/authz';
 import type { SessionUser } from '../api/session';
 import { pluginsApi } from '../api/plugins';
 import type { PluginManifest, PluginTestResponse } from '../api/plugins';
+import { scriptLibrariesApi, type ScriptLibrary } from '../api/script-libraries';
 import { PluginIcon } from './plugin-icons';
 import { BASIC_NODE_OPTIONS } from './node-catalog';
 import { foldNodeExecutionStatuses, latestNumericEventId, nodeExecutionTransition } from './execution-visual-state';
@@ -97,6 +98,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
   const [traceInstanceId, setTraceInstanceId] = useState<string | null>(null);
   const [executionFormSchema, setExecutionFormSchema] = useState<FormSchema | undefined>(undefined);
   const [plugins, setPlugins] = useState<PluginManifest[]>([]);
+  const [scriptLibraries, setScriptLibraries] = useState<ScriptLibrary[]>([]);
   const [pluginSearch, setPluginSearch] = useState('');
   const [isNodeTestRunning, setIsNodeTestRunning] = useState(false);
   const [nodeTestResult, setNodeTestResult] = useState<PluginTestResponse | null>(null);
@@ -123,6 +125,14 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
       .then((groups) => { if (!cancelled) { setAvailableGroups(groups.filter((group) => group.status === 'active')); setGroupsError(null); } })
       .catch((error) => { if (!cancelled) setGroupsError(error instanceof Error ? error.message : '그룹 목록을 불러오지 못했습니다.'); })
       .finally(() => { if (!cancelled) setGroupsLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    scriptLibrariesApi.listAvailable()
+      .then((items) => { if (!cancelled) setScriptLibraries(items); })
+      .catch((error) => console.error('Failed to load JS libraries:', error));
     return () => { cancelled = true; };
   }, []);
 
@@ -1393,6 +1403,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
                       node={selectedNode}
                       onUpdate={handleNodeUpdate}
                     plugins={plugins}
+                    scriptLibraries={scriptLibraries}
                     gatewayEdges={selectedGatewayEdges}
                     pathSuggestions={selectedNodePathSuggestions}
                     onGatewayEdgeUpdate={handleGatewayEdgeUpdate}

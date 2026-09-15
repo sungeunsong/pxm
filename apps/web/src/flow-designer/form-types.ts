@@ -98,6 +98,7 @@ export interface CustomNodeData {
   code?: string;
   outputPath?: string;
   scriptTimeoutMs?: number;
+  scriptLibraries?: Array<{ package_name: string; version: string }>;
 
   // Command 노드 전용
   commandId?: string;

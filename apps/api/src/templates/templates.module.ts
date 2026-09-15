@@ -8,9 +8,10 @@ import { DbWatchModule } from '../db-watch/db-watch.module';
 import { CredentialsModule } from '../credentials/credentials.module';
 import { ManagementAuditModule } from '../audit/management-audit.module';
 import { AuthzModule } from '../authz/authz.module';
+import { ScriptLibrariesModule } from '../script-libraries/script-libraries.module';
 
 @Module({
-  imports: [DbModule, InstancesModule, SchedulesModule, DbWatchModule, CredentialsModule, ManagementAuditModule, AuthzModule],
+  imports: [DbModule, InstancesModule, SchedulesModule, DbWatchModule, CredentialsModule, ManagementAuditModule, AuthzModule, ScriptLibrariesModule],
   controllers: [TemplatesController],
   providers: [TemplatesService],
   exports: [TemplatesService],

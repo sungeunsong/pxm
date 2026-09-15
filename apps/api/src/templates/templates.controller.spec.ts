@@ -39,6 +39,7 @@ describe('TemplatesController public API contract', () => {
     const templatesService = {
       findOne: jest.fn().mockResolvedValue(template),
       findPublished: jest.fn().mockResolvedValue(template),
+      findForExecution: jest.fn().mockResolvedValue(template),
       update: jest.fn(),
       publish: jest.fn().mockResolvedValue(template),
     };

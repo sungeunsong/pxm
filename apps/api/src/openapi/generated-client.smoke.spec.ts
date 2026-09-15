@@ -25,6 +25,7 @@ describe('generated OpenAPI client smoke flow', () => {
       findPublishedAll: jest.fn().mockResolvedValue([workflow]),
       findOne: jest.fn().mockResolvedValue(workflow),
       findPublished: jest.fn().mockResolvedValue(workflow),
+      findForExecution: jest.fn().mockResolvedValue(workflow),
     };
     const instances = {
       findAll: jest.fn().mockResolvedValue([]),

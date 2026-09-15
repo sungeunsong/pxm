@@ -9,6 +9,7 @@ import type { Edge } from 'reactflow';
 import { Button, Input, Select, Checkbox } from '../components';
 import type { CustomNodeData, FormSchema } from './form-types';
 import type { PluginManifest, PluginJsonSchemaProperty, PluginTestResponse } from '../api/plugins';
+import type { ScriptLibrary, ScriptLibraryRef } from '../api/script-libraries';
 import { credentialsApi, type CredentialProfile } from '../api/credentials';
 import { commandsApi, type CommandRegistryItem } from '../api/commands';
 import { templatesApi, type TestDbWatchConnectionResponse } from '../api/templates';
@@ -22,6 +23,7 @@ export interface NodePropertiesFormProps {
   node: Node<CustomNodeData>;
   onUpdate: (nodeId: string, data: Partial<CustomNodeData>) => void;
   plugins?: PluginManifest[];
+  scriptLibraries?: ScriptLibrary[];
   gatewayEdges?: Edge[];
   pathSuggestions?: NodePathSuggestion[];
   onGatewayEdgeUpdate?: (edgeId: string, data: Partial<Edge>) => void;
@@ -107,6 +109,7 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
   node,
   onUpdate,
   plugins = [],
+  scriptLibraries = [],
   gatewayEdges = [],
   pathSuggestions = [],
   onGatewayEdgeUpdate,
@@ -556,9 +559,53 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
   // JS Script 노드 속성
   const renderScriptProperties = () => {
     const data = node.data as any;
+    const selectedLibraries: ScriptLibraryRef[] = Array.isArray(data.scriptLibraries)
+      ? data.scriptLibraries
+      : [];
+    const availableScriptLibraries = scriptLibraries.filter((library) =>
+      library.allowed_group_ids.length === 0 ||
+      (!!credentialGroupId && library.allowed_group_ids.includes(credentialGroupId)),
+    );
+    const toggleLibrary = (library: ScriptLibrary, checked: boolean) => {
+      const key = `${library.package_name}@${library.version}`;
+      const current = selectedLibraries.filter((item) =>
+        `${item.package_name}@${item.version}` !== key,
+      );
+      onUpdate(node.id, {
+        ...data,
+        scriptLibraries: checked
+          ? [...current, { package_name: library.package_name, version: library.version }]
+          : current,
+      });
+    };
     return (
       <div className="property-section">
         <h4 className="property-section-title">JS 실행 설정</h4>
+        <div className="property-group">
+          <label className="property-label">승인된 라이브러리</label>
+          {availableScriptLibraries.length === 0 ? (
+            <div className="property-helper-text">이 그룹에서 사용할 수 있는 JS 라이브러리가 없습니다.</div>
+          ) : (
+            <div className="property-checkbox-list">
+              {availableScriptLibraries.map((library) => {
+                const selected = selectedLibraries.some((item) =>
+                  item.package_name === library.package_name && item.version === library.version,
+                );
+                return (
+                  <Checkbox
+                    key={`${library.package_name}@${library.version}`}
+                    label={`${library.package_name} · ${library.version}`}
+                    checked={selected}
+                    onChange={(event) => toggleLibrary(library, event.target.checked)}
+                  />
+                );
+              })}
+            </div>
+          )}
+          <div className="property-helper-text">
+            선택한 모듈은 <code>libs[&quot;패키지명&quot;]</code>으로 사용합니다. 버전은 워크플로우에 고정됩니다.
+          </div>
+        </div>
         <div className="property-group">
           <label className="property-label">JavaScript Code</label>
           <CodeMirror

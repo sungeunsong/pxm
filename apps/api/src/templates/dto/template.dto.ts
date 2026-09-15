@@ -173,6 +173,11 @@ export type WorkflowExportDocument = {
       version?: string;
       node_ids: string[];
     }>;
+    script_library_dependencies: Array<{
+      package_name: string;
+      version: string;
+      node_ids: string[];
+    }>;
   };
   security: {
     secrets_policy: 'redacted';

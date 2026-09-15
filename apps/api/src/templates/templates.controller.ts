@@ -562,7 +562,7 @@ export class TemplatesController {
 
   private async startWorkflow(id: string, body?: StartWorkflowRequest, idempotencyKey?: string, req?: Request, res?: Response, allowDraft = false) {
     // 템플릿 조회
-    const template = allowDraft ? await this.templatesService.findOne(id) : await this.templatesService.findPublished(id);
+    const template = await this.templatesService.findForExecution(id, allowDraft);
     if (!template) {
       throw new BadRequestException('Workflow is not published or is disabled');
     }

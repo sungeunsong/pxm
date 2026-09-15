@@ -20,6 +20,7 @@ import {
   MailCheck,
   ClipboardCheck,
   FileClock,
+  Library,
 } from 'lucide-react';
 import { DashboardPage } from './dashboard/DashboardPage';
 import { FlowDesigner } from './flow-designer/FlowDesigner';
@@ -45,6 +46,7 @@ import { WebhookManagementPage } from './webhooks/WebhookManagementPage';
 import { OperationsPage } from './operations/OperationsPage';
 import { NotificationManagementPage } from './notifications/NotificationManagementPage';
 import { AuditLogPage } from './audit/AuditLogPage';
+import { ScriptLibraryPage } from './script-libraries/ScriptLibraryPage';
 import './App.css';
 
 type ActiveTab =
@@ -59,6 +61,7 @@ type ActiveTab =
   | 'commands'
   | 'plugins'
   | 'pluginRegistry'
+  | 'scriptLibraries'
   | 'access'
   | 'security'
   | 'integrity'
@@ -81,6 +84,7 @@ const ROUTE_TO_TAB: Record<string, ActiveTab> = {
   commands: 'commands',
   plugins: 'plugins',
   'plugin-registry': 'pluginRegistry',
+  'script-libraries': 'scriptLibraries',
   access: 'access',
   security: 'security',
   integrity: 'integrity',
@@ -102,6 +106,7 @@ const TAB_TO_ROUTE: Record<ActiveTab, string> = {
   commands: 'commands',
   plugins: 'plugins',
   pluginRegistry: 'plugin-registry',
+  scriptLibraries: 'script-libraries',
   access: 'access',
   security: 'security',
   integrity: 'integrity',
@@ -123,6 +128,7 @@ const PAGE_TITLE: Record<ActiveTab, string> = {
   commands: '명령어 관리',
   plugins: '플러그인 제어',
   pluginRegistry: '플러그인 등록',
+  scriptLibraries: 'JS 라이브러리',
   access: '사용자 및 권한',
   security: '제품 설정',
   integrity: '실행 이상 점검',
@@ -232,6 +238,7 @@ function sidebarSections(role: SessionUser['role']): SidebarSectionDefinition[] 
             { tab: 'commands' as const, label: '명령어 관리', icon: Terminal },
             { tab: 'plugins' as const, label: '플러그인 제어', icon: Plug },
             { tab: 'pluginRegistry' as const, label: '플러그인 등록', icon: FileJson },
+            { tab: 'scriptLibraries' as const, label: 'JS 라이브러리', icon: Library },
           ]
         : []),
     ],
@@ -445,6 +452,8 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
           {activeTab === 'plugins' && <PluginControlPage />}
 
           {activeTab === 'pluginRegistry' && <PluginRegistryPage />}
+
+          {activeTab === 'scriptLibraries' && <ScriptLibraryPage />}
 
           {activeTab === 'integrity' && <RuntimeIntegrityPage />}
 

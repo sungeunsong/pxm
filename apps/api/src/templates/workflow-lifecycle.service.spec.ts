@@ -15,7 +15,10 @@ describe('Workflow deployment lifecycle', () => {
   const dbWatch = { syncDefinitionWatchJobs: jest.fn() };
   const credentials = { getForRuntime: jest.fn() };
   const authz = { getUser: jest.fn() };
-  const service = new TemplatesService(workflowRepo as any, schedules as any, dbWatch as any, credentials as any, authz as any);
+  const service = new TemplatesService(workflowRepo as any, schedules as any, dbWatch as any, credentials as any, authz as any, {
+    hydrateNodes: async (nodes: any[]) => nodes,
+    stripBundles: (nodes: any[]) => nodes,
+  } as any);
 
   beforeEach(() => jest.clearAllMocks());
 

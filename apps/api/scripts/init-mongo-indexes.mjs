@@ -100,6 +100,18 @@ async function main() {
   );
   await db.collection('v2_event_outbox').createIndex({ instance_id: 1, created_at: 1 });
   await db.collection('v2_execution_logs').createIndex({ instance_id: 1, created_at: 1 });
+  await db.collection('v2_script_libraries').createIndex(
+    { package_name: 1, version: 1 },
+    { unique: true, name: 'ux_v2_script_libraries_package_version' },
+  );
+  await db.collection('v2_script_libraries').createIndex(
+    { status: 1, package_name: 1 },
+    { name: 'idx_v2_script_libraries_status' },
+  );
+  await db.collection('v2_script_library_audit').createIndex(
+    { library_id: 1, created_at: -1 },
+    { name: 'idx_v2_script_library_audit_library' },
+  );
   await ensureAdvisoryLockIndexes(db);
   await pruneExpiredAdvisoryLocks(db);
 

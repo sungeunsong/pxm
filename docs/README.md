@@ -29,6 +29,7 @@
 | [external-approval-email.md](external-approval-email.md) | 계정 없는 외부 승인자의 이메일 + OTP 결재 |
 | [approval-notifications.md](approval-notifications.md) | 승인자 알림 발송과 이력 |
 | [approval-delegation.md](approval-delegation.md) | 기간·범위별 대리 결재와 관리자 긴급 재배정 |
+| [js-library-management.md](js-library-management.md) | 승인된 npm 패키지의 버전·그룹별 사용과 JS 노드 실행 방식 |
 
 ## 실행 엔진
 

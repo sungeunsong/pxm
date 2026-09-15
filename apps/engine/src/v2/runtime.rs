@@ -383,6 +383,7 @@ fn execute_js_node(node: &NodeDef, context: &Value) -> Result<JsExecution> {
 
     let runner = r#"
 const vm = require('node:vm');
+const crypto = require('node:crypto');
 
 let raw = '';
 process.stdin.setEncoding('utf8');
@@ -428,10 +429,58 @@ process.stdin.on('end', () => {
     }, {
       codeGeneration: { strings: false, wasm: false },
     });
-    const wrapped = `(function(input, context) {
+    new vm.Script('globalThis.global = globalThis; globalThis.self = globalThis; globalThis.libs = Object.create(null)').runInContext(sandbox, {
+      timeout: Number(payload.timeout_ms) || 1000,
+    });
+    const libraries = Array.isArray(payload.libraries) ? payload.libraries : [];
+    if (libraries.length > 20) throw new Error('A JS node can use at most 20 libraries');
+    for (const library of libraries) {
+      const packageName = String(library.package_name || '');
+      const version = String(library.version || '');
+      const bundle = String(library.bundle || '');
+      const expectedHash = String(library.bundle_sha256 || '');
+      if (!packageName || !version || !bundle || !/^[a-f0-9]{64}$/.test(expectedHash)) {
+        throw new Error('Invalid approved JS library payload');
+      }
+      if (Buffer.byteLength(bundle, 'utf8') > 2 * 1024 * 1024) {
+        throw new Error(`JS library bundle is too large: ${packageName}@${version}`);
+      }
+      const actualHash = crypto.createHash('sha256').update(bundle).digest('hex');
+      if (actualHash !== expectedHash) {
+        throw new Error(`JS library integrity check failed: ${packageName}@${version}`);
+      }
+      const moduleBox = new vm.Script('({ exports: {} })').runInContext(sandbox, {
+        timeout: Number(payload.timeout_ms) || 1000,
+      });
+      sandbox.__pxmLibraryModule = moduleBox;
+      const loader = new vm.Script(
+        `(function(module, exports) {\n${bundle}\n})(__pxmLibraryModule, __pxmLibraryModule.exports)`,
+        { filename: `pxm-library-${packageName.replace(/[^a-zA-Z0-9_.-]/g, '_')}-${version}.cjs` },
+      );
+      loader.runInContext(sandbox, {
+        timeout: Number(payload.timeout_ms) || 1000,
+        displayErrors: true,
+      });
+      sandbox.libs[packageName] = moduleBox.exports;
+      delete sandbox.__pxmLibraryModule;
+    }
+    new vm.Script(`
+      (function freezeLibrary(value, seen = new Set()) {
+        if ((typeof value !== 'object' && typeof value !== 'function') || value === null || seen.has(value)) return value;
+        seen.add(value);
+        for (const key of Reflect.ownKeys(value)) {
+          const descriptor = Object.getOwnPropertyDescriptor(value, key);
+          if (descriptor && Object.prototype.hasOwnProperty.call(descriptor, 'value')) {
+            freezeLibrary(descriptor.value, seen);
+          }
+        }
+        return Object.freeze(value);
+      })(globalThis.libs);
+    `).runInContext(sandbox, { timeout: Number(payload.timeout_ms) || 1000 });
+    const wrapped = `(function(input, context, libs) {
       "use strict";
       ${String(payload.code || '')}
-    })(input, context)`;
+    })(input, context, libs)`;
     const script = new vm.Script(wrapped, { filename: 'pxm-js-node.vm' });
     const output = script.runInContext(sandbox, {
       timeout: Number(payload.timeout_ms) || 1000,
@@ -459,12 +508,18 @@ process.stdin.on('end', () => {
     let payload = json!({
         "code": code,
         "context": external_execution_context(context),
+        "libraries": node
+            .config
+            .get("scriptLibraryBundles")
+            .cloned()
+            .unwrap_or_else(|| json!([])),
         "timeout_ms": timeout_ms,
         "console_max_lines": 200,
         "console_max_bytes": 65_536,
     });
 
     let mut child = Command::new("node")
+        .arg("--max-old-space-size=64")
         .arg("-e")
         .arg(runner)
         .stdin(Stdio::piped())
@@ -1990,11 +2045,60 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
 #[cfg(test)]
 mod tests {
     use super::{
-        execute_command_node, resolve_approval_assignment, resolve_approval_deadline, resolve_approval_definition,
-        select_approval_edges, select_gateway_edges, V2RetryPolicy,
+        execute_command_node, execute_js_node, resolve_approval_assignment,
+        resolve_approval_deadline, resolve_approval_definition, select_approval_edges,
+        select_gateway_edges, V2RetryPolicy,
     };
     use crate::v2::types::{EdgeRule, GatewayType, NodeDef};
     use serde_json::json;
+    use sha2::{Digest, Sha256};
+
+    #[test]
+    fn executes_an_approved_versioned_js_library() {
+        let bundle = "module.exports = { double: (value) => value * 2 };";
+        let hash = format!("{:x}", Sha256::digest(bundle.as_bytes()));
+        let node = NodeDef {
+            node_id: "script".to_string(),
+            node_type: "script".to_string(),
+            config: json!({
+                "code": "return libs['company.math'].double(21);",
+                "scriptLibraryBundles": [{
+                    "package_name": "company.math",
+                    "version": "1.0.0",
+                    "bundle_sha256": hash,
+                    "bundle": bundle
+                }]
+            }),
+        };
+
+        let result = execute_js_node(&node, &json!({})).unwrap();
+        assert!(result.success);
+        assert_eq!(result.output, json!(42));
+    }
+
+    #[test]
+    fn rejects_a_js_library_with_a_changed_bundle() {
+        let node = NodeDef {
+            node_id: "script".to_string(),
+            node_type: "script".to_string(),
+            config: json!({
+                "code": "return 1;",
+                "scriptLibraryBundles": [{
+                    "package_name": "company.math",
+                    "version": "1.0.0",
+                    "bundle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "bundle": "module.exports = {};"
+                }]
+            }),
+        };
+
+        let result = execute_js_node(&node, &json!({})).unwrap();
+        assert!(!result.success);
+        assert!(result
+            .error_message
+            .unwrap_or_default()
+            .contains("integrity check failed"));
+    }
 
     #[test]
     fn resolves_fixed_approval_assignee() {
@@ -4201,7 +4305,14 @@ async fn execute_token_flow(
                         Some(token.id),
                         Some(&token.node_id),
                         "NODE_STARTED",
-                        json!({"script_type": "javascript"}),
+                        json!({
+                            "script_type": "javascript",
+                            "script_libraries": node
+                                .config
+                                .get("scriptLibraries")
+                                .cloned()
+                                .unwrap_or_else(|| json!([]))
+                        }),
                         tx,
                     )
                     .await?;
@@ -4239,6 +4350,11 @@ async fn execute_token_flow(
                                 "NODE_COMPLETED",
                                 json!({
                                     "script_type": "javascript",
+                                    "script_libraries": node
+                                        .config
+                                        .get("scriptLibraries")
+                                        .cloned()
+                                        .unwrap_or_else(|| json!([])),
                                     "output_path": output_path,
                                     "output": js.output,
                                     "console": js.console

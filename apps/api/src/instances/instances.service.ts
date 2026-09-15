@@ -112,7 +112,7 @@ export class InstancesService {
   }
 
   async findAll(actor?: WorkflowHistoryActor) {
-    return this.instanceRepo.listInstances(actor);
+    return (await this.instanceRepo.listInstances(actor)).map(stripRuntimeLibraryBundles);
   }
 
   async getStats(actor?: WorkflowHistoryActor) {
@@ -120,7 +120,7 @@ export class InstancesService {
   }
 
   async findOne(id: string, actor?: WorkflowHistoryActor) {
-    return this.getReadableInstance(id, actor);
+    return stripRuntimeLibraryBundles(await this.getReadableInstance(id, actor));
   }
 
   async getResult(id: string, actor?: WorkflowHistoryActor) {
@@ -751,6 +751,21 @@ function withAccess(ctx: any, access?: WorkflowInstanceAccess): any {
       access,
     },
   };
+}
+
+function stripRuntimeLibraryBundles(instance: any) {
+  if (!instance || typeof instance !== 'object') return instance;
+  const clone = structuredClone(instance);
+  for (const contextKey of ['context', 'ctx']) {
+    const nodes = clone?.[contextKey]?.runtime?.nodes;
+    if (!Array.isArray(nodes)) continue;
+    for (const node of nodes) {
+      if (node?.data && typeof node.data === 'object') delete node.data.scriptLibraryBundles;
+      if (node?.config && typeof node.config === 'object') delete node.config.scriptLibraryBundles;
+      if (node && typeof node === 'object') delete node.scriptLibraryBundles;
+    }
+  }
+  return clone;
 }
 
 function accessFromInstance(instance: any): WorkflowInstanceAccess {

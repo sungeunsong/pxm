@@ -20,6 +20,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
 import { OperationsModule } from './operations/operations.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { HttpObservabilityModule } from './observability/http-observability.module';
+import { ScriptLibrariesModule } from './script-libraries/script-libraries.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { HttpObservabilityModule } from './observability/http-observability.modu
     OperationsModule,
     NotificationsModule,
     HttpObservabilityModule,
+    ScriptLibrariesModule,
   ],
   providers: [
     {

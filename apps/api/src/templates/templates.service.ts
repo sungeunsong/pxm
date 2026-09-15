@@ -6,6 +6,7 @@ import { SchedulesService } from '../schedules/schedules.service';
 import { DbWatchService } from '../db-watch/db-watch.service';
 import { CredentialsService } from '../credentials/credentials.service';
 import { AuthzService } from '../authz/authz.service';
+import { ScriptLibrariesService } from '../script-libraries/script-libraries.service';
 
 @Injectable()
 export class TemplatesService {
@@ -15,17 +16,19 @@ export class TemplatesService {
     private readonly dbWatchService: DbWatchService,
     private readonly credentialsService: CredentialsService,
     private readonly authzService: AuthzService,
+    private readonly scriptLibrariesService: ScriptLibrariesService,
   ) {}
 
   async create(dto: CreateTemplateDto): Promise<TemplateResponseDto> {
     const id = randomUUID();
-    await this.assertCredentialBindings(dto.nodes || [], dto.group_id);
-    await this.assertApprovalAssignments(dto.nodes || [], dto.group_id);
-    await this.assertNoWorkflowCallCycle(id, dto.nodes || []);
+    const hydratedNodes = await this.scriptLibrariesService.hydrateNodes(dto.nodes || [], dto.group_id);
+    await this.assertCredentialBindings(hydratedNodes, dto.group_id);
+    await this.assertApprovalAssignments(hydratedNodes, dto.group_id);
+    await this.assertNoWorkflowCallCycle(id, hydratedNodes);
     await this.workflowRepo.createDefinition(
       id,
       dto.name,
-      dto.nodes || [],
+      hydratedNodes,
       dto.edges || [],
       this.normalizeMetadata({
         ...dto,
@@ -64,13 +67,20 @@ export class TemplatesService {
     return result ? this.mapToDto(result) : null;
   }
 
+  async findForExecution(id: string, allowDraft = false): Promise<TemplateResponseDto | null> {
+    const result = allowDraft
+      ? await this.workflowRepo.getDefinition(id)
+      : await this.workflowRepo.getPublishedDefinition(id);
+    return result ? this.mapToDto(result, true) : null;
+  }
+
   async update(id: string, dto: UpdateTemplateDto): Promise<TemplateResponseDto | null> {
     // V2 템플릿 변경: 기존 정의 데이터 로드 후 업데이트 수행
     const current = await this.workflowRepo.getDefinition(id);
     if (!current) return null;
 
     const updatedName = dto.name !== undefined ? dto.name : current.name;
-    const updatedNodes = dto.nodes !== undefined ? dto.nodes : current.nodes;
+    const requestedNodes = dto.nodes !== undefined ? dto.nodes : current.nodes;
     const updatedEdges = dto.edges !== undefined ? dto.edges : current.edges;
     const updatedMetadata = this.normalizeMetadata({
       description: dto.description !== undefined ? dto.description : current.description,
@@ -82,6 +92,10 @@ export class TemplatesService {
       updated_by: dto.updated_by || current.updated_by || current.metadata?.updated_by || null,
       ...effectiveLifecycle(current),
     });
+    const updatedNodes = await this.scriptLibrariesService.hydrateNodes(
+      requestedNodes || [],
+      updatedMetadata.group_id,
+    );
 
     await this.assertCredentialBindings(updatedNodes || [], updatedMetadata.group_id);
     await this.assertApprovalAssignments(updatedNodes || [], updatedMetadata.group_id);
@@ -94,6 +108,10 @@ export class TemplatesService {
   async publish(id: string, actorId = 'system'): Promise<TemplateResponseDto | null> {
     const current = await this.workflowRepo.getDefinition(id);
     if (!current) return null;
+    await this.scriptLibrariesService.hydrateNodes(
+      current.nodes || [],
+      current.group_id || current.metadata?.group_id || null,
+    );
     const published = await this.workflowRepo.setDefinitionLifecycle(id, {
       status: 'PUBLISHED',
       active_published_version: current.version || 1,
@@ -175,6 +193,7 @@ export class TemplatesService {
         nodes,
         edges,
         plugin_dependencies: extractPluginDependencies(nodes),
+        script_library_dependencies: extractScriptLibraryDependencies(nodes),
       },
       security: {
         secrets_policy: 'redacted',
@@ -236,6 +255,10 @@ export class TemplatesService {
     if (!snapshot) return null;
 
     await this.assertCredentialBindings(snapshot.nodes || [], snapshot.group_id || snapshot.metadata?.group_id || null);
+    await this.scriptLibrariesService.hydrateNodes(
+      snapshot.nodes || [],
+      snapshot.group_id || snapshot.metadata?.group_id || null,
+    );
     await this.assertNoWorkflowCallCycle(id, snapshot.nodes || []);
     const restored = await this.workflowRepo.restoreDefinitionVersion(id, version, {
       updated_by: actorId,
@@ -246,7 +269,7 @@ export class TemplatesService {
     return this.mapToDto(restored);
   }
 
-  private mapToDto(row: any): TemplateResponseDto {
+  private mapToDto(row: any, includeRuntimeBundles = false): TemplateResponseDto {
     const metadata = this.normalizeMetadata({
       ...(row.metadata || {}),
       description: row.description ?? row.metadata?.description,
@@ -270,7 +293,9 @@ export class TemplatesService {
       tags: metadata.tags || [],
       version_note: metadata.version_note || '',
       imported_from: metadata.imported_from,
-      nodes: row.nodes || [],
+      nodes: includeRuntimeBundles
+        ? row.nodes || []
+        : this.scriptLibrariesService.stripBundles(row.nodes || []),
       edges: row.edges || [],
       version: row.version || 1,
       is_active: row.is_active !== undefined ? row.is_active : row.status !== 'DELETED',
@@ -632,6 +657,29 @@ function extractPluginDependencies(nodes: any[]) {
   return [...dependencies.values()];
 }
 
+function extractScriptLibraryDependencies(nodes: any[]) {
+  const dependencies = new Map<string, { package_name: string; version: string; node_ids: string[] }>();
+  for (const node of nodes || []) {
+    const refs = Array.isArray(node?.data?.scriptLibraries)
+      ? node.data.scriptLibraries
+      : Array.isArray(node?.scriptLibraries)
+        ? node.scriptLibraries
+        : [];
+    for (const ref of refs) {
+      if (typeof ref?.package_name !== 'string' || typeof ref?.version !== 'string') continue;
+      const key = `${ref.package_name}@${ref.version}`;
+      const current: { package_name: string; version: string; node_ids: string[] } = dependencies.get(key) || {
+        package_name: ref.package_name,
+        version: ref.version,
+        node_ids: [],
+      };
+      if (node?.id) current.node_ids.push(String(node.id));
+      dependencies.set(key, current);
+    }
+  }
+  return [...dependencies.values()];
+}
+
 function extractWorkflowCallTargets(nodes: any[]): string[] {
   return (nodes || [])
     .filter((node) => (node?.data?.nodeType || node?.node_type || node?.type) === 'workflow_call')
@@ -725,6 +773,9 @@ function parseWorkflowExportDocument(document: any): WorkflowExportDocument {
       nodes: workflow.nodes,
       edges: workflow.edges,
       plugin_dependencies: Array.isArray(workflow.plugin_dependencies) ? workflow.plugin_dependencies : extractPluginDependencies(workflow.nodes),
+      script_library_dependencies: Array.isArray(workflow.script_library_dependencies)
+        ? workflow.script_library_dependencies
+        : extractScriptLibraryDependencies(workflow.nodes),
     },
     security: {
       secrets_policy: 'redacted',

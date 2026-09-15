@@ -229,8 +229,12 @@ http://{{formData.host}}/grant               ❌ 오류
 - 주입되는 전역은 `input`, `context`, `console` 세 개뿐
 - `require`, `process` 미제공. `eval`과 `Function` 생성자는 `codeGeneration: false`로 차단
 - timeout 기본 1000ms (50~5000ms 범위), console 출력 200줄 / 64KB 제한
+- 최고관리자가 정확한 npm 버전을 자동 다운로드한 뒤 그룹별로 승인
+- 승인된 패키지는 JS 노드에서 선택하고 `libs['패키지명']`으로 사용
+- npm lifecycle script 차단, 브라우저용 단일 번들·SHA-256 무결성 검증·2MB 상한
+- 워크플로우 버전에 패키지 버전 고정, 실행 로그와 export에 의존성 기록
 
-**제한**: 메모리 상한과 출력 크기 상한은 아직 없다. 다른 언어(Python 등)는 지원하지 않는다.
+임의 `require`/`import`, 실행 중 패키지 설치, Node.js 내장 모듈을 사용하는 패키지는 지원하지 않는다. Node 자식 프로세스는 64MB 힙 제한으로 실행한다. 다른 언어(Python 등)는 지원하지 않는다. 관리 절차는 `docs/js-library-management.md`를 참고한다.
 
 ## Command 노드
 

@@ -30,6 +30,7 @@
     "@pxm/contracts": "workspace:*",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
+    "esbuild": "^0.25.12",
     "helmet": "^8.3.0",
     "mongodb": "^6.21.0",
     "nodemailer": "^9.0.3",

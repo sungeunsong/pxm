@@ -36,7 +36,10 @@ describe('Workflow attribution', () => {
   });
   it('keeps absent historical actors unknown instead of attributing work to admin', async () => {
     const repo = { getDefinition: jest.fn().mockResolvedValue({ id: 'old', nodes: [], edges: [] }) };
-    const service = new TemplatesService(repo as any, {} as any, {} as any, {} as any, {} as any);
+    const service = new TemplatesService(repo as any, {} as any, {} as any, {} as any, {} as any, {
+      hydrateNodes: async (nodes: any[]) => nodes,
+      stripBundles: (nodes: any[]) => nodes,
+    } as any);
     const old = await service.findOne('old');
     expect(old?.created_by).toBeUndefined();
     expect(old?.updated_by).toBeUndefined();
