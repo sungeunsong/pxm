@@ -2,7 +2,7 @@ import { MongoClient } from 'mongodb';
 import { randomBytes } from 'node:crypto';
 import { readFile, writeFile, chmod } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { marker, groupId, users, employees, fixtures, presets } from './fixtures.mjs';
+import { marker, groupId, users, employees, fixtures, presets, demoLibrary } from './fixtures.mjs';
 
 const mode = process.argv[2];
 if (!['seed', 'reset'].includes(mode)) throw new Error('Usage: manage.mjs seed|reset');
@@ -39,7 +39,7 @@ async function saveAccess(access) {
   await writeFile(accessFile, JSON.stringify(access, null, 2) + '\n', { mode: 0o600 });
   await chmod(accessFile, 0o600);
 }
-async function ensureWorkflow(key, payload, manifest) {
+async function ensureWorkflow(key, payload, manifest, workflowPresets = presets) {
   let current = manifest.workflows[key] ? await request(`/templates/${manifest.workflows[key]}`) : null;
   if (!current) {
     // Recover a create that succeeded immediately before a process interruption.
@@ -55,11 +55,27 @@ async function ensureWorkflow(key, payload, manifest) {
   await db.collection('pxm_demo_manifests').updateOne({ _id: marker }, { $set: { workflows: manifest.workflows } });
   if (current.lifecycle_status !== 'PUBLISHED' || current.active_published_version !== current.version) await request(`/templates/${current.id}/deploy`, 'POST', {});
   const existing = await request(`/templates/${current.id}/input-presets`);
-  for (const preset of presets) {
+  for (const preset of workflowPresets) {
     const old = existing.find(p => p.alias === preset.alias);
     const body = { ...preset, scope: 'group', ...(old ? { id: old.id } : {}) };
     if (!old || old.name !== preset.name || old.scope !== 'group' || JSON.stringify(old.values) !== JSON.stringify(preset.values)) await request(`/templates/${current.id}/input-presets`, 'POST', body);
   }
+}
+async function ensureScriptLibrary(manifest) {
+  const libraries = await request('/script-libraries/admin');
+  let library = libraries.find(item => item.package_name === demoLibrary.package_name && item.version === demoLibrary.version);
+  if (!library) library = await request('/script-libraries', 'POST', demoLibrary);
+  const availableToDemoGroup = library.status === 'approved'
+    && (library.allowed_group_ids.length === 0 || library.allowed_group_ids.includes(groupId));
+  if (!availableToDemoGroup) {
+    const preservedGroups = library.allowed_group_ids.length > 0 ? library.allowed_group_ids : [];
+    library = await request(`/script-libraries/${library.id}/approve`, 'POST', {
+      allowed_group_ids: [...new Set([...preservedGroups, groupId])],
+    });
+  }
+  manifest.library_id = library.id;
+  await db.collection('pxm_demo_manifests').updateOne({ _id: marker }, { $set: { library_id: library.id } });
+  return library;
 }
 async function ensureDelegation(manifest) {
   const workflowId = manifest.workflows.delegation;
@@ -185,10 +201,11 @@ try {
       await db.collection('pxm_demo_manifests').updateOne({ _id: marker }, { $set: { credentials: manifest.credentials } });
     }
     for (const employee of employees) await db.collection('pxm_demo_employees').updateOne({ _id: `${marker}:${employee.emp_id}` }, { $set: { ...employee, demo_marker: marker } }, { upsert: true });
-    for (const { key, payload } of fixtures(manifest.credentials, dbName, serviceUrl)) await ensureWorkflow(key, payload, manifest);
+    const library = await ensureScriptLibrary(manifest);
+    for (const { key, payload, presets: workflowPresets } of fixtures(manifest.credentials, dbName, serviceUrl)) await ensureWorkflow(key, payload, manifest, workflowPresets);
     const delegation = await ensureDelegation(manifest);
     await db.collection('pxm_demo_manifests').updateOne({ _id: marker }, { $set: { delegation_id: delegation.id } });
-    console.log(JSON.stringify({ group: group.name, group_id: groupId, workflows: manifest.workflows, credentials: manifest.credentials, accounts: ['admin (기존 계정)', ...users.map(u => u.id)], password_file: accessFile, web: 'http://localhost:5174', mailpit: 'http://localhost:8025', service: serviceUrl, next: 'pnpm demo:service 실행 후 docs/demo-practice.md 참고' }, null, 2));
+    console.log(JSON.stringify({ group: group.name, group_id: groupId, workflows: manifest.workflows, credentials: manifest.credentials, library: `${library.package_name}@${library.version}`, accounts: ['admin (기존 계정)', ...users.map(u => u.id)], password_file: accessFile, web: 'http://localhost:5174', mailpit: 'http://localhost:8025', service: serviceUrl, next: 'pnpm demo:service 실행 후 docs/demo-practice.md 참고' }, null, 2));
   } finally { await db.collection('pxm_demo_manifests').updateOne({ _id: marker }, { $unset: { busy: '' } }); }
 } catch (error) { console.error(`[demo:${mode}] ${error.message}`); process.exitCode = 1; }
 finally { if (headers) await request('/auth/logout', 'POST', {}).catch(() => {}); await client.close(); }

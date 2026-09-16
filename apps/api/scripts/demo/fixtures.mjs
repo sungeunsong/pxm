@@ -11,6 +11,7 @@ export const employees = [
   { emp_id: 'E-2001', name: '이협력', employment_type: 'partner', security_training_done: true },
   { emp_id: 'E-2002', name: '박협력', employment_type: 'partner', security_training_done: false },
 ];
+export const demoLibrary = { package_name: 'lodash', version: '4.17.21' };
 const node = (id, x, y, nodeType, label, data = {}) => ({ id, type: 'custom', position: { x, y }, data: { nodeType, label, ...data } });
 const edge = (source, target, extra = {}) => ({ id: `${source}-${target}`, source, target, type: 'smoothstep', ...extra });
 const approval = (id, x, y, external = false) => node(id, x, y, 'approval', external ? '협력사 이메일 승인' : '내부 담당자 승인', {
@@ -28,6 +29,9 @@ export function fixtures(credentials, dbName, serviceUrl) {
   const start = () => node('start', 0, 160, 'start', '접근 권한 신청', { triggerType: 'manual', formSchema: { fields } });
   const end = (id, x, y, label) => node(id, x, y, 'end', label);
   const common = { group_id: groupId, group: '데모 · 보안운영팀', tags: [marker], version_note: '반복 실습 기준 데이터 v1' };
+  const libraryFields = [
+    { id: 'numbers', type: 'text', label: '처리할 숫자 (쉼표로 구분)', required: true },
+  ];
   return [
     { key: 'basic', payload: { ...common, name: '실습 1 · 기본 접근 권한 결재', description: '신청 → 내부 승인/반려 → 결과 확인',
       nodes: [start(), approval('approval', 260, 160), end('approved', 520, 60, '승인 완료'), end('rejected', 520, 300, '반려 완료')],
@@ -62,9 +66,39 @@ return { level: score < 50 ? 'AUTO' : 'REVIEW', score };` }),
         edge('internal', 'external', { sourceHandle: 'approved' }), edge('internal', 'rejected', { sourceHandle: 'rejected' }),
         edge('external', 'provision', { sourceHandle: 'approved' }), edge('external', 'rejected', { sourceHandle: 'rejected' }), edge('provision', 'approved')],
     } },
+    { key: 'jsLibrary', presets: [libraryPreset], payload: { ...common,
+      name: '실습 4 · 승인된 JS 라이브러리 사용',
+      description: '관리자가 승인한 lodash 고정 버전을 JS 노드에서 사용해 입력 숫자를 집계',
+      nodes: [
+        node('start', 0, 120, 'start', '집계 요청', { triggerType: 'manual', formSchema: { fields: libraryFields } }),
+        node('aggregate', 300, 120, 'script', 'lodash로 숫자 집계', {
+          scriptType: 'javascript', outputPath: 'libraryResult',
+          scriptLibraries: [demoLibrary],
+          code: `const values = String(context.data.formData.numbers || '')
+  .split(',')
+  .map(value => Number(value.trim()))
+  .filter(Number.isFinite);
+if (!values.length) throw new Error('숫자를 하나 이상 입력해 주세요.');
+const lodash = libs['lodash'];
+return {
+  count: values.length,
+  unique: lodash.uniq(values),
+  sortedUnique: lodash.sortBy(lodash.uniq(values)),
+  total: lodash.sum(values),
+};`,
+        }),
+        end('completed', 620, 120, '집계 완료'),
+      ],
+      edges: [edge('start', 'aggregate'), edge('aggregate', 'completed')],
+    } },
   ];
 }
 export const presets = [
   { alias: 'demo-auto', name: '저위험 · 자동 처리', values: { emp_id: 'E-1001', privilege_level: 'read', target_system: '개발 포털' } },
   { alias: 'demo-review', name: '고위험 · 내부/외부 승인', values: { emp_id: 'E-2001', privilege_level: 'admin', target_system: '개발 포털' } },
 ];
+export const libraryPreset = {
+  alias: 'demo-library',
+  name: 'lodash 숫자 집계',
+  values: { numbers: '12, 7, 12, 30, 7' },
+};

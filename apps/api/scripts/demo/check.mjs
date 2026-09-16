@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import { MongoClient } from 'mongodb';
-import { marker, presets } from './fixtures.mjs';
+import { marker, presets, libraryPreset } from './fixtures.mjs';
 const access = JSON.parse(await readFile(process.env.PXM_DEMO_ACCESS_FILE || new URL('../../../../.env.demo-access.json', import.meta.url), 'utf8'));
 const api = access.api;
 const mailpit = process.env.PXM_DEMO_MAILPIT_API_URL || 'http://127.0.0.1:8025/api/v1';
@@ -48,6 +48,15 @@ try {
   assert.ok(manifest, 'Run demo:seed first');
   const requester = await login('demo-requester1');
   const approver = await login('demo-approver1');
+  const libraryId = await run(manifest.workflows.jsLibrary, libraryPreset.alias, requester);
+  const libraryRun = await finished(libraryId);
+  assert.deepEqual(libraryRun.context.data.outputs.libraryResult, {
+    count: 5,
+    unique: [12, 7, 30],
+    sortedUnique: [7, 12, 30],
+    total: 68,
+  });
+  console.log('PASS 승인된 lodash 고정 버전 실행');
   for (const action of ['approve', 'reject']) {
     const id = await run(manifest.workflows.basic, presets[0].alias, requester);
     const pending = await task(id);
