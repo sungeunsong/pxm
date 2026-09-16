@@ -820,7 +820,7 @@ function canReadInstance(instance: any, actor?: WorkflowHistoryActor): boolean {
   if (roles.has('workflow_owner') && actor.owned_workflow_ids.includes(definitionId)) {
     return true;
   }
-  if (actorId && roles.has('requester') && access.requester_id === actorId) {
+  if (actorId && actor.actor_type === 'user' && access.requester_id === actorId) {
     return true;
   }
   if (actorId && roles.has('approver') && (access.approver_ids || []).includes(actorId)) {

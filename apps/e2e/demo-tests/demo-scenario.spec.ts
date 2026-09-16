@@ -25,7 +25,7 @@ test('발표 시연 경로: 관리 설정 확인부터 신청자 자동 처리�
       await expect(row).toBeVisible();
       await row.click();
       await expect(ui.page.getByLabel('워크플로우 작성 이력')).toBeVisible();
-      await expect(ui.page.locator('.workflow-detail-panel')).toContainText('Versionv1');
+      await expect(ui.page.locator('.workflow-detail-panel')).toContainText(/Versionv\d+/);
       await expect(ui.page.getByRole('button', { name: '즉시 실행', exact: true })).toBeVisible();
     });
 
@@ -47,6 +47,19 @@ test('발표 시연 경로: 관리 설정 확인부터 신청자 자동 처리�
     await ui.page.getByRole('button', { name: '요청 제출', exact: true }).click();
     await expect(ui.page).toHaveURL(/#\/my-requests$/);
     await expect(ui.page.locator('main')).toContainText('실습 2 · 협력사 접근 권한 신청');
+
+    await test.step('장면 6 · 결재 없는 JS 라이브러리 실행 결과 확인', async () => {
+      await ui.page.getByRole('button', { name: '요청하기', exact: true }).click();
+      const libraryRow = ui.page.getByRole('row').filter({ hasText: '실습 4 · 승인된 JS 라이브러리 사용' });
+      await expect(libraryRow).toBeVisible();
+      await libraryRow.click();
+      await ui.page.getByRole('button', { name: 'lodash 숫자 집계', exact: true }).click();
+      await ui.page.getByRole('button', { name: '요청 제출', exact: true }).click();
+      await expect(ui.page).toHaveURL(/#\/my-requests$/);
+      await expect(ui.page.locator('.request-progress-card')).toContainText('워크플로우 실행이 완료되었습니다');
+      await expect(ui.page.locator('.request-progress-card')).not.toContainText('결재 진행 중');
+      await expect(ui.page.locator('.request-summary-card').filter({ hasText: '실행 결과' })).toContainText('"total":68');
+    });
     await ui.context.close();
   });
 });

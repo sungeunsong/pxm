@@ -1,6 +1,33 @@
 import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { InstancesService } from './instances.service';
 
+describe('InstancesService requester read authorization', () => {
+  const ownInstance = {
+    id: 'instance-1', state: 'COMPLETED',
+    context: { runtime: { access: { requester_id: 'requester-1' } }, data: { outputs: { total: 68 } } },
+  };
+  const actor = {
+    actor_type: 'user' as const, actor_id: 'requester-1', roles: ['user'], scopes: [],
+    workspace_ids: ['default'], group_ids: [], owned_workflow_ids: [],
+    allowed_workflow_ids: [], allowed_instance_ids: [], api_key_id: null, business_actor: null,
+  };
+  const service = new InstancesService(
+    { getInstance: jest.fn().mockResolvedValue(ownInstance) } as any,
+    {} as any, {} as any, {} as any,
+  );
+
+  it('allows a logged-in user to read an instance they requested', async () => {
+    await expect(service.findOne('instance-1', actor)).resolves.toEqual(
+      expect.objectContaining({ id: 'instance-1', state: 'COMPLETED' }),
+    );
+  });
+
+  it('hides the instance from a different logged-in user', async () => {
+    await expect(service.findOne('instance-1', { ...actor, actor_id: 'requester-2' }))
+      .rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
 describe('InstancesService pause control', () => {
   const buildService = (instance: Record<string, any>) => {
     const instanceRepo = {

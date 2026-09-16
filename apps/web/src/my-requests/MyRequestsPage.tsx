@@ -49,6 +49,23 @@ type RequestInstanceApiRow = Partial<RequestInstance> & {
   };
 };
 
+type ExecutionDetail = {
+  state: string;
+  formData: Record<string, unknown>;
+  outputs: Record<string, unknown>;
+};
+
+type ExecutionDetailApiRow = {
+  state?: string;
+  status?: string;
+  context?: {
+    data?: {
+      formData?: Record<string, unknown>;
+      outputs?: Record<string, unknown>;
+    };
+  };
+};
+
 type HoldInfo = {
   actor_id: string;
   comment: string | null;
@@ -83,6 +100,7 @@ export function MyRequestsPage({
   const [requests, setRequests] = useState<RequestInstance[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(initialInstanceId || null);
   const [history, setHistory] = useState<ApprovalTask[]>([]);
+  const [executionDetail, setExecutionDetail] = useState<ExecutionDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -108,17 +126,27 @@ export function MyRequestsPage({
     }
   }, [currentUser.id]);
 
-  const loadHistory = useCallback(async (instanceId: string) => {
+  const loadDetail = useCallback(async (instanceId: string) => {
     setDetailLoading(true);
     try {
-      const response = await fetch(`/api/instances/${encodeURIComponent(instanceId)}/tasks?limit=100`);
-      const page = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(page?.message || '결재 이력을 불러오지 못했습니다.');
+      const encodedId = encodeURIComponent(instanceId);
+      const [historyResponse, instanceResponse] = await Promise.all([
+        fetch(`/api/instances/${encodedId}/tasks?limit=100`),
+        fetch(`/api/instances/${encodedId}`),
+      ]);
+      const [page, detail] = await Promise.all([
+        historyResponse.json().catch(() => null),
+        instanceResponse.json().catch(() => null),
+      ]);
+      if (!historyResponse.ok) throw new Error(page?.message || '결재 이력을 불러오지 못했습니다.');
+      if (!instanceResponse.ok) throw new Error(detail?.message || '실행 결과를 불러오지 못했습니다.');
       setHistory(Array.isArray(page?.items) ? page.items : []);
+      setExecutionDetail(normalizeExecutionDetail(detail));
       setError(null);
     } catch (loadError) {
       setHistory([]);
-      setError(loadError instanceof Error ? loadError.message : '결재 이력을 불러오지 못했습니다.');
+      setExecutionDetail(null);
+      setError(loadError instanceof Error ? loadError.message : '요청 상세를 불러오지 못했습니다.');
     } finally {
       setDetailLoading(false);
     }
@@ -137,31 +165,32 @@ export function MyRequestsPage({
   useEffect(() => {
     if (!selectedId) {
       setHistory([]);
+      setExecutionDetail(null);
       return;
     }
-    void loadHistory(selectedId);
-    const timer = window.setInterval(() => void loadHistory(selectedId), 3000);
+    void loadDetail(selectedId);
+    const timer = window.setInterval(() => void loadDetail(selectedId), 3000);
     return () => window.clearInterval(timer);
-  }, [loadHistory, selectedId]);
+  }, [loadDetail, selectedId]);
 
   const selected = requests.find((item) => item.id === selectedId) || null;
   const metrics = useMemo(() => ({
     waiting: requests.filter((item) => ['PENDING', 'IN_PROGRESS'].includes(requestStatus(item))).length,
-    approved: requests.filter((item) => requestStatus(item) === 'APPROVED').length,
+    approved: requests.filter((item) => ['APPROVED', 'COMPLETED'].includes(requestStatus(item))).length,
     rejected: requests.filter((item) => requestStatus(item) === 'REJECTED').length,
   }), [requests]);
 
   const refresh = async () => {
     setLoading(true);
     await loadRequests();
-    if (selectedId) await loadHistory(selectedId);
+    if (selectedId) await loadDetail(selectedId);
   };
 
   return (
     <div className="my-requests-page">
       <div className="my-requests-hero">
         <div>
-          <p>내가 시작한 요청의 현재 결재 단계와 처리 결과를 확인합니다.</p>
+          <p>내가 시작한 요청의 실행 상태, 결재 과정과 처리 결과를 확인합니다.</p>
         </div>
         <button type="button" onClick={() => void refresh()} disabled={loading}>
           <RefreshCw size={15} className={loading ? 'spin' : ''} />
@@ -171,7 +200,7 @@ export function MyRequestsPage({
 
       <div className="my-requests-metrics">
         <Metric icon={<Clock3 size={18} />} label="진행 중" value={metrics.waiting} tone="waiting" />
-        <Metric icon={<CheckCircle2 size={18} />} label="승인 완료" value={metrics.approved} tone="approved" />
+        <Metric icon={<CheckCircle2 size={18} />} label="완료" value={metrics.approved} tone="approved" />
         <Metric icon={<XCircle size={18} />} label="반려" value={metrics.rejected} tone="rejected" />
       </div>
 
@@ -218,7 +247,7 @@ export function MyRequestsPage({
           {!selected ? (
             <Empty icon={<FileCheck2 size={26} />} title="확인할 요청을 선택하세요" />
           ) : (
-            <RequestDetail instance={selected} history={history} loading={detailLoading} />
+            <RequestDetail instance={selected} history={history} execution={executionDetail} loading={detailLoading} />
           )}
         </section>
       </div>
@@ -229,16 +258,21 @@ export function MyRequestsPage({
 function RequestDetail({
   instance,
   history,
+  execution,
   loading,
 }: {
   instance: RequestInstance;
   history: ApprovalTask[];
+  execution: ExecutionDetail | null;
   loading: boolean;
 }) {
   const status = requestStatus(instance);
-  const snapshot = history.find((item) => item.content_snapshot)?.content_snapshot || null;
+  const snapshot = history.find((item) => item.content_snapshot)?.content_snapshot || execution?.formData || null;
   const totalSteps = instance.approval_summary?.total_steps || Math.max(0, ...history.map((item) => item.total_steps || 0));
   const currentStep = instance.approval_summary?.current_step_order || Math.max(0, ...history.map((item) => item.current_step_order || 0));
+  const hasApprovalFlow = !!instance.approval_summary || history.length > 0 || totalSteps > 0;
+  const executionState = (execution?.state || instance.state).toUpperCase();
+  const progress = progressCopy(status, executionState, currentStep, totalSteps, hasApprovalFlow);
 
   return (
     <>
@@ -253,10 +287,10 @@ function RequestDetail({
 
       <div className="request-progress-card">
         <div>
-          <strong>{status === 'APPROVED' ? '모든 결재가 완료되었습니다' : status === 'REJECTED' ? '요청이 반려되었습니다' : `${currentStep || 1}단계 결재 진행 중`}</strong>
-          <span>{totalSteps > 0 ? `전체 ${totalSteps}단계` : '결재 단계 준비 중'}</span>
+          <strong>{progress.title}</strong>
+          <span>{progress.description}</span>
         </div>
-        {totalSteps > 0 && (
+        {hasApprovalFlow && totalSteps > 0 && (
           <div className="request-progress-track" aria-label={`전체 ${totalSteps}단계 중 ${currentStep}단계`}>
             {Array.from({ length: totalSteps }, (_, index) => (
               <span key={index} className={index + 1 <= currentStep ? 'active' : ''} />
@@ -279,7 +313,21 @@ function RequestDetail({
         </div>
       )}
 
-      <div className="request-history-card" data-testid="request-approval-history">
+      {execution && Object.keys(execution.outputs).length > 0 && (
+        <div className="request-summary-card">
+          <h4>실행 결과</h4>
+          <div>
+            {Object.entries(execution.outputs).map(([key, value]) => (
+              <dl key={key}>
+                <dt>{humanize(key)}</dt>
+                <dd>{displayValue(value)}</dd>
+              </dl>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {hasApprovalFlow && <div className="request-history-card" data-testid="request-approval-history">
         <div className="my-requests-section-title">
           <strong>결재 진행 이력</strong>
           {loading && <span>갱신 중</span>}
@@ -293,7 +341,7 @@ function RequestDetail({
               .map((task) => <HistoryItem key={task.task_id} task={task} />)}
           </ol>
         )}
-      </div>
+      </div>}
     </>
   );
 }
@@ -336,8 +384,29 @@ function Empty({ icon, title, description }: { icon: React.ReactNode; title: str
 }
 
 function StatusBadge({ status, hold }: { status: string; hold: boolean }) {
-  const display = hold ? '보류' : status === 'IN_PROGRESS' || status === 'PENDING' ? '진행 중' : status === 'APPROVED' ? '승인 완료' : status === 'REJECTED' ? '반려' : status === 'CANCELED' ? '취소' : status;
+  const display = hold ? '보류' : status === 'IN_PROGRESS' || status === 'PENDING' || status === 'RUNNING' ? '진행 중' : status === 'APPROVED' ? '승인 완료' : status === 'COMPLETED' ? '완료' : status === 'REJECTED' ? '반려' : status === 'FAILED' ? '실패' : status === 'TERMINATED' || status === 'CANCELED' ? '종료' : status;
   return <span className={`my-request-status ${hold ? 'hold' : status.toLowerCase()}`}>{display}</span>;
+}
+
+function normalizeExecutionDetail(value: unknown): ExecutionDetail {
+  const row = value as ExecutionDetailApiRow;
+  return {
+    state: String(row.state || row.status || 'RUNNING').toUpperCase(),
+    formData: row.context?.data?.formData || {},
+    outputs: row.context?.data?.outputs || {},
+  };
+}
+
+function progressCopy(status: string, executionState: string, currentStep: number, totalSteps: number, hasApprovalFlow: boolean) {
+  if (hasApprovalFlow) {
+    if (status === 'APPROVED') return { title: '모든 결재가 완료되었습니다', description: totalSteps > 0 ? `전체 ${totalSteps}단계` : '결재 완료' };
+    if (status === 'REJECTED') return { title: '요청이 반려되었습니다', description: totalSteps > 0 ? `전체 ${totalSteps}단계` : '결재 종료' };
+    return { title: `${currentStep || 1}단계 결재 진행 중`, description: totalSteps > 0 ? `전체 ${totalSteps}단계` : '결재 단계 준비 중' };
+  }
+  if (executionState === 'COMPLETED') return { title: '워크플로우 실행이 완료되었습니다', description: '결재 없이 자동 처리가 완료되었습니다' };
+  if (executionState === 'FAILED') return { title: '워크플로우 실행에 실패했습니다', description: '실행 모니터링에서 실패 원인을 확인하세요' };
+  if (executionState === 'TERMINATED' || executionState === 'CANCELED') return { title: '워크플로우 실행이 종료되었습니다', description: '사용자 또는 운영자에 의해 종료되었습니다' };
+  return { title: '워크플로우를 실행하고 있습니다', description: '결재 없이 자동 처리 중입니다' };
 }
 
 function normalizeInstance(value: unknown): RequestInstance {

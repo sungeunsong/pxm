@@ -76,7 +76,9 @@ return { level: score < 50 ? 'AUTO' : 'REVIEW', score };` }),
           scriptLibraries: [demoLibrary],
           code: `const values = String(context.data.formData.numbers || '')
   .split(',')
-  .map(value => Number(value.trim()))
+  .map(value => value.trim())
+  .filter(Boolean)
+  .map(Number)
   .filter(Number.isFinite);
 if (!values.length) throw new Error('숫자를 하나 이상 입력해 주세요.');
 const lodash = libs['lodash'];
