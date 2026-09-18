@@ -23,11 +23,17 @@ import type { SessionUser } from '../api/session';
 import './AccessManagementPage.css';
 import { ApiKeyUsagePanel } from './ApiKeyUsagePanel';
 
-const scopeOptions: ApiKeyScope[] = ['workflow:execute', 'workflow:read', 'task:approve'];
+// 조회가 기본 권한이므로 먼저 보여준다. 실행·승인은 그 위에 얹는 동작이다.
+const scopeOptions: ApiKeyScope[] = ['workflow:read', 'workflow:execute', 'task:approve'];
 const scopeLabels: Record<ApiKeyScope, string> = {
+  'workflow:read': '조회 (읽기 전용)',
   'workflow:execute': '워크플로우 실행',
-  'workflow:read': '워크플로우/실행 결과 조회',
-  'task:approve': '승인 처리',
+  'task:approve': '결재 승인·반려',
+};
+const scopeDescriptions: Record<ApiKeyScope, string> = {
+  'workflow:read': '워크플로우 목록, 실행 상태, 결과를 읽기만 합니다. 실행은 할 수 없습니다.',
+  'workflow:execute': '새 실행을 시작합니다. 결과까지 확인하려면 조회도 함께 선택합니다.',
+  'task:approve': '이 사용자에게 배정된 결재를 승인하거나 반려합니다.',
 };
 type AccessDetailTab = 'users' | 'serviceAccounts' | 'apiKeys' | 'externalMappings';
 type AccessPageSection = 'groups' | 'users';
@@ -1174,7 +1180,7 @@ function ApiKeyForm({
         <div className="wizard-heading"><strong>무엇을 할 수 있나요?</strong><p>필요한 동작과 워크플로우만 선택하는 것이 안전합니다.</p></div>
         <fieldset className="permission-options"><legend>허용 동작</legend>{scopeOptions.map((scope) => {
           const unavailable = ownerType === 'SERVICE_ACCOUNT' && scope === 'task:approve';
-          return <label key={scope} className={unavailable ? 'disabled' : ''}><input type="checkbox" disabled={unavailable} checked={scopes.includes(scope)} onChange={(event) => setScopes((current) => event.target.checked ? Array.from(new Set([...current, scope])) : current.filter((item) => item !== scope))} /><span><strong>{scopeLabels[scope]}</strong><small>{scope === 'workflow:execute' ? '새 실행을 시작합니다.' : scope === 'workflow:read' ? '워크플로우, 실행 상태와 결과를 조회합니다.' : '사용자에게 배정된 결재를 처리합니다.'}</small></span></label>;
+          return <label key={scope} className={unavailable ? 'disabled' : ''}><input type="checkbox" disabled={unavailable} checked={scopes.includes(scope)} onChange={(event) => setScopes((current) => event.target.checked ? Array.from(new Set([...current, scope])) : current.filter((item) => item !== scope))} /><span><strong>{scopeLabels[scope]}</strong><small>{unavailable ? '서비스 계정에는 줄 수 없습니다. 결재는 사람이 소유한 키로만 처리합니다.' : scopeDescriptions[scope]}</small></span></label>;
         })}</fieldset>
         <label><span>워크플로우 접근 범위</span><select value={workflowAccess} onChange={(event) => setWorkflowAccess(event.target.value as ApiKeyWorkflowAccess)}>
           <option value="allowlist">선택한 워크플로우만 (권장)</option>
