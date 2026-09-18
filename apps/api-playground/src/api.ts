@@ -1,3 +1,5 @@
+import { createRequestId } from './request-id';
+
 export type ApiConfig = {
   baseUrl: string;
   apiKey: string;
@@ -33,7 +35,7 @@ export class PxmApi {
 
   private async request<T>(method: string, path: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
     const started = performance.now();
-    const id = crypto.randomUUID();
+    const id = createRequestId();
     let status: number | null = null;
     try {
       const visibleHeaders = {

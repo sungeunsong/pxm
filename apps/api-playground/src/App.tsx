@@ -22,6 +22,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { ApiError, PxmApi } from './api.ts';
+import { createRequestId } from './request-id';
 import type { RequestLog } from './api.ts';
 
 type Tab = 'workflows' | 'instances' | 'approvals' | 'console';
@@ -114,7 +115,7 @@ export function App() {
     await api.post(
       `/tasks/${encodeURIComponent(selectedApproval.task_id)}/complete`,
       { action, comment },
-      { 'Idempotency-Key': `api-playground:${selectedApproval.task_id}:${action}:${crypto.randomUUID()}` },
+      { 'Idempotency-Key': `api-playground:${selectedApproval.task_id}:${action}:${createRequestId()}` },
     );
     setNotice(action === 'approve' ? '결재를 승인했습니다.' : '결재를 반려했습니다.');
     setSelectedApproval(null);

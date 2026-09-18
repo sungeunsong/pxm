@@ -3,6 +3,7 @@ import { Eye, Filter, CheckCircle2, AlertTriangle, PlayCircle, Clock, RotateCcw,
 import './InstanceTracker.css';
 import { useFeedback } from '../components/feedback/feedback-context';
 import { errorMessage } from '../lib/error-message';
+import { createRequestId } from '../lib/request-id';
 import { approvalStatusLabel, instanceStateLabel } from '../lib/status-label';
 import { DataTable, EmptyState, StatusBadge } from '../components';
 
@@ -225,7 +226,7 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
     try {
       const response = await fetch(`/api/instances/${instanceId}/${paused ? 'pause' : 'resume'}`, {
         method: 'POST',
-        headers: { 'Idempotency-Key': crypto.randomUUID() },
+        headers: { 'Idempotency-Key': createRequestId() },
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) {

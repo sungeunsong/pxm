@@ -1,3 +1,5 @@
+import { createRequestId } from '../lib/request-id';
+
 export type RuntimeIntegrityFindingType =
   | 'ORPHAN_JOB'
   | 'ORPHAN_TOKEN'
@@ -56,7 +58,7 @@ export const runtimeIntegrityApi = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Idempotency-Key': crypto.randomUUID(),
+        'Idempotency-Key': createRequestId(),
       },
       credentials: 'include',
       body: JSON.stringify({
