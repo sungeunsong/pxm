@@ -11,9 +11,6 @@
     "plugin:install": "cd apps/api && node scripts/install-plugin-manifest.mjs",
     "plugin:conformance": "cd apps/api && node scripts/plugin-conformance.mjs",
     "plugin:control": "cd apps/api && node scripts/plugin-control.mjs",
-    "demo:sse:approval": "cd apps/api && node scripts/demo-sse-approval-stream.mjs",
-    "demo:external-email-approval": "cd apps/api && node scripts/create-external-approval-demo.mjs",
-    "e2e:external-email-approval": "cd apps/api && PXM_DEMO_AUTO_COMPLETE=true node scripts/create-external-approval-demo.mjs",
     "e2e:workflow-lifecycle": "cd apps/api && node scripts/smoke-workflow-lifecycle.mjs",
     "e2e:start-idempotency": "cd apps/api && node scripts/smoke-start-idempotency.mjs",
     "e2e:instance-command-idempotency": "cd apps/api && node scripts/smoke-instance-command-idempotency.mjs",
@@ -42,11 +39,6 @@
     "dev:web": "cd apps/web && pnpm dev",
     "dev:api-playground": "pnpm --dir apps/api-playground dev",
     "build": "pnpm -r build",
-    "lint": "pnpm -r lint",
-    "demo:seed": "node apps/api/scripts/demo/manage.mjs seed",
-    "demo:reset": "node apps/api/scripts/demo/manage.mjs reset",
-    "demo:service": "node apps/api/scripts/demo/service.mjs",
-    "demo:check": "node apps/api/scripts/demo/check.mjs",
-    "demo:verify": "pnpm --filter @pxm/e2e test:demo"
+    "lint": "pnpm -r lint"
   }
 }

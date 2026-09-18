@@ -18,8 +18,6 @@ const smtpPort = numberEnv('PXM_E2E_SMTP_PORT', 1126);
 const mailpitPort = numberEnv('PXM_E2E_MAILPIT_PORT', 8126);
 const mongoPort = numberEnv('PXM_E2E_MONGO_PORT', 27127);
 const postgresPort = numberEnv('PXM_E2E_POSTGRES_PORT', 55432);
-const demoServicePort = numberEnv('PXM_E2E_DEMO_SERVICE_PORT', 3320);
-const suite = process.env.PXM_E2E_SUITE === 'demo' ? 'demo' : 'regression';
 const mongoReplicaSet = 'pxmE2eRs';
 const mongoDatabaseName = `pxm_e2e_${runId}`;
 const mongoUrl = `mongodb://127.0.0.1:${mongoPort}/?replicaSet=${mongoReplicaSet}&directConnection=true`;
@@ -46,7 +44,6 @@ try {
     rm(resolve(resultDir, 'artifacts'), { recursive: true, force: true }),
     rm(resolve(resultDir, 'report'), { recursive: true, force: true }),
     rm(resolve(resultDir, 'results.json'), { force: true }),
-    rm(resolve(resultDir, 'demo-access.json'), { force: true }),
     rm(logDir, { recursive: true, force: true }),
   ]);
   await mkdir(logDir, { recursive: true });
@@ -93,11 +90,7 @@ try {
     API_BASE_URL: `http://127.0.0.1:${apiPort}/api`,
     PXM_DEMO_USER: 'admin',
     PXM_DEMO_PASSWORD: bootstrapPassword,
-    PXM_DEMO_SERVICE_PORT: String(demoServicePort),
-    PXM_DEMO_SERVICE_URL: `http://127.0.0.1:${demoServicePort}`,
     PXM_DEMO_MAILPIT_API_URL: `http://127.0.0.1:${mailpitPort}/api/v1`,
-    PXM_DEMO_ACCESS_FILE: resolve(resultDir, 'demo-access.json'),
-    PXM_DEMO_ALLOW_E2E_DATABASE: suite === 'demo' ? 'true' : 'false',
   };
 
   const mongoInit = await runCommand('node', ['apps/api/scripts/init-mongo-indexes.mjs'], sharedEnv);
@@ -131,37 +124,19 @@ try {
     ...sharedEnv,
     VITE_API_TARGET: `http://127.0.0.1:${apiPort}`,
   }));
-  if (suite === 'demo') {
-    children.push(startProcess('demo-service', 'node', ['apps/api/scripts/demo/service.mjs'], sharedEnv));
-  }
-
   await Promise.all([
     waitForHttp(`http://127.0.0.1:${apiPort}/api/health`, 60_000),
     waitForHttp(`http://127.0.0.1:${webPort}`, 60_000),
-    ...(suite === 'demo' ? [waitForHttp(`http://127.0.0.1:${demoServicePort}/health`, 30_000)] : []),
   ]);
-
-  if (suite === 'demo') {
-    phase = 'scenario';
-    for (const [label, args] of [
-      ['reset', ['apps/api/scripts/demo/manage.mjs', 'reset']],
-      ['seed', ['apps/api/scripts/demo/manage.mjs', 'seed']],
-      ['scenario check', ['apps/api/scripts/demo/check.mjs']],
-    ]) {
-      const step = await runCommand('node', args, sharedEnv);
-      if (step.code !== 0) throw new Error(`Demo ${label} failed`);
-    }
-  }
 
   phase = 'regression';
   const result = await runCommand('pnpm', [
-    '--filter', '@pxm/e2e', 'exec', 'playwright', 'test', '--config',
-    suite === 'demo' ? 'playwright.demo.config.ts' : 'playwright.config.ts',
+    '--filter', '@pxm/e2e', 'exec', 'playwright', 'test', '--config', 'playwright.config.ts',
   ], sharedEnv);
   const executedTests = await readExecutedTestCount();
   exitCode = result.code ?? 1;
   if (exitCode === 0) {
-    process.stdout.write(`PXM ${suite} browser regression passed. Executed tests: ${executedTests}\n`);
+    process.stdout.write(`PXM browser regression passed. Executed tests: ${executedTests}\n`);
     await rm(logDir, { recursive: true, force: true });
   } else if (executedTests === 0) {
     exitCode = 3;
@@ -171,7 +146,7 @@ try {
   }
 } catch (error) {
   exitCode = phase === 'bootstrap' ? 2 : phase === 'scenario' ? 1 : 3;
-  const category = phase === 'bootstrap' ? 'infrastructure bootstrap' : phase === 'scenario' ? 'demo scenario' : 'test runner';
+  const category = phase === 'bootstrap' ? 'infrastructure bootstrap' : 'test runner';
   const retry = phase === 'bootstrap' ? ' This failure may be retried.' : '';
   process.stderr.write(`PXM E2E ${category} failed before a browser regression result was available.${retry}\n`);
   process.stderr.write(`${error instanceof Error ? error.stack || error.message : String(error)}\n`);

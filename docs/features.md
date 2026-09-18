@@ -359,7 +359,6 @@ API 요청이 정상 처리됐다는 뜻이다.
 
 # 7. 개발자 경험
 
-- 반복 실습: `demo:seed` / `demo:reset`으로 전용 그룹·계정·워크플로우·입력 프리셋 준비. `demo:service`는 모의 권한 반영, `demo:check`는 실제 API/Engine 경로 검증. 사용법은 `docs/demo-practice.md`.
 
 - OpenAPI 3.1: Swagger UI `/api/docs`, JSON `/api/docs/openapi.json`, 빌드 산출물 `apps/api/openapi.json`
 - 코드와 DTO가 문서의 원본이며, 저장된 산출물이 코드와 달라지면 API 테스트가 실패한다
@@ -429,4 +428,3 @@ API 요청이 정상 처리됐다는 뜻이다.
 | `pnpm gate:operations` | 운영 설정·compose 검증 + 복구 리허설 |
 | `pnpm gate:release` | 위 둘 전부 |
 | `pnpm e2e:browser` | 동적 결재 브라우저 회귀 (`docs/dynamic-approval-browser-regression.md`) |
-| `pnpm demo:verify` | 격리 환경의 발표 데이터 준비 + 백엔드 6개 시나리오 + 브라우저 발표 동선 |
