@@ -1036,6 +1036,7 @@ async fn execute_ssh_command(cred: &SshCredential, command: &str) -> Result<SshC
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let mut exit_code: Option<i32> = None;
+    let mut exit_signal: Option<String> = None;
 
     loop {
         tokio::select! {
@@ -1052,7 +1053,20 @@ async fn execute_ssh_command(cred: &SshCredential, command: &str) -> Result<SshC
                     Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
                         exit_code = Some(exit_status as i32);
                     }
-                    Some(russh::ChannelMsg::Eof) | None => {
+                    Some(russh::ChannelMsg::ExitSignal {
+                        signal_name,
+                        error_message,
+                        ..
+                    }) => {
+                        exit_signal = Some(format!("{signal_name:?}"));
+                        if !error_message.is_empty() {
+                            stderr.extend_from_slice(error_message.as_bytes());
+                        }
+                    }
+                    // 서버는 보통 EOF를 exit-status보다 먼저 보낸다. 여기서 루프를 끊으면
+                    // 종료 코드를 놓쳐 정상 실행을 실패로 처리하게 된다. 채널이 닫힐 때까지 읽는다.
+                    Some(russh::ChannelMsg::Eof) => {}
+                    Some(russh::ChannelMsg::Close) | None => {
                         break;
                     }
                     _ => {}
@@ -1061,8 +1075,16 @@ async fn execute_ssh_command(cred: &SshCredential, command: &str) -> Result<SshC
         }
     }
 
+    // 종료 코드도 시그널도 못 받았다면 원격 셸이 상태를 보내지 않은 것이다.
+    // 출력은 정상적으로 받았으므로 성공(0)으로 본다.
+    let resolved_exit_code = match (exit_code, &exit_signal) {
+        (Some(code), _) => code,
+        (None, Some(_)) => 1,
+        (None, None) => 0,
+    };
+
     Ok(SshCommandResult {
-        exit_code: exit_code.unwrap_or(-1),
+        exit_code: resolved_exit_code,
         stdout: String::from_utf8_lossy(&stdout).to_string(),
         stderr: String::from_utf8_lossy(&stderr).to_string(),
     })
