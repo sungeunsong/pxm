@@ -226,8 +226,50 @@ return {
       ],
       edges: [edge('start', 'aggregate'), edge('aggregate', 'completed')],
     } },
+    ...(credentials.ssh ? [{ key: 'sshRemote', presets: [sshPreset], payload: { ...common,
+      name: '실습 9 · SSH 원격 명령 실행',
+      description: '등록된 SSH 자격증명으로 원격 명령을 실행하고 stdout을 후속 노드로 넘기는 실습',
+      nodes: [
+        node('start', 0, 140, 'start', '원격 점검 시작', {
+          triggerType: 'manual',
+          formSchema: { fields: [
+            { id: 'target_path', type: 'text', label: '확인할 원격 경로', required: true, defaultValue: '/tmp' },
+          ] },
+        }),
+        node('ssh', 300, 140, 'service', '원격 서버 상태 확인', {
+          plugin_id: 'builtin.ssh',
+          plugin_version: '1.0.0',
+          credential_id: credentials.ssh,
+          command: 'hostname && uname -sr && ls -1 {{formData.target_path}} | wc -l',
+          timeout_ms: 15000,
+          outputPath: 'remote',
+        }),
+        node('summarize', 600, 140, 'script', '원격 결과 정리', {
+          scriptType: 'javascript',
+          outputPath: 'remoteSummary',
+          code: `const lines = String(context.data.outputs.remote.stdout || '')
+  .split('\\n')
+  .map(line => line.trim())
+  .filter(Boolean);
+if (lines.length < 3) throw new Error('원격 명령 출력이 예상과 다릅니다: ' + JSON.stringify(lines));
+return {
+  hostname: lines[0],
+  kernel: lines[1],
+  entryCount: Number(lines[2]),
+  exitCode: context.data.outputs.remote.exit_code,
+};`,
+        }),
+        end('completed', 900, 140, '원격 점검 완료'),
+      ],
+      edges: [edge('start', 'ssh'), edge('ssh', 'summarize'), edge('summarize', 'completed')],
+    } }] : []),
   ];
 }
+export const sshPreset = {
+  alias: 'demo-ssh',
+  name: '원격 /tmp 점검',
+  values: { target_path: '/tmp' },
+};
 export const presets = [
   { alias: 'demo-auto', name: '저위험 · 자동 처리', values: { emp_id: 'E-1001', privilege_level: 'read', target_system: '개발 포털' } },
   { alias: 'demo-review', name: '고위험 · 내부/외부 승인', values: { emp_id: 'E-2001', privilege_level: 'admin', target_system: '개발 포털' } },

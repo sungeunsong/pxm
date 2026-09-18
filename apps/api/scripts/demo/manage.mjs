@@ -17,8 +17,7 @@ const accessFile = process.env.PXM_DEMO_ACCESS_FILE || fileURLToPath(new URL('..
 const liveDemo = {
   userId: 'demo-live-manager',
   serviceAccountId: 'demo-live-client',
-  // 발표 중 직접 발급하는 키 이름. reset이 이 이름의 키와 그 호출 이력을 정리한다.
-  apiKeyNames: ['발표 · 현장 발급 키', '발표 · 실행 전용 키'],
+  apiKeyName: '발표 · 현장 발급 키',
   temporaryGroupName: '발표 · 임시 검증 그룹',
   temporaryGroupDescription: '발표 중 그룹 생성과 삭제 정책 확인',
 };
@@ -299,7 +298,7 @@ async function resetRuns(manifest) {
 async function resetLiveDemoArtifacts() {
   const keys = await db.collection('pxm_api_keys').find({
     group_id: groupId,
-    $or: [{ name: { $in: liveDemo.apiKeyNames } }, { owner_id: liveDemo.serviceAccountId }],
+    $or: [{ name: liveDemo.apiKeyName }, { owner_id: liveDemo.serviceAccountId }],
   }, { projection: { _id: 1 } }).toArray();
   const keyIds = keys.map(key => key._id);
   if (keyIds.length) {
@@ -392,6 +391,15 @@ try {
       manifest.credentials[key] = current?.id || (await request('/credentials', 'POST', { group_id: groupId, name, type, secret_value, description: marker })).id;
       await db.collection('pxm_demo_manifests').updateOne({ _id: marker }, { $set: { credentials: manifest.credentials } });
     }
+    // SSH 실습은 접속 대상이 환경마다 달라 자격증명을 만들지 않는다.
+    // 그룹에 SSH 자격증명이 등록되어 있으면 그것을 실습 9에 연결하고, 없으면 실습 9를 건너뛴다.
+    const sshCredential = (await request(`/credentials?groupId=${groupId}`)).find(c => c.type === 'ssh' && c.active);
+    if (sshCredential) manifest.credentials.ssh = sshCredential.id;
+    else {
+      delete manifest.credentials.ssh;
+      console.warn('SSH 실습 건너뜀: 그룹에 SSH 자격증명이 없습니다. 연동 자격증명에서 SSH를 하나 만든 뒤 다시 실행하세요.');
+    }
+    await db.collection('pxm_demo_manifests').updateOne({ _id: marker }, { $set: { credentials: manifest.credentials } });
     for (const employee of employees) await db.collection('pxm_demo_employees').updateOne({ _id: `${marker}:${employee.emp_id}` }, { $set: { ...employee, demo_marker: marker } }, { upsert: true });
     const library = await ensureScriptLibrary(manifest);
     await ensureDemoCommands();
