@@ -90,7 +90,7 @@ test('그룹 관리자는 목록 중심 화면에서 API Key 발급 범위를 �
   await drawer.getByLabel(/Key 이름/).fill('UI 검증용 키');
   await drawer.getByRole('button', { name: '다음', exact: true }).click();
   await expect(drawer.getByText('무엇을 할 수 있나요?', { exact: true })).toBeVisible();
-  await expect(drawer.getByText('승인 처리', { exact: true })).toBeVisible();
+  await expect(drawer.getByText('결재 승인·반려', { exact: true })).toBeVisible();
   await drawer.getByRole('checkbox', { name: /실습 1 · 기본 접근 권한 결재/ }).check();
   await drawer.getByRole('button', { name: '다음', exact: true }).click();
   await expect(drawer.getByText('보안 제한을 확인하세요', { exact: true })).toBeVisible();
@@ -150,11 +150,12 @@ test('워크플로우 운영 기능은 관리 화면에 모으고 불러오기�
   await ui.page.getByRole('button', { name: '워크플로우 설계', exact: true }).click();
   await ui.page.getByRole('button', { name: '더 보기' }).click();
   await ui.page.getByRole('menuitem', { name: '불러오기', exact: true }).click();
-  const loadCard = ui.page.locator('.template-item-group').filter({ hasText: '실습 5 · 디자이너와 배포 수명주기' });
+  const loadCard = ui.page.getByRole('listitem').filter({ hasText: '실습 5 · 디자이너와 배포 수명주기' });
   await expect(loadCard.getByRole('button', { name: '불러오기', exact: true })).toBeVisible();
-  await expect(loadCard).toContainText('생성자 ID:');
-  await expect(loadCard).toContainText('수정자 ID:');
-  await expect(loadCard).toContainText('최근 수정');
+  await expect(loadCard).toContainText('수정');
+  await expect(loadCard).toContainText('demo-secadmin');
+  await expect(loadCard).toContainText('생성');
+  await expect(loadCard).toContainText('admin');
   await expect(loadCard.getByRole('button', { name: '배포', exact: true })).toHaveCount(0);
   await expect(loadCard.getByRole('button', { name: '배포 중지', exact: true })).toHaveCount(0);
   await expect(loadCard.getByRole('button', { name: '버전', exact: true })).toHaveCount(0);

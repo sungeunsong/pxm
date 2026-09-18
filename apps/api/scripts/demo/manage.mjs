@@ -49,7 +49,7 @@ async function saveAccess(access) {
   await writeFile(accessFile, JSON.stringify(access, null, 2) + '\n', { mode: 0o600 });
   await chmod(accessFile, 0o600);
 }
-async function ensureWorkflow(key, payload, manifest, workflowPresets = presets) {
+async function ensureWorkflow(key, payload, manifest, workflowPresets = presets, forceUpdate = false) {
   let current = manifest.workflows[key] ? await request(`/templates/${manifest.workflows[key]}`) : null;
   if (!current) {
     // Recover a create that succeeded immediately before a process interruption.
@@ -60,7 +60,7 @@ async function ensureWorkflow(key, payload, manifest, workflowPresets = presets)
   }
   const ownedByManifest = Boolean(current && manifest.workflows[key] === current.id);
   if (current && (current.group_id !== groupId || (!ownedByManifest && !current.tags?.includes(marker)))) throw new Error(`Fixture ownership changed: ${key}`);
-  const same = current && Object.keys(payload).every(field => JSON.stringify(current[field]) === JSON.stringify(payload[field]));
+  const same = !forceUpdate && current && Object.keys(payload).every(field => JSON.stringify(current[field]) === JSON.stringify(payload[field]));
   if (!current || !same) current = await request(current ? `/templates/${current.id}` : '/templates', current ? 'PUT' : 'POST', payload);
   manifest.workflows[key] = current.id;
   await db.collection('pxm_demo_manifests').updateOne({ _id: marker }, { $set: { workflows: manifest.workflows } });
@@ -101,6 +101,53 @@ async function ensureScriptLibrary(manifest) {
   manifest.library_id = library.id;
   await db.collection('pxm_demo_manifests').updateOne({ _id: marker }, { $set: { library_id: library.id } });
   return library;
+}
+/**
+ * reset에서 승인된 JS 라이브러리를 발표 전 상태로 되돌린다.
+ *
+ * 라이브러리 레코드만 지우면 실습 4는 그대로 실행된다. 승인 시점의 번들이
+ * 배포 버전 안에 박히기 때문이다(그게 "배포 버전에 고정"의 실제 동작이다).
+ * 그래서 워크플로우에 남은 번들까지 함께 걷어내, 발표자가 lodash를 준비·승인하고
+ * 실습 4를 다시 저장·배포해야 실행되는 상태로 만든다. 스크립트와 노드 구성은 건드리지 않는다.
+ */
+async function resetScriptLibraryDemo(manifest) {
+  const workflowId = manifest.workflows.jsLibrary;
+  const stripBundles = (nodes = []) => nodes.map(node => {
+    if (!node?.config?.scriptLibraryBundles) return node;
+    const config = { ...node.config };
+    delete config.scriptLibraryBundles;
+    if (config.ui_node?.data?.scriptLibraryBundles) {
+      config.ui_node = { ...config.ui_node, data: { ...config.ui_node.data } };
+      delete config.ui_node.data.scriptLibraryBundles;
+    }
+    return { ...node, config };
+  });
+
+  if (workflowId) {
+    for (const [collection, filter] of [
+      ['v2_process_definitions', { _id: workflowId }],
+      ['v2_process_definition_versions', { definition_id: workflowId }],
+    ]) {
+      for (const doc of await db.collection(collection).find(filter).toArray()) {
+        const nodes = stripBundles(doc.nodes);
+        if (JSON.stringify(nodes) !== JSON.stringify(doc.nodes)) {
+          await db.collection(collection).updateOne({ _id: doc._id }, { $set: { nodes } });
+        }
+      }
+    }
+  }
+
+  const removed = await db.collection('v2_script_libraries').deleteMany({
+    package_name: demoLibrary.package_name, version: demoLibrary.version,
+  });
+  manifest.script_library_demo_needs_rebind = true;
+  await db.collection('pxm_demo_manifests').updateOne(
+    { _id: marker },
+    { $set: { script_library_demo_needs_rebind: true }, $unset: { library_id: '' } },
+  );
+  if (removed.deletedCount) {
+    console.log(`승인된 JS 라이브러리 초기화: ${demoLibrary.package_name}@${demoLibrary.version} 제거. 발표 중 직접 준비·승인한 뒤 실습 4를 다시 저장·배포한다.`);
+  }
 }
 async function ensureDelegation(manifest) {
   const workflowId = manifest.workflows.delegation;
@@ -405,11 +452,27 @@ try {
     await ensureDemoCommands();
     const externalMapping = await ensureExternalPrincipalMapping(manifest);
     const webhookEndpoint = await ensureWebhookEndpoint(manifest);
-    for (const { key, payload, presets: workflowPresets } of fixtures(manifest.credentials, dbName, serviceUrl)) await ensureWorkflow(key, payload, manifest, workflowPresets);
+    for (const { key, payload, presets: workflowPresets } of fixtures(manifest.credentials, dbName, serviceUrl)) {
+      await ensureWorkflow(
+        key,
+        payload,
+        manifest,
+        workflowPresets,
+        mode === 'seed' && key === 'jsLibrary' && manifest.script_library_demo_needs_rebind === true,
+      );
+    }
+    if (mode === 'seed' && manifest.script_library_demo_needs_rebind === true) {
+      delete manifest.script_library_demo_needs_rebind;
+      await db.collection('pxm_demo_manifests').updateOne(
+        { _id: marker },
+        { $unset: { script_library_demo_needs_rebind: '' } },
+      );
+    }
+    if (mode === 'reset') await resetScriptLibraryDemo(manifest);
     const apiDemo = await ensureApiDemoAccess(access, manifest);
     const delegation = await ensureDelegation(manifest);
     await db.collection('pxm_demo_manifests').updateOne({ _id: marker }, { $set: { delegation_id: delegation.id } });
-    console.log(JSON.stringify({ group: group.name, group_id: groupId, workflows: manifest.workflows, credentials: manifest.credentials, external_mapping: `${externalMapping.provider}/${externalMapping.subject}`, webhook_endpoint: webhookEndpoint.name, library: `${library.package_name}@${library.version}`, api_demo: { service_account: apiDemo.service_account_id, keys: Object.fromEntries(Object.entries(apiDemo.keys).map(([slot, item]) => [slot, item.name])) }, accounts: ['admin (기존 계정)', ...users.map(u => u.id)], password_file: accessFile, web: 'http://localhost:5174', api_playground: 'http://localhost:5175', mailpit: 'http://localhost:8025', service: serviceUrl, next: 'pnpm demo:service 및 pnpm dev:api-playground 실행 후 시연.md 참고' }, null, 2));
+    console.log(JSON.stringify({ group: group.name, group_id: groupId, workflows: manifest.workflows, credentials: manifest.credentials, external_mapping: `${externalMapping.provider}/${externalMapping.subject}`, webhook_endpoint: webhookEndpoint.name, approval_demo: { delegation: 'demo-approver1 -> demo-delegate1 (실습 3)', reminder_after: '1분', escalation_after: '추가 1분', multi_stage: 'demo-approver1 + demo-approver2 ALL -> demo-secadmin/외부 승인자 ANY' }, library: `${library.package_name}@${library.version}`, api_demo: { service_account: apiDemo.service_account_id, keys: Object.fromEntries(Object.entries(apiDemo.keys).map(([slot, item]) => [slot, item.name])) }, accounts: ['admin (기존 계정)', ...users.map(u => u.id)], password_file: accessFile, web: 'http://localhost:5174', api_playground: 'http://localhost:5175', mailpit: 'http://localhost:8025', service: serviceUrl, next: 'pnpm demo:service 및 pnpm dev:api-playground 실행 후 시연.md 참고' }, null, 2));
   } finally { await db.collection('pxm_demo_manifests').updateOne({ _id: marker }, { $unset: { busy: '' } }); }
 } catch (error) { console.error(`[demo:${mode}] ${error.message}`); process.exitCode = 1; }
 finally { if (headers) await request('/auth/logout', 'POST', {}).catch(() => {}); await client.close(); }

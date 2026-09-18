@@ -59,6 +59,48 @@ type DesignerTab = {
 };
 
 const INITIAL_DESIGNER_TAB_ID = 'designer-tab-initial';
+const DESIGNER_SESSION_KEY = 'pxm.designer.tabs';
+
+type StoredDesignerSession = { userId: string; activeTabId: string; tabs: DesignerTab[] };
+
+/**
+ * 열어 둔 설계 탭을 브라우저 세션에 보관한다.
+ *
+ * 다른 메뉴로 갔다 오면 FlowDesigner가 언마운트되어 탭이 통째로 사라졌다.
+ * 저장하지 않은 편집도 그대로 복원한다. 탭을 닫을 때 미저장 경고를 띄우는
+ * 동작과 같은 기준이다. sessionStorage라 브라우저 탭을 닫으면 정리된다.
+ *
+ * 저장본에는 소유 사용자를 함께 남긴다. 같은 브라우저 탭에서 계정을 바꾸면
+ * 이전 사용자가 열어 둔 설계가 그대로 보이면 안 되기 때문이다.
+ */
+function readStoredDesignerSession(userId: string): StoredDesignerSession | null {
+  try {
+    const raw = sessionStorage.getItem(DESIGNER_SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as StoredDesignerSession;
+    if (parsed?.userId !== userId) {
+      sessionStorage.removeItem(DESIGNER_SESSION_KEY);
+      return null;
+    }
+    const tabs = parsed?.tabs;
+    if (!Array.isArray(tabs) || tabs.length === 0) return null;
+    const usable = tabs.every((tab) => (
+      tab && typeof tab.tabId === 'string' && Array.isArray(tab.nodes) && Array.isArray(tab.edges)
+    ));
+    if (!usable) return null;
+    return { userId, activeTabId: parsed.activeTabId, tabs };
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredDesignerSession(session: StoredDesignerSession) {
+  try {
+    sessionStorage.setItem(DESIGNER_SESSION_KEY, JSON.stringify(session));
+  } catch {
+    // 용량 초과 등으로 실패해도 설계 자체는 계속 진행한다. 복원은 편의 기능이다.
+  }
+}
 
 type WorkflowClipboard = {
   sourceTabId: string;
@@ -103,8 +145,17 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
   const [isNodeTestRunning, setIsNodeTestRunning] = useState(false);
   const [nodeTestResult, setNodeTestResult] = useState<PluginTestResponse | null>(null);
   const [nodeTestError, setNodeTestError] = useState<string | null>(null);
-  const [designerTabs, setDesignerTabs] = useState<DesignerTab[]>(() => [createBlankDesignerTab(INITIAL_DESIGNER_TAB_ID)]);
-  const [activeDesignerTabId, setActiveDesignerTabId] = useState(INITIAL_DESIGNER_TAB_ID);
+  const storedSessionRef = useRef(readStoredDesignerSession(currentUser.id));
+  const [designerTabs, setDesignerTabs] = useState<DesignerTab[]>(
+    () => storedSessionRef.current?.tabs || [createBlankDesignerTab(INITIAL_DESIGNER_TAB_ID)],
+  );
+  const [activeDesignerTabId, setActiveDesignerTabId] = useState(() => {
+    const stored = storedSessionRef.current;
+    if (!stored) return INITIAL_DESIGNER_TAB_ID;
+    return stored.tabs.some((tab) => tab.tabId === stored.activeTabId)
+      ? stored.activeTabId
+      : stored.tabs[0].tabId;
+  });
   const [workflowClipboard, setWorkflowClipboard] = useState<WorkflowClipboard | null>(null);
   const [favoritePluginIds, setFavoritePluginIds] = useState<string[]>(() => {
     try {
@@ -280,6 +331,29 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
       suppressCanvasDirtyRef.current = false;
     }, 0);
   }, []);
+
+  // 세션에 남아 있던 탭이 있으면 활성 탭의 캔버스를 마운트 직후 되살린다.
+  React.useEffect(() => {
+    const stored = storedSessionRef.current;
+    if (!stored) return;
+    const activeTab = stored.tabs.find((tab) => tab.tabId === activeDesignerTabId) || stored.tabs[0];
+    restoreDesignerTab(activeTab);
+    // 복원은 마운트 시 한 번만 한다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 탭 구성과 편집 중인 내용을 세션에 반영한다. 캔버스 조작마다 쓰지 않도록 묶어서 저장한다.
+  React.useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const snapshot = buildCurrentTabSnapshot(activeDesignerTabId);
+      writeStoredDesignerSession({
+        userId: currentUser.id,
+        activeTabId: activeDesignerTabId,
+        tabs: designerTabs.map((tab) => (tab.tabId === activeDesignerTabId ? snapshot : tab)),
+      });
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [activeDesignerTabId, buildCurrentTabSnapshot, currentUser.id, designerTabs]);
 
   const handleSwitchDesignerTab = (tabId: string) => {
     if (tabId === activeDesignerTabId) {

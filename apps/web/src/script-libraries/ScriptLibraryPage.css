@@ -1,5 +1,9 @@
 .script-library-page {
-  padding: 24px;
+  /* .app-main-content가 overflow:hidden이라 페이지가 직접 스크롤을 가져야 한다.
+     이게 없으면 목록이 길어질 때 아래쪽 라이브러리를 볼 수 없다. */
+  height: 100%;
+  overflow-y: auto;
+  padding: 24px 24px 44px;
   max-width: 1180px;
   margin: 0 auto;
   color: var(--text-primary);

@@ -61,6 +61,9 @@ export const sessionApi = {
   },
   async logout(): Promise<void> {
     await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+    // 화면 상태 중 브라우저에 남는 것은 로그아웃 시점에 비운다.
+    // (설계 탭에는 열어 둔 워크플로우와 저장하지 않은 편집이 들어 있다)
+    sessionStorage.removeItem('pxm.designer.tabs');
   },
   async updateProfile(payload: { display_name: string; email?: string | null }): Promise<SessionUser> {
     const response = await fetch('/api/auth/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(payload) });

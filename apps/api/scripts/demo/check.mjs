@@ -71,6 +71,7 @@ try {
   const requester = await login('demo-requester1');
   const approver = await login('demo-approver1');
   const approver2 = await login('demo-approver2');
+  const delegate = await login('demo-delegate1');
   const manager = await login('demo-secadmin');
   assert.ok(access.api_keys?.trigger?.api_key, 'API trigger key missing; run demo:seed first');
   assert.ok(access.api_keys?.approver?.api_key, 'API approver key missing; run demo:seed first');
@@ -178,8 +179,36 @@ try {
   assert.equal(approved.context.data.outputs.provisioning.body.granted, true);
   assert.equal((await fetch(`${api}/external-approvals/${token}`)).status, 410);
   console.log('PASS 종합 시연 내부 승인 → 이메일 OTP 승인 → HTTP 반영');
+
+  const delegationId = await run(manifest.workflows.delegation, undefined, requester, {
+    emp_id: 'E-1001', privilege_level: 'read', target_system: '개발 포털',
+  });
+  const originalTask = await assigneeTask(delegationId, 'demo-approver1');
+  assert.equal(originalTask.payload?.approval_deadline?.deadline_seconds, 60);
+  assert.equal(originalTask.payload?.approval_deadline?.escalation_grace_seconds, 60);
+  const originalInbox = await json(`${api}/tasks`, { headers: approver });
+  assert.ok(!originalInbox.some(item => item.id === originalTask._id), '위임 중인 Task가 원래 승인자에게 보이면 안 됨');
+  const delegateInbox = await json(`${api}/tasks`, { headers: delegate });
+  const delegatedTask = delegateInbox.find(item => item.id === originalTask._id);
+  assert.equal(delegatedTask?.delegation?.original_assignee, 'demo-approver1');
+  await complete(originalTask._id, 'approve', delegate);
+  await finished(delegationId);
+  const delegatedHistory = await db.collection('v2_tasks').findOne({ _id: originalTask._id });
+  assert.equal(delegatedHistory?.completion?.actor_id, 'demo-delegate1');
+  assert.equal(delegatedHistory?.completion?.delegation?.original_assignee, 'demo-approver1');
+  console.log('PASS 실습 3 전용 위임 + 1분 독촉/1분 상위 알림 계약 + 대리 승인');
+
   const multiStageId = await run(manifest.workflows.multiStage, multiStagePreset.alias, requester);
-  await complete((await assigneeTask(multiStageId, 'demo-approver1'))._id, 'approve', approver);
+  const firstApproverTask = await assigneeTask(multiStageId, 'demo-approver1');
+  await json(`${api}/tasks/${firstApproverTask._id}/hold`, {
+    method: 'POST', headers: approver, body: JSON.stringify({ comment: '변경 범위 추가 확인 필요' }),
+  });
+  assert.equal((await db.collection('v2_tasks').findOne({ _id: firstApproverTask._id }))?.payload?.hold?.comment, '변경 범위 추가 확인 필요');
+  await json(`${api}/instances/${multiStageId}/pause`, { method: 'POST', headers: manager, body: '{}' });
+  assert.equal((await db.collection('v2_process_instances').findOne({ _id: multiStageId }))?.is_paused, true);
+  await json(`${api}/instances/${multiStageId}/resume`, { method: 'POST', headers: manager, body: '{}' });
+  assert.equal((await db.collection('v2_process_instances').findOne({ _id: multiStageId }))?.is_paused, false);
+  await complete(firstApproverTask._id, 'approve', approver);
   assert.ok(await assigneeTask(multiStageId, 'demo-approver2'), 'ALL 단계의 두 번째 결재가 남아 있어야 함');
   assert.equal(await db.collection('v2_tasks').countDocuments({ instance_id: multiStageId, assignee: 'demo-secadmin', status: 'OPEN' }), 0);
   await complete((await assigneeTask(multiStageId, 'demo-approver2'))._id, 'approve', approver2);
@@ -188,7 +217,7 @@ try {
   const delivery = await waitFor(() => db.collection('webhook_deliveries').findOne({ instance_id: multiStageId, status: 'SENT' }), `webhook delivery for ${multiStageId}`);
   assert.equal(delivery.response_status, 200);
   assert.equal(await db.collection('v2_tasks').countDocuments({ instance_id: multiStageId, status: 'OPEN' }), 0);
-  console.log('PASS 다단계 ALL → ANY 결재 + 결과 Webhook');
+  console.log('PASS 보류 + 일시중지/재개 + 다단계 ALL → ANY 결재 + 결과 Webhook');
 } finally {
   for (const headers of sessions) await fetch(`${api}/auth/logout`, { method: 'POST', headers, body: '{}' }).catch(() => {});
   await client.close();
