@@ -91,6 +91,11 @@ export interface WorkflowExportDocument {
       version?: string;
       node_ids: string[];
     }>;
+    script_library_dependencies: Array<{
+      package_name: string;
+      version: string;
+      node_ids: string[];
+    }>;
   };
   security: {
     secrets_policy: 'redacted';
@@ -170,6 +175,12 @@ export interface TestDbWatchConnectionResponse {
 
 const API_BASE_URL = '/api';
 
+async function responseError(response: Response, fallback: string): Promise<Error> {
+  const body = await response.json().catch(() => null) as { message?: string | string[] } | null;
+  const detail = Array.isArray(body?.message) ? body.message.join(', ') : body?.message;
+  return new Error(detail || `${fallback}: ${response.statusText}`);
+}
+
 export const templatesApi = {
   // 템플릿 생성
   async create(data: CreateTemplateRequest): Promise<WorkflowTemplate> {
@@ -182,7 +193,7 @@ export const templatesApi = {
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to create template: ${response.statusText}`);
+      throw await responseError(response, 'Failed to create template');
     }
 
     return response.json();
@@ -224,7 +235,7 @@ export const templatesApi = {
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to update template: ${response.statusText}`);
+      throw await responseError(response, 'Failed to update template');
     }
 
     return response.json();

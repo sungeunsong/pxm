@@ -4,9 +4,10 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import { MongoClient } from 'mongodb';
-import { marker, presets, libraryPreset } from './fixtures.mjs';
+import { marker, presets, libraryPreset, multiStagePreset, demoCommands } from './fixtures.mjs';
 const access = JSON.parse(await readFile(process.env.PXM_DEMO_ACCESS_FILE || new URL('../../../../.env.demo-access.json', import.meta.url), 'utf8'));
 const api = access.api;
+const publicApi = api.replace(/\/api\/?$/, '/api/v1');
 const mailpit = process.env.PXM_DEMO_MAILPIT_API_URL || 'http://127.0.0.1:8025/api/v1';
 if (!['127.0.0.1', 'localhost', '[::1]'].includes(new URL(api).hostname)) throw new Error('Local demo API required');
 const client = new MongoClient(process.env.MONGODB_URL || 'mongodb://127.0.0.1:27017/?replicaSet=rs0');
@@ -16,6 +17,20 @@ async function json(url, init) {
   const response = await fetch(url, init);
   const body = await response.json();
   assert.ok(response.ok, `${response.status}: ${JSON.stringify(body).slice(0, 500)}`);
+  return body;
+}
+async function publicJson(path, apiKey, init = {}) {
+  const response = await fetch(`${publicApi}${path}`, {
+    ...init,
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      'content-type': 'application/json',
+      'x-business-actor': JSON.stringify({ id: 'DEMO-API-001', name: 'Demo API Requester', provider: 'demo-check' }),
+      ...init.headers,
+    },
+  });
+  const body = await response.json();
+  assert.ok(response.ok, `${response.status} ${path}: ${JSON.stringify(body).slice(0, 500)}`);
   return body;
 }
 async function login(id) {
@@ -31,8 +46,15 @@ async function waitFor(fn, description) {
   while (Date.now() < deadline) { const result = await fn(); if (result) return result; await new Promise(resolve => setTimeout(resolve, 300)); }
   throw new Error(`Timed out: ${description}`);
 }
-async function run(id, preset, headers) { return (await json(`${api}/templates/${id}/start`, { method: 'POST', headers, body: JSON.stringify({ preset, input: {} }) })).instance_id; }
+async function run(id, preset, headers, input = {}) {
+  return (await json(`${api}/templates/${id}/start`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ ...(preset ? { preset } : {}), input }),
+  })).instance_id;
+}
 async function task(instanceId, channel) { return waitFor(() => db.collection('v2_tasks').findOne({ instance_id: instanceId, status: 'OPEN', ...(channel ? { 'payload.approver_channel': channel } : {}) }), `task for ${instanceId}`); }
+async function assigneeTask(instanceId, assignee) { return waitFor(() => db.collection('v2_tasks').findOne({ instance_id: instanceId, assignee, status: 'OPEN' }), `task for ${assignee} in ${instanceId}`); }
 async function complete(taskId, action, headers) { return json(`${api}/tasks/${taskId}/complete`, { method: 'POST', headers, body: JSON.stringify({ action, comment: '데모 검증' }) }); }
 async function finished(id) {
   return waitFor(async () => { const row = await db.collection('v2_process_instances').findOne({ _id: id }); if (row?.state === 'FAILED') throw new Error(`Workflow failed ${id}: ${JSON.stringify(row.context).slice(-900)}`); return row?.state === 'COMPLETED' ? row : null; }, `completion for ${id}`);
@@ -48,6 +70,58 @@ try {
   assert.ok(manifest, 'Run demo:seed first');
   const requester = await login('demo-requester1');
   const approver = await login('demo-approver1');
+  const approver2 = await login('demo-approver2');
+  const manager = await login('demo-secadmin');
+  assert.ok(access.api_keys?.trigger?.api_key, 'API trigger key missing; run demo:seed first');
+  assert.ok(access.api_keys?.approver?.api_key, 'API approver key missing; run demo:seed first');
+
+  const registeredCommands = await json(`${api}/commands?activeOnly=true`, { headers: manager });
+  for (const command of demoCommands) {
+    const registered = registeredCommands.find(item => item.command_id === command.command_id);
+    assert.ok(registered, `Demo command missing: ${command.command_id}`);
+    assert.deepEqual(registered.fixed_args, command.fixed_args);
+    assert.deepEqual(registered.arg_order, command.arg_order);
+  }
+  console.log('PASS 시연용 command 등록 + Fixed Args/Argument Order 계약');
+
+  const commandMessage = '금요일 발표 서버 정상';
+  const commandId = await run(manifest.workflows.commandTerminal, undefined, requester, { message: commandMessage });
+  const commandRun = await finished(commandId);
+  assert.equal(commandRun.context.data.outputs.commandResult.exit_code, 0);
+  assert.equal(commandRun.context.data.outputs.commandResult.stdout, commandMessage);
+  console.log('PASS 실행 입력값 → 허용 명령 인자 바인딩 + 터미널 출력 데이터');
+
+  const versionGateId = await run(manifest.workflows.nodeVersionGate, undefined, requester);
+  const versionGateRun = await finished(versionGateId);
+  assert.match(versionGateRun.context.data.outputs.nodeVersionCheck.raw, /^v\d+\.\d+\.\d+/);
+  assert.ok(versionGateRun.context.data.outputs.nodeVersionCheck.major >= 20);
+  assert.ok(await db.collection('v2_tokens').findOne({ instance_id: versionGateId, node_id: 'supported' }));
+  console.log('PASS Node.js 버전 명령 stdout → JS 판독 → 20 이상 분기');
+
+  const apiStart = await publicJson(`/templates/${manifest.workflows.basic}/execute`, access.api_keys.trigger.api_key, {
+    method: 'POST',
+    headers: { 'idempotency-key': `demo-check-start-${Date.now()}` },
+    body: JSON.stringify({
+      formData: { emp_id: 'E-1001', privilege_level: 'read', target_system: 'API 포털' },
+    }),
+  });
+  const apiTask = await assigneeTask(apiStart.instance_id, 'demo-approver1');
+  const openHistory = await publicJson('/tasks/history?status=OPEN&limit=100', access.api_keys.approver.api_key);
+  assert.ok(openHistory.items.some(item => item.task_id === apiTask._id), 'API approval task missing from OPEN history');
+  const taskDetail = await publicJson(`/tasks/${apiTask._id}`, access.api_keys.approver.api_key);
+  assert.equal(taskDetail.status, 'OPEN');
+  await publicJson(`/tasks/${apiTask._id}/complete`, access.api_keys.approver.api_key, {
+    method: 'POST',
+    headers: { 'idempotency-key': `demo-check-approve-${Date.now()}` },
+    body: JSON.stringify({ action: 'approve', comment: 'API 결재 시연 자동 검증' }),
+  });
+  await finished(apiStart.instance_id);
+  const apiResult = await publicJson(`/instances/${apiStart.instance_id}/result`, access.api_keys.trigger.api_key);
+  assert.equal(apiResult.status, 'COMPLETED');
+  const approvedHistory = await publicJson(`/tasks/history?status=APPROVED&instance_id=${apiStart.instance_id}`, access.api_keys.approver.api_key);
+  assert.ok(approvedHistory.items.some(item => item.task_id === apiTask._id), 'Approved task missing from API history');
+  console.log('PASS API 실행 → 결재 상태/상세 조회 → API 승인 → 완료 결과 조회');
+
   const libraryId = await run(manifest.workflows.jsLibrary, libraryPreset.alias, requester);
   const libraryRun = await finished(libraryId);
   assert.deepEqual(libraryRun.context.data.outputs.libraryResult, {
@@ -104,6 +178,17 @@ try {
   assert.equal(approved.context.data.outputs.provisioning.body.granted, true);
   assert.equal((await fetch(`${api}/external-approvals/${token}`)).status, 410);
   console.log('PASS 종합 시연 내부 승인 → 이메일 OTP 승인 → HTTP 반영');
+  const multiStageId = await run(manifest.workflows.multiStage, multiStagePreset.alias, requester);
+  await complete((await assigneeTask(multiStageId, 'demo-approver1'))._id, 'approve', approver);
+  assert.ok(await assigneeTask(multiStageId, 'demo-approver2'), 'ALL 단계의 두 번째 결재가 남아 있어야 함');
+  assert.equal(await db.collection('v2_tasks').countDocuments({ instance_id: multiStageId, assignee: 'demo-secadmin', status: 'OPEN' }), 0);
+  await complete((await assigneeTask(multiStageId, 'demo-approver2'))._id, 'approve', approver2);
+  await complete((await assigneeTask(multiStageId, 'demo-secadmin'))._id, 'approve', manager);
+  await finished(multiStageId);
+  const delivery = await waitFor(() => db.collection('webhook_deliveries').findOne({ instance_id: multiStageId, status: 'SENT' }), `webhook delivery for ${multiStageId}`);
+  assert.equal(delivery.response_status, 200);
+  assert.equal(await db.collection('v2_tasks').countDocuments({ instance_id: multiStageId, status: 'OPEN' }), 0);
+  console.log('PASS 다단계 ALL → ANY 결재 + 결과 Webhook');
 } finally {
   for (const headers of sessions) await fetch(`${api}/auth/logout`, { method: 'POST', headers, body: '{}' }).catch(() => {});
   await client.close();

@@ -138,6 +138,12 @@ function normalizeBranchEdges(nodes: Node[], edges: Edge[]) {
   });
 }
 
+function filterEdgesWithExistingNodes(nodes: Node[], edges: Edge[]) {
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const filtered = edges.filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target));
+  return filtered.length === edges.length ? edges : filtered;
+}
+
 function stripExecutionStatus(node: Node): Node {
   const data = node.data as CustomNodeData;
   if (!data.executionStatus) return node;
@@ -206,7 +212,7 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
       const status = executionStatuses.get(node.id);
       return status ? { ...node, data: { ...node.data, executionStatus: status } } : node;
     }), [executionStatuses, nodes]);
-    const renderedEdges = React.useMemo(() => edges.map((edge) => {
+    const renderedEdges = React.useMemo(() => filterEdgesWithExistingNodes(nodes, edges).map((edge) => {
       if (executionMode === 'design') return edge;
       // 두 끝 노드가 모두 실행된 연결만 통과 경로로 본다. 도착 노드만 보면 여러 분기가
       // 합류하는 그래프에서 실행되지 않은 분기까지 완료 색으로 표시된다.
@@ -221,8 +227,21 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
       if (changes.some((change) => change.type === 'remove' || change.type === 'add' || (change.type === 'position' && change.dragging))) {
         setLayoutUndo(null);
       }
+      const removedIds = new Set(
+        changes.filter((change) => change.type === 'remove').map((change) => change.id),
+      );
+      if (removedIds.size > 0) {
+        setEdges((items) => items.filter(
+          (edge) => !removedIds.has(edge.source) && !removedIds.has(edge.target),
+        ));
+      }
       applyNodeChanges(changes);
-    }, [applyNodeChanges]);
+    }, [applyNodeChanges, setEdges]);
+
+    // 삭제·탭 복원·외부 상태 동기화 어느 경로에서도 고아 엣지를 저장 상태에 남기지 않는다.
+    React.useEffect(() => {
+      setEdges((currentEdges) => filterEdgesWithExistingNodes(nodes, currentEdges));
+    }, [nodes, setEdges]);
 
     // 노드 변경 시 부모에게 알림
     React.useEffect(() => {
@@ -378,7 +397,10 @@ export const FlowCanvas = React.forwardRef<FlowCanvasRef, FlowCanvasProps>(
         const definitionNodes = newNodes.map(stripExecutionStatus);
         setExecutionStatusesState(new Map());
         setNodes(definitionNodes);
-        setEdges(normalizeBranchEdges(definitionNodes, newEdges));
+        setEdges(filterEdgesWithExistingNodes(
+          definitionNodes,
+          normalizeBranchEdges(definitionNodes, newEdges),
+        ));
         // 선택 해제
         onNodeSelect?.(null);
       },

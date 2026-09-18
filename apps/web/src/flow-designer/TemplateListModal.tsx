@@ -1,10 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { templatesApi } from '../api/templates';
-import { useFeedback } from '../components/feedback/feedback-context';
-import { errorMessage } from '../lib/error-message';
-import type { WorkflowTemplate, WorkflowTemplateVersion, WorkflowVersionDiff } from '../api/templates';
+import type { WorkflowTemplate } from '../api/templates';
 import { Button } from '../components/Button';
-import { X, FileText, Calendar, Hash, Copy, GitCompare, RotateCcw } from 'lucide-react';
+import { X, FileText, Calendar, Clock3, Hash, Copy } from 'lucide-react';
 import './TemplateListModal.css';
 
 export interface TemplateListModalProps {
@@ -20,15 +18,9 @@ export const TemplateListModal: React.FC<TemplateListModalProps> = ({
   onSelect,
   allowedGroupIds,
 }) => {
-  const { toast, confirm: confirmDialog } = useFeedback();
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [versionTemplate, setVersionTemplate] = useState<WorkflowTemplate | null>(null);
-  const [versions, setVersions] = useState<WorkflowTemplateVersion[]>([]);
-  const [versionDiff, setVersionDiff] = useState<WorkflowVersionDiff | null>(null);
-  const [versionsLoading, setVersionsLoading] = useState(false);
-  const [versionsError, setVersionsError] = useState<string | null>(null);
   const allowedGroupKey = allowedGroupIds?.join(',');
 
   useEffect(() => {
@@ -58,114 +50,9 @@ export const TemplateListModal: React.FC<TemplateListModalProps> = ({
     }
   };
 
-  const handleDelete = async (id: string, name: string) => {
-    const proceed = await confirmDialog({
-      title: '워크플로우를 삭제할까요?',
-      description: `"${name}"이(가) 목록에서 제거됩니다. 이 작업은 되돌릴 수 없습니다.`,
-      confirmLabel: '삭제',
-      tone: 'danger',
-    });
-    if (!proceed) return;
-
-    try {
-      await templatesApi.delete(id);
-      setTemplates(templates.filter((t) => t.id !== id));
-    } catch (err) {
-      console.error('Failed to delete template:', err);
-      toast.error('워크플로우 삭제에 실패했습니다.', { description: errorMessage(err) });
-    }
-  };
-
   const handleCopyId = async (event: React.MouseEvent, id: string) => {
     event.stopPropagation();
     await navigator.clipboard.writeText(id);
-  };
-
-  const handleLifecycle = async (
-    template: WorkflowTemplate,
-    action: 'publish' | 'disable' | 'reactivate',
-  ) => {
-    const dialog = action === 'publish'
-      ? { title: `v${template.version}을 배포할까요?`, description: '배포하면 이 버전이 외부 실행 대상이 됩니다.', confirmLabel: '배포' }
-      : action === 'disable'
-        ? { title: '실행을 중지할까요?', description: '신규 API 실행과 자동 실행이 중지됩니다. 이미 진행 중인 인스턴스는 계속 처리됩니다.', confirmLabel: '중지', tone: 'danger' as const }
-        : {
-          title: typeof template.active_published_version === 'number'
-            ? `배포 버전 v${template.active_published_version}을 다시 활성화할까요?`
-            : '기존 배포 버전을 다시 활성화할까요?',
-          confirmLabel: '활성화',
-        };
-    if (!(await confirmDialog(dialog))) return;
-    try {
-      const updated = await templatesApi[action](template.id);
-      setTemplates((items) => items.map((item) => item.id === updated.id ? updated : item));
-      if (versionTemplate?.id === updated.id) setVersionTemplate(updated);
-    } catch (err) {
-      console.error(`Failed to ${action} workflow:`, err);
-      toast.error('배포 상태 변경에 실패했습니다.', { description: errorMessage(err) });
-    }
-  };
-
-  const handleShowVersions = async (event: React.MouseEvent, template: WorkflowTemplate) => {
-    event.stopPropagation();
-    setVersionTemplate(template);
-    setVersionDiff(null);
-    setVersionsLoading(true);
-    setVersionsError(null);
-    try {
-      const data = await templatesApi.listVersions(template.id);
-      setVersions(data);
-    } catch (err) {
-      console.error('Failed to load template versions:', err);
-      setVersionsError('버전 목록을 불러오는데 실패했습니다.');
-    } finally {
-      setVersionsLoading(false);
-    }
-  };
-
-  const handleDiffVersion = async (event: React.MouseEvent, version: number) => {
-    event.stopPropagation();
-    if (!versionTemplate) return;
-
-    setVersionsLoading(true);
-    setVersionsError(null);
-    try {
-      const diff = await templatesApi.diffVersions(versionTemplate.id, version);
-      setVersionDiff(diff);
-    } catch (err) {
-      console.error('Failed to diff template versions:', err);
-      setVersionsError('버전 비교에 실패했습니다.');
-    } finally {
-      setVersionsLoading(false);
-    }
-  };
-
-  const handleRollbackVersion = async (event: React.MouseEvent, version: number) => {
-    event.stopPropagation();
-    if (!versionTemplate) return;
-    const proceed = await confirmDialog({
-      title: `v${version} 상태로 롤백할까요?`,
-      description: `"${versionTemplate.name}"의 v${version} 내용으로 새 버전이 만들어집니다. 기존 버전은 그대로 남습니다.`,
-      confirmLabel: '롤백',
-    });
-    if (!proceed) return;
-
-    setVersionsLoading(true);
-    setVersionsError(null);
-    try {
-      const updated = await templatesApi.rollbackVersion(versionTemplate.id, version);
-      setTemplates((items) => items.map((item) => (item.id === updated.id ? updated : item)));
-      setVersionTemplate(updated);
-      setVersions(await templatesApi.listVersions(updated.id));
-      setVersionDiff(null);
-      onSelect(updated);
-      toast.success('롤백 버전을 만들었습니다.', { description: `v${version} 기준 → v${updated.version}` });
-    } catch (err) {
-      console.error('Failed to rollback template version:', err);
-      setVersionsError('롤백에 실패했습니다.');
-    } finally {
-      setVersionsLoading(false);
-    }
   };
 
   if (!isOpen) return null;
@@ -209,9 +96,9 @@ export const TemplateListModal: React.FC<TemplateListModalProps> = ({
               {templates.map((template) => (
                 <div
                   key={template.id}
-                  className={`template-item-group ${versionTemplate?.id === template.id ? 'is-expanded' : ''}`}
+                  className="template-item-group"
                 >
-                  <div className={`template-item ${versionTemplate?.id === template.id ? 'is-selected' : ''}`}>
+                  <div className="template-item">
                     <div className="template-info" onClick={() => handleSelect(template)}>
                       <div className="template-header">
                         <h3 className="template-name">{template.name}</h3>
@@ -248,24 +135,13 @@ export const TemplateListModal: React.FC<TemplateListModalProps> = ({
                           <Calendar size={14} />
                           생성 {new Date(template.created_at).toLocaleDateString('ko-KR')} · 생성자 ID: {template.created_by || '확인 불가'}
                         </span>
+                        <span className="template-meta-item">
+                          <Clock3 size={14} />
+                          최근 수정 {new Date(template.updated_at).toLocaleDateString('ko-KR')} · 수정자 ID: {template.updated_by || '확인 불가'}
+                        </span>
                       </div>
                     </div>
                     <div className="template-actions">
-                      {(template.lifecycle_status === 'DRAFT' || template.has_unpublished_changes) && (
-                        <Button onClick={() => void handleLifecycle(template, 'publish')} variant="primary" size="sm">
-                          배포
-                        </Button>
-                      )}
-                      {template.lifecycle_status === 'PUBLISHED' && !template.has_unpublished_changes && (
-                        <Button onClick={() => void handleLifecycle(template, 'disable')} variant="secondary" size="sm">
-                          배포 중지
-                        </Button>
-                      )}
-                      {template.lifecycle_status === 'DISABLED' && (
-                        <Button onClick={() => void handleLifecycle(template, 'reactivate')} variant="secondary" size="sm">
-                          재활성화
-                        </Button>
-                      )}
                       <Button
                         onClick={() => handleSelect(template)}
                         variant="primary"
@@ -273,39 +149,8 @@ export const TemplateListModal: React.FC<TemplateListModalProps> = ({
                       >
                         불러오기
                       </Button>
-                      <Button
-                        onClick={(event) => handleShowVersions(event, template)}
-                        variant="secondary"
-                        size="sm"
-                      >
-                        버전
-                      </Button>
-                      <Button
-                        onClick={() => handleDelete(template.id, template.name)}
-                        variant="ghost"
-                        size="sm"
-                      >
-                        삭제
-                      </Button>
                     </div>
                   </div>
-                  {versionTemplate?.id === template.id && (
-                    <TemplateVersionPanel
-                      versionTemplate={versionTemplate}
-                      versions={versions}
-                      versionDiff={versionDiff}
-                      versionsLoading={versionsLoading}
-                      versionsError={versionsError}
-                      onClose={() => {
-                        setVersionTemplate(null);
-                        setVersions([]);
-                        setVersionDiff(null);
-                        setVersionsError(null);
-                      }}
-                      onDiffVersion={handleDiffVersion}
-                      onRollbackVersion={handleRollbackVersion}
-                    />
-                  )}
                 </div>
               ))}
             </div>
@@ -324,118 +169,4 @@ export const TemplateListModal: React.FC<TemplateListModalProps> = ({
 
 function lifecycleLabel(status: WorkflowTemplate['lifecycle_status']) {
   return status === 'PUBLISHED' ? '배포됨' : status === 'DISABLED' ? '배포 중지' : '초안';
-}
-
-function TemplateVersionPanel({
-  versionTemplate,
-  versions,
-  versionDiff,
-  versionsLoading,
-  versionsError,
-  onClose,
-  onDiffVersion,
-  onRollbackVersion,
-}: {
-  versionTemplate: WorkflowTemplate;
-  versions: WorkflowTemplateVersion[];
-  versionDiff: WorkflowVersionDiff | null;
-  versionsLoading: boolean;
-  versionsError: string | null;
-  onClose: () => void;
-  onDiffVersion: (event: React.MouseEvent, version: number) => void;
-  onRollbackVersion: (event: React.MouseEvent, version: number) => void;
-}) {
-  return (
-    <div className="template-version-panel">
-      <div className="template-version-panel-header">
-        <div>
-          <h3>{versionTemplate.name} 버전</h3>
-          <p>현재 v{versionTemplate.version}</p>
-        </div>
-        <button
-          type="button"
-          className="template-version-panel-close"
-          onClick={onClose}
-          aria-label="버전 패널 닫기"
-        >
-          <X size={16} />
-        </button>
-      </div>
-
-      {versionsLoading && <p className="template-version-state">처리 중...</p>}
-      {versionsError && <p className="template-version-error">{versionsError}</p>}
-
-      <div className="template-version-list">
-        {versions.map((item) => (
-          <div key={item.version} className="template-version-row">
-            <div>
-              <div className="template-version-row-title">
-                v{item.version}
-                {item.version === versionTemplate.version && (
-                  <span className="template-version-current">현재</span>
-                )}
-              </div>
-              <div className="template-version-row-meta">
-                {item.node_count} 노드 · {item.edge_count} 엣지
-                {item.created_at ? ` · ${new Date(item.created_at).toLocaleString('ko-KR')}` : ''}
-              </div>
-              {item.version_note && (
-                <div className="template-version-note">{item.version_note}</div>
-              )}
-            </div>
-            <div className="template-version-actions">
-              <button
-                type="button"
-                className="template-version-icon-button"
-                onClick={(event) => onDiffVersion(event, item.version)}
-                title="현재 버전과 비교"
-                aria-label="현재 버전과 비교"
-              >
-                <GitCompare size={15} />
-                <span>비교</span>
-              </button>
-              {item.version !== versionTemplate.version && (
-                <button
-                  type="button"
-                  className="template-version-icon-button"
-                  onClick={(event) => onRollbackVersion(event, item.version)}
-                  title="이 버전으로 롤백"
-                  aria-label="이 버전으로 롤백"
-                >
-                  <RotateCcw size={15} />
-                  <span>롤백</span>
-                </button>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {versionDiff && (
-        <div className="template-version-diff">
-          <div className="template-version-diff-header">
-            <span>v{versionDiff.from_version} → v{versionDiff.to_version ?? versionTemplate.version}</span>
-            <span>{versionDiff.changes.length} changes</span>
-          </div>
-          <div className="template-version-diff-list">
-            {versionDiff.changes.length === 0 ? (
-              <p>변경 사항이 없습니다.</p>
-            ) : (
-              versionDiff.changes.slice(0, 40).map((change, index) => (
-                <div key={`${change.path}-${index}`} className="template-version-diff-row">
-                  <span className={`template-version-diff-type ${change.type}`}>{change.type}</span>
-                  <code>{change.path}</code>
-                </div>
-              ))
-            )}
-            {versionDiff.changes.length > 40 && (
-              <p className="template-version-diff-more">
-                나머지 {versionDiff.changes.length - 40}개 변경은 API 응답에서 확인할 수 있습니다.
-              </p>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
 }

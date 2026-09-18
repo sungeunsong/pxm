@@ -11,6 +11,7 @@ export type RequestLog = {
   status: number | null;
   durationMs: number;
   requestBody?: unknown;
+  requestHeaders?: Record<string, string>;
   responseBody?: unknown;
   error?: string;
   at: string;
@@ -35,6 +36,14 @@ export class PxmApi {
     const id = crypto.randomUUID();
     let status: number | null = null;
     try {
+      const visibleHeaders = {
+        ...(this.config.businessActor
+          ? { 'X-Business-Actor': JSON.stringify(this.config.businessActor) }
+          : {}),
+        ...(extraHeaders?.['Idempotency-Key']
+          ? { 'Idempotency-Key': extraHeaders['Idempotency-Key'] }
+          : {}),
+      };
       const response = await fetch(`${normalizeBase(this.config.baseUrl)}${path}`, {
         method,
         // This client represents an external API consumer. Never mix a PXM
@@ -53,7 +62,7 @@ export class PxmApi {
       });
       status = response.status;
       const responseBody: unknown = await response.json().catch(() => null);
-      this.onLog({ id, method, path, status, durationMs: Math.round(performance.now() - started), requestBody: body, responseBody, at: new Date().toISOString() });
+      this.onLog({ id, method, path, status, durationMs: Math.round(performance.now() - started), requestBody: body, requestHeaders: visibleHeaders, responseBody, at: new Date().toISOString() });
       if (!response.ok) throw new ApiError(response.status, messageOf(responseBody), responseBody);
       return responseBody as T;
     } catch (cause) {

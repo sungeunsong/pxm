@@ -2,15 +2,25 @@ import { MongoClient } from 'mongodb';
 import { randomBytes } from 'node:crypto';
 import { readFile, writeFile, chmod } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { marker, groupId, users, employees, fixtures, presets, demoLibrary } from './fixtures.mjs';
+import {
+  marker, groupId, users, employees, fixtures, presets, demoLibrary, externalPrincipalMapping, demoCommands,
+} from './fixtures.mjs';
 
 const mode = process.argv[2];
 if (!['seed', 'reset'].includes(mode)) throw new Error('Usage: manage.mjs seed|reset');
 const apiUrl = process.env.API_BASE_URL || 'http://127.0.0.1:3011/api';
+const publicApiUrl = apiUrl.replace(/\/api\/?$/, '/api/v1');
 const mongoUrl = process.env.MONGODB_URL || 'mongodb://127.0.0.1:27017/?replicaSet=rs0';
 const dbName = process.env.MONGO_DB_NAME || 'pxm_db';
 const serviceUrl = process.env.PXM_DEMO_SERVICE_URL || 'http://127.0.0.1:3020';
 const accessFile = process.env.PXM_DEMO_ACCESS_FILE || fileURLToPath(new URL('../../../../.env.demo-access.json', import.meta.url));
+const liveDemo = {
+  userId: 'demo-live-manager',
+  serviceAccountId: 'demo-live-client',
+  apiKeyName: '발표 · 현장 발급 키',
+  temporaryGroupName: '발표 · 임시 검증 그룹',
+  temporaryGroupDescription: '발표 중 그룹 생성과 삭제 정책 확인',
+};
 // This command owns a small fixture namespace in a local development database only.
 for (const url of [apiUrl, serviceUrl]) {
   if (!['localhost', '127.0.0.1', '[::1]'].includes(new URL(url).hostname)) throw new Error('Demo requires loopback API/service URLs');
@@ -48,17 +58,32 @@ async function ensureWorkflow(key, payload, manifest, workflowPresets = presets)
     if (matches.length > 1) throw new Error(`Duplicate owned fixture: ${key}`);
     current = matches[0];
   }
-  if (current && (current.group_id !== groupId || !current.tags?.includes(marker))) throw new Error(`Fixture ownership changed: ${key}`);
+  const ownedByManifest = Boolean(current && manifest.workflows[key] === current.id);
+  if (current && (current.group_id !== groupId || (!ownedByManifest && !current.tags?.includes(marker)))) throw new Error(`Fixture ownership changed: ${key}`);
   const same = current && Object.keys(payload).every(field => JSON.stringify(current[field]) === JSON.stringify(payload[field]));
   if (!current || !same) current = await request(current ? `/templates/${current.id}` : '/templates', current ? 'PUT' : 'POST', payload);
   manifest.workflows[key] = current.id;
   await db.collection('pxm_demo_manifests').updateOne({ _id: marker }, { $set: { workflows: manifest.workflows } });
   if (current.lifecycle_status !== 'PUBLISHED' || current.active_published_version !== current.version) await request(`/templates/${current.id}/deploy`, 'POST', {});
   const existing = await request(`/templates/${current.id}/input-presets`);
+  const desiredAliases = new Set(workflowPresets.map(preset => preset.alias));
+  for (const stale of existing.filter(preset => preset.alias.startsWith('demo-') && !desiredAliases.has(preset.alias))) {
+    await request(`/templates/${current.id}/input-presets/${stale.id}`, 'DELETE');
+  }
   for (const preset of workflowPresets) {
     const old = existing.find(p => p.alias === preset.alias);
     const body = { ...preset, scope: 'group', ...(old ? { id: old.id } : {}) };
     if (!old || old.name !== preset.name || old.scope !== 'group' || JSON.stringify(old.values) !== JSON.stringify(preset.values)) await request(`/templates/${current.id}/input-presets`, 'POST', body);
+  }
+}
+async function ensureDemoCommands() {
+  const current = await request('/commands');
+  for (const command of demoCommands) {
+    const existing = current.find(item => item.command_id === command.command_id);
+    const same = existing && Object.keys(command).every(
+      field => JSON.stringify(existing[field]) === JSON.stringify(command[field]),
+    );
+    if (!same) await request('/commands', 'POST', command);
   }
 }
 async function ensureScriptLibrary(manifest) {
@@ -98,6 +123,134 @@ async function ensureDelegation(manifest) {
     ends_at: '2099-12-31T23:59:59.000Z',
     reason: '데모 시나리오: 원래 승인자 휴가',
   });
+}
+async function ensureExternalPrincipalMapping(manifest) {
+  const mappings = await request('/authz/external-principal-mappings');
+  let mapping = mappings.find(item =>
+    item.provider === externalPrincipalMapping.provider && item.subject === externalPrincipalMapping.subject,
+  );
+  if (mapping && mapping.group_id !== groupId) throw new Error('Demo external principal mapping is owned by another group');
+  if (!mapping) {
+    mapping = await request('/authz/external-principal-mappings', 'POST', externalPrincipalMapping);
+  } else {
+    const patch = {
+      group_id: externalPrincipalMapping.group_id,
+      pxm_user_id: externalPrincipalMapping.pxm_user_id,
+      display_name: externalPrincipalMapping.display_name,
+      email: externalPrincipalMapping.email,
+      department: externalPrincipalMapping.department,
+    };
+    const changed = Object.entries(patch).some(([key, value]) => mapping[key] !== value);
+    if (changed) mapping = await request(`/authz/external-principal-mappings/${mapping.id}`, 'PUT', patch);
+    if (mapping.status !== 'active') {
+      mapping = await request(`/authz/external-principal-mappings/${mapping.id}/status`, 'PUT', { status: 'active' });
+    }
+  }
+  manifest.external_mapping_id = mapping.id;
+  await db.collection('pxm_demo_manifests').updateOne(
+    { _id: marker }, { $set: { external_mapping_id: mapping.id } },
+  );
+  return mapping;
+}
+async function ensureWebhookEndpoint(manifest) {
+  const endpoints = await request('/webhooks/endpoints');
+  const name = '데모 · 결재 결과 수신';
+  const sourceProvider = 'pxm-demo-hr';
+  let endpoint = endpoints.find(item => item.name === name || item.source_provider === sourceProvider);
+  if (!endpoint) {
+    endpoint = await request('/webhooks/endpoints', 'POST', {
+      name,
+      source_provider: sourceProvider,
+      url: `${serviceUrl}/webhook`,
+      secret: randomBytes(32).toString('base64url'),
+      timeout_ms: 3000,
+      max_attempts: 3,
+    });
+  } else {
+    endpoint = await request(`/webhooks/endpoints/${endpoint.id}`, 'PUT', {
+      name, source_provider: sourceProvider, url: `${serviceUrl}/webhook`,
+      timeout_ms: 3000, max_attempts: 3, active: true,
+    });
+  }
+  manifest.webhook_endpoint_id = endpoint.id;
+  await db.collection('pxm_demo_manifests').updateOne(
+    { _id: marker }, { $set: { webhook_endpoint_id: endpoint.id } },
+  );
+  return endpoint;
+}
+async function ensureApiDemoAccess(access, manifest) {
+  const serviceAccountId = 'pxm-demo-api-client';
+  const accounts = await request(`/authz/service-accounts?groupId=${groupId}`);
+  const currentAccount = accounts.find(item => item.id === serviceAccountId);
+  if (currentAccount && (currentAccount.group_id !== groupId || currentAccount.description !== marker)) {
+    throw new Error('Demo API service account ID is already owned by other data');
+  }
+  if (!currentAccount || currentAccount.status !== 'active' || currentAccount.name !== '데모 · 외부 업무 시스템') {
+    await request('/authz/service-accounts', 'POST', {
+      id: serviceAccountId,
+      name: '데모 · 외부 업무 시스템',
+      group_id: groupId,
+      description: marker,
+      status: 'active',
+    });
+  }
+
+  const workflowId = manifest.workflows.basic;
+  if (!workflowId) throw new Error('Basic approval workflow is missing for API demo');
+  const listedKeys = await request(`/authz/api-keys?groupId=${groupId}`);
+  access.api_keys ||= {};
+
+  const specs = [
+    {
+      slot: 'trigger', name: '데모 · API 실행 키', owner_type: 'SERVICE_ACCOUNT', owner_id: serviceAccountId,
+      scopes: ['workflow:read', 'workflow:execute'],
+    },
+    {
+      slot: 'approver', name: '데모 · API 결재 키', owner_type: 'USER', owner_id: 'demo-approver1',
+      scopes: ['workflow:read', 'task:approve'],
+    },
+  ];
+  const ensured = {};
+  for (const spec of specs) {
+    const saved = access.api_keys[spec.slot];
+    let current = saved?.id ? listedKeys.find(item => item.id === saved.id) : null;
+    const same = current && current.status === 'active' && current.name === spec.name
+      && current.owner_type === spec.owner_type && current.owner_id === spec.owner_id
+      && current.group_id === groupId && current.workflow_access === 'allowlist'
+      && JSON.stringify([...current.scopes].sort()) === JSON.stringify([...spec.scopes].sort())
+      && JSON.stringify(current.allowed_workflow_ids) === JSON.stringify([workflowId]);
+    let usable = false;
+    if (same && saved?.api_key) {
+      const response = await fetch(`${publicApiUrl}/templates?activeOnly=true`, {
+        headers: { authorization: `Bearer ${saved.api_key}` },
+      });
+      usable = response.ok;
+    }
+    if (!usable) {
+      const stale = current || listedKeys.find(item => item.name === spec.name && item.status === 'active');
+      if (stale) await request(`/authz/api-keys/${stale.id}/disable`, 'PUT');
+      current = await request('/authz/api-keys', 'POST', {
+        name: spec.name,
+        owner_type: spec.owner_type,
+        owner_id: spec.owner_id,
+        group_id: groupId,
+        scopes: spec.scopes,
+        workflow_access: 'allowlist',
+        allowed_workflow_ids: [workflowId],
+        rate_limit_per_minute: 120,
+      });
+      access.api_keys[spec.slot] = { id: current.id, name: current.name, api_key: current.api_key };
+      await saveAccess(access);
+    }
+    ensured[spec.slot] = access.api_keys[spec.slot];
+  }
+  manifest.api_key_ids = Object.fromEntries(Object.entries(ensured).map(([slot, item]) => [slot, item.id]));
+  manifest.service_account_id = serviceAccountId;
+  await db.collection('pxm_demo_manifests').updateOne(
+    { _id: marker },
+    { $set: { api_key_ids: manifest.api_key_ids, service_account_id: serviceAccountId } },
+  );
+  return { service_account_id: serviceAccountId, keys: ensured };
 }
 async function resetRuns(manifest) {
   const ids = Object.values(manifest.workflows);
@@ -142,6 +295,41 @@ async function resetRuns(manifest) {
   console.log(`데모 실행 이력 초기화: ${runs.length}건`);
 }
 
+async function resetLiveDemoArtifacts() {
+  const keys = await db.collection('pxm_api_keys').find({
+    group_id: groupId,
+    $or: [{ name: liveDemo.apiKeyName }, { owner_id: liveDemo.serviceAccountId }],
+  }, { projection: { _id: 1 } }).toArray();
+  const keyIds = keys.map(key => key._id);
+  if (keyIds.length) {
+    await db.collection('pxm_api_key_usage_logs').deleteMany({ api_key_id: { $in: keyIds } });
+    await db.collection('pxm_api_keys').deleteMany({ _id: { $in: keyIds } });
+  }
+  await db.collection('pxm_service_accounts').deleteMany({ _id: liveDemo.serviceAccountId, group_id: groupId });
+  await db.collection('pxm_sessions').deleteMany({ user_id: liveDemo.userId });
+  await db.collection('pxm_users').deleteMany({ _id: liveDemo.userId });
+
+  const temporaryGroups = await db.collection('pxm_groups').find({
+    name: liveDemo.temporaryGroupName,
+    description: liveDemo.temporaryGroupDescription,
+  }, { projection: { _id: 1 } }).toArray();
+  for (const temporaryGroup of temporaryGroups) {
+    const temporaryGroupId = temporaryGroup._id;
+    const linkedCounts = await Promise.all([
+      db.collection('v2_process_definitions').countDocuments({ $or: [{ group_id: temporaryGroupId }, { 'metadata.group_id': temporaryGroupId }] }),
+      db.collection('pxm_api_keys').countDocuments({ group_id: temporaryGroupId }),
+      db.collection('pxm_service_accounts').countDocuments({ group_id: temporaryGroupId }),
+      db.collection('pxm_users').countDocuments({ group_ids: temporaryGroupId }),
+    ]);
+    if (linkedCounts.some(Boolean)) throw new Error(`Reset refused: temporary live-demo group ${temporaryGroupId} owns resources`);
+    await db.collection('pxm_groups').deleteOne({ _id: temporaryGroupId });
+  }
+
+  if (keyIds.length || temporaryGroups.length) {
+    console.log(`현장 생성 시연 데이터 정리: API Key ${keyIds.length}건, 임시 그룹 ${temporaryGroups.length}건`);
+  }
+}
+
 try {
   await client.connect();
   headers = await login(process.env.PXM_DEMO_USER || 'admin', process.env.PXM_DEMO_PASSWORD || 'admin1234');
@@ -164,7 +352,10 @@ try {
   const lock = await db.collection('pxm_demo_manifests').updateOne({ _id: marker, busy: { $ne: true } }, { $set: { busy: true } });
   if (!lock.modifiedCount) throw new Error('Another demo command is running (or interrupted); inspect pxm_demo_manifests.busy before retrying');
   try {
-    if (mode === 'reset') await resetRuns(manifest);
+    if (mode === 'reset') {
+      await resetRuns(manifest);
+      await resetLiveDemoArtifacts();
+    }
     let access;
     try { access = JSON.parse(await readFile(accessFile, 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
     if (access && (access.database !== dbName || access.api !== apiUrl)) throw new Error('Local demo password file belongs to another database/API');
@@ -202,10 +393,14 @@ try {
     }
     for (const employee of employees) await db.collection('pxm_demo_employees').updateOne({ _id: `${marker}:${employee.emp_id}` }, { $set: { ...employee, demo_marker: marker } }, { upsert: true });
     const library = await ensureScriptLibrary(manifest);
+    await ensureDemoCommands();
+    const externalMapping = await ensureExternalPrincipalMapping(manifest);
+    const webhookEndpoint = await ensureWebhookEndpoint(manifest);
     for (const { key, payload, presets: workflowPresets } of fixtures(manifest.credentials, dbName, serviceUrl)) await ensureWorkflow(key, payload, manifest, workflowPresets);
+    const apiDemo = await ensureApiDemoAccess(access, manifest);
     const delegation = await ensureDelegation(manifest);
     await db.collection('pxm_demo_manifests').updateOne({ _id: marker }, { $set: { delegation_id: delegation.id } });
-    console.log(JSON.stringify({ group: group.name, group_id: groupId, workflows: manifest.workflows, credentials: manifest.credentials, library: `${library.package_name}@${library.version}`, accounts: ['admin (기존 계정)', ...users.map(u => u.id)], password_file: accessFile, web: 'http://localhost:5174', mailpit: 'http://localhost:8025', service: serviceUrl, next: 'pnpm demo:service 실행 후 docs/demo-practice.md 참고' }, null, 2));
+    console.log(JSON.stringify({ group: group.name, group_id: groupId, workflows: manifest.workflows, credentials: manifest.credentials, external_mapping: `${externalMapping.provider}/${externalMapping.subject}`, webhook_endpoint: webhookEndpoint.name, library: `${library.package_name}@${library.version}`, api_demo: { service_account: apiDemo.service_account_id, keys: Object.fromEntries(Object.entries(apiDemo.keys).map(([slot, item]) => [slot, item.name])) }, accounts: ['admin (기존 계정)', ...users.map(u => u.id)], password_file: accessFile, web: 'http://localhost:5174', api_playground: 'http://localhost:5175', mailpit: 'http://localhost:8025', service: serviceUrl, next: 'pnpm demo:service 및 pnpm dev:api-playground 실행 후 시연.md 참고' }, null, 2));
   } finally { await db.collection('pxm_demo_manifests').updateOne({ _id: marker }, { $unset: { busy: '' } }); }
 } catch (error) { console.error(`[demo:${mode}] ${error.message}`); process.exitCode = 1; }
 finally { if (headers) await request('/auth/logout', 'POST', {}).catch(() => {}); await client.close(); }

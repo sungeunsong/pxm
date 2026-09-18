@@ -27,6 +27,7 @@ import type { RequestLog } from './api.ts';
 type Tab = 'workflows' | 'instances' | 'approvals' | 'console';
 type WorkflowItem = { id: string; name: string; description?: string; version?: number; group?: string; group_id?: string; tags?: string[]; nodes?: Array<{ data?: { nodeType?: string; formSchema?: { fields?: Array<{ id: string; label?: string; type?: string }> } } }> };
 type InstanceItem = { id?: string; _id?: string; state?: string; status?: string; process_definition_id?: string; definition_id?: string; created_at?: string; updated_at?: string; context?: Record<string, unknown> };
+type InstanceResult = { instance_id: string; status: string; result?: Record<string, unknown> | null; result_path?: string | null; completed_at?: string | null; updated_at?: string | null };
 type ApprovalItem = { task_id: string; instance_id: string; workflow_id: string | null; workflow_name: string | null; node_label: string | null; status: string; approver_channel: string; approval_channels?: string[]; completed_via?: string | null; assignee: string; action: string | null; authentication_method: string | null; created_at: string; completed_at: string | null; comment?: string | null; result?: Record<string, unknown> | null };
 type ApprovalPage = { items: ApprovalItem[]; next_cursor: string | null };
 type TraceItem = { id: number; event_type?: string; type?: string; node_label?: string; created_at?: string; payload?: unknown };
@@ -37,7 +38,7 @@ const storedKey = sessionStorage.getItem('pxm-playground-key') || '';
 export function App() {
   const [baseUrl, setBaseUrl] = useState(storedBase);
   const [apiKey, setApiKey] = useState(storedKey);
-  const [businessActorText, setBusinessActorText] = useState('{"employee_id":"DEMO-001"}');
+  const [businessActorText, setBusinessActorText] = useState('{"id":"DEMO-001","name":"Demo API Requester","provider":"HR-PORTAL"}');
   const [connected, setConnected] = useState(false);
   const [tab, setTab] = useState<Tab>('workflows');
   const [logs, setLogs] = useState<RequestLog[]>([]);
@@ -46,6 +47,7 @@ export function App() {
   const [approvals, setApprovals] = useState<ApprovalItem[]>([]);
   const [selectedWorkflow, setSelectedWorkflow] = useState<WorkflowItem | null>(null);
   const [selectedInstance, setSelectedInstance] = useState<InstanceItem | null>(null);
+  const [selectedInstanceResult, setSelectedInstanceResult] = useState<InstanceResult | null>(null);
   const [selectedApproval, setSelectedApproval] = useState<ApprovalItem | null>(null);
   const [trace, setTrace] = useState<TraceItem[]>([]);
   const [inputJson, setInputJson] = useState('{\n  "requestTitle": "API Consumer Demo",\n  "amount": 125000,\n  "requester": "external-client"\n}');
@@ -97,11 +99,12 @@ export function App() {
   const loadInstancesDirect = async () => setInstances(await api.get<InstanceItem[]>('/instances'));
   const inspectInstance = (item: InstanceItem) => run('trace', async () => {
     const id = instanceId(item);
-    const [detail, events] = await Promise.all([
+    const [detail, events, result] = await Promise.all([
       api.get<InstanceItem>(`/instances/${encodeURIComponent(id)}`),
       api.get<TraceItem[]>(`/instances/${encodeURIComponent(id)}/trace`),
+      api.get<InstanceResult>(`/instances/${encodeURIComponent(id)}/result`),
     ]);
-    setSelectedInstance(detail); setTrace(events);
+    setSelectedInstance(detail); setTrace(events); setSelectedInstanceResult(result);
   });
   const inspectApproval = (item: ApprovalItem) => run('approval-detail', async () => {
     setSelectedApproval(await api.get<ApprovalItem>(`/tasks/${encodeURIComponent(item.task_id)}`));
@@ -160,7 +163,7 @@ export function App() {
       </>}
     </main>
     {selectedWorkflow && <ExecuteDrawer workflow={selectedWorkflow} input={inputJson} busy={busy === 'execute'} onInput={setInputJson} onClose={() => setSelectedWorkflow(null)} onExecute={() => void execute()} />}
-    {selectedInstance && <DetailDrawer title="Instance Trace" subtitle={instanceId(selectedInstance)} onClose={() => setSelectedInstance(null)}><InstanceDetail item={selectedInstance} trace={trace} /></DetailDrawer>}
+    {selectedInstance && <DetailDrawer title="Instance Trace & Result" subtitle={instanceId(selectedInstance)} onClose={() => { setSelectedInstance(null); setSelectedInstanceResult(null); }}><InstanceDetail item={selectedInstance} trace={trace} result={selectedInstanceResult} /></DetailDrawer>}
     {selectedApproval && <DetailDrawer title="Approval Detail" subtitle={selectedApproval.task_id} onClose={() => setSelectedApproval(null)}><ApprovalDetail item={selectedApproval} busy={busy === 'approval-complete'} onComplete={(action, comment) => void completeApproval(action, comment)} /></DetailDrawer>}
   </div>;
 }
@@ -196,7 +199,7 @@ function ApprovalDetail({ item, busy, onComplete }: { item: ApprovalItem; busy: 
 }
 
 function DetailDrawer({ title, subtitle, onClose, children }: { title: string; subtitle: string; onClose: () => void; children: ReactNode }) { return <div className="drawer-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><aside className="drawer"><header><div><span className="eyebrow">API RESPONSE</span><h2>{title}</h2><code>{subtitle}</code></div><button onClick={onClose} aria-label="닫기"><XCircle /></button></header>{children}</aside></div>; }
-function InstanceDetail({ item, trace }: { item: InstanceItem; trace: TraceItem[] }) { return <div className="instance-detail"><div className="metric-row"><Metric label="State" value={item.state || item.status || '-'} /><Metric label="Events" value={String(trace.length)} /><Metric label="Updated" value={formatDate(item.updated_at)} /></div><h3>Event trace</h3><div className="timeline">{trace.map((event, index) => <div key={`${event.id}-${index}`}><span className="timeline-dot" /><div><strong>{event.event_type || event.type}</strong><span>{event.node_label || 'Runtime'} · {formatDate(event.created_at)}</span><pre>{JSON.stringify(event.payload || {}, null, 2)}</pre></div></div>)}</div></div>; }
+function InstanceDetail({ item, trace, result }: { item: InstanceItem; trace: TraceItem[]; result: InstanceResult | null }) { return <div className="instance-detail"><div className="metric-row"><Metric label="State" value={item.state || item.status || '-'} /><Metric label="Events" value={String(trace.length)} /><Metric label="Updated" value={formatDate(item.updated_at)} /></div><h3>Result API</h3><JsonBlock value={result || { status: '조회 중' }} /><h3>Event trace</h3><div className="timeline">{trace.map((event, index) => <div key={`${event.id}-${index}`}><span className="timeline-dot" /><div><strong>{event.event_type || event.type}</strong><span>{event.node_label || 'Runtime'} · {formatDate(event.created_at)}</span><pre>{JSON.stringify(event.payload || {}, null, 2)}</pre></div></div>)}</div></div>; }
 function SectionHeader({ title, description, busy, onRefresh, action }: { title: string; description: string; busy?: boolean; onRefresh?: () => void; action?: ReactNode }) { return <div className="section-header"><div><h2>{title}</h2><p>{description}</p></div>{action || (onRefresh && <button className="ghost compact" onClick={onRefresh}><RefreshCw className={busy ? 'spin' : ''} /> Refresh</button>)}</div>; }
 function NavButton({ icon, label, active, disabled, badge, onClick }: { icon: ReactNode; label: string; active: boolean; disabled: boolean; badge?: number; onClick: () => void }) { return <button className={active ? 'active' : ''} disabled={disabled} onClick={onClick}>{icon}<span>{label}</span>{badge ? <b>{badge}</b> : null}</button>; }
 function Status({ value }: { value: string }) { const kind = /APPROVED|COMPLETED|200|201/.test(value) ? 'success' : /REJECTED|FAILED|ERROR|4\d\d|5\d\d/.test(value) ? 'danger' : /OPEN|WAITING|RUNNING/.test(value) ? 'waiting' : 'neutral'; return <span className={`status ${kind}`}>{value}</span>; }
@@ -238,4 +241,4 @@ function errorHint(code: string, status: number) {
   return '';
 }
 function defaultInput(workflow: WorkflowItem) { const fields = workflow.nodes?.find((node) => node.data?.nodeType === 'start')?.data?.formSchema?.fields || []; if (!fields.length) return '{\n  \n}'; return JSON.stringify(Object.fromEntries(fields.map((field) => [field.id, field.type === 'number' ? 0 : `${field.label || field.id} 입력`])), null, 2); }
-function curlFor(log: RequestLog) { const body = log.requestBody === undefined ? '' : ` \\\n  -H 'Content-Type: application/json' \\\n  -d '${JSON.stringify(log.requestBody)}'`; return `curl -X ${log.method} '<API_BASE>${log.path}' \\\n  -H 'Authorization: Bearer <API_KEY>'${body}`; }
+function curlFor(log: RequestLog) { const headers = Object.entries(log.requestHeaders || {}).map(([name, value]) => ` \\\n  -H '${name}: ${value}'`).join(''); const body = log.requestBody === undefined ? '' : ` \\\n  -H 'Content-Type: application/json' \\\n  -d '${JSON.stringify(log.requestBody)}'`; return `curl -X ${log.method} '<API_BASE>${log.path}' \\\n  -H 'Authorization: Bearer <API_KEY>'${headers}${body}`; }

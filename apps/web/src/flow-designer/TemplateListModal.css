@@ -220,6 +220,7 @@
 
 .template-meta {
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
   font-size: 14px;
   color: var(--text-tertiary);
@@ -229,6 +230,10 @@
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.template-meta-item svg {
+  flex: 0 0 auto;
 }
 
 .template-actions {

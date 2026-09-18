@@ -5,9 +5,11 @@ test('사용 기록 없는 그룹의 영구 삭제 방식을 화면에서 명확
   const groupName = `삭제 정책 확인 ${Date.now()}`;
   const ui = await loginPage(browser, 'admin', process.env.PXM_DEMO_PASSWORD!, 'access');
 
-  await ui.page.getByPlaceholder('그룹 이름').fill(groupName);
-  await ui.page.getByPlaceholder('설명').fill('사용 기록 없는 임시 그룹');
-  await ui.page.getByRole('button', { name: '저장', exact: true }).click();
+  await ui.page.getByRole('button', { name: '새 그룹', exact: true }).click();
+  const createDrawer = ui.page.getByRole('dialog', { name: '새 그룹 만들기' });
+  await createDrawer.getByLabel(/그룹 이름/).fill(groupName);
+  await createDrawer.getByLabel('설명', { exact: true }).fill('사용 기록 없는 임시 그룹');
+  await createDrawer.getByRole('button', { name: '그룹 만들기', exact: true }).click();
 
   const row = ui.page.locator('.access-list-row').filter({ hasText: groupName });
   await expect(row).toBeVisible();
@@ -30,17 +32,20 @@ test('사용 이력이 있는 그룹은 복구 가능한 삭제와 후속 확인
   const serviceAccountName = `복구 확인 계정 ${Date.now()}`;
   const ui = await loginPage(browser, 'admin', process.env.PXM_DEMO_PASSWORD!, 'access');
 
-  await ui.page.getByPlaceholder('그룹 이름').fill(groupName);
-  await ui.page.getByPlaceholder('설명').fill('복구 가능한 삭제 확인 그룹');
-  await ui.page.getByRole('button', { name: '저장', exact: true }).click();
+  await ui.page.getByRole('button', { name: '새 그룹', exact: true }).click();
+  const createDrawer = ui.page.getByRole('dialog', { name: '새 그룹 만들기' });
+  await createDrawer.getByLabel(/그룹 이름/).fill(groupName);
+  await createDrawer.getByLabel('설명', { exact: true }).fill('복구 가능한 삭제 확인 그룹');
+  await createDrawer.getByRole('button', { name: '그룹 만들기', exact: true }).click();
   const groupRow = ui.page.locator('.access-list-row').filter({ hasText: groupName });
   await expect(groupRow).toBeVisible();
   await groupRow.click();
 
   await ui.page.getByRole('button', { name: /^서비스 계정/ }).click();
-  const serviceAccountForm = ui.page.locator('form').filter({ has: ui.page.getByPlaceholder('서비스 계정 ID') });
-  await serviceAccountForm.getByPlaceholder('이름', { exact: true }).fill(serviceAccountName);
-  await serviceAccountForm.getByRole('button', { name: '저장', exact: true }).click();
+  await ui.page.getByRole('button', { name: '서비스 계정 생성', exact: true }).click();
+  const serviceAccountDrawer = ui.page.getByRole('dialog', { name: '서비스 계정 생성' });
+  await serviceAccountDrawer.getByLabel(/표시 이름/).fill(serviceAccountName);
+  await serviceAccountDrawer.getByRole('button', { name: '서비스 계정 생성', exact: true }).click();
   await expect(ui.page.getByText(serviceAccountName, { exact: true })).toBeVisible();
 
   await ui.page.getByRole('button', { name: '삭제 영향 확인', exact: true }).click();

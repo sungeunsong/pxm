@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 import './primitives.css';
 import { isTopModalLayer, popModalLayer, pushModalLayer } from '../../lib/modal-layer';
@@ -9,7 +9,7 @@ export interface DrawerProps {
   children: ReactNode;
   footer?: ReactNode;
   onClose: () => void;
-  width?: 'sm' | 'md' | 'lg';
+  width?: 'sm' | 'md' | 'lg' | 'xl';
   className?: string;
   closeLabel?: string;
   closeOnBackdrop?: boolean;
@@ -31,14 +31,29 @@ export function Drawer({
   closeOnBackdrop = true,
 }: DrawerProps) {
   const titleId = useId();
+  const [isClosing, setIsClosing] = useState(false);
   const drawerRef = useRef<HTMLElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
+  const closeTimerRef = useRef<number | null>(null);
   const restoreFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
+
+  const requestClose = useCallback(() => {
+    if (closeTimerRef.current !== null) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      onCloseRef.current();
+      return;
+    }
+    setIsClosing(true);
+    closeTimerRef.current = window.setTimeout(() => {
+      closeTimerRef.current = null;
+      onCloseRef.current();
+    }, 180);
+  }, []);
 
   useEffect(() => {
     if (restoreFrameRef.current !== null) window.cancelAnimationFrame(restoreFrameRef.current);
@@ -54,7 +69,7 @@ export function Drawer({
       if (!isTopModalLayer(layer)) return;
       if (event.key === 'Escape') {
         event.preventDefault();
-        onCloseRef.current();
+        requestClose();
         return;
       }
       if (event.key !== 'Tab' || !drawer) return;
@@ -83,18 +98,19 @@ export function Drawer({
     return () => {
       window.removeEventListener('keydown', handleKey);
       popModalLayer(layer);
+      if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
       restoreFrameRef.current = window.requestAnimationFrame(() => {
         previousFocusRef.current?.focus();
         previousFocusRef.current = null;
         restoreFrameRef.current = null;
       });
     };
-  }, []);
+  }, [requestClose]);
 
   return (
     <div
-      className="pxm-drawer-backdrop"
-      onMouseDown={(event) => closeOnBackdrop && event.target === event.currentTarget && onClose()}
+      className={`pxm-drawer-backdrop${isClosing ? ' is-closing' : ''}`}
+      onMouseDown={(event) => closeOnBackdrop && event.target === event.currentTarget && requestClose()}
     >
       <aside
         ref={drawerRef}
@@ -109,7 +125,7 @@ export function Drawer({
             {eyebrow && <span className="pxm-drawer-eyebrow">{eyebrow}</span>}
             <h3 id={titleId}>{title}</h3>
           </div>
-          <button type="button" className="pxm-drawer-close" onClick={onClose} aria-label={closeLabel} data-drawer-initial-focus>
+          <button type="button" className="pxm-drawer-close" onClick={requestClose} aria-label={closeLabel} data-drawer-initial-focus>
             <X size={18} />
           </button>
         </header>

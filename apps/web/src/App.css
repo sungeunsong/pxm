@@ -155,6 +155,47 @@
   box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
 }
 
+.sidebar-menu-tooltip {
+  position: fixed;
+  z-index: var(--z-tooltip);
+  transform: translateY(-50%);
+  max-width: 220px;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 7px;
+  background: #111a31;
+  box-shadow: 0 8px 24px rgba(2, 6, 23, .28);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.3;
+  pointer-events: none;
+  white-space: nowrap;
+  animation: sidebar-tooltip-in 120ms ease-out both;
+}
+
+.sidebar-menu-tooltip::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 100%;
+  width: 7px;
+  height: 7px;
+  border-left: 1px solid rgba(255, 255, 255, .1);
+  border-bottom: 1px solid rgba(255, 255, 255, .1);
+  background: #111a31;
+  transform: translate(4px, -50%) rotate(45deg);
+}
+
+@keyframes sidebar-tooltip-in {
+  from { opacity: 0; transform: translate(-4px, -50%); }
+  to { opacity: 1; transform: translate(0, -50%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-menu-tooltip { animation-duration: 1ms; }
+}
+
 .sidebar-footer {
   padding: 16px 20px;
   border-top: 1px solid rgba(255, 255, 255, 0.05);

@@ -537,7 +537,7 @@ fn percent_encode_component(value: &str) -> String {
     encoded
 }
 
-fn interpolate_value_with_context(value: &Value, context: &Value) -> Result<Value> {
+pub(crate) fn interpolate_value_with_context(value: &Value, context: &Value) -> Result<Value> {
     match value {
         Value::String(text) => interpolate_string_with_context(text, context),
         Value::Array(items) => items

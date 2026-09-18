@@ -1,4 +1,5 @@
 import { useEffect, useState, type ComponentType } from 'react';
+import { createPortal } from 'react-dom';
 import { 
   LayoutGrid, 
   Paintbrush, 
@@ -269,14 +270,23 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
   const [selectedRequestInstanceId, setSelectedRequestInstanceId] = useState<string | null>(null);
   const [accountOpen, setAccountOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('pxm.sidebar.collapsed') === 'true');
+  const [sidebarTooltip, setSidebarTooltip] = useState<{ tab: ActiveTab; label: string; top: number; left: number } | null>(null);
   // 발표 모드는 일시적인 상태다. 사용자가 저장해 둔 사이드바 선택을 덮어쓰지 않도록 따로 둔다.
   const [presenting, setPresenting] = useState(false);
   const navigationSections = sidebarSections(user.role);
+  const isSidebarCollapsed = sidebarCollapsed || presenting;
 
   const toggleSidebar = () => setSidebarCollapsed((current) => {
+    setSidebarTooltip(null);
     localStorage.setItem('pxm.sidebar.collapsed', String(!current));
     return !current;
   });
+
+  const showSidebarTooltip = (target: HTMLButtonElement, tab: ActiveTab, label: string) => {
+    if (!isSidebarCollapsed) return;
+    const rect = target.getBoundingClientRect();
+    setSidebarTooltip({ tab, label, top: rect.top + rect.height / 2, left: rect.right + 10 });
+  };
 
   const setActiveTab = (tab: ActiveTab) => {
     const nextTab = canAccessTab(user.role, tab) ? tab : landingTab(user.role);
@@ -324,6 +334,7 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
   };
 
   const handleSidebarSelect = (tab: ActiveTab) => {
+    setSidebarTooltip(null);
     if (tab === 'designer') setSelectedInstanceId(null);
     setActiveTab(tab);
   };
@@ -331,13 +342,13 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
   return (
     <div className="app-container">
       {/* 1. Left Sidebar (Deep Navy) */}
-      <aside className={`app-sidebar${sidebarCollapsed || presenting ? ' collapsed' : ''}`}>
+      <aside className={`app-sidebar${isSidebarCollapsed ? ' collapsed' : ''}`}>
         <div className="sidebar-logo">
           <div className="sidebar-logo-text">
             <img src="/brand/pxm-app-icon.png" alt="" /><span>PXM</span>
           </div>
-          <button className="sidebar-collapse-button" onClick={toggleSidebar} title={sidebarCollapsed ? '사이드바 펼치기' : '사이드바 접기'} aria-label={sidebarCollapsed ? '사이드바 펼치기' : '사이드바 접기'}>
-            {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+          <button className="sidebar-collapse-button" onClick={toggleSidebar} title={isSidebarCollapsed ? '사이드바 펼치기' : '사이드바 접기'} aria-label={isSidebarCollapsed ? '사이드바 펼치기' : '사이드바 접기'}>
+            {isSidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
           </button>
         </div>
         
@@ -351,9 +362,15 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
                   return (
                     <button
                       key={item.tab}
-                      title={item.label}
+                      title={isSidebarCollapsed ? undefined : item.label}
+                      aria-label={item.label}
+                      aria-describedby={isSidebarCollapsed && sidebarTooltip?.tab === item.tab ? 'sidebar-menu-tooltip' : undefined}
                       className={`sidebar-menu-item ${activeTab === item.tab ? 'active' : ''}`}
                       onClick={() => handleSidebarSelect(item.tab)}
+                      onMouseEnter={(event) => showSidebarTooltip(event.currentTarget, item.tab, item.label)}
+                      onMouseLeave={() => setSidebarTooltip(null)}
+                      onFocus={(event) => showSidebarTooltip(event.currentTarget, item.tab, item.label)}
+                      onBlur={() => setSidebarTooltip(null)}
                     >
                       <Icon size={16} />
                       <span>{item.label}</span>
@@ -380,6 +397,18 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
           </div>
         </div>
       </aside>
+
+      {isSidebarCollapsed && sidebarTooltip && createPortal(
+        <div
+          id="sidebar-menu-tooltip"
+          role="tooltip"
+          className="sidebar-menu-tooltip"
+          style={{ top: sidebarTooltip.top, left: sidebarTooltip.left }}
+        >
+          {sidebarTooltip.label}
+        </div>,
+        document.body,
+      )}
 
       {/* 2. Main Area (White Header + Grey Content) */}
       <div className="app-main">

@@ -20,9 +20,13 @@ test('발표 시연 경로: 관리 설정 확인부터 신청자 자동 처리�
     await test.step('장면 3~4 · 플러그인과 배포된 워크플로우 확인', async () => {
       await ui.page.getByRole('button', { name: '플러그인 제어', exact: true }).click();
       await expect(ui.page.locator('main')).toContainText('builtin.http_request');
+      await ui.page.getByRole('button', { name: '명령어 관리', exact: true }).click();
+      await expect(ui.page.locator('main')).toContainText('demo.request_summary');
+      await expect(ui.page.locator('main')).toContainText('demo.path_label');
       await ui.page.getByRole('button', { name: '워크플로우 관리', exact: true }).click();
       const row = ui.page.getByRole('row').filter({ hasText: '실습 2 · 협력사 접근 권한 신청' });
       await expect(row).toBeVisible();
+      await expect(ui.page.getByRole('row').filter({ hasText: '실습 8 · Node.js 버전 점검 분기' })).toBeVisible();
       await row.click();
       await expect(ui.page.getByLabel('워크플로우 작성 이력')).toBeVisible();
       await expect(ui.page.locator('.workflow-detail-panel')).toContainText(/Versionv\d+/);
@@ -62,6 +66,101 @@ test('발표 시연 경로: 관리 설정 확인부터 신청자 자동 처리�
     });
     await ui.context.close();
   });
+});
+
+test('그룹 관리자는 목록 중심 화면에서 API Key 발급 범위를 단계별로 확인한다', async ({ browser }) => {
+  const access = JSON.parse(await readFile(process.env.PXM_DEMO_ACCESS_FILE!, 'utf8'));
+  const ui = await loginPage(browser, 'demo-secadmin', access.accounts['demo-secadmin'], 'access');
+
+  await expect(ui.page.getByRole('button', { name: '새 그룹', exact: true })).toHaveCount(0);
+  await expect(ui.page.getByRole('button', { name: '삭제 영향 확인', exact: true })).toHaveCount(0);
+
+  await ui.page.getByRole('button', { name: '사이드바 접기', exact: true }).click();
+  await ui.page.getByRole('button', { name: '사용자 및 권한', exact: true }).hover();
+  await expect(ui.page.getByRole('tooltip', { name: '사용자 및 권한', exact: true })).toBeVisible();
+  await ui.page.getByRole('button', { name: '사이드바 펼치기', exact: true }).click();
+
+  await ui.page.getByRole('button', { name: /^API Key/ }).click();
+  await expect(ui.page.getByText('데모 · API 실행 키', { exact: true })).toBeVisible();
+  await expect(ui.page.getByText('데모 · API 결재 키', { exact: true })).toBeVisible();
+
+  await ui.page.getByRole('button', { name: 'API Key 발급', exact: true }).click();
+  const drawer = ui.page.getByRole('dialog', { name: 'API Key 발급' });
+  await expect(drawer.getByText('누가 사용할 키인가요?', { exact: true })).toBeVisible();
+  await drawer.getByLabel(/Key 이름/).fill('UI 검증용 키');
+  await drawer.getByRole('button', { name: '다음', exact: true }).click();
+  await expect(drawer.getByText('무엇을 할 수 있나요?', { exact: true })).toBeVisible();
+  await expect(drawer.getByText('승인 처리', { exact: true })).toBeVisible();
+  await drawer.getByRole('checkbox', { name: /실습 1 · 기본 접근 권한 결재/ }).check();
+  await drawer.getByRole('button', { name: '다음', exact: true }).click();
+  await expect(drawer.getByText('보안 제한을 확인하세요', { exact: true })).toBeVisible();
+  await expect(drawer.locator('.key-review')).toContainText('서비스 계정');
+  await drawer.getByRole('button', { name: '상세 패널 닫기' }).click();
+  await expect(ui.page.locator('.pxm-drawer-backdrop')).toHaveClass(/is-closing/);
+  await expect(drawer).toBeHidden();
+
+  await ui.page.locator('.access-page-tabs').getByRole('button', { name: /사용자 관리/ }).click();
+  await ui.page.getByRole('button', { name: '새 사용자 추가', exact: true }).click();
+  const userDrawer = ui.page.getByRole('dialog', { name: '새 사용자 계정' });
+  await expect(userDrawer).toContainText('기존 계정을 그룹에 추가하려는 경우');
+  await userDrawer.getByRole('button', { name: '상세 패널 닫기' }).click();
+  await ui.context.close();
+});
+
+test('워크플로우 운영 기능은 관리 화면에 모으고 불러오기는 선택에 집중한다', async ({ browser }) => {
+  const access = JSON.parse(await readFile(process.env.PXM_DEMO_ACCESS_FILE!, 'utf8'));
+  const ui = await loginPage(browser, 'demo-secadmin', access.accounts['demo-secadmin'], 'access');
+
+  await ui.page.getByRole('button', { name: '워크플로우 관리', exact: true }).click();
+  await ui.page.getByRole('row').filter({ hasText: '실습 5 · 디자이너와 배포 수명주기' }).click();
+  const management = ui.page.locator('.workflow-management-section');
+  await expect(management).toContainText('워크플로우 관리');
+  await expect(management.getByRole('button', { name: '배포 중지', exact: true })).toBeVisible();
+  await expect(management.getByRole('button', { name: '메타데이터 수정', exact: true })).toBeVisible();
+  await expect(management.getByRole('button', { name: '버전 이력', exact: true })).toBeVisible();
+  await expect(management.getByRole('button', { name: '파일로 내보내기', exact: true })).toBeVisible();
+
+  await management.getByRole('button', { name: '메타데이터 수정', exact: true }).click();
+  const metadataDrawer = ui.page.getByRole('dialog', { name: '워크플로우 메타데이터 수정' });
+  await expect(metadataDrawer.locator('input').first()).toHaveValue('실습 5 · 디자이너와 배포 수명주기');
+  await expect(metadataDrawer.getByText('저장 후 Version Note와 Export 파일에 기록됩니다.')).toBeVisible();
+  const drawerBox = await metadataDrawer.boundingBox();
+  const formBox = await metadataDrawer.locator('.workflow-metadata-form').boundingBox();
+  expect(drawerBox).not.toBeNull();
+  expect(formBox).not.toBeNull();
+  expect(formBox!.x - drawerBox!.x).toBeGreaterThanOrEqual(20);
+  expect(drawerBox!.x + drawerBox!.width - (formBox!.x + formBox!.width)).toBeGreaterThanOrEqual(20);
+  await metadataDrawer.locator('textarea').last().fill('E2E 메타데이터 관리 검증');
+  await metadataDrawer.getByRole('button', { name: '새 버전으로 저장', exact: true }).click();
+  await expect(metadataDrawer).toBeHidden();
+  const publishButton = management.getByRole('button', { name: /^v\d+ 배포$/ });
+  await expect(publishButton).toBeVisible();
+  await publishButton.click();
+  const publishDialog = ui.page.getByRole('dialog', { name: /배포할까요/ });
+  await publishDialog.getByRole('button', { name: '배포', exact: true }).click();
+  await expect(management.getByRole('button', { name: '배포 중지', exact: true })).toBeVisible();
+
+  await management.getByRole('button', { name: '버전 이력', exact: true }).click();
+  const versionDrawer = ui.page.getByRole('dialog', { name: '워크플로우 버전 이력' });
+  await expect(versionDrawer).toContainText(/현재 v\d+/);
+  await expect(versionDrawer.getByRole('button', { name: '비교', exact: true }).first()).toBeVisible();
+  await versionDrawer.getByRole('button', { name: '상세 패널 닫기' }).click();
+  await expect(versionDrawer).toBeHidden();
+
+  await ui.page.getByRole('button', { name: '워크플로우 설계', exact: true }).click();
+  await ui.page.getByRole('button', { name: '더 보기' }).click();
+  await ui.page.getByRole('menuitem', { name: '불러오기', exact: true }).click();
+  const loadCard = ui.page.locator('.template-item-group').filter({ hasText: '실습 5 · 디자이너와 배포 수명주기' });
+  await expect(loadCard.getByRole('button', { name: '불러오기', exact: true })).toBeVisible();
+  await expect(loadCard).toContainText('생성자 ID:');
+  await expect(loadCard).toContainText('수정자 ID:');
+  await expect(loadCard).toContainText('최근 수정');
+  await expect(loadCard.getByRole('button', { name: '배포', exact: true })).toHaveCount(0);
+  await expect(loadCard.getByRole('button', { name: '배포 중지', exact: true })).toHaveCount(0);
+  await expect(loadCard.getByRole('button', { name: '버전', exact: true })).toHaveCount(0);
+  await expect(loadCard.getByRole('button', { name: '삭제', exact: true })).toHaveCount(0);
+
+  await ui.context.close();
 });
 
 test('배율이 변경된 워크플로우 캔버스에서 노드를 마우스 위치에 드롭한다', async ({ browser }) => {
@@ -137,8 +236,9 @@ test('디자이너 더보기 메뉴가 탭과 캔버스 위에서 모두 클릭 
   expect(menuBox!.y + menuBox!.height).toBeGreaterThan(tabBox!.y + tabBox!.height);
 
   const menuItems = menu.getByRole('menuitem');
-  await expect(menuItems).toHaveCount(7);
+  await expect(menuItems).toHaveCount(6);
   await expect(menu.getByRole('menuitem', { name: '자동 정렬' })).toBeVisible();
+  await expect(menu.getByRole('menuitem', { name: '파일로 내보내기' })).toHaveCount(0);
   for (let index = 0; index < await menuItems.count(); index += 1) {
     const item = menuItems.nth(index);
     const clickable = await item.evaluate((button) => {
@@ -375,6 +475,33 @@ test('캔버스 컨텍스트 메뉴로 마우스 위치에서 노드를 편집�
   await ui.context.close();
 });
 
+test('연결된 노드를 삭제하면 모든 입출력 엣지도 함께 삭제한다', async ({ browser }) => {
+  const ui = await loginPage(browser, 'admin', process.env.PXM_DEMO_PASSWORD!, 'designer');
+  await openWorkflowFromDesigner(ui.page, '실습 5 · 디자이너와 배포 수명주기');
+
+  const approvalNode = ui.page.locator('.react-flow__node').filter({ hasText: '내부 담당자 승인' });
+  await expect(approvalNode).toHaveCount(1);
+  await expect(ui.page.locator('[data-testid="rf__edge-decision-approval"]')).toBeVisible();
+  await expect(ui.page.locator('[data-testid="rf__edge-approval-provision"]')).toBeVisible();
+  await expect(ui.page.locator('[data-testid="rf__edge-approval-rejected"]')).toBeVisible();
+
+  await approvalNode.click({ button: 'right' });
+  await ui.page.getByTestId('canvas-context-menu')
+    .getByRole('menuitem', { name: '삭제 Delete', exact: true })
+    .click();
+  const dialog = ui.page.getByRole('dialog', { name: '이 노드를 삭제할까요?' });
+  await expect(dialog).toContainText('연결된 엣지 3개도 함께 삭제됩니다.');
+  await dialog.getByRole('button', { name: '삭제', exact: true }).click();
+
+  await expect(approvalNode).toHaveCount(0);
+  await expect(ui.page.locator('[data-testid="rf__edge-decision-approval"]')).toHaveCount(0);
+  await expect(ui.page.locator('[data-testid="rf__edge-approval-provision"]')).toHaveCount(0);
+  await expect(ui.page.locator('[data-testid="rf__edge-approval-rejected"]')).toHaveCount(0);
+  await expect(ui.page.locator('[data-testid="rf__edge-provision-completed"]')).toBeVisible();
+
+  await ui.context.close();
+});
+
 test('분기 엣지 컨텍스트 메뉴에서 설정과 삭제 동작을 구분한다', async ({ browser }) => {
   const ui = await loginPage(browser, 'admin', process.env.PXM_DEMO_PASSWORD!, 'designer');
   await ui.page.getByRole('button', { name: '더 보기' }).click();
@@ -418,6 +545,13 @@ test('빈 캔버스 더블클릭과 Tab으로 기본·플러그인 노드를 검
   await ui.page.locator('.flow-canvas-wrapper').focus();
   await ui.page.keyboard.press('Tab');
   await expect(quickAdd).toBeVisible();
+  const results = quickAdd.locator('.node-quick-add-results');
+  const beforeWheelTransform = await viewport.getAttribute('style');
+  await results.hover();
+  await ui.page.mouse.wheel(0, 240);
+  await expect(quickAdd).toBeVisible();
+  await expect(viewport).toHaveAttribute('style', beforeWheelTransform || '');
+  expect(await results.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   await quickAdd.getByRole('combobox').fill('http');
   const pluginOption = quickAdd.getByRole('option').filter({ hasText: 'HTTP Request' }).first();
   await expect(pluginOption).toContainText('Builtin · builtin');
@@ -426,6 +560,35 @@ test('빈 캔버스 더블클릭과 Tab으로 기본·플러그인 노드를 검
 
   await timer.dblclick();
   await expect(quickAdd).toBeHidden();
+  await ui.context.close();
+});
+
+test('그룹 관리자가 새 워크플로우를 자신의 관리 그룹에 저장한다', async ({ browser }) => {
+  const access = JSON.parse(await readFile(process.env.PXM_DEMO_ACCESS_FILE!, 'utf8'));
+  const ui = await loginPage(browser, 'demo-secadmin', access.accounts['demo-secadmin'], 'designer');
+
+  await ui.page.getByRole('button', { name: '속성 패널 열기' }).click();
+  await expect(ui.page.getByLabel('관리 그룹')).toHaveValue('pxm-guided-demo');
+  await ui.page.getByRole('button', { name: '저장', exact: true }).click();
+  const saveDialog = ui.page.getByRole('dialog', { name: '워크플로우 저장' });
+  const workflowName = `E2E 신규 저장 ${Date.now()}`;
+  await saveDialog.getByLabel('워크플로우 이름').fill(workflowName);
+  await saveDialog.getByRole('button', { name: '저장', exact: true }).click();
+
+  await expect(ui.page.locator('.pxm-toast-title', { hasText: '워크플로우를 저장했습니다.' })).toBeVisible();
+  await expect(ui.page.getByRole('tab', { name: new RegExp(workflowName) })).toBeVisible();
+  await ui.context.close();
+});
+
+test('저장하지 않은 설계는 이전 버전으로 실행하지 않는다', async ({ browser }) => {
+  const ui = await loginPage(browser, 'admin', process.env.PXM_DEMO_PASSWORD!, 'designer');
+  await openWorkflowFromDesigner(ui.page, '실습 7 · 명령 실행 터미널');
+  await addTimerFromCanvasMenu(ui.page);
+
+  await ui.page.getByRole('button', { name: '실행', exact: true }).click();
+  await expect(ui.page.locator('.pxm-toast-title', { hasText: '변경사항을 먼저 저장해 주세요.' })).toBeVisible();
+  await expect(ui.page.locator('.pxm-toast-description')).toContainText('마지막으로 저장된 버전');
+  await expect(ui.page.locator('.execution-modal')).toHaveCount(0);
   await ui.context.close();
 });
 

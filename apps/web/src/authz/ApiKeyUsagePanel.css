@@ -6,11 +6,20 @@
 .api-key-usage-filters label { display: grid; gap: 5px; font-size: 12px; }
 .api-key-usage-filters input, .api-key-usage-filters select { min-width: 0; height: 34px; border: 1px solid var(--border-subtle); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); padding: 4px 8px; }
 .api-key-usage-table { overflow-x: auto; }
-.api-key-usage table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.api-key-usage table { width: 100%; min-width: 900px; border-collapse: collapse; font-size: 12px; }
 .api-key-usage td, .api-key-usage th { padding: 10px 6px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border-subtle); overflow-wrap: anywhere; }
+.api-key-usage th:nth-child(1) { width: 16%; }
+.api-key-usage th:nth-child(2) { width: 15%; }
+.api-key-usage th:nth-child(3) { width: 27%; }
+.api-key-usage th:nth-child(4) { width: 20%; }
+.api-key-usage th:nth-child(5) { width: 22%; }
 .api-key-usage small { display: block; margin-top: 4px; color: var(--text-secondary); }
 .api-key-usage-result { display: inline-flex; padding: 3px 7px; border-radius: 999px; font-weight: 600; white-space: nowrap; }
 .api-key-usage-result.is-success { color: var(--success-text, #166534); background: var(--success-subtle, #dcfce7); }
 .api-key-usage-result.is-failure { color: var(--danger-text, #991b1b); background: var(--danger-subtle, #fee2e2); }
 .api-key-usage-result.is-aborted, .api-key-usage-result.is-pending { color: var(--text-secondary); background: var(--bg-secondary); }
 .api-key-usage footer { margin-top: 12px; }
+
+@media (min-width: 1050px) {
+  .usage-drawer .api-key-usage-filters { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}

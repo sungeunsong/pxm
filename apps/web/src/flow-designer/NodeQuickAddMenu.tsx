@@ -43,7 +43,10 @@ export function NodeQuickAddMenu({ title, anchor, boundary, items, onSelect, onC
     const closeFromOutside = (event: PointerEvent) => {
       if (!menuRef.current?.contains(event.target as Node)) onClose();
     };
-    const closeFromViewportChange = () => onClose();
+    const closeFromViewportChange = (event: Event) => {
+      if (menuRef.current?.contains(event.target as Node)) return;
+      onClose();
+    };
     window.addEventListener('pointerdown', closeFromOutside);
     window.addEventListener('scroll', closeFromViewportChange, true);
     return () => {
@@ -84,6 +87,7 @@ export function NodeQuickAddMenu({ title, anchor, boundary, items, onSelect, onC
       className="node-quick-add"
       style={{ left: position.x, top: position.y }}
       onKeyDown={handleKeyDown}
+      onWheel={(event) => event.stopPropagation()}
       data-testid="node-quick-add"
     >
       <div className="node-quick-add-title">{title}</div>

@@ -1,13 +1,20 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
+  Ban,
   CalendarClock,
   CheckCircle2,
   ChevronRight,
+  Download,
+  Edit3,
   FileText,
   GitBranch,
+  GitCompare,
+  History,
   Play,
   RefreshCw,
+  Rocket,
+  RotateCcw,
   Search,
   Trash2,
 } from 'lucide-react';
@@ -19,20 +26,20 @@ import './RequestPortal.css';
 import { WorkflowAttribution } from '../flow-designer/WorkflowAttribution';
 import { useFeedback } from '../components/feedback/feedback-context';
 import { errorMessage } from '../lib/error-message';
+import { templatesApi } from '../api/templates';
+import type { WorkflowTemplate, WorkflowTemplateVersion, WorkflowVersionDiff } from '../api/templates';
+import { Drawer } from '../components/ui/Drawer';
+import { Button } from '../components/Button';
 
-interface Template {
-  id: string;
+type Template = WorkflowTemplate;
+
+type MetadataForm = {
   name: string;
   description: string;
-  group?: string;
-  group_id?: string | null;
-  tags?: string[];
-  version: number;
-  nodes: any[];
-  edges: any[];
-  updated_at?: string;
-  created_at?: string;
-}
+  tags: string;
+  groupId: string;
+  versionNote: string;
+};
 
 type StartFormField = {
   id?: string;
@@ -89,6 +96,14 @@ export const RequestPortal: React.FC<{
   const [successInstanceId, setSuccessInstanceId] = useState<string | null>(null);
   const [scheduleStatus, setScheduleStatus] = useState<ScheduleStatus | null>(null);
   const [scheduleStatusLoading, setScheduleStatusLoading] = useState(false);
+  const [metadataEditorOpen, setMetadataEditorOpen] = useState(false);
+  const [metadataSaving, setMetadataSaving] = useState(false);
+  const [metadataForm, setMetadataForm] = useState<MetadataForm>({ name: '', description: '', tags: '', groupId: '', versionNote: '' });
+  const [versionsOpen, setVersionsOpen] = useState(false);
+  const [versions, setVersions] = useState<WorkflowTemplateVersion[]>([]);
+  const [versionDiff, setVersionDiff] = useState<WorkflowVersionDiff | null>(null);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [versionsError, setVersionsError] = useState<string | null>(null);
 
   const fetchTemplates = async () => {
     setLoading(true);
@@ -302,6 +317,150 @@ export const RequestPortal: React.FC<{
     }
   };
 
+  const applyTemplateUpdate = (updated: Template) => {
+    setTemplates((current) => current.map((template) => (template.id === updated.id ? updated : template)));
+    setSelectedTemplate(updated);
+    setFormData(buildInitialInput(updated));
+  };
+
+  const handleLifecycle = async (action: 'publish' | 'disable' | 'reactivate') => {
+    if (!selectedTemplate) return;
+    const dialog = action === 'publish'
+      ? {
+          title: `v${selectedTemplate.version}을 배포할까요?`,
+          description: '배포하면 이 버전이 API·수동 실행의 대상이 됩니다.',
+          confirmLabel: '배포',
+        }
+      : action === 'disable'
+        ? {
+            title: '워크플로우 실행을 중지할까요?',
+            description: '신규 API 실행과 자동 실행이 중지됩니다. 이미 진행 중인 인스턴스는 계속 처리됩니다.',
+            confirmLabel: '중지',
+            tone: 'danger' as const,
+          }
+        : {
+            title: typeof selectedTemplate.active_published_version === 'number'
+              ? `배포 버전 v${selectedTemplate.active_published_version}을 다시 활성화할까요?`
+              : '기존 배포 버전을 다시 활성화할까요?',
+            confirmLabel: '재활성화',
+          };
+    if (!(await confirmDialog(dialog))) return;
+    try {
+      const updated = await templatesApi[action](selectedTemplate.id);
+      applyTemplateUpdate(updated);
+      toast.success(action === 'publish' ? '워크플로우를 배포했습니다.' : action === 'disable' ? '워크플로우 실행을 중지했습니다.' : '워크플로우를 재활성화했습니다.');
+    } catch (error) {
+      console.error(`Failed to ${action} workflow:`, error);
+      toast.error('배포 상태 변경에 실패했습니다.', { description: errorMessage(error) });
+    }
+  };
+
+  const openMetadataEditor = () => {
+    if (!selectedTemplate) return;
+    setMetadataForm({
+      name: selectedTemplate.name,
+      description: selectedTemplate.description || '',
+      tags: (selectedTemplate.tags || []).join(', '),
+      groupId: selectedTemplate.group_id || '',
+      versionNote: '',
+    });
+    setMetadataEditorOpen(true);
+  };
+
+  const handleSaveMetadata = async () => {
+    if (!selectedTemplate || !metadataForm.name.trim() || !metadataForm.versionNote.trim()) return;
+    const group = groups.find((item) => item.id === metadataForm.groupId);
+    setMetadataSaving(true);
+    try {
+      const updated = await templatesApi.update(selectedTemplate.id, {
+        name: metadataForm.name.trim(),
+        description: metadataForm.description.trim(),
+        tags: parseTags(metadataForm.tags),
+        version_note: metadataForm.versionNote.trim(),
+        ...(currentUser.role === 'admin' && group
+          ? { group_id: group.id, group: group.name }
+          : {}),
+      });
+      applyTemplateUpdate(updated);
+      setMetadataEditorOpen(false);
+      toast.success('워크플로우 메타데이터를 저장했습니다.', { description: `${updated.name} · v${updated.version}` });
+    } catch (error) {
+      console.error('Failed to update workflow metadata:', error);
+      toast.error('메타데이터 저장에 실패했습니다.', { description: errorMessage(error) });
+    } finally {
+      setMetadataSaving(false);
+    }
+  };
+
+  const handleExportTemplate = async () => {
+    if (!selectedTemplate) return;
+    try {
+      const document = await templatesApi.export(selectedTemplate.id);
+      downloadJson(document, `${safeFileName(document.workflow.name)}.pxm-workflow.json`);
+      toast.success('워크플로우 파일을 내보냈습니다.', { description: `v${document.workflow.version || selectedTemplate.version}` });
+    } catch (error) {
+      console.error('Failed to export workflow:', error);
+      toast.error('워크플로우 내보내기에 실패했습니다.', { description: errorMessage(error) });
+    }
+  };
+
+  const loadVersions = async (template: Template) => {
+    setVersionsLoading(true);
+    setVersionsError(null);
+    try {
+      setVersions(await templatesApi.listVersions(template.id));
+    } catch (error) {
+      console.error('Failed to load workflow versions:', error);
+      setVersionsError('버전 목록을 불러오지 못했습니다.');
+    } finally {
+      setVersionsLoading(false);
+    }
+  };
+
+  const openVersionHistory = () => {
+    if (!selectedTemplate) return;
+    setVersionsOpen(true);
+    setVersionDiff(null);
+    void loadVersions(selectedTemplate);
+  };
+
+  const handleDiffVersion = async (version: number) => {
+    if (!selectedTemplate) return;
+    setVersionsLoading(true);
+    setVersionsError(null);
+    try {
+      setVersionDiff(await templatesApi.diffVersions(selectedTemplate.id, version));
+    } catch (error) {
+      console.error('Failed to compare workflow versions:', error);
+      setVersionsError('버전 비교에 실패했습니다.');
+    } finally {
+      setVersionsLoading(false);
+    }
+  };
+
+  const handleRollbackVersion = async (version: number) => {
+    if (!selectedTemplate) return;
+    const confirmed = await confirmDialog({
+      title: `v${version} 상태로 롤백할까요?`,
+      description: `"${selectedTemplate.name}"의 v${version} 내용으로 새 버전이 만들어집니다. 기존 버전은 그대로 남습니다.`,
+      confirmLabel: '롤백',
+    });
+    if (!confirmed) return;
+    setVersionsLoading(true);
+    try {
+      const updated = await templatesApi.rollbackVersion(selectedTemplate.id, version);
+      applyTemplateUpdate(updated);
+      setVersionDiff(null);
+      await loadVersions(updated);
+      toast.success('롤백 버전을 만들었습니다.', { description: `v${version} 기준 → v${updated.version}` });
+    } catch (error) {
+      console.error('Failed to rollback workflow:', error);
+      setVersionsError('롤백에 실패했습니다.');
+    } finally {
+      setVersionsLoading(false);
+    }
+  };
+
   const handleDeleteTemplate = async () => {
     if (!selectedTemplate) return;
     const confirmed = await confirmDialog({
@@ -326,31 +485,6 @@ export const RequestPortal: React.FC<{
     } catch (error) {
       console.error('Failed to delete workflow:', error);
       toast.error('워크플로우 삭제에 실패했습니다.', { description: errorMessage(error) });
-    }
-  };
-
-  const handleChangeGroup = async (groupId: string) => {
-    if (!selectedTemplate || currentUser.role !== 'admin') return;
-    const group = groups.find((item) => item.id === groupId);
-    if (!group) return;
-    const moveConfirmed = await confirmDialog({
-      title: '관리 그룹을 변경할까요?',
-      description: `"${selectedTemplate.name}"이(가) ${group.name} 그룹으로 이동합니다. 새 워크플로우 버전으로 저장됩니다.`,
-      confirmLabel: '이동',
-    });
-    if (!moveConfirmed) return;
-    try {
-      const response = await fetch(`/api/templates/${selectedTemplate.id}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ group_id: group.id, group: group.name, version_note: `Move workflow to group ${group.name}` }),
-      });
-      const updated = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(updated?.message || 'Group change failed');
-      setTemplates((items) => items.map((item) => item.id === updated.id ? updated : item));
-      setSelectedTemplate(updated);
-    } catch (error) {
-      console.error('Failed to change workflow group:', error);
-      toast.error('관리 그룹 변경에 실패했습니다.', { description: errorMessage(error) });
     }
   };
 
@@ -512,6 +646,8 @@ export const RequestPortal: React.FC<{
                 <div className="detail-grid">
                   <DetailItem label="Template ID" value={selectedTemplate.id} mono />
                   <DetailItem label="Version" value={`v${selectedTemplate.version || 1}`} />
+                  <DetailItem label="배포 버전" value={selectedTemplate.active_published_version ? `v${selectedTemplate.active_published_version}` : '없음'} />
+                  <DetailItem label="운영 상태" value={workflowLifecycleLabel(selectedTemplate)} />
                   <DetailItem label="Nodes" value={String(selectedSummary.nodeCount)} />
                   <DetailItem label="Edges" value={String(selectedSummary.edgeCount)} />
                   <DetailItem label="Approval Nodes" value={String(selectedSummary.approvalNodes)} />
@@ -519,19 +655,48 @@ export const RequestPortal: React.FC<{
                 </div>
               )}
 
+              {!isRequester && <div className="detail-section workflow-management-section">
+                <div className="workflow-management-heading">
+                  <div>
+                    <h4>워크플로우 관리</h4>
+                    <p className="form-info-text">설계 저장과 별도로 배포 상태, 메타데이터와 버전을 관리합니다.</p>
+                  </div>
+                  {selectedTemplate.has_unpublished_changes && <span className="workflow-unpublished-badge">미배포 변경</span>}
+                </div>
+                <div className="workflow-management-actions">
+                  {(selectedTemplate.lifecycle_status === 'DRAFT' || selectedTemplate.has_unpublished_changes) && (
+                    <Button size="sm" onClick={() => void handleLifecycle('publish')} icon={<Rocket size={14} />}>
+                      v{selectedTemplate.version} 배포
+                    </Button>
+                  )}
+                  {selectedTemplate.lifecycle_status === 'PUBLISHED' && !selectedTemplate.has_unpublished_changes && (
+                    <Button size="sm" variant="secondary" onClick={() => void handleLifecycle('disable')} icon={<Ban size={14} />}>
+                      배포 중지
+                    </Button>
+                  )}
+                  {selectedTemplate.lifecycle_status === 'DISABLED' && (
+                    <Button size="sm" variant="secondary" onClick={() => void handleLifecycle('reactivate')} icon={<Rocket size={14} />}>
+                      재활성화
+                    </Button>
+                  )}
+                  <Button size="sm" variant="secondary" onClick={openMetadataEditor} icon={<Edit3 size={14} />}>
+                    메타데이터 수정
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={openVersionHistory} icon={<History size={14} />}>
+                    버전 이력
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => void handleExportTemplate()} icon={<Download size={14} />}>
+                    파일로 내보내기
+                  </Button>
+                </div>
+              </div>}
+
               {!isRequester && <WorkflowAttribution workflowId={selectedTemplate.id} updatedAt={selectedTemplate.updated_at} />}
 
               {!isRequester && <div className="detail-section workflow-group-section">
                 <h4>관리 그룹</h4>
-                {currentUser.role === 'admin' ? (
-                  <select value={selectedTemplate.group_id || ''} onChange={(event) => void handleChangeGroup(event.target.value)}>
-                    <option value="" disabled>관리 그룹을 선택하세요</option>
-                    {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
-                  </select>
-                ) : (
-                  <div className="workflow-group-readonly">{selectedTemplate.group || '미지정'}<small>{selectedTemplate.group_id || 'Legacy workflow'}</small></div>
-                )}
-                {currentUser.role === 'admin' && <p className="form-info-text">그룹 변경은 새 워크플로 버전으로 저장됩니다.</p>}
+                <div className="workflow-group-readonly">{selectedTemplate.group || '미지정'}<small>{selectedTemplate.group_id || 'Legacy workflow'}</small></div>
+                {currentUser.role === 'admin' && <p className="form-info-text">그룹 변경은 위의 메타데이터 수정에서 새 버전으로 저장합니다.</p>}
               </div>}
 
               {!isRequester && selectedSummary.triggerType === 'schedule' && (
@@ -630,6 +795,113 @@ export const RequestPortal: React.FC<{
           onClose={() => setPresetManagerOpen(false)}
           onChanged={refreshPresets}
         />
+      )}
+      {selectedTemplate && metadataEditorOpen && (
+        <Drawer
+          title="워크플로우 메타데이터 수정"
+          eyebrow={`${selectedTemplate.name} · v${selectedTemplate.version}`}
+          width="md"
+          className="workflow-management-drawer"
+          closeOnBackdrop={false}
+          onClose={() => setMetadataEditorOpen(false)}
+          footer={<>
+            <Button variant="secondary" onClick={() => setMetadataEditorOpen(false)}>취소</Button>
+            <Button
+              onClick={() => void handleSaveMetadata()}
+              disabled={metadataSaving || !metadataForm.name.trim() || !metadataForm.versionNote.trim()}
+            >
+              {metadataSaving ? '저장 중…' : '새 버전으로 저장'}
+            </Button>
+          </>}
+        >
+          <div className="workflow-metadata-form">
+            <p className="workflow-drawer-intro">이름·설명·태그 변경도 워크플로우 이력에 남도록 새 버전으로 저장됩니다. 노드와 연결은 변경하지 않습니다.</p>
+            <label>
+              <span>이름 <b>필수</b></span>
+              <input value={metadataForm.name} onChange={(event) => setMetadataForm((current) => ({ ...current, name: event.target.value }))} />
+            </label>
+            <label>
+              <span>설명</span>
+              <textarea rows={4} value={metadataForm.description} onChange={(event) => setMetadataForm((current) => ({ ...current, description: event.target.value }))} />
+            </label>
+            <label>
+              <span>태그</span>
+              <input value={metadataForm.tags} onChange={(event) => setMetadataForm((current) => ({ ...current, tags: event.target.value }))} placeholder="쉼표로 구분" />
+            </label>
+            <label>
+              <span>관리 그룹</span>
+              {currentUser.role === 'admin' ? (
+                <select value={metadataForm.groupId} onChange={(event) => setMetadataForm((current) => ({ ...current, groupId: event.target.value }))}>
+                  <option value="" disabled>관리 그룹을 선택하세요</option>
+                  {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+                </select>
+              ) : (
+                <div className="workflow-metadata-readonly">{selectedTemplate.group || '미지정'}<small>{selectedTemplate.group_id || 'Legacy workflow'}</small></div>
+              )}
+            </label>
+            <label>
+              <span>변경 메모 <b>필수</b></span>
+              <textarea
+                rows={3}
+                value={metadataForm.versionNote}
+                onChange={(event) => setMetadataForm((current) => ({ ...current, versionNote: event.target.value }))}
+                placeholder="예: 발표용 설명과 태그 정리"
+              />
+              <small>저장 후 Version Note와 Export 파일에 기록됩니다.</small>
+            </label>
+          </div>
+        </Drawer>
+      )}
+      {selectedTemplate && versionsOpen && (
+        <Drawer
+          title="워크플로우 버전 이력"
+          eyebrow={`${selectedTemplate.name} · 현재 v${selectedTemplate.version}`}
+          width="lg"
+          className="workflow-management-drawer"
+          onClose={() => setVersionsOpen(false)}
+        >
+          <div className="workflow-version-drawer">
+            <p className="workflow-drawer-intro">이전 저장본을 현재 버전과 비교합니다. 롤백해도 기존 이력은 지워지지 않고 새 버전이 만들어집니다.</p>
+            {versionsLoading && <p className="workflow-version-state">처리 중…</p>}
+            {versionsError && <p className="workflow-version-error" role="status">{versionsError}</p>}
+            <div className="workflow-version-list">
+              {versions.map((item) => (
+                <div className="workflow-version-row" key={item.version}>
+                  <div>
+                    <div className="workflow-version-title">
+                      v{item.version}
+                      {item.version === selectedTemplate.version && <span>현재</span>}
+                      {item.version === selectedTemplate.active_published_version && <span className="published">배포</span>}
+                    </div>
+                    <p>{item.node_count} 노드 · {item.edge_count} 연결{item.created_at ? ` · ${formatDateTime(item.created_at)}` : ''}</p>
+                    {item.version_note && <strong>{item.version_note}</strong>}
+                  </div>
+                  <div className="workflow-version-actions">
+                    <Button size="sm" variant="secondary" onClick={() => void handleDiffVersion(item.version)} icon={<GitCompare size={14} />}>
+                      비교
+                    </Button>
+                    {item.version !== selectedTemplate.version && (
+                      <Button size="sm" variant="ghost" onClick={() => void handleRollbackVersion(item.version)} icon={<RotateCcw size={14} />}>
+                        롤백
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {versionDiff && (
+              <section className="workflow-version-diff" aria-label="버전 비교 결과">
+                <header><strong>v{versionDiff.from_version} → v{versionDiff.to_version ?? selectedTemplate.version}</strong><span>{versionDiff.changes.length}개 변경</span></header>
+                {versionDiff.changes.length === 0 ? <p>변경 사항이 없습니다.</p> : versionDiff.changes.slice(0, 50).map((change, index) => (
+                  <div className="workflow-version-change" key={`${change.path}-${index}`}>
+                    <span className={change.type}>{change.type}</span>
+                    <code>{change.path}</code>
+                  </div>
+                ))}
+              </section>
+            )}
+          </div>
+        </Drawer>
       )}
     </div>
   );
@@ -874,4 +1146,31 @@ function formatDateTime(value?: string | Date | null) {
 
 function shortId(value: string) {
   return value.length > 10 ? `${value.slice(0, 8)}...` : value;
+}
+
+function parseTags(value: string) {
+  return value.split(',').map((tag) => tag.trim()).filter(Boolean);
+}
+
+function workflowLifecycleLabel(template: Template) {
+  if (template.lifecycle_status === 'DISABLED') return '배포 중지';
+  if (template.lifecycle_status === 'DRAFT') return '초안';
+  return template.has_unpublished_changes ? '배포됨 · 미배포 변경' : '배포됨';
+}
+
+function downloadJson(data: unknown, filename: string) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function safeFileName(value: string) {
+  const trimmed = value.trim().replace(/[^a-zA-Z0-9가-힣._-]+/g, '-').replace(/^-+|-+$/g, '');
+  return trimmed || 'workflow';
 }

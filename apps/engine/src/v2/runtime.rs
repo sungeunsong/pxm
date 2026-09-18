@@ -15,6 +15,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+use crate::v2::plugin_executor::interpolate_value_with_context;
 use crate::v2::ports::{
     ExecutionLogPort, InstanceLockPort, JobQueuePort, OutboxPort, PluginExecutorPort,
     PluginInvocation, ProcessDefinitionRepositoryPort, TaskRepositoryPort, TokenRepositoryPort,
@@ -701,8 +702,8 @@ async fn command_registry() -> Result<std::collections::HashMap<String, CommandS
     registry.insert(
         "builtin.node_version".to_string(),
         CommandSpec {
-            executable: "/usr/bin/node".to_string(),
-            fixed_args: vec!["--version".to_string()],
+            executable: "/usr/bin/env".to_string(),
+            fixed_args: vec!["node".to_string(), "--version".to_string()],
             arg_order: vec![],
             timeout_ms: 1000,
             max_stdout_bytes: 4096,
@@ -821,7 +822,11 @@ fn parse_command_registry(raw: &str) -> Result<std::collections::HashMap<String,
     Ok(registry)
 }
 
-fn resolve_command_args(node: &NodeDef, context: &Value, spec: &CommandSpec) -> Result<Vec<String>> {
+fn resolve_command_args(
+    node: &NodeDef,
+    context: &Value,
+    spec: &CommandSpec,
+) -> Result<Vec<String>> {
     let arguments = node
         .config
         .get("commandArguments")
@@ -835,6 +840,7 @@ fn resolve_command_args(node: &NodeDef, context: &Value, spec: &CommandSpec) -> 
                 .and_then(|raw| serde_json::from_str(raw).ok())
         })
         .unwrap_or_else(|| json!({}));
+    let arguments = interpolate_value_with_context(&arguments, context)?;
 
     let mut args = Vec::new();
     for key in &spec.arg_order {
@@ -2708,18 +2714,34 @@ mod tests {
             node_type: "command".to_string(),
             config: json!({
                 "commandId": "builtin.echo",
-                "commandArguments": {
-                    "message": "hello"
-                }
+                "commandArgumentsJson": "{\"message\":\"{{formData.message}}\"}"
             }),
+        };
+
+        let output = execute_command_node(
+            &node,
+            &json!({"data": {"formData": {"message": "hello from input"}}}),
+        )
+        .await
+        .expect("command should run");
+        assert_eq!(output["success"], true);
+        assert_eq!(output["exit_code"], 0);
+        assert_eq!(output["stdout"], "hello from input");
+    }
+
+    #[tokio::test]
+    async fn executes_builtin_node_version_from_path() {
+        let node = NodeDef {
+            node_id: "node-version".to_string(),
+            node_type: "command".to_string(),
+            config: json!({"commandId": "builtin.node_version"}),
         };
 
         let output = execute_command_node(&node, &json!({}))
             .await
-            .expect("command should run");
+            .expect("node version command should run");
         assert_eq!(output["success"], true);
-        assert_eq!(output["exit_code"], 0);
-        assert_eq!(output["stdout"], "hello");
+        assert!(output["stdout"].as_str().unwrap_or("").starts_with('v'));
     }
 
     #[tokio::test]

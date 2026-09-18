@@ -122,11 +122,22 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
   React.useEffect(() => {
     let cancelled = false;
     authzApi.listGroups(false, true)
-      .then((groups) => { if (!cancelled) { setAvailableGroups(groups.filter((group) => group.status === 'active')); setGroupsError(null); } })
+      .then((groups) => {
+        if (cancelled) return;
+        const manageableGroupIds = new Set(
+          currentUser.memberships
+            .filter((membership) => membership.role === 'group_manager')
+            .map((membership) => membership.group_id),
+        );
+        setAvailableGroups(groups.filter((group) => (
+          group.status === 'active' && (currentUser.role === 'admin' || manageableGroupIds.has(group.id))
+        )));
+        setGroupsError(null);
+      })
       .catch((error) => { if (!cancelled) setGroupsError(error instanceof Error ? error.message : '그룹 목록을 불러오지 못했습니다.'); })
       .finally(() => { if (!cancelled) setGroupsLoading(false); });
     return () => { cancelled = true; };
-  }, []);
+  }, [currentUser.memberships, currentUser.role]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -285,7 +296,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
 
   const handleNewDesignerTab = () => {
     const snapshot = persistActiveDesignerTab();
-    const newTab = createBlankDesignerTab();
+    const newTab = createBlankDesignerTab(undefined, defaultManagedGroup(currentUser, availableGroups));
     setDesignerTabs((tabs) => tabs.map((tab) => (tab.tabId === snapshot.tabId ? snapshot : tab)).concat(newTab));
     setActiveDesignerTabId(newTab.tabId);
     restoreDesignerTab(newTab);
@@ -307,7 +318,10 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
     }
 
     if (designerTabs.length === 1) {
-      const replacement = createBlankDesignerTab(INITIAL_DESIGNER_TAB_ID);
+      const replacement = createBlankDesignerTab(
+        INITIAL_DESIGNER_TAB_ID,
+        defaultManagedGroup(currentUser, availableGroups),
+      );
       setDesignerTabs([replacement]);
       setActiveDesignerTabId(replacement.tabId);
       restoreDesignerTab(replacement);
@@ -430,6 +444,12 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
   const handleRun = async (formData?: Record<string, any>) => {
     if (!currentTemplateId) {
       toast.info('먼저 템플릿을 저장하거나 불러와주세요.');
+      return;
+    }
+    if (activeDesignerTab?.isDirty) {
+      toast.info('변경사항을 먼저 저장해 주세요.', {
+        description: '워크플로우 실행은 마지막으로 저장된 버전을 사용합니다.',
+      });
       return;
     }
 
@@ -600,6 +620,17 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
       setIsPropertiesPanelOpen(true);
       return;
     }
+    const canManageSelectedGroup = currentUser.role === 'admin' || currentUser.memberships.some(
+      (membership) => membership.group_id === workflowGroupId && membership.role === 'group_manager',
+    );
+    if (!availableGroups.some((group) => group.id === workflowGroupId) || !canManageSelectedGroup) {
+      toast.error('관리 가능한 그룹을 선택해 주세요.', {
+        description: '신규 워크플로우는 그룹 관리자 권한이 있는 그룹에만 저장할 수 있습니다.',
+      });
+      setSelectedNode(null);
+      setIsPropertiesPanelOpen(true);
+      return;
+    }
 
     try {
       if (currentTemplateId) {
@@ -684,21 +715,6 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
 
   const handleLoad = () => {
     setIsTemplateModalOpen(true);
-  };
-
-  const handleExport = async () => {
-    if (!currentTemplateId) {
-      toast.info('먼저 템플릿을 저장하거나 불러와주세요.');
-      return;
-    }
-
-    try {
-      const document = await templatesApi.export(currentTemplateId);
-      downloadJson(document, `${safeFileName(document.workflow.name)}.pxm-workflow.json`);
-    } catch (error) {
-      console.error('Failed to export workflow:', error);
-      toast.error('워크플로우 내보내기에 실패했습니다.', { description: errorMessage(error) });
-    }
   };
 
   const handleImport = () => {
@@ -1186,7 +1202,6 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
         onAutoLayout={traceInstanceId ? undefined : () => flowCanvasRef.current?.autoLayout()}
         onLoad={traceInstanceId ? undefined : handleLoad}
         onImport={traceInstanceId ? undefined : handleImport}
-        onExport={traceInstanceId ? undefined : handleExport}
         onHistory={handleHistory}
         onSettings={traceInstanceId ? undefined : handleSettings}
         darkMode={darkMode}
@@ -1479,20 +1494,25 @@ const DEFAULT_DESIGNER_NODES: Node<CustomNodeData>[] = [
 
 const DEFAULT_DESIGNER_EDGES: Edge[] = [];
 
-function createBlankDesignerTab(tabId = createDesignerTabId()): DesignerTab {
+function createBlankDesignerTab(tabId = createDesignerTabId(), group?: PxmGroup): DesignerTab {
   return {
     tabId,
     templateId: null,
     templateName: '',
     description: '',
-    group: '',
-    groupId: '',
+    group: group?.name || '',
+    groupId: group?.id || '',
     tags: '',
     versionNote: '',
     nodes: cloneWorkflowNodes(DEFAULT_DESIGNER_NODES),
     edges: cloneWorkflowEdges(DEFAULT_DESIGNER_EDGES),
     isDirty: false,
   };
+}
+
+function defaultManagedGroup(currentUser: SessionUser, groups: PxmGroup[]): PxmGroup | undefined {
+  if (currentUser.role === 'group_manager' && groups.length === 1) return groups[0];
+  return undefined;
 }
 
 function createDesignerTabFromTemplate(template: WorkflowTemplate, tabId = createDesignerTabId()): DesignerTab {
@@ -1700,23 +1720,6 @@ function parseTagList(value: string): string[] {
     .split(',')
     .map((tag) => tag.trim())
     .filter(Boolean);
-}
-
-function downloadJson(data: unknown, filename: string) {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-}
-
-function safeFileName(value: string) {
-  const trimmed = value.trim().replace(/[^a-zA-Z0-9가-힣._-]+/g, '-').replace(/^-+|-+$/g, '');
-  return trimmed || 'workflow';
 }
 
 function cloneNodeForClipboard(node: Node<CustomNodeData>): Node<CustomNodeData> {

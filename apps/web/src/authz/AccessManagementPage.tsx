@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { KeyRound, Link2, RefreshCw, RotateCcw, Save, Search, Shield, Trash2, UserPlus, UserRound, UsersRound } from 'lucide-react';
-import { Button } from '../components';
+import { Activity, Copy, KeyRound, Link2, Plus, RefreshCw, RotateCcw, Save, Search, Shield, Trash2, UserPlus, UserRound, UsersRound } from 'lucide-react';
+import { Button, Drawer } from '../components';
 import { useFeedback } from '../components/feedback/feedback-context';
 import {
   authzApi,
@@ -45,6 +45,11 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
   const [selectedGroupId, setSelectedGroupId] = useState('');
   const [selectedUserId, setSelectedUserId] = useState('');
   const [showCreateUser, setShowCreateUser] = useState(false);
+  const [showCreateGroup, setShowCreateGroup] = useState(false);
+  const [showAddMember, setShowAddMember] = useState(false);
+  const [showCreateServiceAccount, setShowCreateServiceAccount] = useState(false);
+  const [showCreateApiKey, setShowCreateApiKey] = useState(false);
+  const [showApiUsage, setShowApiUsage] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -190,7 +195,8 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
     <div className="access-page">
       <div className="access-header">
         <div>
-          <p>그룹 권한과 사용자 계정을 구분해 관리합니다.</p>
+          <strong>접근 권한 관리</strong>
+          <p>그룹을 기준으로 사람, 시스템 계정과 API 접근 범위를 관리합니다.</p>
         </div>
         <Button variant="secondary" size="sm" icon={<RefreshCw size={14} />} onClick={() => void loadData()} disabled={loading}>
           새로고침
@@ -198,14 +204,6 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
       </div>
 
       {error && <div className="access-alert error">{error}</div>}
-      {createdKey && (
-        <div className="access-alert success">
-          <strong>생성된 API key</strong>
-          <code>{createdKey.api_key}</code>
-          <span>이 값은 생성 직후에만 표시됩니다.</span>
-        </div>
-      )}
-
       <div className="access-page-tabs" role="tablist" aria-label="접근 권한 관리 영역">
         <button className={pageSection === 'groups' ? 'active' : ''} onClick={() => setPageSection('groups')}>
           <UsersRound size={16} />
@@ -238,8 +236,14 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
 
       {pageSection === 'groups' ? <div className="access-layout">
         <section className="access-panel group-panel">
-          <PanelHeader icon={<UsersRound size={16} />} title="그룹" />
-          {groupListMode === 'active' && <GroupForm disabled={saving} onSave={(payload) => run(() => authzApi.saveGroup(payload))} />}
+          <PanelHeader
+            icon={<UsersRound size={16} />}
+            title="그룹"
+            description={currentUser.role === 'admin' ? '관리할 그룹을 선택하세요.' : '내가 관리할 수 있는 그룹입니다.'}
+            action={currentUser.role === 'admin' && groupListMode === 'active' ? (
+              <Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={() => setShowCreateGroup(true)}>새 그룹</Button>
+            ) : undefined}
+          />
           <div className="group-list-filter" role="tablist" aria-label="그룹 상태">
             <button className={groupListMode === 'active' ? 'active' : ''} onClick={() => { setGroupListMode('active'); setDeletionImpact(null); activeGroups[0] ? void loadData(activeGroups[0].id) : setSelectedGroupId(''); }}>활성 {activeGroups.length}</button>
             <button className={groupListMode === 'deleted' ? 'active' : ''} onClick={() => { setGroupListMode('deleted'); setDeletionImpact(null); deletedGroups[0] ? void loadData(deletedGroups[0].id) : setSelectedGroupId(''); }}>삭제됨 {deletedGroups.length}</button>
@@ -261,7 +265,7 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
             ))}
           </div>
           {visibleGroups.length === 0 && <div className="access-empty">{groupListMode === 'active' ? '활성 그룹이 없습니다.' : '삭제된 그룹이 없습니다.'}</div>}
-          {selectedGroup && (
+          {selectedGroup && currentUser.role === 'admin' && (
             <div className="access-row-actions">
               <Button
                 variant="ghost"
@@ -354,7 +358,12 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
 
           {activeTab === 'users' && (
             <>
-              <PanelHeader icon={<UserRound size={16} />} title="그룹 멤버" />
+              <PanelHeader
+                icon={<UserRound size={16} />}
+                title="그룹 멤버"
+                description="현재 그룹에 참여하는 사용자와 그룹 역할입니다."
+                action={<Button variant="primary" size="sm" icon={<UserPlus size={14} />} disabled={saving || !currentGroupId} onClick={() => setShowAddMember(true)}>기존 사용자 추가</Button>}
+              />
               <ContextNotice
                 group={selectedGroup}
                 text={
@@ -362,15 +371,6 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
                     ? '삭제된 그룹에는 멤버를 추가할 수 없습니다.'
                     : '기존 사용자를 현재 그룹에 추가하고 이 그룹에서의 역할을 관리합니다.'
                 }
-              />
-              <ExistingUserMembershipForm
-                groupId={currentGroupId}
-                users={userDirectory}
-                groupUsers={groupUsers}
-                groups={groups}
-                canAssignManager={currentUser.role === 'admin'}
-                disabled={saving || !currentGroupId}
-                onAdd={(userId, role) => run(() => authzApi.setGroupMembership(currentGroupId, userId, role))}
               />
               <GroupMemberTable
                 users={groupUsers}
@@ -395,7 +395,12 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
 
           {activeTab === 'serviceAccounts' && (
             <>
-              <PanelHeader icon={<Shield size={16} />} title="서비스 계정" />
+              <PanelHeader
+                icon={<Shield size={16} />}
+                title="서비스 계정"
+                description="사람이 아닌 외부 시스템과 자동화 주체를 관리합니다."
+                action={<Button variant="primary" size="sm" icon={<Plus size={14} />} disabled={saving || !currentGroupId} onClick={() => setShowCreateServiceAccount(true)}>서비스 계정 생성</Button>}
+              />
               <ContextNotice
                 group={selectedGroup}
                 text={
@@ -403,11 +408,6 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
                     ? '삭제된 그룹에는 서비스 계정을 추가할 수 없습니다.'
                     : '서비스 계정은 현재 선택된 그룹에만 귀속됩니다.'
                 }
-              />
-              <ServiceAccountForm
-                groupId={currentGroupId}
-                disabled={saving || !currentGroupId}
-                onSave={(payload) => run(() => authzApi.saveServiceAccount(payload))}
               />
               <EntityTable
                 rows={groupServiceAccounts.map((account) => ({
@@ -423,26 +423,18 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
 
           {activeTab === 'apiKeys' && (
             <>
-              <PanelHeader icon={<KeyRound size={16} />} title="API Key" />
+              <PanelHeader
+                icon={<KeyRound size={16} />}
+                title="API Key"
+                description="누가 어떤 워크플로우를 호출할 수 있는지 최소 권한으로 발급합니다."
+                action={<div className="access-panel-actions"><Button variant="secondary" size="sm" icon={<Activity size={14} />} onClick={() => setShowApiUsage(true)}>사용 이력</Button><Button variant="primary" size="sm" icon={<Plus size={14} />} disabled={saving || !currentGroupId} onClick={() => setShowCreateApiKey(true)}>API Key 발급</Button></div>}
+              />
               <ContextNotice
                 group={selectedGroup}
                 text={
                   selectedGroup?.status === 'deleted'
                     ? '삭제된 그룹에는 API Key를 발급할 수 없습니다.'
                     : 'API Key는 현재 선택된 그룹 안의 사용자 또는 서비스 계정에만 발급됩니다.'
-                }
-              />
-              <ApiKeyForm
-                groupId={currentGroupId}
-                users={groupUsers}
-                serviceAccounts={groupServiceAccounts}
-                workflows={groupWorkflows}
-                disabled={saving || !currentGroupId}
-                onSave={(payload) =>
-                  run(async () => {
-                    const key = await authzApi.createApiKey(payload);
-                    setCreatedKey(key);
-                  })
                 }
               />
               <div className="key-table">
@@ -485,13 +477,12 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
                 ))}
                 {groupKeys.length === 0 && <div className="access-empty">발급된 API Key가 없습니다.</div>}
               </div>
-              {selectedGroupFilterId && <ApiKeyUsagePanel key={selectedGroupFilterId} groupId={selectedGroupFilterId} keys={groupKeys} />}
             </>
           )}
 
           {activeTab === 'externalMappings' && (
             <>
-              <PanelHeader icon={<Link2 size={16} />} title="외부 승인자 매핑" />
+              <PanelHeader icon={<Link2 size={16} />} title="외부 승인자 매핑" description="외부 시스템의 사용자 식별자를 PXM 사용자와 연결합니다." />
               <ContextNotice
                 group={selectedGroup}
                 text={
@@ -533,16 +524,6 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
               새 사용자 추가
             </Button>
           </div>
-          {showCreateUser && (
-            <NewUserForm
-              groups={activeGroups}
-              defaultGroupId={currentGroupId}
-              canAssignManager={currentUser.role === 'admin'}
-              disabled={saving || activeGroups.length === 0}
-              onClose={() => setShowCreateUser(false)}
-              onSave={(payload) => run(() => authzApi.createUser(payload))}
-            />
-          )}
           <div className="user-management-workspace">
             <UserDirectoryTable
               users={userDirectory}
@@ -563,6 +544,74 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
           </div>
         </section>
       )}
+
+      {showCreateGroup && <Drawer title="새 그룹 만들기" eyebrow="그룹 관리" width="sm" className="access-drawer" onClose={() => setShowCreateGroup(false)}>
+        <DrawerIntro title="독립된 권한 경계를 만듭니다" description="그룹을 만든 뒤 멤버, 서비스 계정과 워크플로우를 연결할 수 있습니다." />
+        <GroupForm disabled={saving} onSave={async (payload) => {
+          const saved = await run(() => authzApi.saveGroup(payload));
+          if (saved) setShowCreateGroup(false);
+          return saved;
+        }} />
+      </Drawer>}
+
+      {showAddMember && <Drawer title="기존 사용자 추가" eyebrow={selectedGroup?.name || '그룹 멤버'} width="md" className="access-drawer" onClose={() => setShowAddMember(false)}>
+        <DrawerIntro title="계정은 그대로, 그룹 소속만 추가합니다" description="새 계정을 만드는 작업이 아닙니다. 기존 사용자를 검색하고 이 그룹에서의 역할을 지정하세요." />
+        <ExistingUserMembershipForm
+          groupId={currentGroupId}
+          users={userDirectory}
+          groupUsers={groupUsers}
+          groups={groups}
+          canAssignManager={currentUser.role === 'admin'}
+          disabled={saving || !currentGroupId}
+          onAdd={async (userId, role) => {
+            const saved = await run(() => authzApi.setGroupMembership(currentGroupId, userId, role));
+            if (saved) setShowAddMember(false);
+            return saved;
+          }}
+        />
+      </Drawer>}
+
+      {showCreateServiceAccount && <Drawer title="서비스 계정 생성" eyebrow={selectedGroup?.name || '서비스 계정'} width="sm" className="access-drawer" onClose={() => setShowCreateServiceAccount(false)}>
+        <DrawerIntro title="외부 시스템의 신원을 등록합니다" description="서비스 계정 자체에는 권한이 없습니다. 생성 후 별도의 API Key를 최소 권한으로 발급하세요." />
+        <ServiceAccountForm groupId={currentGroupId} disabled={saving || !currentGroupId} onSave={async (payload) => {
+          const saved = await run(() => authzApi.saveServiceAccount(payload));
+          if (saved) setShowCreateServiceAccount(false);
+          return saved;
+        }} />
+      </Drawer>}
+
+      {showCreateApiKey && <Drawer title="API Key 발급" eyebrow={selectedGroup?.name || 'API 접근'} width="lg" className="access-drawer" closeOnBackdrop={false} onClose={() => setShowCreateApiKey(false)}>
+        <ApiKeyForm
+          groupId={currentGroupId}
+          users={groupUsers}
+          serviceAccounts={groupServiceAccounts}
+          workflows={groupWorkflows}
+          disabled={saving || !currentGroupId}
+          onSave={async (payload) => {
+            const saved = await run(async () => setCreatedKey(await authzApi.createApiKey(payload)));
+            if (saved) setShowCreateApiKey(false);
+            return saved;
+          }}
+        />
+      </Drawer>}
+
+      {showApiUsage && selectedGroupFilterId && <Drawer title="API Key 사용 이력" eyebrow={selectedGroup?.name || 'API 접근'} width="xl" className="access-drawer usage-drawer" onClose={() => setShowApiUsage(false)}>
+        <ApiKeyUsagePanel key={selectedGroupFilterId} groupId={selectedGroupFilterId} keys={groupKeys} />
+      </Drawer>}
+
+      {showCreateUser && <Drawer title="새 사용자 계정" eyebrow="사용자 관리" width="md" className="access-drawer" closeOnBackdrop={false} onClose={() => setShowCreateUser(false)}>
+        <DrawerIntro title="로그인 가능한 새 계정을 만듭니다" description="기존 계정을 그룹에 추가하려는 경우에는 그룹 관리의 ‘기존 사용자 추가’를 사용하세요." />
+        <NewUserForm
+          groups={activeGroups}
+          defaultGroupId={currentGroupId}
+          canAssignManager={currentUser.role === 'admin'}
+          disabled={saving || activeGroups.length === 0}
+          onClose={() => setShowCreateUser(false)}
+          onSave={(payload) => run(() => authzApi.createUser(payload))}
+        />
+      </Drawer>}
+
+      {createdKey && <CreatedApiKeyDrawer apiKey={createdKey.api_key} name={createdKey.name} onClose={() => setCreatedKey(null)} />}
     </div>
   );
 }
@@ -576,13 +625,50 @@ function SummaryCard({ label, value }: { label: string; value: number }) {
   );
 }
 
-function PanelHeader({ icon, title }: { icon: ReactNode; title: string }) {
+function PanelHeader({ icon, title, description, action }: { icon: ReactNode; title: string; description?: string; action?: ReactNode }) {
   return (
     <div className="access-panel-header">
-      <span>{icon}</span>
-      <h3>{title}</h3>
+      <span className="access-panel-header-icon">{icon}</span>
+      <div><h3>{title}</h3>{description && <p>{description}</p>}</div>
+      {action && <span className="access-panel-header-action">{action}</span>}
     </div>
   );
+}
+
+function DrawerIntro({ title, description }: { title: string; description: string }) {
+  return <div className="access-drawer-intro"><strong>{title}</strong><p>{description}</p></div>;
+}
+
+function CreatedApiKeyDrawer({ apiKey, name, onClose }: { apiKey: string; name: string; onClose: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
+  return <Drawer title="API Key 발급 완료" eyebrow={name} width="md" className="access-drawer created-key-drawer" closeOnBackdrop={false} onClose={onClose}>
+    <div className="created-key-warning"><KeyRound size={22} /><div><strong>이 키는 지금 한 번만 확인할 수 있습니다</strong><p>창을 닫기 전에 안전한 비밀 저장소에 복사하세요. 분실하면 기존 키를 확인할 수 없으며 새 키로 Rotation해야 합니다.</p></div></div>
+    <label className="created-key-value"><span>발급된 API Key</span><code>{apiKey}</code></label>
+    <Button variant="primary" icon={<Copy size={15} />} onClick={async () => { const success = await copyText(apiKey); setCopied(success); setCopyFailed(!success); }}>{copied ? '복사됨' : 'API Key 복사'}</Button>
+    {copyFailed && <p className="copy-fallback-message">자동 복사가 차단됐습니다. 위 Key 값을 선택해 직접 복사하세요.</p>}
+    <Button variant="secondary" onClick={onClose}>복사 완료 후 닫기</Button>
+  </Drawer>;
+}
+
+async function copyText(value: string) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch {
+    // LAN의 HTTP 개발 주소에서는 Clipboard API가 차단될 수 있어 아래 호환 경로를 사용한다.
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = value;
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  textarea.remove();
+  return copied;
 }
 
 function ContextNotice({ group, text }: { group: PxmGroup | null; text: string }) {
@@ -600,24 +686,24 @@ function membershipRole(user: PxmUser, groupId: string): PxmGroupRole {
     || (user.role === 'group_manager' ? 'group_manager' : 'user');
 }
 
-function GroupForm({ disabled, onSave }: { disabled?: boolean; onSave: (payload: { id?: string; name: string; description?: string }) => void }) {
+function GroupForm({ disabled, onSave }: { disabled?: boolean; onSave: (payload: { id?: string; name: string; description?: string }) => Promise<boolean> }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   return (
     <form
-      className="access-form"
-      onSubmit={(event) => {
+      className="access-drawer-form"
+      onSubmit={async (event) => {
         event.preventDefault();
         if (!name.trim()) return;
-        onSave({ name: name.trim(), description: description.trim() });
+        if (!await onSave({ name: name.trim(), description: description.trim() })) return;
         setName('');
         setDescription('');
       }}
     >
-      <input value={name} onChange={(event) => setName(event.target.value)} placeholder="그룹 이름" />
-      <input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="설명" />
+      <label><span>그룹 이름 <b>필수</b></span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="예: 보안운영팀" autoFocus /></label>
+      <label><span>설명</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="이 그룹이 담당하는 업무를 입력하세요." rows={3} /></label>
       <Button type="submit" variant="primary" size="sm" icon={<Save size={14} />} disabled={disabled || !name.trim()}>
-        저장
+        그룹 만들기
       </Button>
     </form>
   );
@@ -655,18 +741,15 @@ function ExistingUserMembershipForm({
   const groupName = (id: string) => groups.find((group) => group.id === id)?.name || id;
 
   return (
-    <section className="member-management-card">
-      <div className="member-management-title">
-        <Search size={15} />
-        <div><strong>기존 사용자 추가</strong><small>ID, 이름 또는 이메일로 사용자를 찾습니다.</small></div>
-      </div>
+    <section className="drawer-member-search">
       <div className="member-search-controls">
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="사용자 검색" disabled={disabled} />
-        <select value={role} onChange={(event) => setRole(event.target.value as PxmGroupRole)} disabled={disabled}>
+        <label><span>사용자 검색</span><span className="drawer-search-input"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="ID, 이름 또는 이메일" disabled={disabled} autoFocus /></span></label>
+        <label><span>그룹 역할</span><select value={role} onChange={(event) => setRole(event.target.value as PxmGroupRole)} disabled={disabled}>
           <option value="user">일반 사용자</option>
           {canAssignManager && <option value="group_manager">그룹 관리자</option>}
-        </select>
+        </select></label>
       </div>
+      {!normalizedQuery && <div className="access-empty">검색어를 입력하면 추가 가능한 사용자가 표시됩니다.</div>}
       {normalizedQuery && (
         <div className="member-search-results">
           {candidates.map((user) => (
@@ -716,13 +799,7 @@ function NewUserForm({
   const [selectedGroupId, setSelectedGroupId] = useState('');
   const groupId = selectedGroupId || defaultGroupId || groups[0]?.id || '';
   return (
-    <section className="member-management-card new-user-card">
-      <div className="new-user-form-header">
-        <span><UserPlus size={16} /></span>
-        <div><strong>새 사용자 정보</strong><small>계정을 생성하고 첫 소속 그룹을 지정합니다.</small></div>
-        <Button variant="ghost" size="sm" disabled={disabled} onClick={onClose}>취소</Button>
-      </div>
-      <form className="access-form user-create-form" onSubmit={async (event) => {
+      <form className="access-drawer-form" onSubmit={async (event) => {
         event.preventDefault();
         if (!displayName.trim() || !groupId) return;
         const saved = await onSave({
@@ -742,20 +819,19 @@ function NewUserForm({
         setPassword('');
         onClose();
       }}>
-        <select value={groupId} onChange={(event) => setSelectedGroupId(event.target.value)} disabled={disabled} aria-label="초기 소속 그룹">
+        <label><span>초기 소속 그룹 <b>필수</b></span><select value={groupId} onChange={(event) => setSelectedGroupId(event.target.value)} disabled={disabled} aria-label="초기 소속 그룹">
           {groups.map((group) => <option key={group.id} value={group.id}>초기 소속 · {group.name}</option>)}
-        </select>
-        <input value={id} onChange={(event) => setId(event.target.value)} placeholder="사용자 ID (선택)" disabled={disabled} />
-        <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="사용자 이름" disabled={disabled} />
-        <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="이메일" disabled={disabled} />
-        <input type="password" minLength={12} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="초기 비밀번호 (12자 이상)" disabled={disabled} />
-        <select value={role} onChange={(event) => setRole(event.target.value as PxmGroupRole)} disabled={disabled}>
+        </select><small>계정 생성 후 다른 그룹도 추가할 수 있습니다.</small></label>
+        <label><span>사용자 ID</span><input value={id} onChange={(event) => setId(event.target.value)} placeholder="비우면 자동 생성" disabled={disabled} /></label>
+        <label><span>사용자 이름 <b>필수</b></span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="표시할 이름" disabled={disabled} autoFocus /></label>
+        <label><span>이메일</span><input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" disabled={disabled} /></label>
+        <label><span>초기 비밀번호</span><input type="password" minLength={12} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="비우면 시스템 정책에 따라 생성" disabled={disabled} /><small>직접 입력할 경우 12자 이상이어야 합니다.</small></label>
+        <label><span>그룹 역할 <b>필수</b></span><select value={role} onChange={(event) => setRole(event.target.value as PxmGroupRole)} disabled={disabled}>
           <option value="user">일반 사용자</option>
           {canAssignManager && <option value="group_manager">그룹 관리자</option>}
-        </select>
+        </select></label>
         <Button type="submit" variant="primary" size="sm" disabled={disabled || !displayName.trim()}>사용자 생성</Button>
       </form>
-    </section>
   );
 }
 
@@ -985,24 +1061,24 @@ function ServiceAccountForm({
 }: {
   groupId: string;
   disabled?: boolean;
-  onSave: (payload: { id?: string; name: string; group_id: string; description?: string }) => void;
+  onSave: (payload: { id?: string; name: string; group_id: string; description?: string }) => Promise<boolean>;
 }) {
   const [id, setId] = useState('');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   return (
-    <form className="access-form compact" onSubmit={(event) => {
+    <form className="access-drawer-form" onSubmit={async (event) => {
       event.preventDefault();
       if (!name.trim() || !groupId) return;
-      onSave({ id: id.trim() || undefined, name: name.trim(), group_id: groupId, description: description.trim() });
+      if (!await onSave({ id: id.trim() || undefined, name: name.trim(), group_id: groupId, description: description.trim() })) return;
       setId('');
       setName('');
       setDescription('');
     }}>
-      <input value={id} onChange={(event) => setId(event.target.value)} placeholder="서비스 계정 ID" />
-      <input value={name} onChange={(event) => setName(event.target.value)} placeholder="이름" />
-      <input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="설명" />
-      <Button type="submit" variant="primary" size="sm" disabled={disabled || !name.trim()}>저장</Button>
+      <label><span>서비스 계정 ID</span><input value={id} onChange={(event) => setId(event.target.value)} placeholder="예: hr-portal" autoFocus /><small>비우면 자동 생성됩니다. 발급 후에는 변경하지 않는 식별자입니다.</small></label>
+      <label><span>표시 이름 <b>필수</b></span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="예: 인사 포털" /></label>
+      <label><span>사용 목적</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="어떤 시스템이 어떤 목적으로 사용하는지 기록하세요." rows={3} /></label>
+      <Button type="submit" variant="primary" size="sm" disabled={disabled || !name.trim()}>서비스 계정 생성</Button>
     </form>
   );
 }
@@ -1031,13 +1107,14 @@ function ApiKeyForm({
     ip_allowlist?: string[];
     rate_limit_per_minute?: number | null;
     expires_at?: string | null;
-  }) => void;
+  }) => Promise<boolean>;
 }) {
+  const [step, setStep] = useState(1);
   const [name, setName] = useState('');
   const [ownerType, setOwnerType] = useState<ApiKeyOwnerType>('SERVICE_ACCOUNT');
   const [ownerId, setOwnerId] = useState('');
-  const [scopes, setScopes] = useState<ApiKeyScope[]>(['workflow:execute']);
-  const [workflowAccess, setWorkflowAccess] = useState<ApiKeyWorkflowAccess>('all_in_group');
+  const [scopes, setScopes] = useState<ApiKeyScope[]>(['workflow:read', 'workflow:execute']);
+  const [workflowAccess, setWorkflowAccess] = useState<ApiKeyWorkflowAccess>('allowlist');
   const [workflowIds, setWorkflowIds] = useState<string[]>([]);
   const [expiresAt, setExpiresAt] = useState('');
   const [ipAllowlist, setIpAllowlist] = useState('');
@@ -1049,14 +1126,22 @@ function ApiKeyForm({
   }, [ownerType, groupId, owners.length]);
 
   useEffect(() => {
-    setWorkflowIds(workflows.map((workflow) => workflow.id));
+    setWorkflowIds([]);
   }, [groupId, workflows]);
 
+  const selectOwnerType = (next: ApiKeyOwnerType) => {
+    setOwnerType(next);
+    setScopes(next === 'USER' ? ['workflow:read', 'task:approve'] : ['workflow:read', 'workflow:execute']);
+  };
+  const ownerLabel = owners.find((owner) => owner.id === ownerId);
+  const canContinuePermissions = scopes.length > 0 && (workflowAccess === 'all_in_group' || workflowIds.length > 0);
+
   return (
-    <form className="access-form key-form" onSubmit={(event) => {
+    <form className="api-key-wizard" onSubmit={async (event) => {
       event.preventDefault();
-      if (!name.trim() || !ownerId || !groupId) return;
-      onSave({
+      if (step < 3) return;
+      if (!name.trim() || !ownerId || !groupId || !canContinuePermissions) return;
+      await onSave({
         name: name.trim(),
         owner_type: ownerType,
         owner_id: ownerId,
@@ -1068,71 +1153,45 @@ function ApiKeyForm({
         rate_limit_per_minute: rateLimit ? Number(rateLimit) : null,
         expires_at: expiresAt || null,
       });
-      setName('');
-      setWorkflowIds(workflows.map((workflow) => workflow.id));
-      setExpiresAt('');
-      setIpAllowlist('');
-      setRateLimit('');
     }}>
-      <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Key 이름" />
-      <select value={ownerType} onChange={(event) => setOwnerType(event.target.value as ApiKeyOwnerType)}>
-        <option value="SERVICE_ACCOUNT">서비스 계정</option>
-        <option value="USER">사용자</option>
-      </select>
-      <select value={ownerId} onChange={(event) => setOwnerId(event.target.value)}>
-        {owners.map((owner) => (
-          <option key={owner.id} value={owner.id}>
-            {'display_name' in owner ? owner.display_name : owner.name}
-          </option>
-        ))}
-      </select>
-      <div className="scope-box">
-        {scopeOptions.map((scope) => (
-          <label key={scope}>
-            <input
-              type="checkbox"
-              checked={scopes.includes(scope)}
-              onChange={(event) => {
-                setScopes((current) =>
-                  event.target.checked ? Array.from(new Set([...current, scope])) : current.filter((item) => item !== scope),
-                );
-              }}
-            />
-            {scopeLabels[scope]}
-          </label>
-        ))}
-      </div>
-      <select value={workflowAccess} onChange={(event) => setWorkflowAccess(event.target.value as ApiKeyWorkflowAccess)}>
-        <option value="all_in_group">그룹 전체 워크플로우 (향후 추가 포함)</option>
-        <option value="allowlist">선택한 워크플로우만</option>
-      </select>
-      <div className="scope-box workflow-scope-box">
-        <strong>허용 워크플로우</strong>
-        {workflowAccess === 'all_in_group' ? (
-          <small>이 그룹에 나중에 추가되는 워크플로우도 자동으로 허용됩니다.</small>
-        ) : workflows.length === 0 ? (
-          <small>현재 그룹에 활성 워크플로우가 없습니다.</small>
-        ) : workflows.map((workflow) => (
-          <label key={workflow.id}>
-            <input
-              type="checkbox"
-              checked={workflowIds.includes(workflow.id)}
-              onChange={(event) => setWorkflowIds((current) =>
-                event.target.checked
-                  ? Array.from(new Set([...current, workflow.id]))
-                  : current.filter((id) => id !== workflow.id),
-              )}
-            />
-            {workflow.name}
-          </label>
-        ))}
-      </div>
-      <input type="date" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} />
-      <input value={ipAllowlist} onChange={(event) => setIpAllowlist(event.target.value)} placeholder="허용 IP/CIDR, 쉼표 구분 (선택)" />
-      <input type="number" min="1" max="100000" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} placeholder="분당 요청 제한 (선택)" />
-      <Button type="submit" variant="primary" size="sm" disabled={disabled || !name.trim() || !ownerId || scopes.length === 0}>
-        발급
-      </Button>
+      <ol className="wizard-steps" aria-label="API Key 발급 단계">
+        {['소유자', '권한 범위', '보안 및 확인'].map((label, index) => <li key={label} className={step === index + 1 ? 'active' : step > index + 1 ? 'complete' : ''}><span>{index + 1}</span><strong>{label}</strong></li>)}
+      </ol>
+
+      {step === 1 && <section className="wizard-panel">
+        <div className="wizard-heading"><strong>누가 사용할 키인가요?</strong><p>키는 그룹 공용 익명 키가 아니라 반드시 사용자 또는 서비스 계정에 귀속됩니다.</p></div>
+        <label><span>Key 이름 <b>필수</b></span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="예: 인사 포털 실행 키" autoFocus /></label>
+        <fieldset className="owner-type-cards"><legend>소유자 유형</legend>
+          <label className={ownerType === 'SERVICE_ACCOUNT' ? 'selected' : ''}><input type="radio" name="owner-type" checked={ownerType === 'SERVICE_ACCOUNT'} onChange={() => selectOwnerType('SERVICE_ACCOUNT')} /><Shield size={18} /><span><strong>서비스 계정</strong><small>외부 시스템과 자동화에서 사용</small></span></label>
+          <label className={ownerType === 'USER' ? 'selected' : ''}><input type="radio" name="owner-type" checked={ownerType === 'USER'} onChange={() => selectOwnerType('USER')} /><UserRound size={18} /><span><strong>사용자</strong><small>특정 사용자의 API 결재 등에 사용</small></span></label>
+        </fieldset>
+        <label><span>소유자 <b>필수</b></span><select value={ownerId} onChange={(event) => setOwnerId(event.target.value)}>
+          {owners.map((owner) => <option key={owner.id} value={owner.id}>{'display_name' in owner ? owner.display_name : owner.name} · {owner.id}</option>)}
+        </select>{owners.length === 0 && <small className="field-error">선택 가능한 소유자가 없습니다. 먼저 {ownerType === 'USER' ? '그룹 멤버' : '서비스 계정'}를 등록하세요.</small>}</label>
+      </section>}
+
+      {step === 2 && <section className="wizard-panel">
+        <div className="wizard-heading"><strong>무엇을 할 수 있나요?</strong><p>필요한 동작과 워크플로우만 선택하는 것이 안전합니다.</p></div>
+        <fieldset className="permission-options"><legend>허용 동작</legend>{scopeOptions.map((scope) => {
+          const unavailable = ownerType === 'SERVICE_ACCOUNT' && scope === 'task:approve';
+          return <label key={scope} className={unavailable ? 'disabled' : ''}><input type="checkbox" disabled={unavailable} checked={scopes.includes(scope)} onChange={(event) => setScopes((current) => event.target.checked ? Array.from(new Set([...current, scope])) : current.filter((item) => item !== scope))} /><span><strong>{scopeLabels[scope]}</strong><small>{scope === 'workflow:execute' ? '새 실행을 시작합니다.' : scope === 'workflow:read' ? '워크플로우, 실행 상태와 결과를 조회합니다.' : '사용자에게 배정된 결재를 처리합니다.'}</small></span></label>;
+        })}</fieldset>
+        <label><span>워크플로우 접근 범위</span><select value={workflowAccess} onChange={(event) => setWorkflowAccess(event.target.value as ApiKeyWorkflowAccess)}>
+          <option value="allowlist">선택한 워크플로우만 (권장)</option>
+          <option value="all_in_group">그룹 전체 워크플로우와 향후 추가 항목</option>
+        </select></label>
+        {workflowAccess === 'allowlist' && <fieldset className="workflow-options"><legend>허용 워크플로우 <b>필수</b></legend>{workflows.length === 0 ? <small>현재 그룹에 활성 워크플로우가 없습니다.</small> : workflows.map((workflow) => <label key={workflow.id}><input type="checkbox" checked={workflowIds.includes(workflow.id)} onChange={(event) => setWorkflowIds((current) => event.target.checked ? Array.from(new Set([...current, workflow.id])) : current.filter((id) => id !== workflow.id))} /><span>{workflow.name}<small>v{workflow.version || 1}</small></span></label>)}</fieldset>}
+      </section>}
+
+      {step === 3 && <section className="wizard-panel">
+        <div className="wizard-heading"><strong>보안 제한을 확인하세요</strong><p>선택 사항을 비워두면 별도의 만료·IP·요청량 제한을 적용하지 않습니다.</p></div>
+        <div className="security-fields"><label><span>만료일</span><input type="date" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} /></label><label><span>분당 요청 제한</span><input type="number" min="1" max="100000" value={rateLimit} onChange={(event) => setRateLimit(event.target.value)} placeholder="예: 120" /></label></div>
+        <label><span>허용 IP/CIDR</span><input value={ipAllowlist} onChange={(event) => setIpAllowlist(event.target.value)} placeholder="예: 10.0.0.12, 10.20.0.0/16" /><small>여러 값은 쉼표로 구분합니다.</small></label>
+        <dl className="key-review"><div><dt>Key 이름</dt><dd>{name}</dd></div><div><dt>소유자</dt><dd>{ownerType === 'USER' ? '사용자' : '서비스 계정'} · {'display_name' in (ownerLabel || {}) ? (ownerLabel as PxmUser).display_name : (ownerLabel as PxmServiceAccount | undefined)?.name || ownerId}</dd></div><div><dt>권한</dt><dd>{scopes.map((scope) => scopeLabels[scope]).join(', ')}</dd></div><div><dt>워크플로우</dt><dd>{workflowAccess === 'all_in_group' ? '그룹 전체' : `${workflowIds.length}개 선택`}</dd></div></dl>
+        <div className="one-time-key-note"><KeyRound size={18} /><span><strong>발급 직후 원문을 한 번만 표시합니다.</strong><small>안전한 위치에 즉시 복사해야 합니다.</small></span></div>
+      </section>}
+
+      <div className="wizard-actions"><Button type="button" variant="secondary" disabled={step === 1 || disabled} onClick={() => setStep((current) => Math.max(1, current - 1))}>이전</Button>{step < 3 ? <Button key="next" type="button" variant="primary" disabled={disabled || (step === 1 ? !name.trim() || !ownerId : !canContinuePermissions)} onClick={(event) => { event.preventDefault(); setStep((current) => Math.min(3, current + 1)); }}>다음</Button> : <Button key="issue" type="submit" variant="primary" disabled={disabled || !canContinuePermissions}>API Key 발급</Button>}</div>
     </form>
   );
 }
@@ -1173,6 +1232,7 @@ function ExternalPrincipalMappingPanel({
 }) {
   const activeUsers = users.filter((user) => user.status === 'active');
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [showEditor, setShowEditor] = useState(false);
   const [provider, setProvider] = useState('');
   const [subject, setSubject] = useState('');
   const [userId, setUserId] = useState('');
@@ -1198,6 +1258,7 @@ function ExternalPrincipalMappingPanel({
     setDisplayName('');
     setEmail('');
     setDepartment('');
+    setShowEditor(false);
     setProviderFilter('');
     setSubjectFilter('');
   }, [groupId]);
@@ -1224,11 +1285,16 @@ function ExternalPrincipalMappingPanel({
     setDisplayName(mapping.display_name || '');
     setEmail(mapping.email || '');
     setDepartment(mapping.department || '');
+    setShowEditor(true);
   };
 
   return (
     <>
-      <form className="access-form mapping-form" onSubmit={async (event) => {
+      <div className="mapping-list-toolbar"><div><strong>등록된 매핑</strong><small>Provider와 외부 Subject를 기준으로 검색합니다.</small></div><Button variant="primary" size="sm" icon={<Plus size={14} />} disabled={disabled} onClick={() => { reset(); setShowEditor(true); }}>외부 사용자 매핑</Button></div>
+
+      {showEditor && <Drawer title={editingId ? '외부 사용자 매핑 수정' : '외부 사용자 매핑'} eyebrow="외부 승인자" width="md" className="access-drawer" onClose={reset}>
+      <DrawerIntro title="외부 신원을 PXM 사용자와 연결합니다" description="Provider와 Subject는 외부 시스템이 전달하는 고유 식별자입니다. 실제 승인 권한은 연결된 PXM 사용자의 그룹 권한을 따릅니다." />
+      <form className="access-drawer-form" onSubmit={async (event) => {
         event.preventDefault();
         if (!provider.trim() || !subject.trim() || !userId || !groupId) return;
         const saved = await onSave(editingId, {
@@ -1242,27 +1308,28 @@ function ExternalPrincipalMappingPanel({
         });
         if (saved) reset();
       }}>
-        <input
+        <label><span>Provider <b>필수</b></span><input
           value={provider}
           onChange={(event) => setProvider(event.target.value)}
           placeholder="provider (예: acrapoint)"
           disabled={Boolean(editingId)}
-        />
-        <input
+          autoFocus
+        /><small>예: hr-system, partner-portal</small></label>
+        <label><span>외부 사용자 Subject <b>필수</b></span><input
           value={subject}
           onChange={(event) => setSubject(event.target.value)}
           placeholder="외부 사용자 subject"
           disabled={Boolean(editingId)}
-        />
-        <select value={userId} onChange={(event) => setUserId(event.target.value)}>
+        /></label>
+        <label><span>연결할 PXM 사용자 <b>필수</b></span><select value={userId} onChange={(event) => setUserId(event.target.value)}>
           <option value="">PXM 사용자 선택</option>
           {activeUsers.map((user) => (
             <option key={user.id} value={user.id}>{user.display_name} ({user.id})</option>
           ))}
-        </select>
-        <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="표시 이름 (선택)" />
-        <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="전달 이메일 (선택)" />
-        <input value={department} onChange={(event) => setDepartment(event.target.value)} placeholder="부서 (선택)" />
+        </select></label>
+        <label><span>외부 표시 이름</span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="선택 입력" /></label>
+        <label><span>승인 전달 이메일</span><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="선택 입력" /></label>
+        <label><span>부서</span><input value={department} onChange={(event) => setDepartment(event.target.value)} placeholder="선택 입력" /></label>
         <div className="mapping-form-actions">
           <Button
             type="submit"
@@ -1273,9 +1340,10 @@ function ExternalPrincipalMappingPanel({
           >
             {editingId ? '변경 저장' : '매핑 등록'}
           </Button>
-          {editingId && <Button type="button" variant="ghost" size="sm" onClick={reset}>취소</Button>}
+          <Button type="button" variant="ghost" size="sm" onClick={reset}>취소</Button>
         </div>
       </form>
+      </Drawer>}
 
       <div className="mapping-search">
         <input
