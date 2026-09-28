@@ -7,16 +7,24 @@ export type ExternalApprovalKey = {
   revision: number;
 };
 
+function isDynamicApprovalNode(node: any): boolean {
+  const data = node?.data || node?.config || node || {};
+  return (
+    (data.nodeType || node?.node_type || node?.type) === 'approval' &&
+    (data.approvalLineSource === 'dynamic' || data.approvalType === 'dynamic')
+  );
+}
+
+/** 동적 결재 노드가 있을 때만 결재선이 담기는 입력 최상위 키를 반환한다. */
+export function dynamicApprovalRequestInputKey(nodes: any[]): string | null {
+  if (!(nodes || []).some(isDynamicApprovalNode)) return null;
+  return dynamicApprovalRequestPath(nodes).split('.').filter(Boolean)[0] || null;
+}
+
 export function dynamicApprovalRequestPath(nodes: any[]): string {
   const paths = new Set<string>(
     (nodes || [])
-      .filter((node) => {
-        const data = node?.data || node?.config || node || {};
-        return (
-          (data.nodeType || node?.node_type || node?.type) === 'approval' &&
-          (data.approvalLineSource === 'dynamic' || data.approvalType === 'dynamic')
-        );
-      })
+      .filter(isDynamicApprovalNode)
       .map((node) => {
         const data = node?.data || node?.config || node || {};
         return typeof data.approvalRequestPath === 'string' && data.approvalRequestPath.trim()

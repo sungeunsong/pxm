@@ -155,7 +155,7 @@
 }
 
 .required-mark {
-  color: #ff6b6b;
+  color: var(--color-error);
   font-weight: 700;
   font-size: 14px;
 }
@@ -164,8 +164,8 @@
 .form-textarea {
   width: 100%;
   padding: 14px 16px;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.02) 100%);
-  border: 1.5px solid rgba(255, 255, 255, 0.1);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-strong);
   border-radius: 12px;
   color: var(--text-primary);
   font-family: inherit;
@@ -181,24 +181,22 @@
 }
 
 .form-textarea:hover {
-  border-color: rgba(255, 255, 255, 0.15);
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.03) 100%);
+  border-color: var(--text-disabled);
 }
 
 .form-textarea:focus {
   outline: none;
-  border-color: rgba(33, 150, 243, 0.5);
-  background: linear-gradient(135deg, rgba(33, 150, 243, 0.08) 0%, rgba(33, 150, 243, 0.03) 100%);
-  box-shadow: 0 0 0 3px rgba(33, 150, 243, 0.15);
+  border-color: var(--border-focus);
+  box-shadow: var(--shadow-glow-blue);
 }
 
 .form-textarea.error {
-  border-color: rgba(244, 67, 54, 0.5);
-  background: linear-gradient(135deg, rgba(244, 67, 54, 0.08) 0%, rgba(244, 67, 54, 0.03) 100%);
+  border-color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 6%, var(--bg-secondary));
 }
 
 .form-textarea.error:focus {
-  box-shadow: 0 0 0 3px rgba(244, 67, 54, 0.15);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-error) 18%, transparent);
 }
 
 /* Helper Text */
@@ -210,7 +208,7 @@
 }
 
 .form-field-helper.error {
-  color: #ff6b6b;
+  color: var(--color-error);
   font-weight: 500;
 }
 
@@ -226,8 +224,8 @@
   align-items: center;
   gap: 12px;
   padding: 14px 16px;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0.02) 100%);
-  border: 1.5px solid rgba(255, 255, 255, 0.08);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-strong);
   border-radius: 12px;
   cursor: pointer;
   transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
@@ -241,15 +239,15 @@
   top: 0;
   bottom: 0;
   width: 3px;
-  background: #3b82f6;
+  background: var(--border-focus);
   border-radius: 10px 0 0 10px;
   opacity: 0;
   transition: opacity 0.25s ease;
 }
 
 .form-radio-label:hover {
-  background: linear-gradient(135deg, rgba(33, 150, 243, 0.08) 0%, rgba(33, 150, 243, 0.03) 100%);
-  border-color: rgba(33, 150, 243, 0.3);
+  background: color-mix(in srgb, var(--color-info) 7%, var(--bg-secondary));
+  border-color: var(--border-focus);
   transform: translateX(2px);
 }
 
@@ -261,7 +259,7 @@
   cursor: pointer;
   width: 18px;
   height: 18px;
-  accent-color: #3b82f6;
+  accent-color: var(--border-focus);
 }
 
 .form-radio-label span {
@@ -277,7 +275,7 @@
   gap: 12px;
   padding-top: 32px;
   margin-top: 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--border-subtle);
 }
 
 /* 반응형 */

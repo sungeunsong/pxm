@@ -17,7 +17,9 @@ interface FormRendererProps {
   schema?: FormSchema;
   initialData?: FormValues;
   presetScopeId?: string;
-  onSubmit: (data: FormValues) => void;
+  presetSaveScope?: Extract<InputPreset['scope'], 'private' | 'group'>;
+  submitLabel?: string;
+  onSubmit: (data: FormValues) => void | Promise<void>;
   onCancel?: () => void;
 }
 
@@ -27,20 +29,24 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   schema,
   initialData = EMPTY_FORM_VALUES,
   presetScopeId,
+  presetSaveScope = 'group',
+  submitLabel = '제출',
   onSubmit,
   onCancel,
 }) => {
   const { toast, prompt: promptDialog } = useFeedback();
-  const [formData, setFormData] = useState<FormValues>(initialData);
+  const [formData, setFormData] = useState<FormValues>(() => initialFormData(schema, initialData));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [presetVersion, setPresetVersion] = useState(0);
   const [presets, setPresets] = useState<InputPreset[]>([]);
   const [presetsLoading, setPresetsLoading] = useState(false);
   const [presetManagerOpen, setPresetManagerOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    setFormData(initialData);
-  }, [initialData]);
+    setFormData(initialFormData(schema, initialData));
+    setErrors({});
+  }, [initialData, schema]);
 
   useEffect(() => {
     if (!presetScopeId) {
@@ -73,12 +79,24 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
     return (
       <div className="form-renderer-empty">
         <p>이 워크플로우에는 입력 폼이 정의되지 않았습니다.</p>
-        <Button onClick={() => onSubmit({})}>계속 진행</Button>
+        <Button disabled={submitting} onClick={() => void submitValues({})}>
+          {submitting ? '처리 중…' : submitLabel}
+        </Button>
       </div>
     );
   }
 
-  const handleFieldChange = (fieldId: string, value: any) => {
+  async function submitValues(values: FormValues) {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await onSubmit(values);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const handleFieldChange = (fieldId: string, value: FormValues[string]) => {
     setFormData(prev => ({
       ...prev,
       [fieldId]: value,
@@ -104,18 +122,18 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   const handleSavePreset = async () => {
     if (!presetScopeId) return;
     const name = await promptDialog({
-      title: '파라미터 세트 저장',
-      label: '세트 이름',
-      placeholder: '예: 운영계 기본값',
+      title: '입력값 저장',
+      label: '저장할 이름',
+      placeholder: '예: 매월 반복 신청',
       confirmLabel: '저장',
     });
     if (!name?.trim()) return;
     try {
-      await saveInputPreset(presetScopeId, name, formData, undefined, 'group');
+      await saveInputPreset(presetScopeId, name, formData, undefined, presetSaveScope);
       refreshPresets();
     } catch (error) {
       console.error('Failed to save input preset:', error);
-      toast.error('파라미터 세트 저장에 실패했습니다.', { description: errorMessage(error) });
+      toast.error('입력값 저장에 실패했습니다.', { description: errorMessage(error) });
     }
   };
 
@@ -161,6 +179,28 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
         return;
       }
 
+      if (field.type === 'number' && (typeof value !== 'number' || !Number.isFinite(value))) {
+        newErrors[field.id] = '숫자를 입력해주세요.';
+        return;
+      }
+      if (field.type === 'checkbox' && typeof value !== 'boolean') {
+        newErrors[field.id] = '체크 여부가 올바르지 않습니다.';
+        return;
+      }
+      if (['text', 'textarea', 'select', 'radio', 'date'].includes(field.type) && typeof value !== 'string') {
+        newErrors[field.id] = '입력 형식이 올바르지 않습니다.';
+        return;
+      }
+      if (field.type === 'file') {
+        newErrors[field.id] = '파일 입력은 아직 지원하지 않습니다.';
+        return;
+      }
+
+      if ((field.type === 'select' || field.type === 'radio') && field.options && !field.options.includes(value)) {
+        newErrors[field.id] = '목록에서 허용된 값을 선택해주세요.';
+        return;
+      }
+
       // 타입별 검증
       if (field.type === 'text' || field.type === 'textarea') {
         const strValue = String(value);
@@ -174,20 +214,19 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
         }
         
         if (field.pattern) {
-          const regex = new RegExp(field.pattern);
-          if (!regex.test(strValue)) {
-            newErrors[field.id] = `올바른 형식으로 입력해주세요.`;
+          try {
+            const regex = new RegExp(field.pattern);
+            if (!regex.test(strValue)) {
+              newErrors[field.id] = `올바른 형식으로 입력해주세요.`;
+            }
+          } catch {
+            newErrors[field.id] = '입력 형식 설정이 올바르지 않습니다. 관리자에게 문의해주세요.';
           }
         }
       }
 
       if (field.type === 'number') {
-        const numValue = Number(value);
-        
-        if (isNaN(numValue)) {
-          newErrors[field.id] = '숫자를 입력해주세요.';
-          return;
-        }
+        const numValue = value;
         
         if (field.min !== undefined && numValue < field.min) {
           newErrors[field.id] = `최소값은 ${field.min}입니다.`;
@@ -216,18 +255,18 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
     }
     
     // formData를 깨끗하게 복사 (circular reference 제거)
-    const cleanFormData: Record<string, any> = {};
-    Object.keys(formData).forEach(key => {
-      const value = formData[key];
+    const cleanFormData: FormValues = {};
+    schema.fields.filter(checkCondition).forEach(field => {
+      const value = formData[field.id];
       // 기본 타입만 복사
       if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' || value === null || value === undefined) {
-        cleanFormData[key] = value;
+        cleanFormData[field.id] = value;
       } else {
-        console.warn(`[FormRenderer] Skipping non-primitive value for key "${key}"`);
+        console.warn(`[FormRenderer] Skipping non-primitive value for key "${field.id}"`);
       }
     });
     
-    onSubmit(cleanFormData);
+    void submitValues(cleanFormData);
   };
 
   const renderField = (field: FormField) => {
@@ -376,15 +415,15 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
         <div className="input-preset-bar">
           <div className="input-preset-header">
             <div>
-              <strong>파라미터 세트</strong>
-              <span>저장된 Start 입력값을 아래 폼에 적용합니다.</span>
+              <strong>저장된 입력값</strong>
+              <span>자주 쓰는 입력값을 불러옵니다.</span>
             </div>
             <div className="input-preset-actions">
               <Button type="button" variant="ghost" size="sm" onClick={() => setPresetManagerOpen(true)}>관리</Button>
             </div>
           </div>
           {presetsLoading ? (
-            <p className="input-preset-empty">파라미터 세트를 불러오는 중입니다.</p>
+            <p className="input-preset-empty">저장된 입력값을 불러오는 중입니다.</p>
           ) : presets.length > 0 ? (
             <div className="input-preset-list">
               {presets.map((preset) => (
@@ -396,7 +435,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               ))}
             </div>
           ) : (
-            <p className="input-preset-empty">저장된 파라미터 세트가 없습니다.</p>
+            <p className="input-preset-empty">저장된 입력값이 없습니다.</p>
           )}
         </div>
       )}
@@ -414,8 +453,8 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
       </div>
       {presetScopeId && (
         <div className="input-preset-save-row">
-          <span>위 Start 입력값을 API 실행 프리셋으로 재사용할 수 있습니다.</span>
-          <Button type="button" variant="secondary" size="sm" onClick={handleSavePreset}>입력값을 새 프리셋으로 저장</Button>
+          <span>현재 입력값을 다음 신청에서도 다시 사용할 수 있습니다.</span>
+          <Button type="button" variant="secondary" size="sm" onClick={handleSavePreset}>현재 입력값 저장</Button>
         </div>
       )}
       
@@ -425,10 +464,19 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             취소
           </Button>
         )}
-        <Button type="submit" variant="primary">
-          제출
+        <Button type="submit" variant="primary" disabled={submitting}>
+          {submitting ? '처리 중…' : submitLabel}
         </Button>
       </div>
     </form>
   );
 };
+
+function initialFormData(schema: FormSchema | undefined, initialData: FormValues): FormValues {
+  const defaults = Object.fromEntries(
+    (schema?.fields || [])
+      .filter((field) => field.defaultValue !== undefined)
+      .map((field) => [field.id, field.defaultValue]),
+  );
+  return { ...defaults, ...initialData };
+}

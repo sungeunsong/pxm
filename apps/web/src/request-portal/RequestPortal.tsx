@@ -11,15 +11,12 @@ import {
   GitBranch,
   GitCompare,
   History,
-  Play,
   RefreshCw,
   Rocket,
   RotateCcw,
   Search,
   Trash2,
 } from 'lucide-react';
-import { type InputPreset, listInputPresets, saveInputPreset } from '../input-presets';
-import { InputPresetManager } from '../input-presets/InputPresetManager';
 import { authzApi, type PxmGroup } from '../api/authz';
 import type { SessionUser } from '../api/session';
 import './RequestPortal.css';
@@ -30,6 +27,8 @@ import { templatesApi } from '../api/templates';
 import type { WorkflowTemplate, WorkflowTemplateVersion, WorkflowVersionDiff } from '../api/templates';
 import { Drawer } from '../components/ui/Drawer';
 import { Button } from '../components/Button';
+import { FormRenderer } from '../flow-designer/FormRenderer';
+import type { FormSchema, FormValues } from '../flow-designer/form-types';
 
 type Template = WorkflowTemplate;
 
@@ -39,15 +38,6 @@ type MetadataForm = {
   tags: string;
   groupId: string;
   versionNote: string;
-};
-
-type StartFormField = {
-  id?: string;
-  name?: string;
-  label?: string;
-  type?: string;
-  placeholder?: string;
-  defaultValue?: any;
 };
 
 type FilterMode = 'all' | 'manual' | 'schedule' | 'db_watch' | 'approval';
@@ -79,7 +69,7 @@ export const RequestPortal: React.FC<{
   currentUser: SessionUser;
   onRequestStarted?: (instanceId: string) => void;
 }> = ({ currentUser, onRequestStarted }) => {
-  const { toast, confirm: confirmDialog, prompt: promptDialog } = useFeedback();
+  const { toast, confirm: confirmDialog } = useFeedback();
   const isRequester = currentUser.role === 'user';
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(false);
@@ -88,11 +78,6 @@ export const RequestPortal: React.FC<{
   const [groupFilter, setGroupFilter] = useState('all');
   const [groups, setGroups] = useState<PxmGroup[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
-  const [formData, setFormData] = useState<Record<string, any>>({});
-  const [presetVersion, setPresetVersion] = useState(0);
-  const [selectedPresets, setSelectedPresets] = useState<InputPreset[]>([]);
-  const [presetsLoading, setPresetsLoading] = useState(false);
-  const [presetManagerOpen, setPresetManagerOpen] = useState(false);
   const [successInstanceId, setSuccessInstanceId] = useState<string | null>(null);
   const [scheduleStatus, setScheduleStatus] = useState<ScheduleStatus | null>(null);
   const [scheduleStatusLoading, setScheduleStatusLoading] = useState(false);
@@ -111,10 +96,10 @@ export const RequestPortal: React.FC<{
       const res = await fetch('/api/templates');
       if (!res.ok) throw new Error('Failed to fetch templates');
       const data = await res.json();
-      const validTemplates = Array.isArray(data) ? data : [];
+      const validTemplates: WorkflowTemplate[] = Array.isArray(data) ? data : [];
 
       setTemplates(
-        validTemplates.map((template: any, idx: number) => ({
+        validTemplates.map((template, idx) => ({
           ...template,
           name: template.name || `Custom Workflow #${idx + 1}`,
           description: template.description || '설명 없음',
@@ -140,31 +125,6 @@ export const RequestPortal: React.FC<{
 
   const summaries = useMemo(() => templates.map(buildTemplateSummary), [templates]);
   const selectedSummary = selectedTemplate ? buildTemplateSummary(selectedTemplate) : null;
-
-  useEffect(() => {
-    if (!selectedTemplate) {
-      setSelectedPresets([]);
-      return;
-    }
-
-    let cancelled = false;
-    setPresetsLoading(true);
-    listInputPresets(selectedTemplate.id)
-      .then((items) => {
-        if (!cancelled) setSelectedPresets(items);
-      })
-      .catch((error) => {
-        console.error('Failed to load input presets:', error);
-        if (!cancelled) setSelectedPresets([]);
-      })
-      .finally(() => {
-        if (!cancelled) setPresetsLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedTemplate, presetVersion]);
 
   const filteredTemplates = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -210,54 +170,16 @@ export const RequestPortal: React.FC<{
     setSelectedTemplate(template);
     setSuccessInstanceId(null);
     setScheduleStatus(null);
-    setFormData(buildInitialInput(template));
     if (buildTemplateSummary(template).triggerType === 'schedule') {
       void fetchScheduleStatus(template.id);
     }
   };
 
-  const handleInputChange = (key: string, value: any) => {
-    setFormData((prev) => ({ ...prev, [key]: value }));
-  };
-
-  const refreshPresets = () => setPresetVersion((current) => current + 1);
-
-  const handleApplyPreset = (presetId: string) => {
-    const preset = selectedPresets.find((item) => item.id === presetId);
-    if (!preset) return;
-    setFormData((current) => ({ ...current, ...preset.values }));
-  };
-
-  const handleSavePreset = async () => {
-    if (!selectedTemplate) return;
-    const name = await promptDialog({
-      title: '파라미터 세트 저장',
-      label: '세트 이름',
-      placeholder: '예: 운영계 기본값',
-      confirmLabel: '저장',
-    });
-    if (!name?.trim()) return;
-    try {
-      await saveInputPreset(selectedTemplate.id, name, formData, undefined, currentUser.role === 'user' ? 'private' : 'group');
-      refreshPresets();
-    } catch (error) {
-      console.error('Failed to save input preset:', error);
-      toast.error('파라미터 세트 저장에 실패했습니다.', { description: errorMessage(error) });
-    }
-  };
-
-  const handleLaunch = async () => {
+  const handleLaunch = async (input: FormValues) => {
     if (!selectedTemplate) return;
 
     try {
-      const res = await fetch(`/api/templates/${selectedTemplate.id}/start`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: 'async', input: formData }),
-      });
-
-      if (!res.ok) throw new Error('Execution failed');
-      const data = await res.json();
+      const data = await templatesApi.start(selectedTemplate.id, { mode: 'async', input });
       setSuccessInstanceId(data.instance_id);
       onRequestStarted?.(data.instance_id);
     } catch (error) {
@@ -320,7 +242,6 @@ export const RequestPortal: React.FC<{
   const applyTemplateUpdate = (updated: Template) => {
     setTemplates((current) => current.map((template) => (template.id === updated.id ? updated : template)));
     setSelectedTemplate(updated);
-    setFormData(buildInitialInput(updated));
   };
 
   const handleLifecycle = async (action: 'publish' | 'disable' | 'reactivate') => {
@@ -747,22 +668,13 @@ export const RequestPortal: React.FC<{
                     <p className="form-info-text">{isRequester
                       ? '필요한 내용을 입력하고 요청을 제출하세요.'
                       : '관리자가 테스트나 운영 조치 목적으로 이 워크플로우를 즉시 시작합니다.'}</p>
-                    <InputFields
-                      template={selectedTemplate}
-                      formData={formData}
-                      onInputChange={handleInputChange}
-                      presets={selectedPresets}
-                      presetsLoading={presetsLoading}
-                      onApplyPreset={handleApplyPreset}
-                      onSavePreset={handleSavePreset}
-                      onManagePresets={() => currentUser.role === 'user'
-                        ? setPresetManagerOpen(true)
-                        : (window.location.hash = `#/presets?workflow=${encodeURIComponent(selectedTemplate.id)}`)}
+                    <FormRenderer
+                      schema={getStartFormSchema(selectedTemplate)}
+                      presetScopeId={selectedTemplate.id}
+                      presetSaveScope={isRequester ? 'private' : 'group'}
+                      submitLabel={isRequester ? '요청 제출' : '즉시 실행'}
+                      onSubmit={handleLaunch}
                     />
-                    <button className="btn-launch-execute" onClick={handleLaunch}>
-                      <Play size={14} fill="currentColor" />
-                      {isRequester ? '요청 제출' : '즉시 실행'}
-                    </button>
                   </div>
                 )}
               </div>
@@ -787,15 +699,6 @@ export const RequestPortal: React.FC<{
           )}
         </aside>
       </div>
-      {selectedTemplate && (
-        <InputPresetManager
-          open={presetManagerOpen}
-          workflowId={selectedTemplate.id}
-          presets={selectedPresets}
-          onClose={() => setPresetManagerOpen(false)}
-          onChanged={refreshPresets}
-        />
-      )}
       {selectedTemplate && metadataEditorOpen && (
         <Drawer
           title="워크플로우 메타데이터 수정"
@@ -1016,84 +919,6 @@ function DetailItem({
   );
 }
 
-function InputFields({
-  template,
-  formData,
-  onInputChange,
-  presets,
-  presetsLoading,
-  onApplyPreset,
-  onSavePreset,
-  onManagePresets,
-}: {
-  template: Template;
-  formData: Record<string, any>;
-  onInputChange: (key: string, value: any) => void;
-  presets: InputPreset[];
-  presetsLoading: boolean;
-  onApplyPreset: (presetId: string) => void;
-  onSavePreset: () => void | Promise<void>;
-  onManagePresets: () => void;
-}) {
-  const fields = getStartFields(template);
-  if (fields.length === 0) {
-    return (
-      <div className="form-info-text">
-        이 워크플로우에는 Start 입력 폼이 없습니다. 빈 input으로 실행됩니다.
-      </div>
-    );
-  }
-
-  return (
-    <>
-      <div className="request-input-preset-bar">
-        <div className="request-input-preset-header">
-          <div>
-            <strong>파라미터 세트</strong>
-            <span>저장된 Start 입력값을 아래 폼에 적용합니다.</span>
-          </div>
-          <div className="request-input-preset-actions">
-            <button type="button" className="secondary" onClick={onManagePresets}>프리셋 관리</button>
-          </div>
-        </div>
-        {presetsLoading ? (
-          <p className="request-input-preset-empty">파라미터 세트를 불러오는 중입니다.</p>
-        ) : presets.length > 0 ? (
-          <div className="request-input-preset-list">
-            {presets.map((preset) => (
-              <div key={preset.id} className="request-input-preset-item">
-                <button type="button" onClick={() => onApplyPreset(preset.id)}>
-                  {preset.name}
-                </button>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="request-input-preset-empty">저장된 파라미터 세트가 없습니다.</p>
-        )}
-      </div>
-      {fields.map((field: any) => {
-        const id = field.id || field.name;
-        return (
-          <div key={id} className="form-group">
-            <label>{field.label || id}</label>
-            <input
-              type={field.type === 'number' ? 'number' : 'text'}
-              placeholder={field.placeholder || `${field.label || id} 입력`}
-              value={formData[id] || ''}
-              onChange={(event) => onInputChange(id, field.type === 'number' && event.target.value !== '' ? Number(event.target.value) : event.target.value)}
-            />
-          </div>
-        );
-      })}
-      <div className="request-input-preset-save">
-        <span>위 입력값을 다음 API 실행에서도 재사용할 수 있습니다.</span>
-        <button type="button" onClick={onSavePreset}>입력값을 새 프리셋으로 저장</button>
-      </div>
-    </>
-  );
-}
-
 function buildTemplateSummary(template: Template) {
   const startNode = (template.nodes || []).find((node) => node.data?.nodeType === 'start');
   const rawTriggerType = startNode?.data?.triggerType;
@@ -1112,22 +937,10 @@ function buildTemplateSummary(template: Template) {
   };
 }
 
-function buildInitialInput(template: Template) {
-  const fields = getStartFields(template);
-  if (fields.length === 0) return {};
-
-  return fields.reduce((acc: Record<string, any>, field) => {
-    const id = field.id || field.name;
-    if (id) acc[id] = field.defaultValue || '';
-    return acc;
-  }, {});
-}
-
-function getStartFields(template: Template): StartFormField[] {
+function getStartFormSchema(template: Template): FormSchema | undefined {
   const startNode = (template.nodes || []).find((node) => node.data?.nodeType === 'start');
-  return Array.isArray(startNode?.data?.formSchema?.fields)
-    ? startNode.data.formSchema.fields
-    : [];
+  const schema = startNode?.data?.formSchema;
+  return Array.isArray(schema?.fields) ? schema as FormSchema : undefined;
 }
 
 function formatDate(value?: string) {

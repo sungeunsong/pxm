@@ -35,13 +35,14 @@ describe('TemplatesController public API contract', () => {
     };
   }
 
-  function buildController() {
+  function buildController(templateOverride: Record<string, unknown> = {}) {
+    const currentTemplate = { ...template, ...templateOverride };
     const templatesService = {
-      findOne: jest.fn().mockResolvedValue(template),
-      findPublished: jest.fn().mockResolvedValue(template),
-      findForExecution: jest.fn().mockResolvedValue(template),
+      findOne: jest.fn().mockResolvedValue(currentTemplate),
+      findPublished: jest.fn().mockResolvedValue(currentTemplate),
+      findForExecution: jest.fn().mockResolvedValue(currentTemplate),
       update: jest.fn(),
-      publish: jest.fn().mockResolvedValue(template),
+      publish: jest.fn().mockResolvedValue(currentTemplate),
     };
     const audit = { append: jest.fn().mockResolvedValue(undefined) };
     const controller = new TemplatesController(
@@ -79,6 +80,27 @@ describe('TemplatesController public API contract', () => {
         allowed_workflow_ids: [],
       }))),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('rejects API input that does not match the Start form before creating an instance', async () => {
+    const { controller } = buildController({
+      nodes: [{
+        id: 'start',
+        data: { nodeType: 'start', formSchema: { fields: [{ id: 'amount', type: 'number', required: true }] } },
+      }],
+    });
+
+    await expect(controller.start(
+      'workflow-1',
+      { input: { amount: 'ten' as unknown as number } },
+      undefined,
+      request(apiKeyActor({ scopes: ['workflow:read', 'workflow:execute'] })),
+    )).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: 'WORKFLOW_INPUT_INVALID',
+        details: expect.arrayContaining([expect.stringContaining('number')]),
+      }),
+    });
   });
 
   it('deploys the saved workflow when the optional body is omitted', async () => {

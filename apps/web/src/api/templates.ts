@@ -176,8 +176,9 @@ export interface TestDbWatchConnectionResponse {
 const API_BASE_URL = '/api';
 
 async function responseError(response: Response, fallback: string): Promise<Error> {
-  const body = await response.json().catch(() => null) as { message?: string | string[] } | null;
-  const detail = Array.isArray(body?.message) ? body.message.join(', ') : body?.message;
+  const body = await response.json().catch(() => null) as { message?: string | string[]; details?: string[] } | null;
+  const message = Array.isArray(body?.message) ? body.message.join(', ') : body?.message;
+  const detail = [message, ...(body?.details || [])].filter(Boolean).join(' ');
   return new Error(detail || `${fallback}: ${response.statusText}`);
 }
 
@@ -279,7 +280,7 @@ export const templatesApi = {
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to start template: ${response.statusText}`);
+      throw await responseError(response, 'Failed to start template');
     }
 
     return response.json();

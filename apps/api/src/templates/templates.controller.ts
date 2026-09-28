@@ -13,6 +13,7 @@ import {
   externalApprovalIdempotencyTtlMs,
   externalApprovalKeyHash,
   externalApprovalRequestHash,
+  dynamicApprovalRequestInputKey,
   dynamicApprovalRequestPath,
   normalizeExternalApprovalRequest,
   stableStringify,
@@ -583,7 +584,7 @@ export class TemplatesController {
     }
 
     const requestedPreset = body?.preset_id || body?.preset_alias || body?.preset;
-    const inputOverrides = body?.input || body?.formData || {};
+    const inputOverrides = body?.input ?? body?.formData ?? {};
     const inputPreset = requestedPreset ? await this.inputPresetRepo.getInputPreset(template.id, requestedPreset) : null;
     if (requestedPreset && !inputPreset) {
       throw new NotFoundException('Input preset not found');
@@ -593,10 +594,19 @@ export class TemplatesController {
     }
 
     // ctx 구조: Rust Engine이 기대하는 실행 컨텍스트
-    const formData = {
+    const mergedInput = {
       ...(inputPreset?.values || {}),
       ...inputOverrides,
     };
+    const normalizedInput = normalizeWorkflowInputValues(template.nodes, mergedInput);
+    if (normalizedInput.errors.length > 0) {
+      throw new BadRequestException({
+        code: 'WORKFLOW_INPUT_INVALID',
+        message: '신청 입력값을 확인해주세요.',
+        details: normalizedInput.errors,
+      });
+    }
+    const formData = normalizedInput.values;
     const approvalRequestPath = dynamicApprovalRequestPath(template.nodes);
     const externalApproval = normalizeExternalApprovalRequest(formData, approvalRequestPath);
     const externalApprovalRequestDigest = externalApproval
@@ -902,18 +912,50 @@ export function validateInputPresetValues(nodes: any[], value: unknown): string[
     errors.push(`민감정보 키는 프리셋에 저장할 수 없습니다: ${sensitivePaths.join(', ')}`);
   }
 
+  errors.push(...normalizeWorkflowInputValues(nodes, value, '프리셋에 저장할 수 없습니다.').errors);
+  return errors;
+}
+
+export function validateWorkflowInputValues(nodes: any[], value: unknown): string[] {
+  return normalizeWorkflowInputValues(nodes, value).errors;
+}
+
+export function normalizeWorkflowInputValues(
+  nodes: any[],
+  value: unknown,
+  fileError = '아직 지원하지 않습니다.',
+): { values: Record<string, any>; errors: string[] } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { values: {}, errors: ['입력값은 JSON object여야 합니다.'] };
+  }
+
   const startNode = nodes.find((node) => node?.data?.nodeType === 'start');
   const fields: any[] = Array.isArray(startNode?.data?.formSchema?.fields) ? startNode.data.formSchema.fields.filter((field: any) => field?.id || field?.name) : [];
-  if (fields.length === 0) return errors;
+  if (fields.length === 0) return { values: { ...(value as Record<string, any>) }, errors: [] };
 
-  const values = value as Record<string, any>;
+  const suppliedValues = value as Record<string, any>;
   const fieldById = new Map<string, any>(fields.map((field: any) => [String(field.id || field.name), field]));
-  for (const key of Object.keys(values)) {
+  // 동적 결재선은 입력 폼이 아니라 호출자가 함께 보내는 값이다. 검증 없이 그대로 넘긴다.
+  const approvalRequestKey = dynamicApprovalRequestInputKey(nodes);
+  const errors: string[] = [];
+  for (const key of Object.keys(suppliedValues)) {
+    if (key === approvalRequestKey) continue;
     if (!fieldById.has(key)) errors.push(`Start 입력 스키마에 없는 키입니다: ${key}`);
   }
 
-  for (const [id, field] of fieldById) {
+  const values = fields.reduce<Record<string, any>>((result, field) => {
+    const id = String(field.id || field.name);
+    if (field.defaultValue !== undefined) result[id] = field.defaultValue;
+    if (suppliedValues[id] !== undefined) result[id] = suppliedValues[id];
+    return result;
+  }, {});
+
+  const visibleFields = fields.filter((field) => workflowInputFieldIsVisible(field, values));
+  const normalizedValues: Record<string, any> = {};
+  for (const field of visibleFields) {
+    const id = String(field.id || field.name);
     const item = values[id];
+    if (item !== undefined) normalizedValues[id] = item;
     if (field.required === true && (item === undefined || item === null || item === '')) {
       errors.push(`필수 입력값이 비어 있습니다: ${id}`);
       continue;
@@ -928,7 +970,7 @@ export function validateInputPresetValues(nodes: any[], value: unknown): string[
     } else if (['text', 'textarea', 'select', 'radio', 'date'].includes(type) && typeof item !== 'string') {
       errors.push(`${id} 값은 string이어야 합니다.`);
     } else if (type === 'file') {
-      errors.push(`${id} 파일 입력은 프리셋에 저장할 수 없습니다.`);
+      errors.push(`${id} 파일 입력은 ${fileError}`);
     }
 
     if (typeof item === 'number') {
@@ -948,7 +990,19 @@ export function validateInputPresetValues(nodes: any[], value: unknown): string[
       }
     }
   }
-  return errors;
+  if (approvalRequestKey && !fieldById.has(approvalRequestKey) && suppliedValues[approvalRequestKey] !== undefined) {
+    normalizedValues[approvalRequestKey] = suppliedValues[approvalRequestKey];
+  }
+  return { values: normalizedValues, errors };
+}
+
+function workflowInputFieldIsVisible(field: any, values: Record<string, any>): boolean {
+  if (!field?.condition) return true;
+  const actual = String(values[String(field.condition.field)] ?? '');
+  const target = String(field.condition.value);
+  if (field.condition.operator === 'eq') return actual === target;
+  if (field.condition.operator === 'neq') return actual !== target;
+  return true;
 }
 
 function findSensitivePresetPaths(value: Record<string, any>, prefix = ''): string[] {
