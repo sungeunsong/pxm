@@ -18,6 +18,7 @@
 | [api-consumer-demo.md](api-consumer-demo.md) | `apps/api-playground` reference client 사용법 |
 | [webhook-delivery.md](webhook-delivery.md) | 결재 결과 Webhook 등록·서명·재전송 |
 | [plugin-sdk-guide.md](plugin-sdk-guide.md) | 플러그인 개발 가이드 (hosted / external_http) |
+| [ai-tool-publish-design.md](ai-tool-publish-design.md) | **설계 · 미구현.** 워크플로우를 AI Tool로 공개하는 Tool Registry와 Invoke API |
 
 ## 결재
 
