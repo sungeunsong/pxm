@@ -55,6 +55,7 @@ type ActiveTab =
   | 'dashboard'
   | 'designer'
   | 'request'
+  | 'workflows'
   | 'myRequests'
   | 'presets'
   | 'tracker'
@@ -78,6 +79,7 @@ const ROUTE_TO_TAB: Record<string, ActiveTab> = {
   dashboard: 'dashboard',
   designer: 'designer',
   request: 'request',
+  workflows: 'workflows',
   'my-requests': 'myRequests',
   presets: 'presets',
   tracker: 'tracker',
@@ -100,6 +102,7 @@ const TAB_TO_ROUTE: Record<ActiveTab, string> = {
   dashboard: 'dashboard',
   designer: 'designer',
   request: 'request',
+  workflows: 'workflows',
   myRequests: 'my-requests',
   presets: 'presets',
   tracker: 'tracker',
@@ -121,7 +124,8 @@ const TAB_TO_ROUTE: Record<ActiveTab, string> = {
 const PAGE_TITLE: Record<ActiveTab, string> = {
   dashboard: '대시보드',
   designer: '워크플로우 설계',
-  request: '워크플로우 관리',
+  request: '요청하기',
+  workflows: '워크플로우 관리',
   myRequests: '내 요청',
   presets: '실행 프리셋',
   tracker: '실행 모니터링',
@@ -145,6 +149,7 @@ const GROUP_MANAGER_TABS = new Set<ActiveTab>([
   'dashboard',
   'designer',
   'request',
+  'workflows',
   'myRequests',
   'presets',
   'tracker',
@@ -181,11 +186,12 @@ function sidebarSections(role: SessionUser['role']): SidebarSectionDefinition[] 
     label: role === 'user' ? '나의 업무' : '요청 및 결재',
     items: role === 'user'
       ? [
-          { tab: 'request', label: '요청하기', icon: Rocket },
+          { tab: 'request', label: '요청하기', icon: Send },
           { tab: 'myRequests', label: '내 요청', icon: ClipboardCheck },
           { tab: 'inbox', label: '내 결재함', icon: Inbox },
         ]
       : [
+          { tab: 'request', label: '요청하기', icon: Send },
           { tab: 'myRequests', label: '내 요청', icon: ClipboardCheck },
           { tab: 'inbox', label: '내 결재함', icon: Inbox },
         ],
@@ -203,7 +209,7 @@ function sidebarSections(role: SessionUser['role']): SidebarSectionDefinition[] 
       label: '설계 및 실행',
       items: [
         { tab: 'designer', label: '워크플로우 설계', icon: Paintbrush },
-        { tab: 'request', label: '워크플로우 관리', icon: Rocket },
+        { tab: 'workflows', label: '워크플로우 관리', icon: Rocket },
         { tab: 'presets', label: '실행 프리셋', icon: Braces },
         { tab: 'tracker', label: '실행 모니터링', icon: Search },
       ],
@@ -431,7 +437,7 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
         <header className="app-top-header">
           <div className="header-left">
             <h1 className="header-title">
-              {activeTab === 'request' && user.role === 'user' ? '요청하기' : PAGE_TITLE[activeTab]}
+              {PAGE_TITLE[activeTab]}
             </h1>
           </div>
 
@@ -471,7 +477,9 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
             </div>
           )}
 
-          {activeTab === 'request' && <RequestPortal currentUser={user} onRequestStarted={handleRequestStarted} />}
+          {activeTab === 'request' && <RequestPortal key="request" mode="request" currentUser={user} onRequestStarted={handleRequestStarted} />}
+
+          {activeTab === 'workflows' && <RequestPortal key="workflows" mode="manage" currentUser={user} onRequestStarted={handleRequestStarted} />}
 
           {activeTab === 'myRequests' && (
             <MyRequestsPage currentUser={user} initialInstanceId={selectedRequestInstanceId} />

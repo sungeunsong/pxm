@@ -171,6 +171,9 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
   const importFileInputRef = useRef<HTMLInputElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const suppressCanvasDirtyRef = useRef(true);
+  // 저장본의 내용 서명. 캔버스 변경 이벤트가 와도 내용이 같으면 "저장 안 됨"으로 바꾸지 않는다.
+  // (React Flow는 노드를 올린 뒤 크기 측정 이벤트를 보내므로 이벤트 유무로는 편집 여부를 알 수 없다)
+  const savedCanvasSignatureRef = useRef<string | null>(null);
 
   // SSE 연결 정리
   React.useEffect(() => {
@@ -349,6 +352,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
     setExecutionFormSchema(undefined);
     flowCanvasRef.current?.clearExecutionState();
     flowCanvasRef.current?.setNodesAndEdges(tab.nodes, tab.edges);
+    savedCanvasSignatureRef.current = tab.isDirty ? null : canvasSignature(tab.nodes, tab.edges);
     // 노드를 교체한 뒤에는 항상 화면에 맞춘다.
     // (이게 없으면 18개짜리 워크플로우를 열어도 직전 viewport가 남아 첫 노드만 크게 보인다)
     // 이 경로는 선택을 해제하므로 패널은 닫힌다 → 전체 폭 기준.
@@ -490,7 +494,8 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
   const handleCanvasNodesChange = React.useCallback(
     (nodes: Node[]) => {
       setCanvasNodes(nodes as Node<CustomNodeData>[]);
-      if (!traceInstanceId && !suppressCanvasDirtyRef.current) {
+      const edges = flowCanvasRef.current?.getEdges() || [];
+      if (!traceInstanceId && !suppressCanvasDirtyRef.current && canvasSignature(nodes, edges) !== savedCanvasSignatureRef.current) {
         markActiveDesignerTabDirty();
       }
     },
@@ -500,7 +505,8 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
   const handleCanvasEdgesChange = React.useCallback(
     (edges: Edge[]) => {
       setCanvasEdges(edges);
-      if (!traceInstanceId && !suppressCanvasDirtyRef.current) {
+      const nodes = flowCanvasRef.current?.getNodes() || [];
+      if (!traceInstanceId && !suppressCanvasDirtyRef.current && canvasSignature(nodes, edges) !== savedCanvasSignatureRef.current) {
         markActiveDesignerTabDirty();
       }
     },
@@ -702,7 +708,8 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
     setExecutionFormSchema(undefined);
   };
 
-  const handleSave = async () => {
+  /** 저장에 성공하면 워크플로우 ID를, 취소·실패하면 null을 돌려준다. 배포가 저장 결과를 이어서 쓴다. */
+  const handleSave = async (): Promise<string | null> => {
     const nodes = flowCanvasRef.current?.getNodes() || [];
     const edges = flowCanvasRef.current?.getEdges() || [];
 
@@ -713,12 +720,12 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
       placeholder: '예: IT 권한 신청',
       confirmLabel: '저장',
     });
-    if (!templateName) return;
+    if (!templateName) return null;
     if (!workflowGroupId) {
       toast.error('관리 그룹을 먼저 선택해 주세요.', { description: '워크플로우는 관리 그룹 없이 저장할 수 없습니다.' });
       setSelectedNode(null);
       setIsPropertiesPanelOpen(true);
-      return;
+      return null;
     }
     const canManageSelectedGroup = currentUser.role === 'admin' || currentUser.memberships.some(
       (membership) => membership.group_id === workflowGroupId && membership.role === 'group_manager',
@@ -729,7 +736,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
       });
       setSelectedNode(null);
       setIsPropertiesPanelOpen(true);
-      return;
+      return null;
     }
 
     try {
@@ -768,7 +775,9 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
               : tab,
           ),
         );
+        savedCanvasSignatureRef.current = canvasSignature(nodes, edges);
         toast.success('워크플로우를 저장했습니다.', { description: `${updated.name} · v${updated.version}` });
+        return updated.id;
       } else {
         const created = await templatesApi.create({
           name: templateName,
@@ -805,11 +814,61 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
               : tab,
           ),
         );
+        savedCanvasSignatureRef.current = canvasSignature(nodes, edges);
         toast.success('워크플로우를 저장했습니다.', { description: created.name });
+        return created.id;
       }
     } catch (error) {
       console.error('Failed to save template:', error);
       toast.error('워크플로우 저장에 실패했습니다.', { description: errorMessage(error) });
+      return null;
+    }
+  };
+
+  /**
+   * 설계를 끝낸 뒤 "다음 할 일"인 배포를 디자이너 안에서 바로 한다.
+   * 예전에는 탭에 "미배포"만 표시하고 배포는 워크플로우 관리 화면에서 다시 찾아야 했다.
+   */
+  const handleDeploy = async () => {
+    const tab = buildCurrentTabSnapshot(activeDesignerTabId);
+    let templateId = tab.templateId;
+    if (!templateId || tab.isDirty) {
+      const saveFirst = await confirmDialog({
+        title: '저장하고 배포할까요?',
+        description: '배포는 저장된 버전을 대상으로 합니다. 현재 변경사항을 먼저 저장합니다.',
+        confirmLabel: '저장하고 계속',
+      });
+      if (!saveFirst) return;
+      templateId = await handleSave();
+      if (!templateId) return;
+    }
+    const proceed = await confirmDialog({
+      title: '이 워크플로우를 배포할까요?',
+      description: '배포하면 요청하기 화면과 API에서 이 버전으로 새 요청을 받습니다. 이미 진행 중인 요청은 시작할 때의 버전을 그대로 씁니다.',
+      confirmLabel: '배포',
+    });
+    if (!proceed) return;
+    try {
+      const deployed = await templatesApi.publish(templateId);
+      setDesignerTabs((tabs) =>
+        tabs.map((item) =>
+          item.templateId === deployed.id
+            ? {
+                ...item,
+                templateVersion: deployed.version,
+                lifecycleStatus: deployed.lifecycle_status,
+                activePublishedVersion: deployed.active_published_version,
+                hasUnpublishedChanges: deployed.has_unpublished_changes,
+              }
+            : item,
+        ),
+      );
+      toast.success('배포했습니다.', {
+        description: `${deployed.name} · v${deployed.active_published_version ?? deployed.version}. 이제 요청하기에서 신청할 수 있습니다.`,
+      });
+    } catch (error) {
+      console.error('Failed to deploy template:', error);
+      toast.error('배포하지 못했습니다.', { description: errorMessage(error) });
     }
   };
 
@@ -1299,6 +1358,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
         )}
         onRun={traceInstanceId ? undefined : () => handleRun()}
         onSave={traceInstanceId ? undefined : handleSave}
+        onDeploy={traceInstanceId || !designerNeedsDeploy(activeDesignerTab) ? undefined : handleDeploy}
         onAutoLayout={traceInstanceId ? undefined : () => flowCanvasRef.current?.autoLayout()}
         onLoad={traceInstanceId ? undefined : handleLoad}
         onImport={traceInstanceId ? undefined : handleImport}
@@ -2022,4 +2082,53 @@ function PluginPaletteSection({
       </div>
     </div>
   );
+}
+
+/** 저장·배포가 끝나지 않은 설계인지. 이때 디자이너가 "배포"를 다음 행동으로 보여준다. */
+function designerNeedsDeploy(tab: DesignerTab | undefined): boolean {
+  if (!tab) return false;
+  const isEmptyNewTab = !tab.templateId && !tab.isDirty;
+  if (isEmptyNewTab) return false;
+  return !tab.templateId || tab.isDirty || tab.lifecycleStatus !== 'PUBLISHED' || Boolean(tab.hasUnpublishedChanges);
+}
+
+/**
+ * 저장 대상이 되는 캔버스 내용만으로 만든 서명. 선택 상태·측정 크기·실행 표시처럼
+ * 화면에만 있는 값은 빼서, 워크플로우를 열기만 했을 때 "저장 안 됨"으로 바뀌지 않게 한다.
+ */
+function canvasSignature(nodes: Node[], edges: Edge[]): string {
+  return JSON.stringify({
+    nodes: [...nodes]
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((node) => {
+        const data = { ...((node.data || {}) as Record<string, unknown>) };
+        delete data.executionStatus;
+        return {
+          id: node.id,
+          type: node.type,
+          x: Math.round(node.position?.x ?? 0),
+          y: Math.round(node.position?.y ?? 0),
+          data,
+        };
+      }),
+    edges: [...edges]
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((edge) => ({
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        sourceHandle: edge.sourceHandle ?? null,
+        targetHandle: edge.targetHandle ?? null,
+        label: edge.label ?? null,
+        data: edgeDefinitionData(edge.data),
+      })),
+  });
+}
+
+/** 캔버스가 분기 연결선에 덧붙이는 표시용 값(branchSourceType)은 저장 내용이 아니다. */
+function edgeDefinitionData(data: unknown): Record<string, unknown> | null {
+  if (!data || typeof data !== 'object') return null;
+  const definition = { ...(data as Record<string, unknown>) };
+  delete definition.branchSourceType;
+  return Object.keys(definition).length > 0 ? definition : null;
 }

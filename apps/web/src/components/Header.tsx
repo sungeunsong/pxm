@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Clock, Download, FolderOpen, LayoutGrid, MoreHorizontal, Moon, Play, Save, Settings, Sun, Upload } from 'lucide-react';
+import { Clock, Download, FolderOpen, LayoutGrid, MoreHorizontal, Moon, Play, Rocket, Save, Settings, Sun, Upload } from 'lucide-react';
 import { Button } from './Button';
 import './Header.css';
 
@@ -20,6 +20,8 @@ export interface HeaderProps {
   leading?: React.ReactNode;
   onRun?: () => void;
   onSave?: () => void;
+  /** 저장·배포가 남았을 때만 넘긴다. 있으면 배포를 주 행동으로 보여준다. */
+  onDeploy?: () => void;
   /** 노드를 계층형으로 다시 배치한다 */
   onAutoLayout?: () => void;
   onLoad?: () => void;
@@ -42,6 +44,7 @@ export const Header: React.FC<HeaderProps> = ({
   leading,
   onRun,
   onSave,
+  onDeploy,
   onAutoLayout,
   onLoad,
   onImport,
@@ -96,8 +99,13 @@ export const Header: React.FC<HeaderProps> = ({
             저장
           </Button>
         )}
+        {onDeploy && (
+          <Button variant="primary" icon={<Rocket />} onClick={onDeploy} data-testid="designer-deploy">
+            배포
+          </Button>
+        )}
         {onRun && (
-          <Button variant="primary" icon={<Play />} onClick={onRun}>
+          <Button variant={onDeploy ? 'secondary' : 'primary'} icon={<Play />} onClick={onRun}>
             실행
           </Button>
         )}

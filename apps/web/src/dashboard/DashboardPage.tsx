@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Activity, AlertTriangle, CheckCircle2, Clock, FileText, RefreshCw, XCircle } from 'lucide-react';
 import { errorMessage } from '../lib/error-message';
 import './DashboardPage.css';
+import { hashFor } from '../lib/deep-link';
 
 /**
  * 대시보드는 실제 API 응답만 보여준다.
@@ -107,6 +108,7 @@ const formatBytes = (bytes: number): string => {
 
 export const DashboardPage: React.FC = () => {
   const [templatesCount, setTemplatesCount] = useState<Loadable<number>>({ status: 'loading' });
+  const [undeployed, setUndeployed] = useState<Array<{ id: string; name: string }>>([]);
   const [instanceStats, setInstanceStats] = useState<Loadable<InstanceStats>>({ status: 'loading' });
   const [recentInstances, setRecentInstances] = useState<Loadable<InstanceRow[]>>({ status: 'loading' });
   const [pendingApprovals, setPendingApprovals] = useState<Loadable<number>>({ status: 'loading' });
@@ -116,7 +118,13 @@ export const DashboardPage: React.FC = () => {
   const load = useCallback(async () => {
     // 각 카드와 패널은 독립적으로 실패한다. 실패를 0건으로 바꾸지 않는다.
     const templates = getJson<unknown[]>('/api/templates')
-      .then((value) => setTemplatesCount({ status: 'ready', value: requireArray(value, '워크플로우').length }))
+      .then((value) => {
+        const rows = requireArray<{ id: string; name?: string; lifecycle_status?: string; has_unpublished_changes?: boolean }>(value, '워크플로우');
+        setTemplatesCount({ status: 'ready', value: rows.length });
+        setUndeployed(rows
+          .filter((row) => row.lifecycle_status === 'DRAFT' || row.has_unpublished_changes === true)
+          .map((row) => ({ id: row.id, name: row.name || row.id })));
+      })
       .catch((error) => setTemplatesCount({ status: 'error', message: errorMessage(error) }));
 
     const stats = getJson<InstanceStats>('/api/instances/stats')
@@ -191,6 +199,12 @@ export const DashboardPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      <NextActions
+        pendingApprovals={pendingApprovals.status === 'ready' ? pendingApprovals.value : null}
+        failedInstances={countByState('FAILED')}
+        undeployed={undeployed}
+      />
 
       <div className="dashboard-grid">
         <div className="stats-row">
@@ -360,3 +374,51 @@ const HealthPanel: React.FC<{ health: Loadable<HealthReport> }> = ({ health }) =
     </>
   );
 };
+
+/**
+ * 로그인한 관리자에게 "지금 무엇을 하면 되는지"를 먼저 보여준다.
+ * 숫자 카드만 있으면 신규 사용자는 어디서 시작할지 몰라 메뉴를 하나씩 열어 본다.
+ */
+function NextActions({
+  pendingApprovals,
+  failedInstances,
+  undeployed,
+}: {
+  pendingApprovals: number | null;
+  failedInstances: number | null;
+  undeployed: Array<{ id: string; name: string }>;
+}) {
+  const items: Array<{ key: string; title: string; description: string; href: string; tone: 'accent' | 'danger' | 'default' }> = [];
+  if (pendingApprovals) {
+    items.push({ key: 'inbox', title: `내 결재 ${pendingApprovals}건이 기다리고 있습니다`, description: '결재함에서 요청 내용을 확인하고 처리하세요.', href: hashFor('inbox'), tone: 'accent' });
+  }
+  if (failedInstances) {
+    items.push({ key: 'failed', title: `실패한 실행이 ${failedInstances}건 있습니다`, description: '실행 모니터링에서 원인을 확인하고 재시도하거나 종료하세요.', href: hashFor('tracker'), tone: 'danger' });
+  }
+  for (const workflow of undeployed.slice(0, 3)) {
+    items.push({ key: `deploy-${workflow.id}`, title: `'${workflow.name}'에 배포하지 않은 변경이 있습니다`, description: '배포해야 요청하기와 API에서 새 버전으로 신청을 받습니다.', href: hashFor('designer', { workflow: workflow.id }), tone: 'default' });
+  }
+  if (undeployed.length > 3) {
+    items.push({ key: 'deploy-more', title: `배포하지 않은 워크플로우가 ${undeployed.length - 3}개 더 있습니다`, description: '워크플로우 관리에서 배포 상태를 확인하세요.', href: hashFor('workflows'), tone: 'default' });
+  }
+
+  return (
+    <section className="dashboard-next-actions" aria-label="지금 할 일" data-testid="dashboard-next-actions">
+      <h3>지금 할 일</h3>
+      {items.length === 0 ? (
+        <p className="dashboard-next-empty">지금 처리할 일이 없습니다.</p>
+      ) : (
+        <ul>
+          {items.map((item) => (
+            <li key={item.key} className={`tone-${item.tone}`}>
+              <a href={item.href}>
+                <strong>{item.title}</strong>
+                <span>{item.description}</span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}

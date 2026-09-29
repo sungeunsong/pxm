@@ -560,6 +560,8 @@ export interface operations {
     Templates_findAll: {
         parameters: {
             query?: {
+                /** @description true면 관리 권한이 있어도 배포된 버전만 돌려준다. 신청 화면처럼 실제 실행될 버전의 입력 폼이 필요할 때 쓴다 */
+                publishedOnly?: boolean;
                 activeOnly?: boolean;
             };
             header?: {

@@ -61,13 +61,21 @@ export class TemplatesController {
   @Version(PUBLIC_API_VERSIONS)
   @ApiOperation({ summary: '실행 가능한 워크플로우 목록 조회' })
   @ApiQuery({ name: 'activeOnly', required: false, schema: { type: 'boolean', default: true } })
+  @ApiQuery({
+    name: 'publishedOnly',
+    required: false,
+    schema: { type: 'boolean', default: false },
+    description: 'true면 관리 권한이 있어도 배포된 버전만 돌려준다. 신청 화면처럼 실제 실행될 버전의 입력 폼이 필요할 때 쓴다',
+  })
   @ApiOkResponse({ type: WorkflowDto, isArray: true })
   @PublicApiErrors()
-  async findAll(@Query('activeOnly') activeOnly: string | undefined, @Req() req: Request) {
+  async findAll(@Query('activeOnly') activeOnly: string | undefined, @Req() req: Request, @Query('publishedOnly') publishedOnly?: string) {
     const active = activeOnly !== 'false';
     const actor = actorFromRequest(req);
     const canManage = isAdmin(actor) || actor.roles.includes('group_manager');
-    const templates = canManage ? await this.templatesService.findAll(active) : await this.templatesService.findPublishedAll();
+    const templates = canManage && publishedOnly !== 'true'
+      ? await this.templatesService.findAll(active)
+      : await this.templatesService.findPublishedAll();
     return templates.filter((template) => canReadTemplate(actor, template));
   }
 

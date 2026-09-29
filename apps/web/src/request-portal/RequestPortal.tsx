@@ -68,10 +68,16 @@ type ScheduleStatus = {
 
 export const RequestPortal: React.FC<{
   currentUser: SessionUser;
+  /**
+   * request: 요청하기 — 모든 역할이 배포된 업무 양식으로 신청한다.
+   * manage: 워크플로우 관리 — 관리자가 배포·트리거·버전을 관리한다.
+   * 역할로 화면 성격을 정하면 관리자는 신청할 곳이 없고 같은 메뉴가 역할마다 다른 이름을 갖게 된다.
+   */
+  mode: 'request' | 'manage';
   onRequestStarted?: (instanceId: string) => void;
-}> = ({ currentUser, onRequestStarted }) => {
+}> = ({ currentUser, mode, onRequestStarted }) => {
   const { toast, confirm: confirmDialog } = useFeedback();
-  const isRequester = currentUser.role === 'user';
+  const isRequester = mode === 'request';
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState('');
@@ -94,7 +100,8 @@ export const RequestPortal: React.FC<{
   const fetchTemplates = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/templates');
+      // 신청은 배포된 버전으로 실행되므로, 신청 화면은 관리자라도 배포된 버전의 입력 폼을 보여준다.
+      const res = await fetch(isRequester ? '/api/templates?publishedOnly=true' : '/api/templates');
       if (!res.ok) throw await readApiError(res, '업무 양식 목록을 불러오지 못했습니다.');
       const data = await res.json();
       const validTemplates: WorkflowTemplate[] = Array.isArray(data) ? data : [];
@@ -118,6 +125,8 @@ export const RequestPortal: React.FC<{
 
   useEffect(() => {
     fetchTemplates();
+    // mode는 화면(메뉴)마다 고정이고 App이 mode별로 key를 달리해 다시 마운트한다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {

@@ -8,6 +8,7 @@ import {
   clearMailpit,
   confirmDialogAction,
   databaseConnection,
+  dynamicApprovalTemplate,
   externalApprover,
   fixture,
   loginPage,
@@ -105,6 +106,8 @@ test.describe.serial('PXM 동적 결재 베타 회귀', () => {
     await expect(managerMenu).toContainText('감사 로그');
     await expect(managerMenu.locator('.sidebar-section-label')).toHaveText(['개요', '설계 및 실행', '요청 및 결재', '그룹 관리']);
     await expect(managerMenu.getByRole('button', { name: '워크플로우 관리', exact: true })).toHaveCount(1);
+    // 관리자도 신청자다. 신청 메뉴와 관리 메뉴는 이름과 화면이 따로 있다.
+    await expect(managerMenu.getByRole('button', { name: '요청하기', exact: true })).toHaveCount(1);
     expect((await manager.rawGet('/auth/security-policy')).status()).toBe(403);
     expect((await manager.rawGet('/audit/management?limit=1')).status()).toBe(200);
     await expect(manager.get(`/authz/users?groupId=${fixture.groupId}`)).resolves.toEqual(expect.any(Array));
@@ -240,6 +243,41 @@ test.describe.serial('PXM 동적 결재 베타 회귀', () => {
     await expect(managerUi.page.locator('.flow-designer.trace-mode')).toBeVisible({ timeout: 30_000 });
 
     await closeContexts(approver.context, requester.context, managerUi.context);
+  });
+
+  test('설계자는 디자이너에서 바로 배포하고, 대시보드는 배포할 일을 먼저 알려준다', async ({ browser }) => {
+    const draft = await admin.post<any>('/templates', {
+      ...dynamicApprovalTemplate(),
+      name: uniqueTitle('디자이너 배포'),
+    });
+    expect(draft.lifecycle_status).toBe('DRAFT');
+
+    const managerUi = await loginPage(browser, fixture.users.manager.id, userPassword, 'dashboard');
+    const nextActions = managerUi.page.getByTestId('dashboard-next-actions');
+    const deployItem = nextActions.getByRole('link').filter({ hasText: draft.name });
+    await expect(deployItem).toBeVisible({ timeout: 30_000 });
+    await deployItem.click();
+
+    await expect(managerUi.page.locator('.workflow-tab-main[aria-selected="true"]')).toContainText(draft.name, { timeout: 30_000 });
+    await managerUi.page.getByTestId('designer-deploy').click();
+    await confirmDialogAction(managerUi.page, '배포');
+    await expect(managerUi.page.locator('.pxm-toast-title', { hasText: '배포했습니다.' })).toBeVisible({ timeout: 15_000 });
+    await expect(managerUi.page.getByTestId('designer-deploy')).toHaveCount(0);
+    expect((await admin.get<any>(`/templates/${draft.id}`)).lifecycle_status).toBe('PUBLISHED');
+    const activeTab = managerUi.page.locator('.workflow-tab-main[aria-selected="true"]');
+    await expect(activeTab.locator('.workflow-tab-status')).toHaveText('');
+
+    // 열기만 해서는 변경으로 보지 않지만, 실제로 노드를 옮기면 저장·배포가 다시 필요하다.
+    const node = managerUi.page.locator('.react-flow__node').first();
+    const box = await node.boundingBox();
+    if (!box) throw new Error('canvas node is not visible');
+    await managerUi.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await managerUi.page.mouse.down();
+    await managerUi.page.mouse.move(box.x + box.width / 2 + 120, box.y + box.height / 2 + 60, { steps: 8 });
+    await managerUi.page.mouse.up();
+    await expect(activeTab.locator('.workflow-tab-status')).toHaveText('●');
+    await expect(managerUi.page.getByTestId('designer-deploy')).toBeVisible();
+    await managerUi.context.close();
   });
 
   test('ALL은 전원 승인까지 기다리고 ANY는 첫 승인 뒤 나머지를 취소한다', async () => {
