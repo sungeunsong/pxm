@@ -12,24 +12,24 @@ PXM 워크플로우를 LLM이 호출할 수 있는 **Tool**로 공개하는 기�
 
 ## 1. 목적과 역할 분리
 
-고객사 엔지니어가 PXM에서 만든 워크플로우를 AI 하네스(Promtic 등)가 호출할 수 있는 Tool로
+고객사 엔지니어가 PXM에서 만든 워크플로우를 AI 하네스(Promptic 등)가 호출할 수 있는 Tool로
 공개한다. **판단은 LLM이, 실행은 PXM이** 한다.
 
 ```
 사용자 질문
-  → Promtic: 사용 가능한 Tool 목록 조회 (GET /api/v1/tools)
+  → Promptic: 사용 가능한 Tool 목록 조회 (GET /api/v1/tools)
   → LLM: Tool과 arguments 선택
-  → Promtic: PXM Tool Invoke 호출 (POST /api/v1/tools/{name}/invoke)
+  → Promptic: PXM Tool Invoke 호출 (POST /api/v1/tools/{name}/invoke)
       → PXM: 입력 스키마 검증 → 고정 버전 워크플로우 실행
       → PXM: 결재 / 재시도 / 타이머 / Trace 는 기존 그대로
       → PXM: Tool 응답 계약으로 결과 반환
-  → Promtic: 결과를 LLM에 전달, 필요하면 반복
+  → Promptic: 결과를 LLM에 전달, 필요하면 반복
   → 최종 응답
 ```
 
 | 구성 | 책임 |
 |---|---|
-| Promtic | AI 판단, Agent Loop, 사용자 응답 |
+| Promptic | AI 판단, Agent Loop, 사용자 응답 |
 | PXM | 워크플로우 실행, 권한, 승인, 재시도, 상태, Trace |
 
 **Agent Loop는 1단계에서 PXM 밖에 있다.** PXM은 Tool 실행 서버 역할만 한다.
@@ -38,7 +38,7 @@ PXM 워크플로우를 LLM이 호출할 수 있는 **Tool**로 공개하는 기�
 
 | 단계 | 내용 | Rust 수정 | 착수 조건 |
 |---|---|---|---|
-| **1** | Tool Registry + Invoke API + Promtic 실연동 | **작음** — 종료 전이의 `outcome` 기록 1건 (9.1) | 지금 |
+| **1** | Tool Registry + Invoke API + Promptic 실연동 | **작음** — 종료 전이의 `outcome` 기록 1건 (9.1) | 지금 |
 | **2** | LLM Node (입력 → LLM 1회 호출 → 구조화 결과) | 없음(권고안) | 1단계 사용 후 "워크플로우 안에서도 AI 판단이 필요하다"가 확인되면 |
 | **3** | Agent Node (LLM ↔ Tool 반복) | 큼 | 2단계 사용 후 실제 요구 확인 시 |
 | 별도 | MCP Adapter | 없음 | 1단계 안정화 이후 |
@@ -328,7 +328,7 @@ Resource Grant 통합은 별도 트랙으로 진행한다. 그 통합 전에 Too
 
 | 구분 | 무엇의 신원인가 | 상태 |
 |---|---|---|
-| API Key | **호출 애플리케이션** (Promtic 등) | 인증됨 |
+| API Key | **호출 애플리케이션** (Promptic 등) | 인증됨 |
 | `on_behalf_of` | **최종 사용자** (챗봇에 질문한 사람) | 주장됨 — 검증이 필요하다 |
 
 **둘 다 Trace와 감사 기록에 남긴다.** 하나로 합치거나 한쪽을 다른 쪽으로 덮어쓰지 않는다.
@@ -343,7 +343,7 @@ Resource Grant 통합은 별도 트랙으로 진행한다. 그 통합 전에 Too
 
 ```json
 "on_behalf_of": {
-  "provider": "promtic",
+  "provider": "promptic",
   "subject": "u-7f3a91c2",
   "attributes": { "email": "kim@corp.example", "employee_no": "E20231" }
 }
@@ -442,13 +442,13 @@ trace_context
   attributes        제한된 key/value (선택)
 ```
 
-| PXM 필드 | Promtic | 다른 소비자 예 |
+| PXM 필드 | Promptic | 다른 소비자 예 |
 |---|---|---|
 | `correlation_id` | `conversation_id` | 티켓 번호, 배치 실행 id |
 | `interaction_id` | `turn_id` | 개별 요청 id |
 | `source` | `"ai_harness"` | `"api_client"` |
 
-매핑은 **하네스 쪽에서** 한다. PXM 코드와 DB에 `conversation`, `turn`, `promtic` 같은
+매핑은 **하네스 쪽에서** 한다. PXM 코드와 DB에 `conversation`, `turn`, `promptic` 같은
 이름이 등장하면 안 된다.
 
 `trace_context.source`는 **호출 경로의 종류**이고 `on_behalf_of.provider`는 **외부 신원 체계**다.
@@ -516,7 +516,7 @@ Idempotency-Key: <선택>
   "arguments": { "user_id": "E20231", "date": "2026-09-20" },
   "group_id": "...",
   "on_behalf_of": {
-    "provider": "promtic",
+    "provider": "promptic",
     "subject": "u-7f3a91c2",
     "attributes": { "email": "kim@corp.example" }
   },
@@ -945,7 +945,7 @@ LLM ↔ Tool 반복. **실제 요구가 확인된 뒤에 착수한다.**
 
 ## 15. MCP Adapter
 
-순서: **Workflow → Tool Registry → Invoke API → Promtic 실연동 → 안정화 → MCP Adapter.**
+순서: **Workflow → Tool Registry → Invoke API → Promptic 실연동 → 안정화 → MCP Adapter.**
 
 PXM 내부 Tool 모델이 MCP에 종속되지 않고, 안정된 Registry 위에 Adapter를 얹는다.
 지금은 **필드 대응만 지켜둔다**(비용 0, 나중에 Registry 스키마를 바꾸지 않기 위해).
@@ -968,7 +968,7 @@ PXM 내부 Tool 모델이 MCP에 종속되지 않고, 안정된 Registry 위에 
 | 항목 | 이유 |
 |---|---|
 | 1단계에서 실행 의미를 바꾸는 Rust 수정 | 종료 결과 기록(9.1) 외에는 엔진을 건드리지 않는다 |
-| PXM 안의 Agent Loop (1·2단계) | Promtic이 담당한다 |
+| PXM 안의 Agent Loop (1·2단계) | Promptic이 담당한다 |
 | Tool 전용 권한 모델 (`required_scopes` 등) | 워크플로우 권한의 별칭으로만 둔다 |
 | `tenant_id`를 권한에 사용 | 멀티테넌시는 현재 없다. 예약 필드다 |
 | Tool이 워크플로우를 생성·수정 | Tool은 **실행**만 한다 |

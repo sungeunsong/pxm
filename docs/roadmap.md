@@ -11,8 +11,10 @@
    한 여정을 끝까지 해내는 것"이다. 회의에서 "어렵다"는 반응이 나와 사용성 개선(UX 1~8단계)을 마쳤다.
    결과는 `docs/features.md`와 `docs/ui-terminology.md`에 있다.
 3. **PXM의 쓰임새는 두 가지로 넓어진다.**
-   - AI 하네스(Promtic)가 부르는 **Tool 실행 서버**. Promtic이 판단하고 PXM이 안전하게 실행한다.
-     Promtic은 추석 이후 준비된다. 설계는 `docs/ai-tool-publish-design.md`
+   - AI 하네스가 부르는 **Tool 실행 서버**. 하네스가 판단하고 PXM이 안전하게 실행한다.
+     PXM과 Promptic(운영자를 위한 AI 하네스 시스템)은 별개의 제품이고, 첫 연동 대상이 Promptic이다.
+     Promptic 하네스 안에 PXM을 넣어 쓰는 구조를 목표로 한다. Promptic은 추석 이후 준비된다.
+     설계는 `docs/ai-tool-publish-design.md`
    - **범용 API 게이트웨이**. 외부 요청이 PXM을 거쳐 백엔드로 가고, 일부는 승인을 받은 뒤 전달된다.
      **특정 백엔드를 전제로 하지 않는다.** 회의의 아크라 예시는 이미 구조가 잡혀 있어 적용 대상이 아니다.
 4. **배포 형태는 온프레미스 설치형이다.** 설치 서버에 JS 원본이 남지 않도록 **API 서버를 Rust로 단계적으로
@@ -41,9 +43,9 @@ AI Tool과 게이트웨이 라우트는 등록·입력 계약·고정 버전·�
 - 이력과 API 문서 자동 생성 방식
 - AI·게이트웨이 이슈의 세부 범위를 이 문서에서 확정한다
 
-## AI 연동 (Promtic)
+## AI 연동 (Promptic)
 
-Promtic이 판단하고 PXM이 실행한다. 설계: `docs/ai-tool-publish-design.md`.
+Promptic이 판단하고 PXM이 실행한다. 설계: `docs/ai-tool-publish-design.md`.
 이미 끝난 선행 작업: 인스턴스 처리 결과(outcome), 실행 입력 검증, 실패 분류(`failure_type`·`retryable`).
 Tool API는 **NestJS로 얇게** 만든다. 실제 실행은 기존 서비스를 쓰고 입구만 새로 만들어 R-23에서 Rust로 옮기기 쉽게 한다.
 
@@ -68,10 +70,10 @@ Tool API는 **NestJS로 얇게** 만든다. 실제 실행은 기존 서비스를
 - `trace_context`: 같은 대화의 실행 묶음 조회
 - 호출 이력에 호출 시스템과 최종 사용자를 각각 기록
 
-### R-17. [AI] Tool 관리 화면과 Promtic 연동 가이드 — PXM-72
+### R-17. [AI] Tool 관리 화면과 Promptic 연동 가이드 — PXM-72
 
 - Tool 목록·상세, 디자이너 "Tool로 게시", 호출 이력 화면
-- Promtic 팀에 넘길 연동 가이드: 인증, 목록·실행 API, 응답 계약, 재시도 기준
+- Promptic 팀에 넘길 연동 가이드: 인증, 목록·실행 API, 응답 계약, 재시도 기준
 
 ## API 게이트웨이
 
@@ -114,9 +116,9 @@ Tool API는 **NestJS로 얇게** 만든다. 실제 실행은 기존 서비스를
 - 엔진 저장소 인터페이스(`V2RuntimeContext`, trait 10개)에 메모리 구현을 꽂아 같은 실행 로직 재사용
 - 이력은 끝날 때 한 번, 인증은 요청을 받는 쪽 한 곳에서만
 
-## 그 밖의 방향 (NIT 미등록)
+## 그 밖의 방향
 
-### R-23. Rust 데몬과 API 서버 단계적 이전 (장기)
+### R-23. Rust 데몬과 API 서버 단계적 이전 (장기) — PXM-78
 
 이유는 **소스 보호**다(PXM-50). 온프레미스 설치 서버에 JS 원본이 남지 않게 한다. 전면 재작성(API 약 25,000줄)은 하지 않는다.
 
@@ -130,11 +132,6 @@ Tool API는 **NestJS로 얇게** 만든다. 실제 실행은 기존 서비스를
 - MongoDB 전용 기능(change stream 등)은 인터페이스 뒤에 둔다
 - 지금 MongoDB에 직접 붙은 서비스(자격증명, JS 라이브러리, 자원 요청, Command 등록)는 옮기면서 인터페이스 뒤로 넣는다
 - 새 데이터 구조는 두 DB 모두 가능하게 정하고 PostgreSQL 마이그레이션 파일을 함께 남긴다
-
-### R-24. 운영자용 AI 하네스 (나중)
-
-Promtic으로 운영자가 PXM을 다루는 쓰임새다("실패한 실행 찾아서 원인 알려줘", "재시도해줘").
-AI 연동(R-14~R-17)이 끝나면 PXM의 운영 기능을 Tool로 공개하는 방식으로 이어진다.
 
 ---
 
