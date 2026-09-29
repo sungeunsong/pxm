@@ -539,6 +539,9 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
       : tab));
   };
 
+  // 관리 그룹이 하나뿐인 관리자에게는 새 워크플로우의 그룹을 미리 채워 준다.
+  // 사용자가 편집한 것이 아니므로 "저장 안 됨"으로 바꾸지 않는다. 그룹 목록이 늦게 도착해
+  // 그 사이 같은 탭에 워크플로우가 열렸다면(빈 탭 재사용) 건드리지 않는다.
   React.useEffect(() => {
     if (
       currentUser.role === 'group_manager' &&
@@ -546,9 +549,16 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
       !workflowGroupId &&
       !currentTemplateId
     ) {
-      handleGroupSelection(availableGroups[0].id);
+      const group = availableGroups[0];
+      setDesignerTabs((tabs) => tabs.map((tab) => (
+        tab.tabId === activeDesignerTabId && !tab.templateId && !tab.groupId
+          ? { ...tab, groupId: group.id, group: group.name }
+          : tab
+      )));
+      setWorkflowGroupId((current) => current || group.id);
+      setWorkflowGroup((current) => current || group.name);
     }
-  }, [availableGroups, currentTemplateId, currentUser.role, workflowGroupId]);
+  }, [activeDesignerTabId, availableGroups, currentTemplateId, currentUser.role, workflowGroupId]);
 
   const handleRun = async (formData?: Record<string, any>) => {
     if (!currentTemplateId) {

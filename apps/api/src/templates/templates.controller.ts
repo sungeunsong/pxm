@@ -126,9 +126,14 @@ export class TemplatesController {
    */
   @Get(':id/compatibility')
   async compatibilityForWorkflow(@Param('id') id: string, @Query('target_group_id') targetGroupId: string | undefined, @Req() req: Request) {
-    const template = await this.assertManageableTemplate(id, req);
     const requested = targetGroupId?.trim() || null;
+    // 다른 그룹 기준 점검은 복제와 같은 권한이다: 원본을 읽을 수 있고 대상 그룹을 관리할 수 있으면 된다.
+    // (다른 팀 워크플로우를 가져다 쓰려는 관리자가 복제 전에 필요한 요청을 확인할 수 있어야 한다)
+    const template = requested
+      ? await this.assertReadableTemplate(id, req)
+      : await this.assertManageableTemplate(id, req);
     if (requested && requested !== template.group_id) assertCanManageGroup(actorFromRequest(req), requested);
+    if (requested && requested === template.group_id) assertCanManageGroup(actorFromRequest(req), requested);
     return this.compatibility.evaluate(template.id, template.nodes || [], requested || template.group_id || null);
   }
 

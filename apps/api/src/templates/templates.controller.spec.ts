@@ -217,6 +217,15 @@ describe('TemplatesController clone', () => {
     }));
   });
 
+  it('다른 그룹 기준 점검은 복제와 같은 권한이다 (원본 읽기 + 대상 그룹 관리)', async () => {
+    const { controller, compatibility } = build(true);
+    const infraManager = { ...managerOf('group-b'), group_ids: ['group-a', 'group-b'], group_roles: { 'group-a': 'user', 'group-b': 'group_manager' } } as WorkflowHistoryActor;
+    await controller.compatibilityForWorkflow('workflow-1', 'group-b', req(infraManager));
+    expect(compatibility.evaluate).toHaveBeenCalledWith('workflow-1', source.nodes, 'group-b');
+    // 원본 그룹 기준 점검은 원본 관리자만 한다.
+    await expect(controller.compatibilityForWorkflow('workflow-1', 'group-a', req(infraManager))).rejects.toMatchObject({ status: 403 });
+  });
+
   it('대상 그룹의 관리 권한이 없으면 복제할 수 없다', async () => {
     const { controller, templatesService } = build(true);
     await expect(controller.clone('workflow-1', { target_group_id: 'group-b' }, req(managerOf('group-a'))))
