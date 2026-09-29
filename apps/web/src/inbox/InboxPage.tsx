@@ -16,6 +16,7 @@ import './InboxPage.css';
 import type { SessionUser } from '../api/session';
 import { ApprovalDelegationDrawer } from './ApprovalDelegationDrawer';
 import { readApiError } from '../lib/api-error';
+import { hashFor, replaceHash } from '../lib/deep-link';
 
 interface Task {
   id: string;
@@ -81,6 +82,8 @@ function normalizeHistoryTask(item: any): Task {
 
 export interface InboxPageProps {
   currentUser: SessionUser;
+  /** 주소(#/inbox?task=…)로 들어왔을 때 바로 열 결재 */
+  initialTaskId?: string | null;
 }
 
 // 아래 4개는 task 인자에만 의존하는 순수 함수다.
@@ -183,7 +186,7 @@ const getRequestSummary = (task: Task) => {
   return summary ? String(summary) : '';
 };
 
-export const InboxPage: React.FC<InboxPageProps> = ({ currentUser }) => {
+export const InboxPage: React.FC<InboxPageProps> = ({ currentUser, initialTaskId }) => {
   const { toast, confirm: confirmDialog } = useFeedback();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
@@ -197,6 +200,8 @@ export const InboxPage: React.FC<InboxPageProps> = ({ currentUser }) => {
   const [rejectReasonChecked, setRejectReasonChecked] = useState(false);
   const [instanceHistory, setInstanceHistory] = useState<Task[]>([]);
   const [delegationOpen, setDelegationOpen] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [pendingTaskId, setPendingTaskId] = useState<string | null>(initialTaskId || null);
 
   const formatDate = (value?: string) => {
     if (!value) return '-';
@@ -218,9 +223,8 @@ export const InboxPage: React.FC<InboxPageProps> = ({ currentUser }) => {
         fetch('/api/tasks/history?status=APPROVED,CANCELED&limit=100'),
         fetch('/api/tasks/history?status=REJECTED&limit=100'),
       ]);
-      if (!openResponse.ok || !completedResponse.ok || !rejectedResponse.ok) {
-        throw new Error('Failed to fetch tasks');
-      }
+      const failed = [openResponse, completedResponse, rejectedResponse].find((response) => !response.ok);
+      if (failed) throw await readApiError(failed, '결재 목록을 불러오지 못했습니다.');
       const [openRows, completedPage, rejectedPage] = await Promise.all([
         openResponse.json(),
         completedResponse.json(),
@@ -231,8 +235,10 @@ export const InboxPage: React.FC<InboxPageProps> = ({ currentUser }) => {
         ...((completedPage?.items || []).map(normalizeHistoryTask)),
         ...((rejectedPage?.items || []).map(normalizeHistoryTask)),
       ]);
+      setLoadError(null);
     } catch (error) {
       console.error('Failed to fetch tasks:', error);
+      setLoadError(errorMessage(error, '결재 목록을 불러오지 못했습니다.'));
     } finally {
       setLoading(false);
     }
@@ -278,6 +284,23 @@ export const InboxPage: React.FC<InboxPageProps> = ({ currentUser }) => {
   );
 
   useEffect(() => {
+    if (initialTaskId) setPendingTaskId(initialTaskId);
+  }, [initialTaskId]);
+
+  useEffect(() => {
+    if (!pendingTaskId || tasks.length === 0) return;
+    const target = tasks.find((task) => task.id === pendingTaskId);
+    setPendingTaskId(null);
+    if (target) {
+      void openTask(target);
+    } else {
+      toast.info('이 결재 건은 결재함에 없습니다.', { description: '이미 처리됐거나 담당이 바뀌었을 수 있습니다.' });
+      replaceHash('inbox');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingTaskId, tasks]);
+
+  useEffect(() => {
     if (!selectedTask) return;
     const refreshedTask = tasks.find((task) => task.id === selectedTask.id);
     if (refreshedTask) {
@@ -289,6 +312,7 @@ export const InboxPage: React.FC<InboxPageProps> = ({ currentUser }) => {
   }, [tasks]);
 
   const openTask = async (task: Task) => {
+    replaceHash('inbox', { task: task.id });
     setSelectedTask(task);
     setDecision('approve');
     setComment('요청 내용을 확인하였습니다. 승인합니다.');
@@ -337,6 +361,7 @@ export const InboxPage: React.FC<InboxPageProps> = ({ currentUser }) => {
       await fetchTasks();
       setSelectedTask(null);
       setScreen('list');
+      replaceHash('inbox');
     } catch (error) {
       console.error('Failed to process task:', error);
       toast.error(`${displayActionText} 처리에 실패했습니다.`, { description: errorMessage(error) });
@@ -354,6 +379,8 @@ export const InboxPage: React.FC<InboxPageProps> = ({ currentUser }) => {
           <button className="icon-action-btn" onClick={fetchTasks} title="새로고침"><RotateCcw size={14} /></button>
         </div>
       </div>
+
+      {loadError && <div className="inbox-load-error" role="alert">{loadError}</div>}
 
       <div className="sub-tabs">
         <button
@@ -472,12 +499,14 @@ export const InboxPage: React.FC<InboxPageProps> = ({ currentUser }) => {
 
     const deadline = getApprovalDeadline(selectedTask);
     const stepProgress = getStepProgress(selectedTask);
+    // 설계·실행 추적 화면은 일반 사용자에게 열려 있지 않다. 갈 수 없는 곳으로 안내하지 않는다.
+    const canOpenDesigner = currentUser.role !== 'user';
     const requestSummary = getRequestSummary(selectedTask);
     const requestInputs = getRequestInputs(selectedTask);
     return (
       <div className="inbox-detail-page">
         <div className="inbox-detail-header">
-          <button className="back-to-list-btn" onClick={() => setScreen('list')}>
+          <button className="back-to-list-btn" onClick={() => { setScreen('list'); replaceHash('inbox'); }}>
             <ArrowLeft size={15} />
             목록으로
           </button>
@@ -530,7 +559,17 @@ export const InboxPage: React.FC<InboxPageProps> = ({ currentUser }) => {
                   </div>
                   <div className="info-cell">
                     <span className="info-label">업무 양식</span>
-                    <span className="info-val">{getProcessLabel(selectedTask)}</span>
+                    <span className="info-val">
+                      {getProcessLabel(selectedTask)}
+                      {canOpenDesigner && (
+                        <span className="inbox-deep-links">
+                          {selectedTask.process_definition_id && (
+                            <a href={hashFor('designer', { workflow: selectedTask.process_definition_id })}>설계 보기</a>
+                          )}
+                          <a href={hashFor('designer', { instance: selectedTask.instance_id })}>실행 추적</a>
+                        </span>
+                      )}
+                    </span>
                   </div>
                   {deadline && (
                     <div className="info-cell">

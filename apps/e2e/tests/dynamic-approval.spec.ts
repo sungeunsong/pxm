@@ -215,6 +215,33 @@ test.describe.serial('PXM 동적 결재 베타 회귀', () => {
     await closeContexts(requester.context, approver.context, finalApprover.context);
   });
 
+  test('알림 메일과 공유 주소의 링크는 목록을 거치지 않고 해당 결재와 요청을 바로 연다', async ({ browser }) => {
+    const title = uniqueTitle('주소로 바로 열기');
+    const execution = await startApproval(approverC, title, [step(1, '링크 검증', 'ALL', [pxmApprover('a')])], {
+      requester: fixture.users.c.name,
+    });
+    const [task] = await waitForOpenTasks(approverA, execution.instance_id);
+
+    // 알림 메일 링크와 같은 형식 (notification.dispatcher.ts)
+    const approver = await loginPage(browser, fixture.users.a.id, userPassword, `inbox?task=${task.id}`);
+    await expect(approver.page.getByRole('heading', { name: title })).toBeVisible({ timeout: 30_000 });
+    await expect(approver.page.locator('[data-testid="approval-request-content"]')).toBeVisible();
+    // 일반 사용자에게는 열 수 없는 설계·추적 화면 링크를 보여주지 않는다.
+    await expect(approver.page.locator('.inbox-deep-links')).toHaveCount(0);
+
+    const requester = await loginPage(browser, fixture.users.c.id, userPassword, `my-requests?request=${execution.instance_id}`);
+    await expect(requester.page.getByRole('heading', { name: title })).toBeVisible({ timeout: 30_000 });
+    await expect(requester.page).toHaveURL(new RegExp(`request=${execution.instance_id}`));
+
+    // 그룹 관리자는 주소로 워크플로우 설계와 실행 추적을 바로 연다.
+    const managerUi = await loginPage(browser, fixture.users.manager.id, userPassword, `designer?workflow=${fixture.workflowId}`);
+    await expect(managerUi.page.locator('.workflow-tab-main[aria-selected="true"]')).toContainText(fixture.workflowName, { timeout: 30_000 });
+    await managerUi.page.goto(`${webBaseUrl}/#/designer?instance=${execution.instance_id}`);
+    await expect(managerUi.page.locator('.flow-designer.trace-mode')).toBeVisible({ timeout: 30_000 });
+
+    await closeContexts(approver.context, requester.context, managerUi.context);
+  });
+
   test('ALL은 전원 승인까지 기다리고 ANY는 첫 승인 뒤 나머지를 취소한다', async () => {
     const title = uniqueTitle('ALL ANY 집계');
     const execution = await startApproval(admin, title, [

@@ -8,6 +8,7 @@ import {
 } from '../api/runtime-integrity';
 import './RuntimeIntegrityPage.css';
 import { useFeedback } from '../components/feedback/feedback-context';
+import { InstanceLink } from '../components/InstanceLink';
 
 const TYPE_LABELS: Record<RuntimeIntegrityFindingType, string> = {
   ORPHAN_JOB: '연결 없는 작업',
@@ -118,7 +119,7 @@ export function RuntimeIntegrityPage() {
               <p>{finding.description}</p>
               <dl>
                 <div><dt>대상</dt><dd>{finding.resource_type} · {shortId(finding.resource_id)}</dd></div>
-                {finding.instance_id && <div><dt>실행 ID</dt><dd>{shortId(finding.instance_id)}</dd></div>}
+                {finding.instance_id && <div><dt>실행 ID</dt><dd><InstanceLink id={finding.instance_id} label={shortId(finding.instance_id)} /></dd></div>}
                 <div><dt>마지막 변경</dt><dd>{formatDate(finding.observed_updated_at)}</dd></div>
               </dl>
             </div>

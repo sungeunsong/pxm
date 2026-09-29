@@ -1113,3 +1113,31 @@
 .inbox-tech-details[open] > summary {
   margin-bottom: 8px;
 }
+
+.inbox-load-error {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid #fecdd3;
+  border-radius: 8px;
+  background: #fff1f2;
+  color: #9f1239;
+  font-size: 12px;
+  white-space: pre-line;
+}
+
+.inbox-deep-links {
+  display: inline-flex;
+  gap: 10px;
+  margin-left: 10px;
+  font-size: 12px;
+}
+
+.inbox-deep-links a {
+  color: #2563eb;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.inbox-deep-links a:hover {
+  text-decoration: underline;
+}

@@ -5,6 +5,7 @@ import './OperationsPage.css';
 import { useFeedback } from '../components/feedback/feedback-context';
 import { PageHeader } from '../components';
 import { deliveryStatusLabel } from '../lib/status-label';
+import { InstanceLink } from '../components/InstanceLink';
 
 const age = (ms: number | null) => {
   if (ms == null) return '-';
@@ -65,16 +66,16 @@ export function OperationsPage() {
         <article><span>Outbox 적체</span><strong>{data.outbox.pending + data.outbox.failed}</strong><small>DLQ {data.outbox.dead_letter}</small></article>
       </section>
       <OperationTable title="Engine Job" rows={data.runtime.jobs.filter(j => j.status === 'FAILED')} empty="실패 Job이 없습니다."
-        render={(job) => <><code>{job.id}</code><span>{job.type}</span><span>시도 {job.attempt}</span><code>{job.instance_id}</code>
+        render={(job) => <><code>{job.id}</code><span>{job.type}</span><span>시도 {job.attempt}</span><InstanceLink id={job.instance_id} />
           <button disabled={acting === `job-${job.id}`} onClick={() => run(`job-${job.id}`, '실패 Job 재시도', r => operationsApi.retryJob(job.id, r))}><RotateCcw size={13}/>재시도</button></>}/>
       <OperationTable title="장기 WAITING 인스턴스" rows={data.runtime.waiting_instances} empty="기준 시간을 넘긴 WAITING 인스턴스가 없습니다."
-        render={(instance) => <><code>{instance.id}</code>
+        render={(instance) => <><InstanceLink id={instance.id} />
           <span className={instance.classification === 'EXPECTED' ? 'expected' : 'status'}>
             {instance.classification === 'EXPECTED' ? '정상 대기' : '재개 근거 없음'}
           </span><span>{age(instance.waiting_age_ms)} 대기</span>
           <span>{waitingReason(instance)}</span></>}/>
       <OperationTable title="만료 인스턴스 잠금" rows={data.runtime.expired_locks} empty="만료된 잠금이 없습니다."
-        render={(lock) => <><code>{lock.instance_id}</code><span>{lock.lock_owner}</span><span>{new Date(lock.lock_until).toLocaleString()}</span>
+        render={(lock) => <><InstanceLink id={lock.instance_id} /><span>{lock.lock_owner}</span><span>{new Date(lock.lock_until).toLocaleString()}</span>
           <button disabled={acting === `lock-${lock.instance_id}`} onClick={() => run(`lock-${lock.instance_id}`, '만료 잠금 회수', r => operationsApi.reclaimLock(lock.instance_id, r))}><ServerCog size={13}/>잠금 회수</button></>}/>
       <OperationTable title="Outbox 전송 이상" rows={data.outbox.deliveries.filter(d => ['FAILED','DEAD_LETTER'].includes(d.status))} empty="실패한 전송이 없습니다."
         render={(delivery) => <><code>{delivery.id.slice(0, 12)}…</code><span>{delivery.endpoint_name}</span><span className="status">{deliveryStatusLabel(delivery.status)}</span><span>{delivery.last_error || delivery.event_type}</span>

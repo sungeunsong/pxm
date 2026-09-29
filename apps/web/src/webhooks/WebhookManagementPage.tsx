@@ -21,6 +21,7 @@ import {
   type WebhookEndpoint,
 } from '../api/webhooks';
 import './WebhookManagementPage.css';
+import { InstanceLink } from '../components/InstanceLink';
 
 const STATUS_LABELS: Record<WebhookDeliveryStatus, string> = {
   PENDING: '전송 대기',
@@ -520,7 +521,7 @@ function DeliveryDrawer({
           </div>
           <div>
             <dt>Instance</dt>
-            <dd>{delivery.instance_id}</dd>
+            <dd>{delivery.instance_id ? <InstanceLink id={delivery.instance_id} /> : '-'}</dd>
           </div>
           <div>
             <dt>Endpoint</dt>

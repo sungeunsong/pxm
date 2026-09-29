@@ -35,3 +35,18 @@ a:hover {
 button {
   font-family: inherit;
 }
+
+/* 실행 ID 링크 (components/InstanceLink.tsx) */
+.instance-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.instance-link code {
+  color: #2563eb;
+  cursor: pointer;
+}
+
+.instance-link:hover code {
+  text-decoration: underline;
+}

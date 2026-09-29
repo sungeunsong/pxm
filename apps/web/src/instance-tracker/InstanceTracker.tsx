@@ -3,6 +3,7 @@ import { Eye, Filter, CheckCircle2, AlertTriangle, PlayCircle, Clock, RotateCcw,
 import './InstanceTracker.css';
 import { useFeedback } from '../components/feedback/feedback-context';
 import { errorMessage } from '../lib/error-message';
+import { readApiError } from '../lib/api-error';
 import { createRequestId } from '../lib/request-id';
 import { approvalStatusLabel, instanceStateLabel } from '../lib/status-label';
 import { DataTable, EmptyState, StatusBadge } from '../components';
@@ -75,6 +76,7 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
   const { toast, confirm: confirmDialog } = useFeedback();
   const [instances, setInstances] = useState<Instance[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [filterState, setFilterState] = useState<string>('ALL');
   const [retryingId, setRetryingId] = useState<string | null>(null);
   const [terminatingId, setTerminatingId] = useState<string | null>(null);
@@ -86,9 +88,7 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
     setLoading(true);
     try {
       const response = await fetch('/api/instances');
-      if (!response.ok) {
-        throw new Error(`instances api failed: ${response.status}`);
-      }
+      if (!response.ok) throw await readApiError(response, '실행 목록을 불러오지 못했습니다.');
 
       const rows = await response.json();
       setInstances(
@@ -113,9 +113,11 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
           approval_summary: row.approval_summary || null,
         })),
       );
+      setLoadError(null);
     } catch (error) {
+      // 조회 실패를 "실행이 없음"으로 보이게 하지 않는다. 기존 목록은 그대로 두고 오류를 알린다.
       console.error('Failed to load instances:', error);
-      setInstances([]);
+      setLoadError(errorMessage(error, '실행 목록을 불러오지 못했습니다.'));
     } finally {
       setLoading(false);
     }
@@ -286,7 +288,9 @@ export const InstanceTracker: React.FC<InstanceTrackerProps> = ({ onSelectInstan
 
       {/* INSTANCES LIST TABLE */}
       <div className="tracker-table-section">
-        {loading && instances.length === 0 ? (
+        {loadError && instances.length === 0 ? (
+          <EmptyState kind="error" title="실행 목록을 불러오지 못했습니다." description={loadError} />
+        ) : loading && instances.length === 0 ? (
           <EmptyState kind="loading" title="인스턴스 실행 목록 조회 중..." />
         ) : filteredInstances.length === 0 ? (
           <EmptyState title="조건에 부합하는 실행 인스턴스 이력이 없습니다." description="필터를 변경하거나 목록을 다시 동기화해 보세요." />

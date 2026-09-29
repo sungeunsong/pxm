@@ -35,6 +35,8 @@ export interface FlowDesignerProps {
   onSwitchToInbox?: () => void;
   onExitTrace?: () => void;
   initialMonitorInstanceId?: string;
+  /** 주소(#/designer?workflow=…)로 들어왔을 때 바로 열 워크플로우 */
+  initialWorkflowId?: string;
   currentUser: SessionUser;
   /** 발표 모드 동안 전역 내비게이션을 접어 달라고 앱에 알린다 */
   onPresentationChange?: (presenting: boolean) => void;
@@ -111,7 +113,7 @@ type WorkflowClipboard = {
   edges: Edge[];
 };
 
-export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onExitTrace, initialMonitorInstanceId, currentUser, onPresentationChange }) => {
+export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onExitTrace, initialMonitorInstanceId, initialWorkflowId, currentUser, onPresentationChange }) => {
   const { toast, confirm: confirmDialog, prompt: promptDialog } = useFeedback();
   const [darkMode, setDarkMode] = useState(true);
   const [selectedNode, setSelectedNode] = useState<Node<CustomNodeData> | null>(null);
@@ -250,6 +252,29 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
       handleHistorySelect(initialMonitorInstanceId);
     }
   }, [initialMonitorInstanceId]);
+
+  // 주소로 지정된 워크플로우를 연다. 이미 열린 탭이면 그 탭으로 전환만 한다(편집 중인 내용 보존).
+  React.useEffect(() => {
+    if (!initialWorkflowId) return;
+    let cancelled = false;
+    const openTab = designerTabs.find((tab) => tab.templateId === initialWorkflowId);
+    if (openTab) {
+      handleSwitchDesignerTab(openTab.tabId);
+      return;
+    }
+    void (async () => {
+      try {
+        const template = await templatesApi.get(initialWorkflowId);
+        if (!cancelled) await openTemplateInDesignerTab(template);
+      } catch (error) {
+        if (!cancelled) toast.error('워크플로우를 열지 못했습니다.', { description: errorMessage(error) });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialWorkflowId]);
 
   const activeDesignerTab = useMemo(
     () => designerTabs.find((tab) => tab.tabId === activeDesignerTabId) || designerTabs[0],

@@ -49,6 +49,7 @@ import { NotificationManagementPage } from './notifications/NotificationManageme
 import { AuditLogPage } from './audit/AuditLogPage';
 import { ScriptLibraryPage } from './script-libraries/ScriptLibraryPage';
 import './App.css';
+import { hashFor, readHashParam } from './lib/deep-link';
 
 type ActiveTab =
   | 'dashboard'
@@ -266,8 +267,11 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
     const initialTab = readInitialTab();
     return canAccessTab(user.role, initialTab) ? initialTab : landingTab(user.role);
   });
-  const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
-  const [selectedRequestInstanceId, setSelectedRequestInstanceId] = useState<string | null>(null);
+  // 주소에 담긴 대상(#/designer?instance=…, #/my-requests?request=… 등)으로 첫 화면을 연다.
+  const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(() => readHashParam('instance'));
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(() => readHashParam('workflow'));
+  const [selectedRequestInstanceId, setSelectedRequestInstanceId] = useState<string | null>(() => readHashParam('request'));
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(() => readHashParam('task'));
   const [accountOpen, setAccountOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('pxm.sidebar.collapsed') === 'true');
   const [sidebarTooltip, setSidebarTooltip] = useState<{ tab: ActiveTab; label: string; top: number; left: number } | null>(null);
@@ -288,10 +292,10 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
     setSidebarTooltip({ tab, label, top: rect.top + rect.height / 2, left: rect.right + 10 });
   };
 
-  const setActiveTab = (tab: ActiveTab) => {
+  const setActiveTab = (tab: ActiveTab, params: Parameters<typeof hashFor>[1] = {}) => {
     const nextTab = canAccessTab(user.role, tab) ? tab : landingTab(user.role);
     setActiveTabState(nextTab);
-    window.history.pushState(null, '', `#/${TAB_TO_ROUTE[nextTab]}`);
+    window.history.pushState(null, '', hashFor(TAB_TO_ROUTE[nextTab], nextTab === tab ? params : {}));
   };
 
   useEffect(() => {
@@ -309,6 +313,12 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
       if (!nextTab) return;
       const allowedTab = canAccessTab(user.role, nextTab) ? nextTab : landingTab(user.role);
       setActiveTabState(allowedTab);
+      if (allowedTab === 'designer') {
+        setSelectedInstanceId(readHashParam('instance'));
+        setSelectedWorkflowId(readHashParam('workflow'));
+      }
+      if (allowedTab === 'myRequests') setSelectedRequestInstanceId(readHashParam('request'));
+      if (allowedTab === 'inbox') setSelectedTaskId(readHashParam('task'));
       if (allowedTab !== nextTab) {
         window.history.replaceState(null, '', `#/${TAB_TO_ROUTE[allowedTab]}`);
       }
@@ -324,18 +334,24 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
 
   // 실행 트래커에서 인스턴스를 선택해 실시간 모니터링을 시도할 때
   const handleSelectInstanceForTracking = (instanceId: string) => {
+    setSelectedWorkflowId(null);
     setSelectedInstanceId(instanceId);
-    setActiveTab('designer'); // Flow Designer로 탭 스위칭
+    setActiveTab('designer', { instance: instanceId });
   };
 
   const handleRequestStarted = (instanceId: string) => {
     setSelectedRequestInstanceId(instanceId);
-    setActiveTab('myRequests');
+    setActiveTab('myRequests', { request: instanceId });
   };
 
   const handleSidebarSelect = (tab: ActiveTab) => {
     setSidebarTooltip(null);
-    if (tab === 'designer') setSelectedInstanceId(null);
+    if (tab === 'designer') {
+      setSelectedInstanceId(null);
+      setSelectedWorkflowId(null);
+    }
+    if (tab === 'myRequests') setSelectedRequestInstanceId(null);
+    if (tab === 'inbox') setSelectedTaskId(null);
     setActiveTab(tab);
   };
 
@@ -450,6 +466,7 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
                   setActiveTab('tracker');
                 }}
                 initialMonitorInstanceId={selectedInstanceId || undefined}
+                initialWorkflowId={selectedInstanceId ? undefined : selectedWorkflowId || undefined}
               />
             </div>
           )}
@@ -467,7 +484,7 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
           )}
 
           {activeTab === 'inbox' && (
-            <InboxPage currentUser={user} />
+            <InboxPage currentUser={user} initialTaskId={selectedTaskId} />
           )}
 
           {activeTab === 'credentials' && <CredentialsPage currentUser={user} />}

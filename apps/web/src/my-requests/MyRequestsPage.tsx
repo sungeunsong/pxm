@@ -13,6 +13,7 @@ import type { SessionUser } from '../api/session';
 import { Button } from '../components/Button';
 import { useFeedback } from '../components/feedback/feedback-context';
 import { errorMessage } from '../lib/error-message';
+import { replaceHash } from '../lib/deep-link';
 import './MyRequestsPage.css';
 
 type ApprovalStatus =
@@ -176,6 +177,11 @@ export function MyRequestsPage({
   useEffect(() => {
     if (initialInstanceId) setSelectedId(initialInstanceId);
   }, [initialInstanceId]);
+
+  // 선택한 요청을 주소에 남겨 새로고침·공유 시 같은 요청이 열리게 한다.
+  useEffect(() => {
+    replaceHash('my-requests', { request: selectedId });
+  }, [selectedId]);
 
   useEffect(() => {
     if (!selectedId) {
