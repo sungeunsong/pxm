@@ -1,6 +1,6 @@
 import { ConflictException, ForbiddenException } from '@nestjs/common';
 import type { WorkflowHistoryActor } from '../db/ports/db.ports';
-import { TasksService } from './tasks.service';
+import { TasksService, requestFormFields } from './tasks.service';
 
 describe('TasksService', () => {
   const taskRepo = {
@@ -43,7 +43,7 @@ describe('TasksService', () => {
 
     expect(taskRepo.listTasks).toHaveBeenCalledWith('alice');
     expect(result).toEqual([
-      { id: 'task-1', instance_id: 'instance-1', assignee: 'alice' },
+      { id: 'task-1', instance_id: 'instance-1', assignee: 'alice', form_fields: [] },
     ]);
   });
 
@@ -469,3 +469,25 @@ function actor(overrides: Partial<WorkflowHistoryActor>): WorkflowHistoryActor {
     ...overrides,
   };
 }
+
+describe('requestFormFields', () => {
+  it('요청 시점 Start 폼의 id·이름표·타입을 돌려준다', () => {
+    const instance = { context: { runtime: { nodes: [
+      { data: { nodeType: 'start', formSchema: { fields: [
+        { id: 'emp_id', label: '사번', type: 'text' },
+        { name: 'level', type: 'select' },
+        { label: '식별자 없음' },
+      ] } } },
+      { data: { nodeType: 'approval' } },
+    ] } } };
+    expect(requestFormFields(instance)).toEqual([
+      { id: 'emp_id', label: '사번', type: 'text' },
+      { id: 'level', label: 'level', type: 'select' },
+    ]);
+  });
+
+  it('입력 폼이 없으면 빈 배열이다', () => {
+    expect(requestFormFields({ context: { runtime: { nodes: [{ data: { nodeType: 'start' } }] } } })).toEqual([]);
+    expect(requestFormFields(null)).toEqual([]);
+  });
+});

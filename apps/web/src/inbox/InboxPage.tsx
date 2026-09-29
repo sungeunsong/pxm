@@ -31,6 +31,7 @@ interface Task {
   completed_via?: 'pxm_user' | 'external_email' | null;
   authentication_method?: string | null;
   form_data?: Record<string, any>;
+  form_fields?: Array<{ id: string; label: string; type: string }>;
   approval_request_id?: string | null;
   approval_step_id?: string | null;
   request_status?: string | null;
@@ -79,7 +80,6 @@ function normalizeHistoryTask(item: any): Task {
 
 export interface InboxPageProps {
   currentUser: SessionUser;
-  onSwitchToDesigner?: () => void;
 }
 
 // 아래 4개는 task 인자에만 의존하는 순수 함수다.
@@ -137,7 +137,52 @@ const getApprovalDeadline = (task: Task | null) => {
   return { dueAt, overdue: task.status === 'OPEN' && dueAt.getTime() <= Date.now() };
 };
 
-export const InboxPage: React.FC<InboxPageProps> = ({ currentUser, onSwitchToDesigner }) => {
+// 결재자에게 보이는 상태·방식은 내부 코드값이 아니라 업무 용어로 쓴다 (docs/ui-terminology.md).
+const getStatusLabel = (task: Task) => {
+  if (task.status === 'OPEN') return task.hold || task.payload?.hold ? '보류' : '승인 대기';
+  if (task.status === 'APPROVED') return '승인 완료';
+  if (task.status === 'REJECTED') return '반려';
+  if (task.status === 'CANCELED') return '취소';
+  return task.status;
+};
+
+const getStepModeLabel = (mode?: string | null) => (mode === 'ANY' ? '1인 승인' : '전원 승인');
+
+const getStepProgress = (task: Task | null) =>
+  task?.current_step_order && task.total_steps ? `${task.current_step_order} / ${task.total_steps}단계` : null;
+
+const formatInputValue = (value: unknown) => {
+  if (typeof value === 'boolean') return value ? '예' : '아니오';
+  if (value && typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+};
+
+const isEmptyValue = (value: unknown) => value === undefined || value === null || String(value).trim() === '';
+
+// 요약·제목·신청자처럼 이미 다른 자리에 보이는 값과 결재선 원본은 입력 목록에서 뺀다.
+const NON_INPUT_KEYS = new Set(['approval_request', 'title', 'summary', 'requester']);
+
+const getRequestInputs = (task: Task): Array<{ label: string; value: string }> => {
+  const data = task.form_data || {};
+  const entries = task.form_fields?.length
+    ? task.form_fields.map((field) => ({ label: field.label, value: data[field.id] }))
+    : Object.entries(data)
+        .filter(([key]) => !NON_INPUT_KEYS.has(key))
+        .map(([key, value]) => ({ label: key, value }));
+  return entries
+    .filter((entry) => !isEmptyValue(entry.value))
+    .map((entry) => ({ label: entry.label, value: formatInputValue(entry.value) }));
+};
+
+const getRequestSummary = (task: Task) => {
+  const summary =
+    task.content_snapshot?.summary ||
+    task.form_data?.approval_request?.content?.summary ||
+    readField(task, ['요청 사유', 'purpose', 'reason', 'message'], '');
+  return summary ? String(summary) : '';
+};
+
+export const InboxPage: React.FC<InboxPageProps> = ({ currentUser }) => {
   const { toast, confirm: confirmDialog } = useFeedback();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
@@ -210,7 +255,7 @@ export const InboxPage: React.FC<InboxPageProps> = ({ currentUser, onSwitchToDes
     const q = searchTerm.trim().toLowerCase();
     if (!q) return byProcess;
     return byProcess.filter((task) =>
-      [getTaskTitle(task), getRequester(task), task.instance_id, task.node_id]
+      [getTaskTitle(task), getRequester(task), task.instance_id]
         .join(' ')
         .toLowerCase()
         .includes(q),
@@ -336,9 +381,9 @@ export const InboxPage: React.FC<InboxPageProps> = ({ currentUser, onSwitchToDes
             className="form-select-sm"
             value={processFilter}
             onChange={(event) => setProcessFilter(event.target.value)}
-            aria-label="프로세스 필터"
+            aria-label="업무 양식 필터"
           >
-            <option value="">전체 프로세스</option>
+            <option value="">전체 업무 양식</option>
             {processOptions.map((label) => (
               <option key={label} value={label}>{label}</option>
             ))}
@@ -363,7 +408,7 @@ export const InboxPage: React.FC<InboxPageProps> = ({ currentUser, onSwitchToDes
               <th>요청명</th>
               <th>신청자</th>
               <th>요청일</th>
-              <th>담당 노드</th>
+              <th>결재 단계</th>
               <th>상태</th>
             </tr>
           </thead>
@@ -378,23 +423,14 @@ export const InboxPage: React.FC<InboxPageProps> = ({ currentUser, onSwitchToDes
                 onClick={() => openTask(task)}
               >
                 <td>
-                  <div className="req-name-cell">
-                    <span className="req-tag">{task.node_id}</span>
-                    {getTaskTitle(task)}
-                  </div>
+                  <div className="req-name-cell">{getTaskTitle(task)}</div>
                 </td>
                 <td>{getRequester(task)}</td>
                 <td>{formatDate(task.created_at)}</td>
-                <td>{task.node_id}</td>
+                <td>{getStepProgress(task) || '-'}</td>
                 <td>
                   <span className={`status-badge-outline ${task.status.toLowerCase()}`}>
-                    {task.status === 'OPEN'
-                      ? task.payload?.hold ? '보류' : '승인 대기'
-                      : task.status === 'APPROVED'
-                        ? '승인 완료'
-                        : task.status === 'REJECTED'
-                          ? '반려'
-                          : '취소'}
+                    {getStatusLabel(task)}
                   </span>
                   {task.delegation && <span className="delegated-task-badge">대리 결재</span>}
                 </td>
@@ -434,6 +470,9 @@ export const InboxPage: React.FC<InboxPageProps> = ({ currentUser, onSwitchToDes
     }
 
     const deadline = getApprovalDeadline(selectedTask);
+    const stepProgress = getStepProgress(selectedTask);
+    const requestSummary = getRequestSummary(selectedTask);
+    const requestInputs = getRequestInputs(selectedTask);
     return (
       <div className="inbox-detail-page">
         <div className="inbox-detail-header">
@@ -443,10 +482,10 @@ export const InboxPage: React.FC<InboxPageProps> = ({ currentUser, onSwitchToDes
           </button>
           <div>
             <h2>{getTaskTitle(selectedTask)}</h2>
-            <p>{selectedTask.instance_id}</p>
+            <p>{getProcessLabel(selectedTask)}</p>
           </div>
           <span className={`status-badge-full ${selectedTask.status === 'OPEN' ? 'orange' : ''}`}>
-            {selectedTask.status === 'OPEN' && selectedTask.payload?.hold ? '보류' : selectedTask.status}
+            {getStatusLabel(selectedTask)}
           </span>
         </div>
 
@@ -458,11 +497,22 @@ export const InboxPage: React.FC<InboxPageProps> = ({ currentUser, onSwitchToDes
             </div>
 
             <div className="details-card-body">
-              {onSwitchToDesigner && (
-                <button onClick={onSwitchToDesigner} className="view-designer-link">
-                  Flow Designer에서 템플릿 보기 &gt;
-                </button>
-              )}
+              <div className="info-block" data-testid="approval-request-content">
+                <h5>요청 내용</h5>
+                {requestSummary && <p className="text-box-reason">{requestSummary}</p>}
+                {requestInputs.length > 0 ? (
+                  <div className="vertical-info-list">
+                    {requestInputs.map((input) => (
+                      <div className="info-cell" key={input.label}>
+                        <span className="info-label">{input.label}</span>
+                        <span className="info-val">{input.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  !requestSummary && <p className="inbox-empty-note">신청자가 입력한 내용이 없습니다.</p>
+                )}
+              </div>
 
               <div className="info-block">
                 <h5>신청 정보</h5>
@@ -478,40 +528,8 @@ export const InboxPage: React.FC<InboxPageProps> = ({ currentUser, onSwitchToDes
                     </span>
                   </div>
                   <div className="info-cell">
-                    <span className="info-label">프로세스</span>
+                    <span className="info-label">업무 양식</span>
                     <span className="info-val">{getProcessLabel(selectedTask)}</span>
-                  </div>
-                  <div className="info-cell">
-                    <span className="info-label">요청 ID</span>
-                    <span className="info-val font-mono-style">{selectedTask.instance_id}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="info-block">
-                <h5>요청 내용</h5>
-                <div className="vertical-info-list">
-                  <div className="info-cell">
-                    <span className="info-label">외부 요청 키</span>
-                    <span className="info-val font-mono-style">
-                      {selectedTask.source_provider && selectedTask.external_request_id
-                        ? `${selectedTask.source_provider}:${selectedTask.external_request_id}:r${selectedTask.external_revision || 1}`
-                        : '-'}
-                    </span>
-                  </div>
-                  <div className="info-cell">
-                    <span className="info-label">현재 결재 단계</span>
-                    <span className="info-val highlighting-blue">
-                      {selectedTask.current_step_order && selectedTask.total_steps
-                        ? `${selectedTask.current_step_order} / ${selectedTask.total_steps}단계 · ${selectedTask.step_mode || 'ALL'}`
-                        : '-'}
-                    </span>
-                  </div>
-                  <div className="info-cell">
-                    <span className="info-label">허용 결재 채널</span>
-                    <span className="info-val">
-                      {getApprovalChannels(selectedTask)}
-                    </span>
                   </div>
                   {deadline && (
                     <div className="info-cell">
@@ -521,6 +539,32 @@ export const InboxPage: React.FC<InboxPageProps> = ({ currentUser, onSwitchToDes
                       </span>
                     </div>
                   )}
+                </div>
+              </div>
+
+              <div className="info-block">
+                <h5>결재 진행</h5>
+                <div className="vertical-info-list">
+                  {stepProgress && (
+                    <div className="info-cell">
+                      <span className="info-label">현재 결재 단계</span>
+                      <span className="info-val highlighting-blue">
+                        {stepProgress} · {getStepModeLabel(selectedTask.step_mode)}
+                      </span>
+                    </div>
+                  )}
+                  {(selectedTask.approval_line_snapshot?.steps || []).map((step) => (
+                    <div className="info-cell" key={step.order}>
+                      <span className="info-label">
+                        {step.order}단계 · {step.label || '결재'} · {getStepModeLabel(step.mode)}
+                      </span>
+                      <span className="info-val">
+                        {(step.approvers || [])
+                          .map((approver) => approver.display_snapshot?.name || approver.assignee || '-')
+                          .join(', ')}
+                      </span>
+                    </div>
+                  ))}
                   {selectedTask.delegation && (
                     <div className="info-cell">
                       <span className="info-label">대리 결재</span>
@@ -530,64 +574,48 @@ export const InboxPage: React.FC<InboxPageProps> = ({ currentUser, onSwitchToDes
                   {!!selectedTask.reassignment_history?.length && (
                     <div className="info-cell"><span className="info-label">담당자 재배정</span><span className="info-val">{selectedTask.reassignment_history.map((item) => `${item.from} → ${item.to}${item.reason ? ` (${item.reason})` : ''}`).join(', ')}</span></div>
                   )}
-                  {selectedTask.completed_via && (
+                  {!stepProgress && !selectedTask.approval_line_snapshot?.steps?.length && (
                     <div className="info-cell">
-                      <span className="info-label">실제 처리 채널</span>
-                      <span className="info-val">
-                        {selectedTask.completed_via === 'external_email'
-                          ? '이메일 링크'
-                          : 'PXM 웹'}
-                        {selectedTask.authentication_method
-                          ? ` · ${selectedTask.authentication_method}`
-                          : ''}
+                      <span className="info-val">단일 결재입니다.</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <details className="inbox-tech-details">
+                <summary>기술 정보</summary>
+                <div className="vertical-info-list">
+                  <div className="info-cell">
+                    <span className="info-label">요청 ID</span>
+                    <span className="info-val font-mono-style">{selectedTask.instance_id}</span>
+                  </div>
+                  <div className="info-cell">
+                    <span className="info-label">결재 노드</span>
+                    <span className="info-val font-mono-style">{selectedTask.node_id}</span>
+                  </div>
+                  {selectedTask.source_provider && selectedTask.external_request_id && (
+                    <div className="info-cell">
+                      <span className="info-label">외부 요청 키</span>
+                      <span className="info-val font-mono-style">
+                        {`${selectedTask.source_provider}:${selectedTask.external_request_id}:r${selectedTask.external_revision || 1}`}
                       </span>
                     </div>
                   )}
                   <div className="info-cell">
-                    <span className="info-label">결재 내용</span>
-                    <span className="info-val text-box-reason">
-                      {String(
-                        selectedTask.content_snapshot?.summary ||
-                          selectedTask.form_data?.approval_request?.content?.summary ||
-                          readField(selectedTask, ['요청 사유', 'purpose', 'reason', 'message']),
-                      )}
-                    </span>
+                    <span className="info-label">허용 결재 채널</span>
+                    <span className="info-val">{getApprovalChannels(selectedTask)}</span>
                   </div>
-                </div>
-              </div>
-
-              <div className="info-block">
-                <h5>전체 결재라인</h5>
-                <div className="vertical-info-list">
-                  {(selectedTask.approval_line_snapshot?.steps || []).map((step) => (
-                    <div className="info-cell" key={step.order}>
-                      <span className="info-label">
-                        {step.order}단계 · {step.label || '결재'} · {step.mode || 'ALL'}
-                      </span>
-                      <span className="info-val">
-                        {(step.approvers || [])
-                          .map((approver) => approver.display_snapshot?.name || approver.assignee || '-')
-                          .join(', ')}
-                      </span>
-                    </div>
-                  ))}
-                  {!selectedTask.approval_line_snapshot?.steps?.length && (
+                  {selectedTask.completed_via && (
                     <div className="info-cell">
-                      <span className="info-val">저장된 동적 결재라인이 없습니다.</span>
+                      <span className="info-label">실제 처리 채널</span>
+                      <span className="info-val">
+                        {selectedTask.completed_via === 'external_email' ? '이메일 링크' : 'PXM 웹'}
+                        {selectedTask.authentication_method ? ` · ${selectedTask.authentication_method}` : ''}
+                      </span>
                     </div>
                   )}
                 </div>
-              </div>
-
-              <div className="info-block">
-                <h5>첨부 파일</h5>
-                <div className="file-attachment-list">
-                  <div className="file-item empty-file-item">
-                    <FileText size={14} className="file-icon" />
-                    <span className="file-name">첨부 파일이 없습니다.</span>
-                  </div>
-                </div>
-              </div>
+              </details>
             </div>
           </div>
 
@@ -689,27 +717,10 @@ export const InboxPage: React.FC<InboxPageProps> = ({ currentUser, onSwitchToDes
         <div className="inbox-section timeline-history-section">
           <div className="section-title-wrap">
             <h3>결재 처리 이력</h3>
-            <span className="subtitle-desc">현재 요청의 진행 상태를 확인합니다.</span>
+            <span className="subtitle-desc">이 요청에서 누가 언제 무엇을 처리했는지 확인합니다.</span>
           </div>
 
           <div className="timeline-flow-body">
-            <div className="horizontal-timeline">
-              <div className="t-node active">
-                <div className="t-node-dot">1</div>
-                <span className="t-node-name">인스턴스 시작</span>
-              </div>
-              <div className="t-line active" />
-              <div className={`t-node ${selectedTask.status === 'OPEN' ? 'processing' : 'active'}`}>
-                <div className="t-node-dot">2</div>
-                <span className="t-node-name">승인 대기</span>
-              </div>
-              <div className="t-line" />
-              <div className="t-node">
-                <div className="t-node-dot">3</div>
-                <span className="t-node-name">후속 노드 진행</span>
-              </div>
-            </div>
-
             <div className="timeline-vertical-logs">
               {(instanceHistory.length ? instanceHistory : [selectedTask]).map((history) => (
                 <div className="v-log-item blue" key={history.id}>
@@ -721,14 +732,12 @@ export const InboxPage: React.FC<InboxPageProps> = ({ currentUser, onSwitchToDes
                       <span className="v-log-actor">{history.completion_actor_id || history.assignee || getRequester(selectedTask)}</span>
                       <span className="v-log-badge blue">
                         {history.step_order ? `${history.step_order}단계 · ` : ''}
-                        {history.status === 'OPEN' && (history.hold || history.payload?.hold) ? '보류' : history.status}
+                        {getStatusLabel(history)}
                       </span>
                     </div>
                     <p className="v-log-comment">
                       {history.comment || history.hold?.comment || history.payload?.hold?.comment ||
-                        (history.status === 'OPEN'
-                          ? `${history.node_id} 노드에서 승인을 기다리고 있습니다.`
-                          : `${history.node_id} 노드에서 ${history.status} 처리되었습니다.`)}
+                        (history.status === 'OPEN' ? '승인을 기다리고 있습니다.' : `${getStatusLabel(history)} 처리되었습니다.`)}
                     </p>
                   </div>
                 </div>

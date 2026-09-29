@@ -48,7 +48,11 @@ export class TasksService {
         const instance = await this.instances.getInstance(task.instance_id);
         const access = instance ? this.resolveTaskAccess(actor, task, instance, delegations) : null;
         return access?.allowed
-          ? { ...task, ...(access.delegation ? { delegation: { id: access.delegation.id, original_assignee: task.assignee, delegated_until: access.delegation.ends_at } } : {}) }
+          ? {
+              ...task,
+              form_fields: requestFormFields(instance),
+              ...(access.delegation ? { delegation: { id: access.delegation.id, original_assignee: task.assignee, delegated_until: access.delegation.ends_at } } : {}),
+            }
           : null;
       }),
     );
@@ -469,4 +473,22 @@ function normalizeIdempotencyKey(value?: string | null): string | null {
       'Idempotency-Key must be at most 200 characters',
     );
   return key;
+}
+
+/**
+ * 결재자 화면이 신청 입력값을 이름표와 함께 보여줄 수 있도록,
+ * 요청 시점에 고정된 워크플로우의 Start 입력 폼 정의를 요약한다.
+ */
+export function requestFormFields(instance: any): Array<{ id: string; label: string; type: string }> {
+  const nodes = instance?.context?.runtime?.nodes ?? instance?.ctx?.runtime?.nodes;
+  if (!Array.isArray(nodes)) return [];
+  const start = nodes.find((node: any) => (node?.data?.nodeType ?? node?.node_type) === 'start');
+  const fields = start?.data?.formSchema?.fields ?? start?.config?.formSchema?.fields;
+  if (!Array.isArray(fields)) return [];
+  return fields
+    .filter((field: any) => field?.id || field?.name)
+    .map((field: any) => {
+      const id = String(field.id || field.name);
+      return { id, label: String(field.label || id), type: String(field.type || 'text') };
+    });
 }

@@ -51,6 +51,7 @@
 |---|---|
 | [ui-ux-handoff.md](ui-ux-handoff.md) | 프론트엔드 정리 인수인계 (진행 중) |
 | [ui-components.md](ui-components.md) | 공용 UI 컴포넌트 계약 |
+| [ui-terminology.md](ui-terminology.md) | 화면 용어 사전. 역할별 표시 용어와 상태 문구 |
 | [dashboard-metrics.md](dashboard-metrics.md) | 대시보드 각 지표의 조회 범위 |
 
 ## 테스트
