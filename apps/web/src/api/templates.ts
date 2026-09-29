@@ -402,6 +402,20 @@ export const templatesApi = {
     return response.json();
   },
 
+  /**
+   * 대상 그룹의 새 초안으로 복제한다. 대상 그룹에서 쓸 수 없는 자원이 있으면 409와 함께
+   * ApiError.body.report에 호환성 진단 결과가 온다.
+   */
+  async clone(id: string, targetGroupId: string, name: string): Promise<{ template: WorkflowTemplate; report: CompatibilityReport }> {
+    const response = await fetch(`${API_BASE_URL}/templates/${id}/clone`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target_group_id: targetGroupId, name }),
+    });
+    if (!response.ok) throw await responseError(response, '워크플로우를 복제하지 못했습니다.');
+    return response.json();
+  },
+
   async publish(id: string): Promise<WorkflowTemplate> {
     const response = await fetch(`${API_BASE_URL}/templates/${id}/deploy`, {
       method: 'POST',

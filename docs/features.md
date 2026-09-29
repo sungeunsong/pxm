@@ -151,6 +151,17 @@ Start 노드의 `formSchema`는 신청 화면 표시와 실행 API 검증에 함
 - 워크플로우 관리의 관리 그룹 영역에서 현재 그룹 또는 옮길 그룹 기준으로 점검할 수 있고, 최고관리자가 그룹을 옮길 때도 먼저 점검한다
 - API: `GET /api/templates/:id/compatibility?target_group_id=`, `POST /api/templates/compatibility`(저장 전 노드). 콘솔 전용이며 대상 그룹의 관리 권한이 필요하다
 
+## 워크플로우 복제와 가져오기
+
+- **복제**: 워크플로우 관리의 `복제`에서 대상 그룹과 새 이름을 골라 새 초안을 만든다. 원본은 바뀌지 않는다.
+  대상 그룹에서 쓸 수 없는 자원이 있으면 복제하지 않고 그룹 호환성 점검 결과를 같은 창에 보여준다.
+  자원을 몰래 빼거나 원본 자격증명을 그대로 두지 않는다. 복제가 끝나면 새 초안이 디자이너에서 열린다
+- 복제본은 출처를 `imported_from`(`schema_version: pxm.clone.v1`)에 남기고, 관리 상세에 "복제 원본"으로 보인다
+- **가져오기**: `POST /api/templates/import?target_group_id=`로 파일에 적힌 원본 그룹 대신 지정한 그룹으로 가져온다.
+  지정하지 않으면 예전처럼 원본 그룹을 쓴다
+- API: `POST /api/templates/:id/clone` `{ target_group_id, name }`. 원본을 읽을 수 있고 대상 그룹의 관리 권한이 있어야 한다.
+  준비되지 않은 그룹이면 `409 CLONE_TARGET_NOT_READY`와 `report`를 돌려준다
+
 ## 콘솔 메뉴
 
 | 메뉴 | 역할 | 용도 |

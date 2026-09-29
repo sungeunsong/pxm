@@ -5,6 +5,7 @@ import {
   CalendarClock,
   CheckCircle2,
   ChevronRight,
+  Copy,
   Download,
   Edit3,
   FileText,
@@ -30,7 +31,8 @@ import { Drawer } from '../components/ui/Drawer';
 import { Button } from '../components/Button';
 import { FormRenderer } from '../flow-designer/FormRenderer';
 import type { FormSchema, FormValues } from '../flow-designer/form-types';
-import { readApiError } from '../lib/api-error';
+import { ApiError, readApiError } from '../lib/api-error';
+import { hashFor } from '../lib/deep-link';
 
 type Template = WorkflowTemplate;
 
@@ -88,6 +90,10 @@ export const RequestPortal: React.FC<{
   const [compatTargetGroupId, setCompatTargetGroupId] = useState('');
   const [compatReport, setCompatReport] = useState<CompatibilityReport | null>(null);
   const [compatLoading, setCompatLoading] = useState(false);
+  const [cloneOpen, setCloneOpen] = useState(false);
+  const [cloneForm, setCloneForm] = useState({ groupId: '', name: '' });
+  const [cloneReport, setCloneReport] = useState<CompatibilityReport | null>(null);
+  const [cloning, setCloning] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [successInstanceId, setSuccessInstanceId] = useState<string | null>(null);
   const [scheduleStatus, setScheduleStatus] = useState<ScheduleStatus | null>(null);
@@ -351,6 +357,36 @@ export const RequestPortal: React.FC<{
       toast.error('메타데이터 저장에 실패했습니다.', { description: errorMessage(error) });
     } finally {
       setMetadataSaving(false);
+    }
+  };
+
+  const openClone = () => {
+    if (!selectedTemplate) return;
+    setCloneForm({ groupId: selectedTemplate.group_id || groups[0]?.id || '', name: `${selectedTemplate.name} (복사본)` });
+    setCloneReport(null);
+    setCloneOpen(true);
+  };
+
+  const handleClone = async () => {
+    if (!selectedTemplate || !cloneForm.groupId || !cloneForm.name.trim()) return;
+    setCloning(true);
+    setCloneReport(null);
+    try {
+      const { template } = await templatesApi.clone(selectedTemplate.id, cloneForm.groupId, cloneForm.name.trim());
+      setCloneOpen(false);
+      toast.success('워크플로우를 복제했습니다.', { description: `${template.name} · 초안으로 만들었습니다. 설계를 확인한 뒤 배포하세요.` });
+      await fetchTemplates();
+      window.location.hash = hashFor('designer', { workflow: template.id });
+    } catch (error) {
+      // 대상 그룹에서 쓸 수 없는 자원이 있으면 같은 창에 무엇을 해결해야 하는지 보여준다.
+      const report = error instanceof ApiError ? (error.body?.report as CompatibilityReport | undefined) : undefined;
+      if (report) {
+        setCloneReport(report);
+      } else {
+        toast.error('워크플로우를 복제하지 못했습니다.', { description: errorMessage(error) });
+      }
+    } finally {
+      setCloning(false);
     }
   };
 
@@ -647,6 +683,9 @@ export const RequestPortal: React.FC<{
                   <Button size="sm" variant="secondary" onClick={openVersionHistory} icon={<History size={14} />}>
                     버전 이력
                   </Button>
+                  <Button size="sm" variant="secondary" onClick={openClone} icon={<Copy size={14} />} data-testid="workflow-clone-open">
+                    복제
+                  </Button>
                   <Button size="sm" variant="secondary" onClick={() => void handleExportTemplate()} icon={<Download size={14} />}>
                     파일로 내보내기
                   </Button>
@@ -761,6 +800,55 @@ export const RequestPortal: React.FC<{
           )}
         </aside>
       </div>
+      {selectedTemplate && cloneOpen && (
+        <Drawer
+          title="워크플로우 복제"
+          eyebrow={`${selectedTemplate.name} · v${selectedTemplate.version}`}
+          width="md"
+          className="workflow-management-drawer"
+          closeOnBackdrop={false}
+          onClose={() => setCloneOpen(false)}
+          footer={<>
+            <Button variant="secondary" onClick={() => setCloneOpen(false)}>취소</Button>
+            <Button
+              onClick={() => void handleClone()}
+              disabled={cloning || !cloneForm.groupId || !cloneForm.name.trim()}
+              data-testid="workflow-clone-submit"
+            >
+              {cloning ? '복제하는 중' : cloneReport ? '다시 시도' : '복제'}
+            </Button>
+          </>}
+        >
+          <div className="workflow-metadata-form">
+            <label>
+              <span>대상 그룹</span>
+              <select
+                aria-label="복제할 그룹"
+                value={cloneForm.groupId}
+                onChange={(event) => { setCloneForm((current) => ({ ...current, groupId: event.target.value })); setCloneReport(null); }}
+              >
+                {groups.map((group) => (
+                  <option key={group.id} value={group.id}>
+                    {group.name}{group.id === selectedTemplate.group_id ? ' (현재 그룹)' : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>새 워크플로우 이름</span>
+              <input
+                aria-label="새 워크플로우 이름"
+                value={cloneForm.name}
+                maxLength={200}
+                onChange={(event) => setCloneForm((current) => ({ ...current, name: event.target.value }))}
+              />
+            </label>
+            <p className="form-info-text">원본은 바뀌지 않습니다. 새 워크플로우는 초안으로 만들어지고, 확인한 뒤 배포해야 요청을 받습니다.</p>
+            {cloneReport && <CompatibilityReportView report={cloneReport} />}
+          </div>
+        </Drawer>
+      )}
+
       {selectedTemplate && metadataEditorOpen && (
         <Drawer
           title="워크플로우 메타데이터 수정"

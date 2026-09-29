@@ -325,6 +325,49 @@ test.describe.serial('PXM 동적 결재 베타 회귀', () => {
     await managerUi.context.close();
   });
 
+  test('워크플로우를 새 초안으로 복제하고, 대상 그룹에서 쓸 수 없는 자원이 있으면 복제 전에 알려준다', async ({ browser }) => {
+    // 화면에서 복제: 새 초안이 만들어지고 디자이너에서 바로 열린다.
+    const managerUi = await loginPage(browser, fixture.users.manager.id, userPassword, 'workflows');
+    await managerUi.page.getByRole('row').filter({ hasText: fixture.workflowName }).first().click();
+    await managerUi.page.getByTestId('workflow-clone-open').click();
+    const cloneName = uniqueTitle('복제본');
+    await managerUi.page.getByLabel('새 워크플로우 이름').fill(cloneName);
+    await managerUi.page.getByTestId('workflow-clone-submit').click();
+    await expect(managerUi.page.locator('.workflow-tab-main[aria-selected="true"]')).toContainText(cloneName, { timeout: 30_000 });
+    const clones = (await admin.get<any[]>('/templates')).filter((row) => row.name === cloneName);
+    expect(clones).toHaveLength(1);
+    expect(clones[0]).toMatchObject({ lifecycle_status: 'DRAFT', group_id: fixture.groupId });
+    expect(clones[0].imported_from).toMatchObject({ schema_version: 'pxm.clone.v1', definition_id: fixture.workflowId });
+    await managerUi.context.close();
+
+    // 승인이 나중에 바뀌어 대상 그룹에서 쓸 수 없게 된 라이브러리: 복제하지 않고 진단 결과를 준다.
+    const libraryVersion = `0.1.${Date.now()}`;
+    const libraryId = `e2e-clone-lib-${libraryVersion}`;
+    await db.collection<any>('v2_script_libraries').insertOne({
+      _id: libraryId, package_name: 'e2e-clone-lib', version: libraryVersion, description: '', license: 'MIT',
+      integrity: 'sha512-e2e', bundle_sha256: 'e2e', bundle_bytes: 1, dependency_count: 0,
+      status: 'approved', allowed_group_ids: [fixture.groupId], created_by: 'admin',
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    });
+    const withLibrary = await admin.post<any>('/templates', {
+      ...dynamicApprovalTemplate(),
+      name: uniqueTitle('라이브러리 사용'),
+      nodes: [
+        ...dynamicApprovalTemplate().nodes,
+        { id: 'js-1', type: 'custom', position: { x: 0, y: 0 }, data: { nodeType: 'script', label: '계산', code: 'return {}', scriptLibraries: [{ package_name: 'e2e-clone-lib', version: libraryVersion }] } },
+      ],
+    });
+    await db.collection<any>('v2_script_libraries').updateOne({ _id: libraryId }, { $set: { allowed_group_ids: ['e2e-other-group'] } });
+
+    const blocked = await manager.rawPost(`/templates/${withLibrary.id}/clone`, { target_group_id: fixture.groupId });
+    expect(blocked.status()).toBe(409);
+    const body = await blocked.json();
+    expect(body).toMatchObject({ code: 'CLONE_TARGET_NOT_READY', report: { summary: { ready: false } } });
+    expect(body.report.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'script_library', status: 'action_required', node_ids: ['js-1'] }),
+    ]));
+  });
+
   test('ALL은 전원 승인까지 기다리고 ANY는 첫 승인 뒤 나머지를 취소한다', async () => {
     const title = uniqueTitle('ALL ANY 집계');
     const execution = await startApproval(admin, title, [

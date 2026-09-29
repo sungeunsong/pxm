@@ -155,3 +155,72 @@ describe('TemplatesController public API contract', () => {
     expect(templatesService.publish).toHaveBeenCalledWith('workflow-1', 'admin-1');
   });
 });
+
+describe('TemplatesController clone', () => {
+  const source = {
+    id: 'workflow-1',
+    name: '권한 신청',
+    group_id: 'group-a',
+    version: 3,
+    nodes: [{ id: 'js-1', data: { nodeType: 'script' } }],
+    edges: [],
+  };
+  const managerOf = (...groups: string[]): WorkflowHistoryActor => ({
+    actor_type: 'user',
+    actor_id: 'manager-1',
+    api_key_id: null,
+    roles: ['group_manager'],
+    scopes: [],
+    workspace_ids: ['default'],
+    group_ids: groups,
+    group_roles: Object.fromEntries(groups.map((group) => [group, 'group_manager'])),
+    owned_workflow_ids: [],
+    allowed_workflow_ids: [],
+    allowed_instance_ids: [],
+    business_actor: null,
+  } as WorkflowHistoryActor);
+
+  function build(ready: boolean) {
+    const report = { workflow_id: source.id, items: [], summary: { ok: 0, action_required: ready ? 0 : 1, blocked: 0, warning: 0, ready } };
+    const templatesService = {
+      findOne: jest.fn().mockResolvedValue(source),
+      findPublished: jest.fn().mockResolvedValue(source),
+      clone: jest.fn().mockResolvedValue({ id: 'workflow-2', group_id: 'group-b', name: '권한 신청 (복사본)' }),
+    };
+    const authzService = { getGroup: jest.fn().mockResolvedValue({ id: 'group-b', name: '인프라팀' }) };
+    const compatibility = { evaluate: jest.fn().mockResolvedValue(report) };
+    const audit = { append: jest.fn().mockResolvedValue(undefined) };
+    const controller = new TemplatesController(
+      templatesService as any, {} as any, {} as any, {} as any, {} as any, audit as any, authzService as any, compatibility as any,
+    );
+    return { controller, templatesService, compatibility, audit };
+  }
+
+  const req = (actor: WorkflowHistoryActor) => ({ workflowActor: actor }) as unknown as Request;
+
+  it('대상 그룹에서 쓸 수 없는 자원이 있으면 복제하지 않고 진단 결과를 돌려준다', async () => {
+    const { controller, templatesService } = build(false);
+    await expect(controller.clone('workflow-1', { target_group_id: 'group-b' }, req(managerOf('group-a', 'group-b'))))
+      .rejects.toMatchObject({ status: 409, response: expect.objectContaining({ code: 'CLONE_TARGET_NOT_READY', report: expect.any(Object) }) });
+    expect(templatesService.clone).not.toHaveBeenCalled();
+  });
+
+  it('준비된 그룹이면 새 초안으로 복제하고 출처를 남긴다', async () => {
+    const { controller, templatesService, compatibility, audit } = build(true);
+    const result = await controller.clone('workflow-1', { target_group_id: 'group-b' }, req(managerOf('group-a', 'group-b')));
+    expect(compatibility.evaluate).toHaveBeenCalledWith('workflow-1', source.nodes, 'group-b');
+    expect(templatesService.clone).toHaveBeenCalledWith(source, { id: 'group-b', name: '인프라팀' }, '권한 신청 (복사본)', 'manager-1');
+    expect(result.template.id).toBe('workflow-2');
+    expect(audit.append).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'workflow.cloned',
+      details: expect.objectContaining({ source_workflow_id: 'workflow-1', source_group_id: 'group-a' }),
+    }));
+  });
+
+  it('대상 그룹의 관리 권한이 없으면 복제할 수 없다', async () => {
+    const { controller, templatesService } = build(true);
+    await expect(controller.clone('workflow-1', { target_group_id: 'group-b' }, req(managerOf('group-a'))))
+      .rejects.toMatchObject({ status: 403 });
+    expect(templatesService.clone).not.toHaveBeenCalled();
+  });
+});

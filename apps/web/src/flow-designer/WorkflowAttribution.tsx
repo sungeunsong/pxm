@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import './WorkflowAttribution.css';
+import { hashFor } from '../lib/deep-link';
 
 type Actor = { id: string | null; display_name: string | null; status: string };
-type Attribution = { creator: Actor; updater: Actor; created_at?: string; updated_at?: string; imported_from?: { definition_id?: string; version?: number } | null };
+type Attribution = { creator: Actor; updater: Actor; created_at?: string; updated_at?: string; imported_from?: { schema_version?: string; definition_id?: string; version?: number } | null };
 function actorLabel(actor: Actor) {
   if (!actor.id) return '확인 불가';
   if (actor.status === 'missing') return `확인할 수 없는 사용자 · ID: ${actor.id}`;
@@ -25,7 +26,17 @@ export function WorkflowAttribution({ workflowId, updatedAt }: { workflowId: str
     {error ? <p role="status">작성 이력을 불러오지 못했습니다.</p> : !data ? <p>작성 이력을 불러오는 중입니다.</p> : <dl>
       <div><dt>생성자</dt><dd>{actorLabel(data.creator)}<time>{dateLabel(data.created_at)}</time></dd></div>
       <div><dt>최근 수정자</dt><dd>{actorLabel(data.updater)}<time>{dateLabel(data.updated_at)}</time></dd></div>
-      {data.imported_from && <div><dt>가져온 원본</dt><dd>{data.imported_from.definition_id || '확인 불가'} · v{data.imported_from.version ?? '?'}</dd></div>}
+      {data.imported_from && (
+        <div>
+          <dt>{data.imported_from.schema_version === 'pxm.clone.v1' ? '복제 원본' : '가져온 원본'}</dt>
+          <dd>
+            {data.imported_from.definition_id
+              ? <a href={hashFor('designer', { workflow: data.imported_from.definition_id })}>{data.imported_from.definition_id}</a>
+              : '확인 불가'}
+            {' · v'}{data.imported_from.version ?? '?'}
+          </dd>
+        </div>
+      )}
     </dl>}
   </section>;
 }

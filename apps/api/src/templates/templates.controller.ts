@@ -132,12 +132,57 @@ export class TemplatesController {
     return this.compatibility.evaluate(template.id, template.nodes || [], requested || template.group_id || null);
   }
 
-  @Post('import')
-  async import(@Body() body: any, @Req() req: Request) {
+  /**
+   * 워크플로우를 대상 그룹의 새 초안으로 복제한다.
+   * 대상 그룹에서 쓸 수 없는 자원이 있으면 복제하지 않고 호환성 진단 결과를 409로 돌려준다.
+   * 자원을 조용히 빼거나 원본 자격증명을 그대로 두지 않고, 무엇을 해결해야 하는지 보여주기 위해서다.
+   */
+  @Post(':id/clone')
+  async clone(@Param('id') id: string, @Body() body: { target_group_id?: string; name?: string }, @Req() req: Request) {
     const actor = actorFromRequest(req);
-    assertCanManageGroup(actor, body?.workflow?.metadata?.group_id || null);
+    const source = await this.assertReadableTemplate(id, req);
+    const targetGroupId = (typeof body?.target_group_id === 'string' && body.target_group_id.trim()) || source.group_id || null;
+    if (!targetGroupId) {
+      throw new BadRequestException(errorBody('GROUP_REQUIRED', '복제할 대상 그룹을 골라주세요.', { actor: 'self', action: '대상 그룹을 지정한 뒤 다시 복제하세요.' }));
+    }
+    assertCanManageGroup(actor, targetGroupId);
+    const target = await this.authzService.getGroup(targetGroupId);
+
+    const report = await this.compatibility.evaluate(source.id, source.nodes || [], target.id);
+    if (!report.summary.ready) {
+      throw new ConflictException(errorBody(
+        'CLONE_TARGET_NOT_READY',
+        `${target.name}에서 쓸 수 없는 자원이 있어 복제하지 않았습니다.`,
+        { actor: 'self', action: '점검 결과의 항목을 해결한 뒤 다시 복제하세요.' },
+        { report },
+      ));
+    }
+
+    const name = (typeof body?.name === 'string' && body.name.trim()) || `${source.name} (복사본)`;
+    const created = await this.templatesService.clone(source, { id: target.id, name: target.name }, name.slice(0, 200), actor.actor_id || 'system');
+    await this.audit.append({
+      action: 'workflow.cloned',
+      resource_type: 'workflow',
+      resource_id: created.id,
+      group_id: created.group_id,
+      actor_id: actor.actor_id,
+      details: { source_workflow_id: source.id, source_version: source.version, source_group_id: source.group_id || null },
+    });
+    return { template: created, report };
+  }
+
+  @Post('import')
+  async import(@Body() body: any, @Req() req: Request, @Query('target_group_id') targetGroupId?: string) {
+    const actor = actorFromRequest(req);
+    const requestedGroupId = targetGroupId?.trim() || null;
+    assertCanManageGroup(actor, requestedGroupId || body?.workflow?.metadata?.group_id || null);
+    const target = requestedGroupId ? await this.authzService.getGroup(requestedGroupId) : null;
     try {
-      const template = await this.templatesService.import(body, actor.actor_id || 'system');
+      const template = await this.templatesService.import(
+        body,
+        actor.actor_id || 'system',
+        target ? { id: target.id, name: target.name } : undefined,
+      );
       await this.audit.append({
         action: 'workflow.imported',
         resource_type: 'workflow',

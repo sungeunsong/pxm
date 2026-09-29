@@ -202,18 +202,53 @@ export class TemplatesService {
     };
   }
 
-  async import(document: any, actorId = 'system'): Promise<TemplateResponseDto> {
+  /**
+   * target을 주면 파일에 적힌 원본 그룹 대신 그 그룹으로 가져온다.
+   * 예전에는 원본 그룹을 그대로 써서, 다른 그룹으로는 가져올 수 없었다.
+   */
+  async import(document: any, actorId = 'system', target?: { id: string; name: string }): Promise<TemplateResponseDto> {
     const parsed = parseWorkflowExportDocument(document);
     return this.create({
       name: parsed.workflow.name,
       description: parsed.workflow.metadata.description,
-      group: parsed.workflow.metadata.group,
-      group_id: parsed.workflow.metadata.group_id,
+      group: target ? target.name : parsed.workflow.metadata.group,
+      group_id: target ? target.id : parsed.workflow.metadata.group_id,
       tags: parsed.workflow.metadata.tags,
       version_note: parsed.workflow.metadata.version_note,
       imported_from: buildImportSourceMetadata(parsed),
       nodes: parsed.workflow.nodes,
       edges: parsed.workflow.edges,
+      created_by: actorId,
+      updated_by: actorId,
+    });
+  }
+
+  /**
+   * 워크플로우를 대상 그룹의 새 초안으로 복제한다. 원본은 바꾸지 않는다.
+   * 출처는 가져오기와 같은 자리(imported_from)에 schema_version 'pxm.clone.v1'로 남는다.
+   * 대상 그룹 호환성은 호출부(컨트롤러)가 먼저 확인한다. 여기서도 저장 검사는 그대로 적용된다.
+   */
+  async clone(
+    source: TemplateResponseDto,
+    target: { id: string; name: string },
+    name: string,
+    actorId = 'system',
+  ): Promise<TemplateResponseDto> {
+    return this.create({
+      name,
+      description: source.description,
+      group: target.name,
+      group_id: target.id,
+      tags: source.tags || [],
+      version_note: `${source.name} v${source.version}에서 복제`,
+      imported_from: {
+        schema_version: 'pxm.clone.v1',
+        definition_id: source.id,
+        version: source.version,
+        exported_at: new Date().toISOString(),
+      },
+      nodes: source.nodes || [],
+      edges: source.edges || [],
       created_by: actorId,
       updated_by: actorId,
     });
