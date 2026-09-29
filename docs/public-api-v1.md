@@ -72,4 +72,6 @@ API Key로 시작한 실행**만 처리한다. Key를 재발급해도 소유자�
 - `code`는 프로그램에서 분기할 안정적인 오류 코드다.
 - `request_id`는 응답 헤더와 서버 요청 로그에서 동일하다.
 - 여러 입력 검증 오류가 있으면 `details` 배열도 제공한다.
+- 호출자가 스스로 풀 수 없는 오류에는 `remediation`(해결 방법), `remediation_actor`(`self` / `group_manager` / `admin`),
+  필요하면 `remediation_group_id`를 함께 준다.
 - 처리되지 않은 서버 오류는 `INTERNAL_SERVER_ERROR`와 일반 메시지만 반환하며 내부 예외나 stack trace를 노출하지 않는다.

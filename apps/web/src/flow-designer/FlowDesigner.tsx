@@ -28,6 +28,7 @@ import { BASIC_NODE_OPTIONS } from './node-catalog';
 import { foldNodeExecutionStatuses, latestNumericEventId, nodeExecutionTransition } from './execution-visual-state';
 import type { CanvasExecutionEvent } from './execution-visual-state';
 import './FlowDesigner.css';
+import { readApiError } from '../lib/api-error';
 
 export interface FlowDesignerProps {
   children?: React.ReactNode;
@@ -871,7 +872,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
     try {
       // 1. 인스턴스 상세 정보 조회 (ctx 복원을 위해)
       const res = await fetch(`/api/instances/${instanceId}`);
-      if (!res.ok) throw new Error('Failed to fetch instance details');
+      if (!res.ok) throw await readApiError(res, '실행 상세를 불러오지 못했습니다.');
       const instance = await res.json();
       const fallbackContext = instance.ctx || instance.context || {};
       const fallbackRuntime = fallbackContext.runtime || fallbackContext;

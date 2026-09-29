@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X, Clock, CheckCircle, AlertCircle, Loader, Copy } from 'lucide-react';
 import './HistoryListModal.css';
+import { readApiError } from '../lib/api-error';
 
 interface Instance {
   id: string;
@@ -34,7 +35,7 @@ export const HistoryListModal: React.FC<HistoryListModalProps> = ({
     setLoading(true);
     try {
       const res = await fetch('/api/instances');
-      if (!res.ok) throw new Error('Failed to fetch instances');
+      if (!res.ok) throw await readApiError(res, '실행 이력을 불러오지 못했습니다.');
       const data = await res.json();
       setInstances(data);
     } catch (error) {

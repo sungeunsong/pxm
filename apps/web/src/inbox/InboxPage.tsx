@@ -15,6 +15,7 @@ import { errorMessage } from '../lib/error-message';
 import './InboxPage.css';
 import type { SessionUser } from '../api/session';
 import { ApprovalDelegationDrawer } from './ApprovalDelegationDrawer';
+import { readApiError } from '../lib/api-error';
 
 interface Task {
   id: string;
@@ -330,7 +331,7 @@ export const InboxPage: React.FC<InboxPageProps> = ({ currentUser }) => {
         body: JSON.stringify(decision === 'hold' ? { comment } : { action, comment }),
       });
 
-      if (!res.ok) throw new Error('Failed to complete task');
+      if (!res.ok) throw await readApiError(res, '결재를 처리하지 못했습니다.');
 
       toast.success(`${displayActionText} 처리했습니다.`);
       await fetchTasks();

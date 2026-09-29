@@ -1,4 +1,5 @@
 import { BadRequestException, Body, ConflictException, Controller, Delete, ForbiddenException, Get, Headers, HttpStatus, NotFoundException, Param, ParseIntPipe, Post, Put, Query, Req, Res, Version } from '@nestjs/common';
+import { errorBody } from '../observability/remediation';
 import type { Request, Response } from 'express';
 import { TemplatesService } from './templates.service';
 import { CreateTemplateDto, DeployTemplateDto, UpdateTemplateDto } from './dto/template.dto';
@@ -600,11 +601,12 @@ export class TemplatesController {
     };
     const normalizedInput = normalizeWorkflowInputValues(template.nodes, mergedInput);
     if (normalizedInput.errors.length > 0) {
-      throw new BadRequestException({
-        code: 'WORKFLOW_INPUT_INVALID',
-        message: '신청 입력값을 확인해주세요.',
-        details: normalizedInput.errors,
-      });
+      throw new BadRequestException(errorBody(
+        'WORKFLOW_INPUT_INVALID',
+        '신청 입력값을 확인해주세요.',
+        { actor: 'self', action: '표시된 항목을 고친 뒤 다시 제출하세요.' },
+        { details: normalizedInput.errors },
+      ));
     }
     const formData = normalizedInput.values;
     const approvalRequestPath = dynamicApprovalRequestPath(template.nodes);

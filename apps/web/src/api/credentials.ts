@@ -1,3 +1,4 @@
+import { readApiError } from '../lib/api-error';
 export type CredentialType =
   | 'api_key'
   | 'basic_auth'
@@ -63,7 +64,7 @@ export const credentialsApi = {
       body: JSON.stringify({ group_id: groupId, host, port }),
     });
     if (!response.ok) {
-      throw new Error(await responseError(response, 'Failed to read SSH server key'));
+      throw await readApiError(response, 'SSH 서버 키를 읽지 못했습니다.');
     }
     return response.json();
   },
@@ -74,7 +75,7 @@ export const credentialsApi = {
     if (groupId) params.set('groupId', groupId);
     const response = await fetch(`${API_BASE_URL}/credentials?${params.toString()}`);
     if (!response.ok) {
-      throw new Error(`Failed to fetch credentials: ${response.statusText}`);
+      throw await readApiError(response, '자격증명 목록을 불러오지 못했습니다.');
     }
     return response.json();
   },
@@ -86,7 +87,7 @@ export const credentialsApi = {
       body: JSON.stringify(data),
     });
     if (!response.ok) {
-      throw new Error(await responseError(response, 'Failed to create credential'));
+      throw await readApiError(response, '자격증명을 만들지 못했습니다.');
     }
     return response.json();
   },
@@ -98,7 +99,7 @@ export const credentialsApi = {
       body: JSON.stringify(data),
     });
     if (!response.ok) {
-      throw new Error(await responseError(response, 'Failed to update credential'));
+      throw await readApiError(response, '자격증명을 저장하지 못했습니다.');
     }
     return response.json();
   },
@@ -108,7 +109,7 @@ export const credentialsApi = {
       method: 'DELETE',
     });
     if (!response.ok) {
-      throw new Error(`Failed to deactivate credential: ${response.statusText}`);
+      throw await readApiError(response, '자격증명을 비활성화하지 못했습니다.');
     }
   },
 
@@ -118,16 +119,9 @@ export const credentialsApi = {
       : `${API_BASE_URL}/credentials/audit`;
     const response = await fetch(url);
     if (!response.ok) {
-      throw new Error(`Failed to fetch credential audit: ${response.statusText}`);
+      throw await readApiError(response, '사용 이력을 불러오지 못했습니다.');
     }
     return response.json();
   },
 };
 
-async function responseError(response: Response, fallback: string) {
-  const payload = await response.json().catch(() => null);
-  const message = payload?.message || payload?.error;
-  return Array.isArray(message)
-    ? message.join(', ')
-    : message || `${fallback}: ${response.statusText}`;
-}

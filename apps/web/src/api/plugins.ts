@@ -1,3 +1,4 @@
+import { apiErrorFromBody } from '../lib/api-error';
 export interface PluginJsonSchemaProperty {
   type?: string;
   title?: string;
@@ -75,10 +76,7 @@ export const pluginsApi = {
     });
 
     const payload = await response.json().catch(() => null);
-    if (!response.ok) {
-      const message = payload?.message || payload?.error || `plugin test failed: ${response.status}`;
-      throw new Error(Array.isArray(message) ? message.join(', ') : message);
-    }
+    if (!response.ok) throw apiErrorFromBody(response, payload, '플러그인 테스트에 실패했습니다.');
     return payload;
   },
 

@@ -1,3 +1,4 @@
+import { readApiError } from './lib/api-error';
 export type InputPreset = {
   id: string;
   scopeId: string;
@@ -24,16 +25,14 @@ export type InputPreset = {
 
 export async function listInputPresets(scopeId: string): Promise<InputPreset[]> {
   const response = await fetch(`/api/templates/${scopeId}/input-presets`);
-  if (!response.ok) {
-    throw new Error('Failed to load input presets');
-  }
+  if (!response.ok) throw await readApiError(response, '저장한 입력값을 불러오지 못했습니다.');
   const presets = await response.json();
   return Array.isArray(presets) ? presets.map(mapPreset(scopeId)) : [];
 }
 
 export async function listAllInputPresets(): Promise<InputPreset[]> {
   const response = await fetch('/api/templates/input-presets');
-  if (!response.ok) throw new Error('Failed to load input presets');
+  if (!response.ok) throw await readApiError(response, '저장한 입력값을 불러오지 못했습니다.');
   const presets = await response.json();
   return Array.isArray(presets) ? presets.map((preset) => mapPreset(preset.workflow_id)(preset)) : [];
 }
@@ -54,7 +53,7 @@ export async function createInputPreset(
       shared_group_ids: preset.scope === 'shared' ? preset.shared_group_ids : [],
     }),
   });
-  if (!response.ok) throw new Error(await readError(response, 'Failed to create input preset'));
+  if (!response.ok) throw await readApiError(response, '입력값을 저장하지 못했습니다.');
   return mapPreset(scopeId)(await response.json());
 }
 
@@ -75,9 +74,7 @@ export async function saveInputPreset(
       scope,
     }),
   });
-  if (!response.ok) {
-    throw new Error('Failed to save input preset');
-  }
+  if (!response.ok) throw await readApiError(response, '입력값을 저장하지 못했습니다.');
   return mapPreset(scopeId)(await response.json());
 }
 
@@ -98,9 +95,7 @@ export async function updateInputPreset(
       shared_group_ids: preset.scope === 'shared' ? preset.shared_group_ids : [],
     }),
   });
-  if (!response.ok) {
-    throw new Error(await readError(response, 'Failed to update input preset'));
-  }
+  if (!response.ok) throw await readApiError(response, '입력값을 저장하지 못했습니다.');
   return mapPreset(scopeId)(await response.json());
 }
 
@@ -108,9 +103,7 @@ export async function deleteInputPreset(scopeId: string, id: string): Promise<vo
   const response = await fetch(`/api/templates/${scopeId}/input-presets/${id}`, {
     method: 'DELETE',
   });
-  if (!response.ok) {
-    throw new Error('Failed to delete input preset');
-  }
+  if (!response.ok) throw await readApiError(response, '저장한 입력값을 삭제하지 못했습니다.');
 }
 
 function mapPreset(scopeId: string) {
@@ -139,11 +132,6 @@ function mapPreset(scopeId: string) {
   });
 }
 
-async function readError(response: Response, fallback: string): Promise<string> {
-  const body = await response.json().catch(() => null);
-  if (Array.isArray(body?.message)) return body.message.join('\n');
-  return body?.message || fallback;
-}
 
 function slugifyPresetAlias(value: string): string {
   const alias = String(value || '')

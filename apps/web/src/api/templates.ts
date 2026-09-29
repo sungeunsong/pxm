@@ -1,3 +1,4 @@
+import { readApiError } from '../lib/api-error';
 import type { Node, Edge } from 'reactflow';
 
 export interface WorkflowTemplate {
@@ -175,12 +176,8 @@ export interface TestDbWatchConnectionResponse {
 
 const API_BASE_URL = '/api';
 
-async function responseError(response: Response, fallback: string): Promise<Error> {
-  const body = await response.json().catch(() => null) as { message?: string | string[]; details?: string[] } | null;
-  const message = Array.isArray(body?.message) ? body.message.join(', ') : body?.message;
-  const detail = [message, ...(body?.details || [])].filter(Boolean).join(' ');
-  return new Error(detail || `${fallback}: ${response.statusText}`);
-}
+// 서버 오류 본문(원인·세부 항목·해결 방법·문의 번호)을 버리지 않는다. lib/api-error.ts 참고.
+const responseError = readApiError;
 
 export const templatesApi = {
   // 템플릿 생성
@@ -194,7 +191,7 @@ export const templatesApi = {
     });
 
     if (!response.ok) {
-      throw await responseError(response, 'Failed to create template');
+      throw await responseError(response, '워크플로우를 만들지 못했습니다.');
     }
 
     return response.json();
@@ -208,7 +205,7 @@ export const templatesApi = {
     const response = await fetch(`${API_BASE_URL}/templates?${params.toString()}`);
 
     if (!response.ok) {
-      throw new Error(`Failed to fetch templates: ${response.statusText}`);
+      throw await responseError(response, '워크플로우 목록을 불러오지 못했습니다.');
     }
 
     return response.json();
@@ -219,7 +216,7 @@ export const templatesApi = {
     const response = await fetch(`${API_BASE_URL}/templates/${id}`);
 
     if (!response.ok) {
-      throw new Error(`Failed to fetch template: ${response.statusText}`);
+      throw await responseError(response, '워크플로우를 불러오지 못했습니다.');
     }
 
     return response.json();
@@ -236,7 +233,7 @@ export const templatesApi = {
     });
 
     if (!response.ok) {
-      throw await responseError(response, 'Failed to update template');
+      throw await responseError(response, '워크플로우를 저장하지 못했습니다.');
     }
 
     return response.json();
@@ -249,7 +246,7 @@ export const templatesApi = {
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to delete template: ${response.statusText}`);
+      throw await responseError(response, '워크플로우를 삭제하지 못했습니다.');
     }
   },
 
@@ -264,7 +261,7 @@ export const templatesApi = {
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to execute template: ${response.statusText}`);
+      throw await responseError(response, '워크플로우를 실행하지 못했습니다.');
     }
 
     return response.json();
@@ -280,7 +277,7 @@ export const templatesApi = {
     });
 
     if (!response.ok) {
-      throw await responseError(response, 'Failed to start template');
+      throw await responseError(response, '워크플로우를 실행하지 못했습니다.');
     }
 
     return response.json();
@@ -290,7 +287,7 @@ export const templatesApi = {
     const response = await fetch(`${API_BASE_URL}/templates/${id}/export`);
 
     if (!response.ok) {
-      throw new Error(`Failed to export template: ${response.statusText}`);
+      throw await responseError(response, '워크플로우를 내보내지 못했습니다.');
     }
 
     return response.json();
@@ -306,7 +303,7 @@ export const templatesApi = {
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to import template: ${response.statusText}`);
+      throw await responseError(response, '워크플로우를 가져오지 못했습니다.');
     }
 
     return response.json();
@@ -322,8 +319,7 @@ export const templatesApi = {
     });
 
     if (!response.ok) {
-      const message = await response.text().catch(() => response.statusText);
-      throw new Error(message || `Failed to test DB watch connection: ${response.statusText}`);
+      throw await responseError(response, 'DB 연결 테스트에 실패했습니다.');
     }
 
     return response.json();
@@ -333,7 +329,7 @@ export const templatesApi = {
     const response = await fetch(`${API_BASE_URL}/templates/${id}/versions`);
 
     if (!response.ok) {
-      throw new Error(`Failed to fetch template versions: ${response.statusText}`);
+      throw await responseError(response, '버전 목록을 불러오지 못했습니다.');
     }
 
     return response.json();
@@ -349,7 +345,7 @@ export const templatesApi = {
     const response = await fetch(`${API_BASE_URL}/templates/${id}/versions/diff?${params.toString()}`);
 
     if (!response.ok) {
-      throw new Error(`Failed to diff template versions: ${response.statusText}`);
+      throw await responseError(response, '버전 비교를 불러오지 못했습니다.');
     }
 
     return response.json();
@@ -361,7 +357,7 @@ export const templatesApi = {
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to rollback template version: ${response.statusText}`);
+      throw await responseError(response, '버전을 되돌리지 못했습니다.');
     }
 
     return response.json();
@@ -373,19 +369,19 @@ export const templatesApi = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
     });
-    if (!response.ok) throw new Error(`Failed to publish workflow: ${response.statusText}`);
+    if (!response.ok) throw await responseError(response, '워크플로우를 배포하지 못했습니다.');
     return (await response.json()).template;
   },
 
   async disable(id: string): Promise<WorkflowTemplate> {
     const response = await fetch(`${API_BASE_URL}/templates/${id}/disable`, { method: 'POST' });
-    if (!response.ok) throw new Error(`Failed to disable workflow: ${response.statusText}`);
+    if (!response.ok) throw await responseError(response, '배포를 중지하지 못했습니다.');
     return (await response.json()).template;
   },
 
   async reactivate(id: string): Promise<WorkflowTemplate> {
     const response = await fetch(`${API_BASE_URL}/templates/${id}/reactivate`, { method: 'POST' });
-    if (!response.ok) throw new Error(`Failed to reactivate workflow: ${response.statusText}`);
+    if (!response.ok) throw await responseError(response, '배포를 다시 켜지 못했습니다.');
     return (await response.json()).template;
   },
 };

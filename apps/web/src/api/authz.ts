@@ -1,3 +1,4 @@
+import { apiErrorFromBody } from '../lib/api-error';
 export type PxmRole = 'admin' | 'group_manager' | 'user';
 export type PxmGroupRole = Exclude<PxmRole, 'admin'>;
 export type PxmGroupMembership = { group_id: string; role: PxmGroupRole };
@@ -363,9 +364,6 @@ export const authzApi = {
 
 async function readJson<T>(response: Response, fallback: string): Promise<T> {
   const body = await response.json().catch(() => null);
-  if (!response.ok) {
-    const message = body?.message || body?.error || `${fallback}: ${response.status}`;
-    throw new Error(Array.isArray(message) ? message.join(', ') : message);
-  }
+  if (!response.ok) throw apiErrorFromBody(response, body, fallback);
   return body;
 }

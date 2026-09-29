@@ -36,11 +36,8 @@ export class PublicApiExceptionFilter implements ExceptionFilter {
       this.logger.warn(logContext);
     }
 
-    if (!isPublicApiRequest(req)) {
-      res.status(status).json(payload);
-      return;
-    }
-
+    // 콘솔(/api)과 공개 API(/api/v1)가 같은 오류 형식을 쓴다. 화면도 code·details·request_id·
+    // remediation을 읽어 원인과 다음 행동, 문의 번호를 보여줄 수 있어야 하기 때문이다.
     const messages = Array.isArray(payload.message)
       ? payload.message.map(String)
       : [String(payload.message || STATUS_CODES[status] || 'Request failed')];

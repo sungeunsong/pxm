@@ -729,7 +729,10 @@ export class InstancesService {
           statusCode: 403,
           error: 'Forbidden',
           code: 'OPERATOR_ROLE_REQUIRED',
-          message: '실행 강제 종료는 운영 권한이 필요합니다. 본인 요청은 신청 취소를 사용하세요.',
+          message: '실행 강제 종료는 운영 권한이 필요합니다.',
+          remediation: '본인 요청이면 내 요청에서 신청 취소를 사용하고, 아니면 이 그룹의 관리자에게 종료를 요청하세요.',
+          remediation_actor: 'group_manager',
+          remediation_group_id: accessFromInstance(instance).group_id || undefined,
         });
       }
       return;

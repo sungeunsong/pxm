@@ -4,6 +4,7 @@ import type { NextFunction, Request, Response } from 'express';
 import request from 'supertest';
 import { HttpObservabilityModule } from './http-observability.module';
 import { enablePublicApiVersioning, PUBLIC_API_VERSIONS } from '../public-api-version';
+import { errorBody } from './remediation';
 
 @Controller('probe')
 class ObservabilityProbeController {
@@ -35,6 +36,16 @@ class ObservabilityProbeController {
   @Version(PUBLIC_API_VERSIONS)
   missing() {
     throw new NotFoundException('Template not found');
+  }
+
+  @Get('needs-share')
+  needsShare() {
+    throw new ForbiddenException(errorBody(
+      'CREDENTIAL_NOT_AVAILABLE_TO_GROUP',
+      "'hr-db'은(는) 이 워크플로우 그룹에 공유되지 않았습니다.",
+      { actor: 'group_manager', action: '소유 그룹 관리자에게 공유를 요청하세요.', group_id: 'group-owner' },
+      { credential_id: 'cred-1' },
+    ));
   }
 
   @Get('boom')
@@ -173,16 +184,36 @@ describe('HTTP observability', () => {
     }
   });
 
-  it('keeps the legacy error body for internal console APIs', async () => {
+  it('uses the same error body for internal console APIs', async () => {
     const app = await createApp();
     try {
       const response = await request(app.getHttpServer()).get('/api/probe/internal').expect(404);
       expect(response.headers['x-request-id']).toBeTruthy();
-      expect(response.body).toEqual({
+      expect(response.body).toEqual(expect.objectContaining({
         statusCode: 404,
         error: 'Not Found',
+        code: 'NOT_FOUND',
         message: 'Internal route missing',
-      });
+        request_id: response.headers['x-request-id'],
+        path: '/api/probe/internal',
+      }));
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('carries remediation to the console so the screen can say who must act', async () => {
+    const app = await createApp();
+    try {
+      const response = await request(app.getHttpServer()).get('/api/probe/needs-share').expect(403);
+      expect(response.body).toEqual(expect.objectContaining({
+        code: 'CREDENTIAL_NOT_AVAILABLE_TO_GROUP',
+        remediation: '소유 그룹 관리자에게 공유를 요청하세요.',
+        remediation_actor: 'group_manager',
+        remediation_group_id: 'group-owner',
+        credential_id: 'cred-1',
+        request_id: response.headers['x-request-id'],
+      }));
     } finally {
       await app.close();
     }

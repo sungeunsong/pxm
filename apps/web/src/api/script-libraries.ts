@@ -1,3 +1,4 @@
+import { apiErrorFromBody } from '../lib/api-error';
 export type ScriptLibraryStatus = "pending" | "approved" | "disabled";
 
 export interface ScriptLibrary {
@@ -26,13 +27,7 @@ export interface ScriptLibraryRef {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/script-libraries${path}`, init);
   const body = await response.json().catch(() => null);
-  if (!response.ok) {
-    const message =
-      body?.message ||
-      body?.error ||
-      `JS library API failed: ${response.status}`;
-    throw new Error(Array.isArray(message) ? message.join(", ") : message);
-  }
+  if (!response.ok) throw apiErrorFromBody(response, body, 'JS 라이브러리 요청에 실패했습니다.');
   return body;
 }
 

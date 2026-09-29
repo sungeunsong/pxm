@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { errorBody } from '../observability/remediation';
 import { build } from 'esbuild';
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -236,17 +237,27 @@ export class ScriptLibrariesService {
       const bundles = nodeRefs.map((ref) => {
         const document = byKey.get(libraryKey(ref.package_name, ref.version));
         if (!document || document.status !== 'approved') {
-          throw new BadRequestException(
+          throw new BadRequestException(errorBody(
+            'SCRIPT_LIBRARY_NOT_APPROVED',
             `승인된 JS 라이브러리가 아닙니다: ${ref.package_name}@${ref.version}`,
-          );
+            { actor: 'admin', action: '최고관리자에게 플랫폼 설정 → JS 라이브러리에서 이 버전의 준비와 승인을 요청하세요.' },
+            { package_name: ref.package_name, version: ref.version },
+          ));
         }
         if (
           document.allowed_group_ids.length > 0 &&
           (!groupId || !document.allowed_group_ids.includes(groupId))
         ) {
-          throw new BadRequestException(
+          throw new BadRequestException(errorBody(
+            'SCRIPT_LIBRARY_NOT_ALLOWED_FOR_GROUP',
             `${ref.package_name}@${ref.version}은(는) 이 워크플로우 그룹에서 사용할 수 없습니다.`,
-          );
+            {
+              actor: 'admin',
+              action: '최고관리자에게 플랫폼 설정 → JS 라이브러리에서 이 그룹의 사용 승인을 요청하세요.',
+              group_id: groupId || null,
+            },
+            { package_name: ref.package_name, version: ref.version },
+          ));
         }
         return {
           package_name: document.package_name,

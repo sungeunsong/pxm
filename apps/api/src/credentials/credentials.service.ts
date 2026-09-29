@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { errorBody } from '../observability/remediation';
 import { createHash, randomUUID } from 'crypto';
 import { Db } from 'mongodb';
 import { Client } from 'ssh2';
@@ -136,7 +137,7 @@ export class CredentialsService implements OnModuleInit {
   async getForRuntime(id: string, expectedGroupId: string | null | undefined): Promise<CredentialResponseDto> {
     const doc = await this.findDocument(id);
     if (!expectedGroupId || !credentialAvailableToGroup(doc, expectedGroupId)) {
-      throw new ForbiddenException('Credential is not available to the workflow group');
+      throw credentialNotAvailable(doc, expectedGroupId);
     }
     if (!doc.active) {
       throw new BadRequestException('Credential is inactive');
@@ -253,7 +254,7 @@ export class CredentialsService implements OnModuleInit {
       assertCredentialUseAccess(usage.actor_context, doc);
     } else if (usage.expected_group_id) {
       if (!credentialAvailableToGroup(doc, usage.expected_group_id)) {
-        throw new ForbiddenException('Credential is not available to the workflow group');
+        throw credentialNotAvailable(doc, usage.expected_group_id);
       }
     } else {
       throw new ForbiddenException('Credential authorization context is required');
@@ -641,4 +642,17 @@ function assertMetadataContainsNoSecrets(value: unknown, path: string): void {
     }
     assertMetadataContainsNoSecrets(child, `${path}.${key}`);
   }
+}
+
+/** 자격증명이 워크플로우 그룹에 공유되지 않았을 때. 공유 권한은 소유 그룹 관리자에게 있다. */
+function credentialNotAvailable(doc: { id?: string; _id?: string; name?: string; group_id?: string | null }, groupId?: string | null) {
+  const name = doc.name ? `'${doc.name}'` : '이 자격증명';
+  return new ForbiddenException(errorBody(
+    'CREDENTIAL_NOT_AVAILABLE_TO_GROUP',
+    groupId ? `${name}은(는) 이 워크플로우 그룹에 공유되지 않았습니다.` : '소유 그룹이 없는 워크플로우는 자격증명을 사용할 수 없습니다.',
+    groupId
+      ? { actor: 'group_manager', action: `자격증명을 소유한 그룹의 관리자에게 ${name}을(를) 이 그룹에 공유해 달라고 요청하세요.`, group_id: doc.group_id || null }
+      : { actor: 'self', action: '워크플로우 설정에서 소유 그룹을 먼저 지정하세요.' },
+    { credential_id: doc.id || doc._id || null },
+  ));
 }

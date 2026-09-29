@@ -29,6 +29,7 @@ import { Drawer } from '../components/ui/Drawer';
 import { Button } from '../components/Button';
 import { FormRenderer } from '../flow-designer/FormRenderer';
 import type { FormSchema, FormValues } from '../flow-designer/form-types';
+import { readApiError } from '../lib/api-error';
 
 type Template = WorkflowTemplate;
 
@@ -94,7 +95,7 @@ export const RequestPortal: React.FC<{
     setLoading(true);
     try {
       const res = await fetch('/api/templates');
-      if (!res.ok) throw new Error('Failed to fetch templates');
+      if (!res.ok) throw await readApiError(res, '업무 양식 목록을 불러오지 못했습니다.');
       const data = await res.json();
       const validTemplates: WorkflowTemplate[] = Array.isArray(data) ? data : [];
 
@@ -184,7 +185,7 @@ export const RequestPortal: React.FC<{
       onRequestStarted?.(data.instance_id);
     } catch (error) {
       console.error('Failed to launch workflow:', error);
-      toast.error('워크플로우 실행에 실패했습니다.', { description: errorMessage(error) });
+      toast.error('요청을 제출하지 못했습니다.', { description: errorMessage(error) });
     }
   };
 
@@ -198,7 +199,7 @@ export const RequestPortal: React.FC<{
         body: JSON.stringify({ enabled }),
       });
 
-      if (!res.ok) throw new Error('Schedule toggle failed');
+      if (!res.ok) throw await readApiError(res, '스케줄 상태를 바꾸지 못했습니다.');
       const data = await res.json();
       const updated = data.template;
 
@@ -224,7 +225,7 @@ export const RequestPortal: React.FC<{
         body: JSON.stringify({ enabled }),
       });
 
-      if (!res.ok) throw new Error('DB Watch toggle failed');
+      if (!res.ok) throw await readApiError(res, 'DB Watch 상태를 바꾸지 못했습니다.');
       const data = await res.json();
       const updated = data.template;
 
@@ -397,7 +398,7 @@ export const RequestPortal: React.FC<{
         method: 'DELETE',
       });
 
-      if (!res.ok) throw new Error('Template delete failed');
+      if (!res.ok) throw await readApiError(res, '워크플로우를 삭제하지 못했습니다.');
 
       setTemplates((current) => current.filter((template) => template.id !== selectedTemplate.id));
       setSelectedTemplate(null);
@@ -413,7 +414,7 @@ export const RequestPortal: React.FC<{
     setScheduleStatusLoading(true);
     try {
       const res = await fetch(`/api/templates/${templateId}/schedule/status`);
-      if (!res.ok) throw new Error('Schedule status load failed');
+      if (!res.ok) throw await readApiError(res, '스케줄 상태를 불러오지 못했습니다.');
       setScheduleStatus(await res.json());
     } catch (error) {
       console.error('Failed to load schedule status:', error);

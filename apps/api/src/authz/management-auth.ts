@@ -1,12 +1,17 @@
 import { ForbiddenException } from '@nestjs/common';
 import type { WorkflowHistoryActor } from '../db/ports/db.ports';
 import { developmentBypassEnabled } from './authenticated.guard';
+import { errorBody } from '../observability/remediation';
 
 export function assertAdmin(actor: WorkflowHistoryActor): void {
   if (isDevelopmentBypass(actor) || isAdmin(actor)) {
     return;
   }
-  throw new ForbiddenException('admin role is required');
+  throw new ForbiddenException(errorBody(
+    'ADMIN_REQUIRED',
+    'admin role is required',
+    { actor: 'admin', action: '최고관리자만 할 수 있는 작업입니다. 최고관리자에게 처리를 요청하세요.' },
+  ));
 }
 
 export function assertCanManageGroup(
@@ -25,7 +30,11 @@ export function assertCanManageGroup(
   if (groupRole(actor, groupId) === 'group_manager') {
     return;
   }
-  throw new ForbiddenException('group_manager can manage own group only');
+  throw new ForbiddenException(errorBody(
+    'GROUP_MANAGER_REQUIRED',
+    'group_manager can manage own group only',
+    { actor: 'group_manager', action: '이 그룹의 관리자에게 처리를 요청하세요.', group_id: groupId },
+  ));
 }
 
 export function assertCanIssueUser(
