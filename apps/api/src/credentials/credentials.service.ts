@@ -134,6 +134,23 @@ export class CredentialsService implements OnModuleInit {
     return mapCredential(doc, actor);
   }
 
+  /**
+   * 자격증명을 이 그룹의 워크플로우가 쓸 수 있는지 판정만 한다(예외 없이).
+   * getForRuntime과 같은 조건을 쓰므로 호환성 진단과 저장·실행 결과가 어긋나지 않는다.
+   */
+  async availabilityForGroup(
+    id: string,
+    groupId: string | null,
+  ): Promise<{ status: 'ok' | 'not_shared' | 'inactive' | 'not_found'; name: string | null; owner_group_id: string | null }> {
+    const doc = await this.credentials.findOne({ _id: id });
+    if (!doc) return { status: 'not_found', name: null, owner_group_id: null };
+    const name = doc.name || null;
+    const ownerGroupId = doc.group_id || null;
+    if (!groupId || !credentialAvailableToGroup(doc, groupId)) return { status: 'not_shared', name, owner_group_id: ownerGroupId };
+    if (!doc.active) return { status: 'inactive', name, owner_group_id: ownerGroupId };
+    return { status: 'ok', name, owner_group_id: ownerGroupId };
+  }
+
   async getForRuntime(id: string, expectedGroupId: string | null | undefined): Promise<CredentialResponseDto> {
     const doc = await this.findDocument(id);
     if (!expectedGroupId || !credentialAvailableToGroup(doc, expectedGroupId)) {

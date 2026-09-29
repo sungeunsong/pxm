@@ -280,6 +280,51 @@ test.describe.serial('PXM 동적 결재 베타 회귀', () => {
     await managerUi.context.close();
   });
 
+  test('다른 그룹에만 승인된 자원은 저장 전에 한 번에 진단하고 해결 주체를 알려준다', async ({ browser }) => {
+    // 사용자가 처음 겪은 상황: 다른 그룹의 워크플로우에서 JS 노드를 가져와 저장하려는데 라이브러리가 이 그룹에 승인되지 않았다.
+    const libraryVersion = `0.0.${Date.now()}`;
+    await db.collection<any>('v2_script_libraries').insertOne({
+      _id: `e2e-lib-${libraryVersion}`,
+      package_name: 'e2e-lib',
+      version: libraryVersion,
+      description: 'E2E 호환성 진단용',
+      license: 'MIT',
+      integrity: 'sha512-e2e',
+      bundle_sha256: 'e2e',
+      bundle_bytes: 1,
+      dependency_count: 0,
+      status: 'approved',
+      allowed_group_ids: ['e2e-other-group'],
+      created_by: 'admin',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+
+    const nodes = [
+      ...dynamicApprovalTemplate().nodes,
+      { id: 'js-1', type: 'custom', position: { x: 0, y: 0 }, data: { nodeType: 'script', label: '계산', code: 'return {}', scriptLibraries: [{ package_name: 'e2e-lib', version: libraryVersion }] } },
+      { id: 'fixed-approval', type: 'custom', position: { x: 0, y: 0 }, data: { nodeType: 'approval', label: '고정 결재', approvalChannels: ['pxm_user'], assignee: 'no-such-user' } },
+    ];
+    const report = await manager.post<any>('/templates/compatibility', { nodes, target_group_id: fixture.groupId });
+    expect(report.summary).toMatchObject({ ready: false, action_required: 1, blocked: 1 });
+    expect(report.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'script_library', status: 'action_required', node_ids: ['js-1'], remediation: expect.objectContaining({ actor: 'admin' }) }),
+      expect.objectContaining({ kind: 'approver', status: 'blocked', node_ids: ['fixed-approval'] }),
+    ]));
+
+    // 진단과 저장이 같은 기준을 쓴다: 진단이 막힌다고 한 것은 실제 저장도 막힌다.
+    const save = await manager.rawPost('/templates', { ...dynamicApprovalTemplate(), name: uniqueTitle('호환성 저장'), nodes });
+    expect(save.status()).toBe(400);
+    expect((await save.json()).code).toBe('SCRIPT_LIBRARY_NOT_ALLOWED_FOR_GROUP');
+
+    // 워크플로우 관리 화면에서 현재 그룹 기준 점검을 돌릴 수 있다.
+    const managerUi = await loginPage(browser, fixture.users.manager.id, userPassword, 'workflows');
+    await managerUi.page.getByRole('row').filter({ hasText: fixture.workflowName }).first().click();
+    await managerUi.page.getByTestId('workflow-compat-run').click();
+    await expect(managerUi.page.getByTestId('compatibility-report')).toContainText('저장·실행할 수 있습니다', { timeout: 15_000 });
+    await managerUi.context.close();
+  });
+
   test('ALL은 전원 승인까지 기다리고 ANY는 첫 승인 뒤 나머지를 취소한다', async () => {
     const title = uniqueTitle('ALL ANY 집계');
     const execution = await startApproval(admin, title, [

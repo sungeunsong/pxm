@@ -2,6 +2,7 @@ import { BadRequestException, Body, ConflictException, Controller, Delete, Forbi
 import { errorBody } from '../observability/remediation';
 import type { Request, Response } from 'express';
 import { TemplatesService } from './templates.service';
+import { WorkflowCompatibilityService } from './workflow-compatibility.service';
 import { CreateTemplateDto, DeployTemplateDto, UpdateTemplateDto } from './dto/template.dto';
 import { WorkflowInputPresetRepositoryPort, type WorkflowInputPreset, WorkflowInstanceRepositoryPort, WorkflowScheduleRepositoryPort } from '../db/ports/db.ports';
 import { InstancesService } from '../instances/instances.service';
@@ -36,7 +37,22 @@ export class TemplatesController {
     private readonly inputPresetRepo: WorkflowInputPresetRepositoryPort,
     private readonly audit: ManagementAuditService,
     private readonly authzService: AuthzService,
+    private readonly compatibility: WorkflowCompatibilityService,
   ) {}
+
+  /**
+   * 저장하지 않은 캔버스나 가져올 파일의 노드를 대상 그룹 기준으로 진단한다.
+   * 저장·가져오기 전에 필요한 승인·공유·교체를 한 번에 보여주기 위해 쓴다.
+   */
+  @Post('compatibility')
+  async compatibilityForNodes(@Body() body: { nodes?: unknown; target_group_id?: string | null }, @Req() req: Request) {
+    const actor = actorFromRequest(req);
+    if (!Array.isArray(body?.nodes)) throw new BadRequestException('nodes must be an array');
+    const targetGroupId = typeof body.target_group_id === 'string' && body.target_group_id.trim() ? body.target_group_id.trim() : null;
+    if (targetGroupId) assertCanManageGroup(actor, targetGroupId);
+    else assertCanManageGroup(actor, null);
+    return this.compatibility.evaluate('unsaved', body.nodes as any[], targetGroupId);
+  }
 
   @Post()
   async create(@Body() dto: CreateTemplateDto, @Req() req: Request) {
@@ -102,6 +118,18 @@ export class TemplatesController {
         },
       ];
     });
+  }
+
+  /**
+   * 저장된 워크플로우를 대상 그룹 기준으로 진단한다. target_group_id를 생략하면 현재 소유 그룹 기준이다.
+   * 다른 그룹을 대상으로 하려면 그 그룹의 관리 권한도 있어야 한다.
+   */
+  @Get(':id/compatibility')
+  async compatibilityForWorkflow(@Param('id') id: string, @Query('target_group_id') targetGroupId: string | undefined, @Req() req: Request) {
+    const template = await this.assertManageableTemplate(id, req);
+    const requested = targetGroupId?.trim() || null;
+    if (requested && requested !== template.group_id) assertCanManageGroup(actorFromRequest(req), requested);
+    return this.compatibility.evaluate(template.id, template.nodes || [], requested || template.group_id || null);
   }
 
   @Post('import')

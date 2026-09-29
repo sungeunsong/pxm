@@ -18,13 +18,14 @@ import {
   Trash2,
 } from 'lucide-react';
 import { authzApi, type PxmGroup } from '../api/authz';
+import { CompatibilityReportView } from '../workflow/CompatibilityReportView';
 import type { SessionUser } from '../api/session';
 import './RequestPortal.css';
 import { WorkflowAttribution } from '../flow-designer/WorkflowAttribution';
 import { useFeedback } from '../components/feedback/feedback-context';
 import { errorMessage } from '../lib/error-message';
 import { templatesApi } from '../api/templates';
-import type { WorkflowTemplate, WorkflowTemplateVersion, WorkflowVersionDiff } from '../api/templates';
+import type { CompatibilityReport, WorkflowTemplate, WorkflowTemplateVersion, WorkflowVersionDiff } from '../api/templates';
 import { Drawer } from '../components/ui/Drawer';
 import { Button } from '../components/Button';
 import { FormRenderer } from '../flow-designer/FormRenderer';
@@ -84,6 +85,9 @@ export const RequestPortal: React.FC<{
   const [filterMode, setFilterMode] = useState<FilterMode>('all');
   const [groupFilter, setGroupFilter] = useState('all');
   const [groups, setGroups] = useState<PxmGroup[]>([]);
+  const [compatTargetGroupId, setCompatTargetGroupId] = useState('');
+  const [compatReport, setCompatReport] = useState<CompatibilityReport | null>(null);
+  const [compatLoading, setCompatLoading] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [successInstanceId, setSuccessInstanceId] = useState<string | null>(null);
   const [scheduleStatus, setScheduleStatus] = useState<ScheduleStatus | null>(null);
@@ -178,6 +182,8 @@ export const RequestPortal: React.FC<{
 
   const handleOpenTemplate = (template: Template) => {
     setSelectedTemplate(template);
+    setCompatReport(null);
+    setCompatTargetGroupId('');
     setSuccessInstanceId(null);
     setScheduleStatus(null);
     if (buildTemplateSummary(template).triggerType === 'schedule') {
@@ -298,9 +304,34 @@ export const RequestPortal: React.FC<{
     setMetadataEditorOpen(true);
   };
 
+  const runCompatibility = async (targetGroupId: string | null) => {
+    if (!selectedTemplate) return null;
+    setCompatLoading(true);
+    try {
+      const report = await templatesApi.compatibility(selectedTemplate.id, targetGroupId);
+      setCompatReport(report);
+      return report;
+    } catch (error) {
+      toast.error('그룹 호환성을 점검하지 못했습니다.', { description: errorMessage(error) });
+      return null;
+    } finally {
+      setCompatLoading(false);
+    }
+  };
+
   const handleSaveMetadata = async () => {
     if (!selectedTemplate || !metadataForm.name.trim() || !metadataForm.versionNote.trim()) return;
     const group = groups.find((item) => item.id === metadataForm.groupId);
+    // 그룹을 옮기면 저장 실패로 하나씩 알게 하지 않고, 대상 그룹에서 필요한 조치를 먼저 모두 보여준다.
+    if (currentUser.role === 'admin' && group && group.id !== selectedTemplate.group_id) {
+      const report = await runCompatibility(group.id);
+      if (report && !report.summary.ready) {
+        setCompatTargetGroupId(group.id);
+        setMetadataEditorOpen(false);
+        toast.error(`${group.name}(으)로 옮기기 전에 해결할 항목이 있습니다.`, { description: '관리 그룹의 호환성 점검 결과를 확인하세요.' });
+        return;
+      }
+    }
     setMetadataSaving(true);
     try {
       const updated = await templatesApi.update(selectedTemplate.id, {
@@ -628,6 +659,27 @@ export const RequestPortal: React.FC<{
                 <h4>관리 그룹</h4>
                 <div className="workflow-group-readonly">{selectedTemplate.group || '미지정'}<small>{selectedTemplate.group_id || 'Legacy workflow'}</small></div>
                 {currentUser.role === 'admin' && <p className="form-info-text">그룹 변경은 위의 메타데이터 수정에서 새 버전으로 저장합니다.</p>}
+                <div className="workflow-compat-controls">
+                  <select
+                    aria-label="점검할 그룹"
+                    value={compatTargetGroupId}
+                    onChange={(event) => { setCompatTargetGroupId(event.target.value); setCompatReport(null); }}
+                  >
+                    <option value="">현재 그룹 기준</option>
+                    {groups.filter((group) => group.id !== selectedTemplate.group_id).map((group) => (
+                      <option key={group.id} value={group.id}>{group.name}(으)로 옮길 때</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    data-testid="workflow-compat-run"
+                    disabled={compatLoading}
+                    onClick={() => void runCompatibility(compatTargetGroupId || null)}
+                  >
+                    {compatLoading ? '점검 중' : '그룹 호환성 점검'}
+                  </button>
+                </div>
+                {compatReport && compatReport.workflow_id === selectedTemplate.id && <CompatibilityReportView report={compatReport} />}
               </div>}
 
               {!isRequester && selectedSummary.triggerType === 'schedule' && (

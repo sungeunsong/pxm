@@ -9,11 +9,14 @@ import { CredentialsModule } from '../credentials/credentials.module';
 import { ManagementAuditModule } from '../audit/management-audit.module';
 import { AuthzModule } from '../authz/authz.module';
 import { ScriptLibrariesModule } from '../script-libraries/script-libraries.module';
+import { PluginsModule } from '../plugins/plugins.module';
+import { CommandsModule } from '../commands/commands.module';
+import { WorkflowCompatibilityService } from './workflow-compatibility.service';
 
 @Module({
-  imports: [DbModule, InstancesModule, SchedulesModule, DbWatchModule, CredentialsModule, ManagementAuditModule, AuthzModule, ScriptLibrariesModule],
+  imports: [DbModule, InstancesModule, SchedulesModule, DbWatchModule, CredentialsModule, ManagementAuditModule, AuthzModule, ScriptLibrariesModule, PluginsModule, CommandsModule],
   controllers: [TemplatesController],
-  providers: [TemplatesService],
+  providers: [TemplatesService, WorkflowCompatibilityService],
   exports: [TemplatesService],
 })
 export class TemplatesModule {}

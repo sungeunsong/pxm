@@ -680,7 +680,7 @@ function extractScriptLibraryDependencies(nodes: any[]) {
   return [...dependencies.values()];
 }
 
-function extractWorkflowCallTargets(nodes: any[]): string[] {
+export function extractWorkflowCallTargets(nodes: any[]): string[] {
   return (nodes || [])
     .filter((node) => (node?.data?.nodeType || node?.node_type || node?.type) === 'workflow_call')
     .map((node) => node?.data?.targetWorkflowId || node?.data?.targetDefinitionId || node?.targetWorkflowId)
@@ -811,7 +811,7 @@ function normalizeImportSourceMetadata(value: any) {
   return Object.values(metadata).some((item) => item !== undefined) ? metadata : undefined;
 }
 
-function collectCredentialIds(value: unknown, result = new Set<string>()): Set<string> {
+export function collectCredentialIds(value: unknown, result = new Set<string>()): Set<string> {
   if (Array.isArray(value)) {
     value.forEach((item) => collectCredentialIds(item, result));
     return result;

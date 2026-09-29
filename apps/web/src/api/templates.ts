@@ -179,6 +179,26 @@ const API_BASE_URL = '/api';
 // 서버 오류 본문(원인·세부 항목·해결 방법·문의 번호)을 버리지 않는다. lib/api-error.ts 참고.
 const responseError = readApiError;
 
+export type CompatibilityStatus = 'ok' | 'action_required' | 'blocked' | 'warning';
+
+export type CompatibilityItem = {
+  kind: 'script_library' | 'credential' | 'approver' | 'plugin' | 'command' | 'workflow_call' | 'group';
+  ref: string;
+  label: string;
+  node_ids: string[];
+  status: CompatibilityStatus;
+  message: string;
+  remediation?: { actor: 'self' | 'group_manager' | 'admin'; action: string; group_id?: string | null };
+};
+
+export type CompatibilityReport = {
+  workflow_id: string;
+  target_group_id: string | null;
+  target_group_name: string | null;
+  items: CompatibilityItem[];
+  summary: Record<CompatibilityStatus, number> & { ready: boolean };
+};
+
 export const templatesApi = {
   // 템플릿 생성
   async create(data: CreateTemplateRequest): Promise<WorkflowTemplate> {
@@ -360,6 +380,25 @@ export const templatesApi = {
       throw await responseError(response, '버전을 되돌리지 못했습니다.');
     }
 
+    return response.json();
+  },
+
+  /** 저장된 워크플로우를 대상 그룹 기준으로 진단한다. 그룹을 생략하면 현재 소유 그룹 기준이다. */
+  async compatibility(id: string, targetGroupId?: string | null): Promise<CompatibilityReport> {
+    const query = targetGroupId ? `?target_group_id=${encodeURIComponent(targetGroupId)}` : '';
+    const response = await fetch(`${API_BASE_URL}/templates/${id}/compatibility${query}`);
+    if (!response.ok) throw await responseError(response, '그룹 호환성을 점검하지 못했습니다.');
+    return response.json();
+  },
+
+  /** 저장하지 않은 캔버스나 가져올 파일의 노드를 진단한다. */
+  async compatibilityForNodes(nodes: unknown[], targetGroupId: string | null): Promise<CompatibilityReport> {
+    const response = await fetch(`${API_BASE_URL}/templates/compatibility`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nodes, target_group_id: targetGroupId }),
+    });
+    if (!response.ok) throw await responseError(response, '그룹 호환성을 점검하지 못했습니다.');
     return response.json();
   },
 

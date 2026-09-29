@@ -16,7 +16,9 @@ import { TemplateListModal } from './TemplateListModal';
 import { ExecutionModal } from './ExecutionModal';
 import { ExecutionPanel } from './ExecutionPanel';
 import { HistoryListModal } from './HistoryListModal';
-import { templatesApi } from '../api/templates';
+import { templatesApi, type CompatibilityReport } from '../api/templates';
+import { Drawer } from '../components/ui/Drawer';
+import { CompatibilityReportView } from '../workflow/CompatibilityReportView';
 import type { WorkflowTemplate } from '../api/templates';
 import { authzApi, type PxmGroup } from '../api/authz';
 import type { SessionUser } from '../api/session';
@@ -136,6 +138,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
   // 팔레트는 기본 rail(아이콘)로 접어 캔버스를 넓게 쓴다. 선택은 기억한다.
   const [isPaletteOpen, setIsPaletteOpen] = useState(() => localStorage.getItem('pxm.designer.palette') === 'open');
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+  const [compatibilityReport, setCompatibilityReport] = useState<CompatibilityReport | null>(null);
   const [isPresenting, setIsPresenting] = useState(false);
   // 탭 줄이 액션 버튼과 한 줄을 나눠 쓰므로, 활성 탭이 스크롤 밖으로 밀릴 수 있다.
   const activeTabRef = useRef<HTMLDivElement | null>(null);
@@ -736,6 +739,17 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
       });
       setSelectedNode(null);
       setIsPropertiesPanelOpen(true);
+      return null;
+    }
+
+    // 다른 그룹의 노드를 붙여 넣었거나 그룹을 바꿨을 때, 저장 실패로 하나씩 알게 하지 않고
+    // 필요한 승인·공유·교체를 한 번에 보여준다. 진단이 실패하면 저장 검사에 맡긴다.
+    const report = await templatesApi.compatibilityForNodes(nodes, workflowGroupId).catch(() => null);
+    if (report && !report.summary.ready) {
+      setCompatibilityReport(report);
+      toast.error('이 그룹에서 쓸 수 없는 자원이 있어 저장하지 않았습니다.', {
+        description: '점검 결과에서 필요한 승인·공유·교체를 확인하세요.',
+      });
       return null;
     }
 
@@ -1621,6 +1635,16 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
         onSelect={handleTemplateSelect}
         allowedGroupIds={currentUser.role === 'admin' ? undefined : availableGroups.map((group) => group.id)}
       />
+
+      {compatibilityReport && (
+        <Drawer
+          title="그룹 호환성 점검"
+          onClose={() => setCompatibilityReport(null)}
+          footer={<Button variant="secondary" onClick={() => setCompatibilityReport(null)}>닫기</Button>}
+        >
+          <CompatibilityReportView report={compatibilityReport} />
+        </Drawer>
+      )}
 
       <HistoryListModal
         isOpen={isHistoryModalOpen}

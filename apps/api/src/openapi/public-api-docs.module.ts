@@ -8,6 +8,7 @@ import { TasksService } from '../tasks/tasks.service';
 import { OutboxService } from '../outbox/outbox.service';
 import { ManagementAuditService } from '../audit/management-audit.service';
 import { AuthzService } from '../authz/authz.service';
+import { WorkflowCompatibilityService } from '../templates/workflow-compatibility.service';
 import {
   WorkflowInputPresetRepositoryPort,
   WorkflowInstanceRepositoryPort,
@@ -25,6 +26,7 @@ const docsOnlyProvider = (provide: InjectionToken): ValueProvider => ({ provide,
     OutboxService,
     ManagementAuditService,
     AuthzService,
+    WorkflowCompatibilityService,
     WorkflowInstanceRepositoryPort,
     WorkflowScheduleRepositoryPort,
     WorkflowInputPresetRepositoryPort,

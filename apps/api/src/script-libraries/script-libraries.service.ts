@@ -201,6 +201,36 @@ export class ScriptLibrariesService {
     return toView(result);
   }
 
+  /**
+   * 워크플로우가 쓰는 라이브러리 각각을 대상 그룹 기준으로 판정한다.
+   * 저장 시 hydrateNodes와 같은 판정(libraryUsabilityForGroup)을 쓰므로 진단과 저장 결과가 어긋나지 않는다.
+   */
+  async evaluateForGroup(
+    nodes: WorkflowNodeLike[],
+    groupId: string | null,
+  ): Promise<Array<{ package_name: string; version: string; node_ids: string[]; status: LibraryUsability }>> {
+    const usages = new Map<string, { package_name: string; version: string; node_ids: string[] }>();
+    for (const node of nodes || []) {
+      for (const ref of normalizeRefs(nodeData(node).scriptLibraries)) {
+        const key = libraryKey(ref.package_name, ref.version);
+        const usage = usages.get(key) || { package_name: ref.package_name, version: ref.version, node_ids: [] };
+        const nodeId = String((node as { id?: unknown })?.id || '');
+        if (nodeId && !usage.node_ids.includes(nodeId)) usage.node_ids.push(nodeId);
+        usages.set(key, usage);
+      }
+    }
+    if (usages.size === 0) return [];
+    const documents = await this.db
+      .collection<ScriptLibraryDocument>(COLLECTION)
+      .find({ $or: [...usages.values()].map((usage) => ({ package_name: usage.package_name, version: usage.version })) })
+      .toArray();
+    const byKey = new Map(documents.map((document) => [libraryKey(document.package_name, document.version), document]));
+    return [...usages.entries()].map(([key, usage]) => ({
+      ...usage,
+      status: libraryUsabilityForGroup(byKey.get(key), groupId),
+    }));
+  }
+
   async hydrateNodes(
     nodes: WorkflowNodeLike[],
     groupId?: string | null,
@@ -236,7 +266,8 @@ export class ScriptLibrariesService {
       }
       const bundles = nodeRefs.map((ref) => {
         const document = byKey.get(libraryKey(ref.package_name, ref.version));
-        if (!document || document.status !== 'approved') {
+        const usability = libraryUsabilityForGroup(document, groupId);
+        if (usability === 'not_approved' || !document) {
           throw new BadRequestException(errorBody(
             'SCRIPT_LIBRARY_NOT_APPROVED',
             `승인된 JS 라이브러리가 아닙니다: ${ref.package_name}@${ref.version}`,
@@ -244,10 +275,7 @@ export class ScriptLibrariesService {
             { package_name: ref.package_name, version: ref.version },
           ));
         }
-        if (
-          document.allowed_group_ids.length > 0 &&
-          (!groupId || !document.allowed_group_ids.includes(groupId))
-        ) {
+        if (usability === 'not_allowed_for_group') {
           throw new BadRequestException(errorBody(
             'SCRIPT_LIBRARY_NOT_ALLOWED_FOR_GROUP',
             `${ref.package_name}@${ref.version}은(는) 이 워크플로우 그룹에서 사용할 수 없습니다.`,
@@ -545,4 +573,18 @@ function toView(document: ScriptLibraryDocument): ScriptLibraryView {
     created_at: document.created_at,
     updated_at: document.updated_at,
   };
+}
+
+export type LibraryUsability = 'ok' | 'not_approved' | 'not_allowed_for_group';
+
+/** 라이브러리 버전을 이 그룹의 워크플로우가 쓸 수 있는지. 저장 검사와 호환성 진단이 함께 쓴다. */
+export function libraryUsabilityForGroup(
+  document: Pick<ScriptLibraryDocument, 'status' | 'allowed_group_ids'> | null | undefined,
+  groupId: string | null | undefined,
+): LibraryUsability {
+  if (!document || document.status !== 'approved') return 'not_approved';
+  if (document.allowed_group_ids.length > 0 && (!groupId || !document.allowed_group_ids.includes(groupId))) {
+    return 'not_allowed_for_group';
+  }
+  return 'ok';
 }

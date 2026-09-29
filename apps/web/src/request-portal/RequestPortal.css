@@ -873,3 +873,7 @@
     min-height: 340px;
   }
 }
+.workflow-compat-controls { display: flex; gap: 8px; margin: 10px 0; }
+.workflow-compat-controls select { flex: 1; min-width: 0; padding: 7px 9px; border: 1px solid var(--border-subtle); border-radius: 8px; background: #fff; }
+.workflow-compat-controls button { padding: 7px 12px; border: 1px solid var(--border-subtle); border-radius: 8px; background: #fff; font-weight: 650; cursor: pointer; }
+.workflow-compat-controls button:disabled { opacity: .6; cursor: default; }

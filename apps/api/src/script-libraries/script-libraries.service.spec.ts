@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import type { Db } from 'mongodb';
-import { ScriptLibrariesService } from './script-libraries.service';
+import { ScriptLibrariesService, libraryUsabilityForGroup } from './script-libraries.service';
 
 describe('ScriptLibrariesService workflow binding', () => {
   const approved = {
@@ -73,5 +73,16 @@ describe('ScriptLibrariesService workflow binding', () => {
         { ...approved, status: 'disabled', allowed_group_ids: [] },
       ]).hydrateNodes(nodes, null),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('libraryUsabilityForGroup', () => {
+  it('저장 검사와 호환성 진단이 같은 기준으로 판정한다', () => {
+    expect(libraryUsabilityForGroup(null, 'g1')).toBe('not_approved');
+    expect(libraryUsabilityForGroup({ status: 'pending', allowed_group_ids: [] }, 'g1')).toBe('not_approved');
+    expect(libraryUsabilityForGroup({ status: 'approved', allowed_group_ids: [] }, 'g1')).toBe('ok');
+    expect(libraryUsabilityForGroup({ status: 'approved', allowed_group_ids: ['g1'] }, 'g1')).toBe('ok');
+    expect(libraryUsabilityForGroup({ status: 'approved', allowed_group_ids: ['g1'] }, 'g2')).toBe('not_allowed_for_group');
+    expect(libraryUsabilityForGroup({ status: 'approved', allowed_group_ids: ['g1'] }, null)).toBe('not_allowed_for_group');
   });
 });
