@@ -507,6 +507,10 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
             fields.status = update.status;
           }
           if (update.context !== undefined) fields.context = update.context;
+          if (update.outcome !== undefined) {
+            fields.outcome = update.outcome;
+            fields.outcome_reason = update.outcome_reason ?? null;
+          }
           if (update.paused !== undefined) {
             fields.is_paused = update.paused;
             fields.paused_at = update.paused ? now : null;
@@ -637,6 +641,10 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
         fields.status = update.status;
       }
       if (update.context !== undefined) fields.context = update.context;
+      if (update.outcome !== undefined) {
+        fields.outcome = update.outcome;
+        fields.outcome_reason = update.outcome_reason ?? null;
+      }
       if (update.paused !== undefined) {
         fields.is_paused = update.paused;
         fields.paused_at = update.paused ? now : null;
@@ -830,6 +838,8 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
         definition_id: inst.process_definition_id,
         state: inst.state,
         status: inst.state || inst.status,
+        outcome: inst.outcome || null,
+        outcome_reason: inst.outcome_reason || null,
         is_paused: inst.is_paused === true,
         paused_at: inst.paused_at || null,
         paused_by: inst.paused_by || null,
@@ -915,6 +925,8 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
       definition_id: inst.process_definition_id,
       state: inst.state,
       status: inst.state || inst.status,
+      outcome: inst.outcome || null,
+      outcome_reason: inst.outcome_reason || null,
       is_paused: inst.is_paused === true,
       paused_at: inst.paused_at || null,
       paused_by: inst.paused_by || null,
@@ -945,6 +957,8 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
       definition_id: inst.process_definition_id,
       state: inst.state,
       status: inst.state || inst.status,
+      outcome: inst.outcome || null,
+      outcome_reason: inst.outcome_reason || null,
       is_paused: inst.is_paused === true,
       paused_at: inst.paused_at || null,
       paused_by: inst.paused_by || null,

@@ -131,6 +131,9 @@ export type IdempotentInstanceCommand = {
     paused?: boolean;
     paused_by?: string | null;
     pause_origin_instance_id?: string | null;
+    /** undefined면 건드리지 않고, null이면 지운다 (재시도로 되살린 실행). */
+    outcome?: InstanceOutcome | null;
+    outcome_reason?: InstanceOutcomeReason | null;
   }>;
   tokens?: Array<{
     id: string;
@@ -188,6 +191,17 @@ export abstract class WorkflowInstanceRepositoryPort {
   abstract createToken(token: { id: string; instanceId: string; nodeId: string; status: string; parentTokenId?: string; scopeKey?: string }): Promise<void>;
   abstract createJob(job: { instanceId: string; tokenId?: string | null; type: string; runAt: Date; payload: any }): Promise<void>;
 }
+
+/** 실행 상태(state)와 분리된 업무 결과. 종료 상태일 때만 값이 있다. */
+export type InstanceOutcome = 'SUCCESS' | 'REJECTED' | 'FAILURE' | 'CANCELLED';
+
+export type InstanceOutcomeReason = {
+  code: string;
+  failure_type?: string | null;
+  retryable?: boolean;
+  message?: string | null;
+  node_id?: string | null;
+};
 
 export type WorkflowInstanceState =
   | 'CREATED'

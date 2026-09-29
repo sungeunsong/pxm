@@ -398,6 +398,8 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
                paused_at = CASE WHEN $3::boolean IS NULL THEN paused_at WHEN $3 THEN NOW() ELSE NULL END,
                paused_by = CASE WHEN $3::boolean IS NULL THEN paused_by WHEN $3 THEN $4 ELSE NULL END,
                pause_origin_instance_id = CASE WHEN $3::boolean IS NULL THEN pause_origin_instance_id WHEN $3 THEN $5::uuid ELSE NULL END,
+               outcome = CASE WHEN $7::boolean THEN $8 ELSE outcome END,
+               outcome_reason = CASE WHEN $7::boolean THEN $9::jsonb ELSE outcome_reason END,
                updated_at = NOW()
            WHERE id = $6::uuid`,
           [
@@ -407,6 +409,9 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
             update.paused_by || null,
             update.pause_origin_instance_id || null,
             update.id,
+            update.outcome !== undefined,
+            update.outcome ?? null,
+            update.outcome_reason ? JSON.stringify(update.outcome_reason) : null,
           ],
         );
         if (update.complete_jobs) {
@@ -497,6 +502,8 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
              paused_at = CASE WHEN $3::boolean IS NULL THEN paused_at WHEN $3 THEN NOW() ELSE NULL END,
              paused_by = CASE WHEN $3::boolean IS NULL THEN paused_by WHEN $3 THEN $4 ELSE NULL END,
              pause_origin_instance_id = CASE WHEN $3::boolean IS NULL THEN pause_origin_instance_id WHEN $3 THEN $5::uuid ELSE NULL END,
+             outcome = CASE WHEN $7::boolean THEN $8 ELSE outcome END,
+             outcome_reason = CASE WHEN $7::boolean THEN $9::jsonb ELSE outcome_reason END,
              updated_at = NOW()
          WHERE id = $6::uuid`,
         [
@@ -506,6 +513,9 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
           update.paused_by || null,
           update.pause_origin_instance_id || null,
           update.id,
+          update.outcome !== undefined,
+          update.outcome ?? null,
+          update.outcome_reason ? JSON.stringify(update.outcome_reason) : null,
         ],
       );
       if (update.complete_jobs) {

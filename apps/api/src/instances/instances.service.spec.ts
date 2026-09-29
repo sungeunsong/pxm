@@ -389,3 +389,96 @@ describe('InstancesService external approval start', () => {
     expect(instanceRepo.executeInstanceMutation).not.toHaveBeenCalled();
   });
 });
+
+describe('InstancesService console terminate and requester cancel', () => {
+  const consoleActor = (overrides: Record<string, any> = {}) => ({
+    actor_type: 'user' as const,
+    actor_id: 'requester-1',
+    roles: ['user'],
+    scopes: [],
+    workspace_ids: ['default'],
+    group_ids: ['group-a'],
+    owned_workflow_ids: [],
+    allowed_workflow_ids: [],
+    allowed_instance_ids: [],
+    api_key_id: null,
+    business_actor: null,
+    ...overrides,
+  });
+
+  const instanceIn = (state: string) => ({
+    id: 'instance-1',
+    process_definition_id: 'workflow-1',
+    state,
+    context: {
+      runtime: {
+        access: { group_id: 'group-a', requester_id: 'requester-1', approver_ids: ['approver-1'] },
+      },
+    },
+  });
+
+  const buildService = (instance: Record<string, any>) => {
+    const instanceRepo = {
+      getInstance: jest.fn().mockResolvedValue(instance),
+      listChildInstances: jest.fn().mockResolvedValue([]),
+      executeInstanceMutation: jest.fn().mockResolvedValue(undefined),
+      getIdempotentCommand: jest.fn(),
+      executeIdempotentCommand: jest.fn(),
+    };
+    return { service: new InstancesService(instanceRepo as any, {} as any, {} as any, {} as any), instanceRepo };
+  };
+
+  it('does not let an approver who can read the request terminate it', async () => {
+    const { service, instanceRepo } = buildService(instanceIn('WAITING'));
+    const approver = consoleActor({ actor_id: 'approver-1', roles: ['user', 'approver'] });
+    await expect(service.terminateInstance('instance-1', approver)).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'OPERATOR_ROLE_REQUIRED' }),
+    });
+    expect(instanceRepo.executeInstanceMutation).not.toHaveBeenCalled();
+  });
+
+  it('does not let the requester use operator terminate', async () => {
+    const { service } = buildService(instanceIn('WAITING'));
+    await expect(service.terminateInstance('instance-1', consoleActor())).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('lets the group manager terminate and records it as an operator stop', async () => {
+    const { service, instanceRepo } = buildService(instanceIn('WAITING'));
+    const manager = consoleActor({ actor_id: 'manager-1', roles: ['group_manager'], group_roles: { 'group-a': 'group_manager' } });
+    await service.terminateInstance('instance-1', manager);
+    const mutation = instanceRepo.executeInstanceMutation.mock.calls[0][0];
+    expect(mutation.update_instances[0]).toEqual(expect.objectContaining({
+      status: 'TERMINATED',
+      outcome: 'CANCELLED',
+      outcome_reason: expect.objectContaining({ code: 'OPERATOR_TERMINATED', cancelled_by: 'manager-1', retryable: false }),
+    }));
+    expect(mutation.events[0].payload.reason).toBe('operator_terminated');
+  });
+
+  it('lets the requester cancel their own in-flight request', async () => {
+    const { service, instanceRepo } = buildService(instanceIn('WAITING'));
+    await expect(service.cancelOwnRequest('instance-1', consoleActor())).resolves.toEqual(
+      expect.objectContaining({ terminated_instances: ['instance-1'] }),
+    );
+    expect(instanceRepo.executeInstanceMutation.mock.calls[0][0].update_instances[0].outcome_reason)
+      .toEqual(expect.objectContaining({ code: 'REQUESTER_CANCELLED', cancelled_by: 'requester-1' }));
+  });
+
+  it("hides another user's request from cancel", async () => {
+    const { service } = buildService(instanceIn('WAITING'));
+    await expect(service.cancelOwnRequest('instance-1', consoleActor({ actor_id: 'approver-1', roles: ['user', 'approver'] })))
+      .rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('refuses to cancel a request that already finished', async () => {
+    const { service, instanceRepo } = buildService(instanceIn('COMPLETED'));
+    await expect(service.cancelOwnRequest('instance-1', consoleActor())).rejects.toBeInstanceOf(ConflictException);
+    expect(instanceRepo.executeInstanceMutation).not.toHaveBeenCalled();
+  });
+
+  it('does not accept requester cancel through an API key', async () => {
+    const { service } = buildService(instanceIn('WAITING'));
+    await expect(service.cancelOwnRequest('instance-1', consoleActor({ api_key_id: 'key-1' })))
+      .rejects.toBeInstanceOf(ForbiddenException);
+  });
+});

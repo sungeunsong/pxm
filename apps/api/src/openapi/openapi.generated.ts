@@ -423,11 +423,36 @@ export interface components {
             /** Format: date-time */
             updated_at?: string;
         };
+        InstanceOutcomeReasonDto: {
+            /**
+             * @description 프로그램에서 분기할 안정적인 결과 코드
+             * @example APPROVAL_REJECTED
+             */
+            code: string;
+            /**
+             * @description FAILURE의 원인 분류: configuration | upstream_error | timeout | script_error | subworkflow_failed | internal. 업무 결과(반려 등)는 business
+             * @example upstream_error
+             */
+            failure_type?: Record<string, never> | null;
+            /** @description 같은 입력으로 다시 실행하면 성공할 수 있는지. 자동 재시도 판단은 이 값을 기준으로 한다 */
+            retryable?: boolean;
+            message?: Record<string, never> | null;
+            node_id?: Record<string, never> | null;
+        };
         InstanceResultDto: {
             /** Format: uuid */
             instance_id: string;
-            /** @example COMPLETED */
+            /**
+             * @description 실행 상태. 업무 결과는 outcome을 본다
+             * @example COMPLETED
+             */
             status: string;
+            /**
+             * @description 업무 결과. 종료 전에는 null. 결재 반려는 status가 COMPLETED여도 REJECTED다
+             * @enum {string|null}
+             */
+            outcome?: "SUCCESS" | "REJECTED" | "FAILURE" | "CANCELLED" | null;
+            outcome_reason?: components["schemas"]["InstanceOutcomeReasonDto"] | null;
             result?: {
                 [key: string]: unknown;
             } | null;

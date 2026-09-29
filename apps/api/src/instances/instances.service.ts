@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateInstanceDto } from './dto/create-instance.dto';
 import { createHash, randomUUID } from 'crypto';
-import { OutboxRepositoryPort, WorkflowHistoryActor, WorkflowInstanceAccess, WorkflowInstanceRepositoryPort, WorkflowRepositoryPort } from '../db/ports/db.ports';
+import { InstanceOutcomeReason, OutboxRepositoryPort, WorkflowHistoryActor, WorkflowInstanceAccess, WorkflowInstanceRepositoryPort, WorkflowRepositoryPort } from '../db/ports/db.ports';
 import {
   externalApprovalIdempotencyTtlMs,
   externalApprovalKeyHash,
@@ -134,6 +134,8 @@ export class InstancesService {
     return {
       instance_id: id,
       status: instance.state ?? instance.status,
+      outcome: instance.outcome ?? null,
+      outcome_reason: instance.outcome_reason ?? null,
       result,
       result_path: context.result_path ?? null,
       completed_at: instance.completed_at ?? null,
@@ -234,51 +236,66 @@ export class InstancesService {
     };
   }
 
+  /**
+   * 실행 강제 종료. 콘솔에서는 운영 권한(최고관리자·운영자·해당 그룹 관리자)이 필요하고,
+   * API Key는 같은 소유자가 시작한 실행만 종료할 수 있다.
+   */
   async terminateInstance(id: string, actor?: WorkflowHistoryActor, idempotencyKey?: string) {
     await this.ensureTerminableInstance(id, actor);
-    const key = normalizeIdempotencyKey(idempotencyKey);
-    if (key) {
-      const hashes = instanceCommandHashes(actor, id, 'terminate', key, { command: 'terminate' });
-      const existing = await this.instanceRepo.getIdempotentCommand(hashes.key_hash, hashes.request_hash);
-      if (existing.outcome === 'replayed') return { ...existing.result, idempotent_replay: true };
-      if (existing.outcome === 'conflict') throw new ConflictException('Idempotency-Key was already used with a different terminate request');
-      const targets = await this.collectTerminationTargets(id, new Set<string>());
-      const terminated = targets.filter((target) => target.shouldTerminate).map((target) => target.id);
-      const response = { success: true, instance_id: id, terminated_instances: terminated };
-      const command = await this.instanceRepo.executeIdempotentCommand({
-        ...hashes,
-        expires_at: new Date(Date.now() + instanceCommandIdempotencyTtlMs()),
-        result: response,
-        update_instances: targets.map((target) => ({
-          id: target.id,
-          status: target.shouldTerminate ? 'TERMINATED' : undefined,
-          complete_jobs: true,
-          cancel_approvals: target.shouldTerminate,
-        })),
-        events: terminated.map((instanceId) => ({
-          instance_id: instanceId,
-          event_type: 'INSTANCE_TERMINATED',
-          payload: { reason: 'operator_terminated' },
-        })),
-      });
-      if (command.outcome === 'conflict') throw new ConflictException('Idempotency-Key was already used with a different terminate request');
-      return { ...command.result, idempotent_replay: command.outcome === 'replayed' };
-    }
-    const targets = await this.collectTerminationTargets(id, new Set<string>());
-    const terminated = targets.filter((target) => target.shouldTerminate).map((target) => target.id);
-    await this.instanceRepo.executeInstanceMutation({
+    const kind: StopKind = actor?.api_key_id ? 'caller_cancelled' : 'operator_terminated';
+    return this.stopInstance(id, actor, idempotencyKey, 'terminate', kind);
+  }
+
+  /** 신청자가 자기 요청을 취소한다. 진행 중인 본인 요청만 가능하다. */
+  async cancelOwnRequest(id: string, actor?: WorkflowHistoryActor, idempotencyKey?: string) {
+    await this.ensureCancellableByRequester(id, actor);
+    return this.stopInstance(id, actor, idempotencyKey, 'cancel', 'requester_cancelled');
+  }
+
+  private async stopInstance(
+    id: string,
+    actor: WorkflowHistoryActor | undefined,
+    idempotencyKey: string | undefined,
+    command: 'terminate' | 'cancel',
+    kind: StopKind,
+  ) {
+    const reason = stopReason(kind, actor);
+    const buildMutation = (targets: Array<{ id: string; shouldTerminate: boolean }>) => ({
       update_instances: targets.map((target) => ({
         id: target.id,
         status: target.shouldTerminate ? 'TERMINATED' : undefined,
         complete_jobs: true,
         cancel_approvals: target.shouldTerminate,
+        ...(target.shouldTerminate ? { outcome: 'CANCELLED' as const, outcome_reason: reason } : {}),
       })),
-      events: terminated.map((instanceId) => ({
-        instance_id: instanceId,
+      events: targets.filter((target) => target.shouldTerminate).map((target) => ({
+        instance_id: target.id,
         event_type: 'INSTANCE_TERMINATED',
-        payload: { reason: 'operator_terminated' },
+        payload: { reason: kind, outcome: 'CANCELLED', outcome_reason: reason },
       })),
     });
+
+    const key = normalizeIdempotencyKey(idempotencyKey);
+    if (key) {
+      const hashes = instanceCommandHashes(actor, id, command, key, { command });
+      const existing = await this.instanceRepo.getIdempotentCommand(hashes.key_hash, hashes.request_hash);
+      if (existing.outcome === 'replayed') return { ...existing.result, idempotent_replay: true };
+      if (existing.outcome === 'conflict') throw new ConflictException(`Idempotency-Key was already used with a different ${command} request`);
+      const targets = await this.collectTerminationTargets(id, new Set<string>());
+      const terminated = targets.filter((target) => target.shouldTerminate).map((target) => target.id);
+      const response = { success: true, instance_id: id, terminated_instances: terminated };
+      const result = await this.instanceRepo.executeIdempotentCommand({
+        ...hashes,
+        expires_at: new Date(Date.now() + instanceCommandIdempotencyTtlMs()),
+        result: response,
+        ...buildMutation(targets),
+      });
+      if (result.outcome === 'conflict') throw new ConflictException(`Idempotency-Key was already used with a different ${command} request`);
+      return { ...result.result, idempotent_replay: result.outcome === 'replayed' };
+    }
+    const targets = await this.collectTerminationTargets(id, new Set<string>());
+    const terminated = targets.filter((target) => target.shouldTerminate).map((target) => target.id);
+    await this.instanceRepo.executeInstanceMutation(buildMutation(targets));
     return { success: true, instance_id: id, terminated_instances: terminated, idempotent_replay: false };
   }
 
@@ -581,7 +598,7 @@ export class InstancesService {
         ...(hashes || instanceCommandHashes(actor, id, 'retry', idempotencyKey, { command: 'retry', mode: 'failed_node' })),
         expires_at: new Date(Date.now() + instanceCommandIdempotencyTtlMs()),
         result: response,
-        update_instances: [{ id, status: 'RUNNING', context: nextContext }],
+        update_instances: [{ id, status: 'RUNNING', context: nextContext, outcome: null }],
         tokens: [{ id: tokenId, instance_id: id, node_id: failedNodeId, status: 'ACTIVE' }],
         jobs: [{
           instance_id: id,
@@ -601,7 +618,7 @@ export class InstancesService {
     }
 
     await this.instanceRepo.executeInstanceMutation({
-      update_instances: [{ id, status: 'RUNNING', context: nextContext }],
+      update_instances: [{ id, status: 'RUNNING', context: nextContext, outcome: null }],
       tokens: [{ id: tokenId, instance_id: id, node_id: failedNodeId, status: 'ACTIVE' }],
       jobs: [{
         instance_id: id,
@@ -705,7 +722,16 @@ export class InstancesService {
 
   private async ensureTerminableInstance(id: string, actor?: WorkflowHistoryActor): Promise<void> {
     if (!actor?.api_key_id) {
-      await this.ensureReadableInstance(id, actor);
+      const instance = await this.getReadableInstance(id, actor);
+      // 읽을 수 있다는 것만으로는 부족하다. 승인자도 요청을 읽을 수 있지만 종료해서는 안 된다.
+      if (actor && !canOperateInstance(instance, actor)) {
+        throw new ForbiddenException({
+          statusCode: 403,
+          error: 'Forbidden',
+          code: 'OPERATOR_ROLE_REQUIRED',
+          message: '실행 강제 종료는 운영 권한이 필요합니다. 본인 요청은 신청 취소를 사용하세요.',
+        });
+      }
       return;
     }
     if (!(actor.scopes || []).includes('workflow:execute')) {
@@ -720,6 +746,31 @@ export class InstancesService {
     const instance = await this.instanceRepo.getInstance(id);
     if (!instance || !canApiKeyTerminateInstance(instance, actor)) {
       throw new NotFoundException('Instance not found');
+    }
+  }
+
+  private async ensureCancellableByRequester(id: string, actor?: WorkflowHistoryActor): Promise<void> {
+    if (!actor?.actor_id || actor.api_key_id || actor.actor_type !== 'user') {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'Forbidden',
+        code: 'REQUESTER_ONLY',
+        message: '신청 취소는 요청한 본인만 할 수 있습니다.',
+      });
+    }
+    const instance = await this.getReadableInstance(id, actor);
+    if (accessFromInstance(instance).requester_id !== actor.actor_id) {
+      // 남의 요청은 존재 자체를 드러내지 않는다.
+      throw new NotFoundException('Instance not found');
+    }
+    const state = String(instance.state ?? instance.status ?? '').toUpperCase();
+    if (['COMPLETED', 'FAILED', 'TERMINATED'].includes(state)) {
+      throw new ConflictException({
+        statusCode: 409,
+        error: 'Conflict',
+        code: 'REQUEST_ALREADY_FINISHED',
+        message: '이미 처리가 끝난 요청은 취소할 수 없습니다.',
+      });
     }
   }
 
@@ -834,6 +885,34 @@ function canReadInstance(instance: any, actor?: WorkflowHistoryActor): boolean {
   }
 
   return false;
+}
+
+type StopKind = 'operator_terminated' | 'requester_cancelled' | 'caller_cancelled';
+
+const STOP_REASONS: Record<StopKind, { code: string; message: string }> = {
+  operator_terminated: { code: 'OPERATOR_TERMINATED', message: '운영자가 실행을 강제 종료했습니다.' },
+  requester_cancelled: { code: 'REQUESTER_CANCELLED', message: '신청자가 요청을 취소했습니다.' },
+  caller_cancelled: { code: 'CALLER_CANCELLED', message: '호출 시스템이 실행을 취소했습니다.' },
+};
+
+function stopReason(kind: StopKind, actor?: WorkflowHistoryActor): InstanceOutcomeReason & { cancelled_by: string | null } {
+  return {
+    ...STOP_REASONS[kind],
+    failure_type: null,
+    retryable: false,
+    cancelled_by: actor?.actor_id || null,
+  };
+}
+
+/** 콘솔에서 실행을 강제 종료할 수 있는 역할. 요청을 읽을 수 있는 승인자·신청자는 포함하지 않는다. */
+function canOperateInstance(instance: any, actor: WorkflowHistoryActor): boolean {
+  const roles = new Set(actor.roles || []);
+  if (roles.has('admin')) return true;
+  const access = accessFromInstance(instance);
+  if (roles.has('operator') && actor.workspace_ids.includes(access.workspace_id || 'default')) return true;
+  if (!access.group_id) return false;
+  if (actor.group_roles) return actor.group_roles[access.group_id] === 'group_manager';
+  return roles.has('group_manager') && Boolean(actor.group_ids?.includes(access.group_id));
 }
 
 function canApiKeyTerminateInstance(instance: any, actor: WorkflowHistoryActor): boolean {
@@ -1031,7 +1110,7 @@ function normalizeIdempotencyKey(value?: string): string | null {
 function instanceCommandHashes(
   actor: WorkflowHistoryActor | undefined,
   instanceId: string,
-  command: 'retry' | 'terminate' | 'pause' | 'resume',
+  command: 'retry' | 'terminate' | 'cancel' | 'pause' | 'resume',
   key: string,
   request: Record<string, any>,
 ) {

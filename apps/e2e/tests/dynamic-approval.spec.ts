@@ -209,6 +209,7 @@ test.describe.serial('PXM 동적 결재 베타 회귀', () => {
     await approveInBrowser(finalApprover.page, title, '최종 승인 완료');
     await waitForInstance(admin, execution.instance_id, (instance) => instance.state === 'COMPLETED');
     await expect(requester.page.getByText('모든 결재가 완료되었습니다')).toBeVisible({ timeout: 30_000 });
+    expect(await admin.get<any>(`/instances/${execution.instance_id}/result`)).toMatchObject({ status: 'COMPLETED', outcome: 'SUCCESS' });
     await expect(requester.page.locator('[data-testid="request-approval-history"]')).toContainText('최종 승인 완료');
 
     await closeContexts(requester.context, approver.context, finalApprover.context);
@@ -246,6 +247,12 @@ test.describe.serial('PXM 동적 결재 베타 회귀', () => {
     const instance = await waitForInstance(admin, execution.instance_id, (row) => row.state === 'COMPLETED');
     expect(instance.state).not.toBe('FAILED');
     expect(instance.context?.data?.outputs?.approval?.outcome).toBe('rejected');
+    // 실행은 정상 완료(COMPLETED)지만 업무 결과는 반려다. 소비자는 outcome만 보고 구분한다.
+    expect(await admin.get<any>(`/instances/${execution.instance_id}/result`)).toMatchObject({
+      status: 'COMPLETED',
+      outcome: 'REJECTED',
+      outcome_reason: { code: 'APPROVAL_REJECTED', retryable: false },
+    });
     const history = await taskHistory(admin, execution.instance_id);
     expect(history[0]).toMatchObject({ status: 'REJECTED', comment: '예산 근거 부족으로 반려' });
     const trace = await admin.get<any[]>(`/instances/${execution.instance_id}/trace`);
@@ -271,7 +278,46 @@ test.describe.serial('PXM 동적 결재 베타 회귀', () => {
     expect(history).toHaveLength(2);
     const lateCompletion = await approverA.rawPost(`/tasks/${aTask.id}/complete`, { action: 'approve' });
     expect(lateCompletion.status()).toBe(409);
+    expect(await admin.get<any>(`/instances/${execution.instance_id}/result`)).toMatchObject({
+      outcome: 'CANCELLED',
+      outcome_reason: { code: 'OPERATOR_TERMINATED', cancelled_by: fixture.users.admin.id },
+    });
     await tracker.context.close();
+  });
+
+  test('신청자는 진행 중인 본인 요청을 취소하고, 요청을 읽을 수 있는 승인자는 종료할 수 없다', async ({ browser }) => {
+    const title = uniqueTitle('신청 취소');
+    const execution = await startApproval(approverC, title, [step(1, '취소 검증', 'ALL', [pxmApprover('a')])], {
+      requester: fixture.users.c.name,
+    });
+    await waitForOpenTasks(approverA, execution.instance_id);
+
+    // 승인자는 요청을 읽을 수 있더라도(403) 없더라도(404) 강제 종료할 수 없다.
+    const denied = await approverA.rawPost(`/instances/${execution.instance_id}/terminate`, {});
+    expect([403, 404]).toContain(denied.status());
+    expect((await admin.get<any>(`/instances/${execution.instance_id}`)).state).not.toBe('TERMINATED');
+    const notMine = await approverA.rawPost(`/instances/${execution.instance_id}/cancel`, {});
+    expect(notMine.status()).toBe(404);
+
+    const requester = await loginPage(browser, fixture.users.c.id, userPassword, 'my-requests');
+    const requestRow = requester.page.locator(`[data-testid="my-request-row"][data-instance-id="${execution.instance_id}"]`);
+    await expect(requestRow).toContainText(title, { timeout: 30_000 });
+    await requestRow.click();
+    await requester.page.getByTestId('my-request-cancel').click();
+    await confirmDialogAction(requester.page, '요청 취소');
+
+    await waitForInstance(admin, execution.instance_id, (instance) => instance.state === 'TERMINATED');
+    expect(await admin.get<any>(`/instances/${execution.instance_id}/result`)).toMatchObject({
+      outcome: 'CANCELLED',
+      outcome_reason: { code: 'REQUESTER_CANCELLED', cancelled_by: fixture.users.c.id },
+    });
+    await expect(requester.page.locator('.request-progress-card')).toContainText('요청을 취소했습니다', { timeout: 30_000 });
+    await expect(requestRow).toContainText('신청 취소');
+    await expect(requester.page.getByTestId('my-request-cancel')).toHaveCount(0);
+
+    const again = await approverC.rawPost(`/instances/${execution.instance_id}/cancel`, {});
+    expect(again.status()).toBe(409);
+    await requester.context.close();
   });
 
   test('일시중지 중 결재 완료는 저장되지만 명시적 재개 전에는 후속 실행하지 않는다', async ({ browser }) => {

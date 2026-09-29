@@ -2051,13 +2051,58 @@ fn resolve_approval_definition(node: &NodeDef, context: &Value) -> Result<V2Appr
 #[cfg(test)]
 mod tests {
     use super::{
-        execute_command_node, execute_js_node, resolve_approval_assignment,
-        resolve_approval_deadline, resolve_approval_definition, select_approval_edges,
-        select_gateway_edges, V2RetryPolicy,
+        classify_service_failure, completion_outcome, execute_command_node, execute_js_node,
+        resolve_approval_assignment, resolve_approval_deadline, resolve_approval_definition,
+        select_approval_edges, select_gateway_edges, V2RetryPolicy,
     };
     use crate::v2::types::{EdgeRule, GatewayType, NodeDef};
     use serde_json::json;
     use sha2::{Digest, Sha256};
+
+    fn end_node(config: serde_json::Value) -> NodeDef {
+        NodeDef {
+            node_id: "end-1".to_string(),
+            node_type: "end".to_string(),
+            config,
+        }
+    }
+
+    #[test]
+    fn completion_without_rejection_is_success() {
+        let (outcome, reason) = completion_outcome(&end_node(json!({})), &json!({"runtime": {}}), "end-1");
+        assert_eq!(outcome, "SUCCESS");
+        assert!(reason.is_none());
+    }
+
+    #[test]
+    fn completion_after_rejected_approval_branch_is_rejected() {
+        let context = json!({"runtime": {"last_approval_status": "REJECTED"}});
+        let (outcome, reason) = completion_outcome(&end_node(json!({})), &context, "end-1");
+        assert_eq!(outcome, "REJECTED");
+        assert_eq!(reason.unwrap()["code"], "APPROVAL_REJECTED");
+    }
+
+    #[test]
+    fn completion_after_final_approval_is_success() {
+        let context = json!({"runtime": {"last_approval_status": "APPROVED"}});
+        assert_eq!(completion_outcome(&end_node(json!({})), &context, "end-1").0, "SUCCESS");
+    }
+
+    #[test]
+    fn end_node_can_declare_business_failure() {
+        let (outcome, reason) =
+            completion_outcome(&end_node(json!({"outcome": "failure"})), &json!({}), "end-1");
+        assert_eq!(outcome, "FAILURE");
+        let reason = reason.unwrap();
+        assert_eq!(reason["failure_type"], "business");
+        assert_eq!(reason["retryable"], false);
+    }
+
+    #[test]
+    fn service_failures_separate_timeouts_from_upstream_errors() {
+        assert_eq!(classify_service_failure("request timed out after 5000ms"), ("timeout", true));
+        assert_eq!(classify_service_failure("HTTP 503 from upstream"), ("upstream_error", true));
+    }
 
     #[test]
     fn executes_an_approved_versioned_js_library() {
@@ -3143,6 +3188,102 @@ async fn requeue_transient_job(
     Ok(())
 }
 
+// ============================================================
+// 인스턴스 업무 결과 (outcome)
+// ============================================================
+// 실행 상태(state)와 업무 결과를 분리한다. 결재 반려는 실행이 정상 종료된
+// COMPLETED이지만 업무 결과는 REJECTED다. 소비자가 Outbox를 되읽지 않고
+// 인스턴스만 보고 판정할 수 있도록 종료 전이에서 함께 기록한다.
+const OUTCOME_SUCCESS: &str = "SUCCESS";
+const OUTCOME_REJECTED: &str = "REJECTED";
+const OUTCOME_FAILURE: &str = "FAILURE";
+
+fn rejected_reason(node_id: &str) -> Value {
+    json!({
+        "code": "APPROVAL_REJECTED",
+        "failure_type": "business",
+        "retryable": false,
+        "message": "결재가 반려되었습니다.",
+        "node_id": node_id,
+    })
+}
+
+/// End 도달 시 업무 결과. End 노드가 실패를 선언했거나 마지막 결재가 반려였으면 성공이 아니다.
+fn completion_outcome(node: &NodeDef, context: &Value, node_id: &str) -> (&'static str, Option<Value>) {
+    let declared_failure = node
+        .config
+        .get("outcome")
+        .and_then(Value::as_str)
+        .map(|value| value.eq_ignore_ascii_case("failure"))
+        .unwrap_or(false);
+    if declared_failure {
+        return (
+            OUTCOME_FAILURE,
+            Some(json!({
+                "code": "END_DECLARED_FAILURE",
+                "failure_type": "business",
+                "retryable": false,
+                "message": "워크플로우가 업무 실패로 종료되었습니다.",
+                "node_id": node_id,
+            })),
+        );
+    }
+    let last_approval = context
+        .pointer("/runtime/last_approval_status")
+        .and_then(Value::as_str);
+    if last_approval == Some("REJECTED") {
+        return (OUTCOME_REJECTED, Some(rejected_reason(node_id)));
+    }
+    (OUTCOME_SUCCESS, None)
+}
+
+/// 서비스(플러그인) 노드 실패를 원인별로 나눈다. 시간 초과만 따로 구분한다.
+fn classify_service_failure(error: &str) -> (&'static str, bool) {
+    let lower = error.to_ascii_lowercase();
+    if lower.contains("timed out") || lower.contains("timeout") {
+        ("timeout", true)
+    } else {
+        ("upstream_error", true)
+    }
+}
+
+fn failure_message(failure_type: &str) -> &'static str {
+    match failure_type {
+        "configuration" => "노드 설정이 올바르지 않습니다.",
+        "timeout" => "처리 시간이 초과되었습니다.",
+        "upstream_error" => "연동 시스템 호출이 실패했습니다.",
+        "script_error" => "스크립트 또는 명령 실행이 실패했습니다.",
+        "subworkflow_failed" => "하위 워크플로우가 실패했습니다.",
+        _ => "실행 중 오류가 발생했습니다.",
+    }
+}
+
+/// 실패 전이에서 호출한다. 원문 오류는 실행 로그에만 남기고 여기에는 분류와 고정 문구만 둔다.
+async fn record_failure_outcome(
+    ctx: &V2RuntimeContext,
+    instance_id: Uuid,
+    code: &str,
+    failure_type: &str,
+    retryable: bool,
+    node_id: &str,
+    tx: &mut dyn Tx,
+) -> Result<()> {
+    ctx.instance_repo
+        .set_instance_outcome(
+            instance_id,
+            OUTCOME_FAILURE,
+            Some(json!({
+                "code": code,
+                "failure_type": failure_type,
+                "retryable": retryable,
+                "message": failure_message(failure_type),
+                "node_id": node_id,
+            })),
+            tx,
+        )
+        .await
+}
+
 async fn fail_node_for_invalid_configuration(
     ctx: &V2RuntimeContext,
     instance: &mut V2Instance,
@@ -3161,6 +3302,16 @@ async fn fail_node_for_invalid_configuration(
     ctx.instance_repo
         .update_instance(instance.id, &instance.state, instance.context.clone(), tx)
         .await?;
+    record_failure_outcome(
+        ctx,
+        instance.id,
+        "NODE_CONFIGURATION_INVALID",
+        "configuration",
+        false,
+        &token.node_id,
+        tx,
+    )
+    .await?;
 
     ctx.exec_log
         .append_log(
@@ -3465,6 +3616,11 @@ async fn execute_token_flow(
                                 "outcome": outcome
                             }),
                         );
+                        set_context_value_at_path(
+                            &mut instance.context,
+                            "runtime.last_approval_status",
+                            json!(request.status),
+                        );
                         let next_edges: Vec<&EdgeRule> = edges
                             .iter()
                             .filter(|e| e.source_node_id == token.node_id)
@@ -3473,6 +3629,14 @@ async fn execute_token_flow(
 
                         if selected_edges.is_empty() && request.status == "REJECTED" {
                             instance.state = "COMPLETED".to_string();
+                            ctx.instance_repo
+                                .set_instance_outcome(
+                                    instance.id,
+                                    OUTCOME_REJECTED,
+                                    Some(rejected_reason(&token.node_id)),
+                                    tx,
+                                )
+                                .await?;
                             ctx.instance_repo
                                 .update_instance(
                                     instance.id,
@@ -3707,6 +3871,7 @@ async fn execute_token_flow(
                     ctx.token_repo.update_tokens(&[token.clone()], tx).await?;
 
                     instance.state = "FAILED".to_string();
+                    record_failure_outcome(ctx, instance.id, "WORKFLOW_CALL_TIMEOUT", "timeout", true, &token.node_id, tx).await?;
                     ctx.instance_repo
                         .update_instance(instance.id, &instance.state, instance.context.clone(), tx)
                         .await?;
@@ -3825,6 +3990,7 @@ async fn execute_token_flow(
                         ctx.token_repo.update_tokens(&[token.clone()], tx).await?;
 
                         instance.state = "FAILED".to_string();
+                        record_failure_outcome(ctx, instance.id, "SUBWORKFLOW_FAILED", "subworkflow_failed", false, &token.node_id, tx).await?;
                         ctx.instance_repo
                             .update_instance(
                                 instance.id,
@@ -4116,6 +4282,7 @@ async fn execute_token_flow(
                         ctx.token_repo.update_tokens(&[token.clone()], tx).await?;
 
                         instance.state = "FAILED".to_string();
+                        record_failure_outcome(ctx, instance.id, "WORKFLOW_CALL_FAILED", "subworkflow_failed", false, &token.node_id, tx).await?;
                         ctx.instance_repo
                             .update_instance(
                                 instance.id,
@@ -4288,6 +4455,8 @@ async fn execute_token_flow(
                             ctx.token_repo.update_tokens(&[token.clone()], tx).await?;
 
                             instance.state = "FAILED".to_string();
+                            let (failure_type, retryable) = classify_service_failure(&err.to_string());
+                            record_failure_outcome(ctx, instance.id, "PLUGIN_EXECUTION_FAILED", failure_type, retryable, &token.node_id, tx).await?;
                             ctx.instance_repo
                                 .update_instance(
                                     instance.id,
@@ -4417,6 +4586,7 @@ async fn execute_token_flow(
                         ctx.token_repo.update_tokens(&[token.clone()], tx).await?;
 
                         instance.state = "FAILED".to_string();
+                        record_failure_outcome(ctx, instance.id, "SCRIPT_FAILED", "script_error", false, &token.node_id, tx).await?;
                         ctx.instance_repo
                             .update_instance(
                                 instance.id,
@@ -4466,6 +4636,7 @@ async fn execute_token_flow(
                         ctx.token_repo.update_tokens(&[token.clone()], tx).await?;
 
                         instance.state = "FAILED".to_string();
+                        record_failure_outcome(ctx, instance.id, "SCRIPT_FAILED", "script_error", false, &token.node_id, tx).await?;
                         ctx.instance_repo
                             .update_instance(
                                 instance.id,
@@ -4605,6 +4776,7 @@ async fn execute_token_flow(
                         ctx.token_repo.update_tokens(&[token.clone()], tx).await?;
 
                         instance.state = "FAILED".to_string();
+                        record_failure_outcome(ctx, instance.id, "COMMAND_FAILED", "script_error", false, &token.node_id, tx).await?;
                         ctx.instance_repo
                             .update_instance(
                                 instance.id,
@@ -4719,6 +4891,11 @@ async fn execute_token_flow(
                     ctx.instance_repo
                         .update_instance(instance.id, &instance.state, instance.context.clone(), tx)
                         .await?;
+                    let (outcome, outcome_reason) =
+                        completion_outcome(node, &instance.context, &token.node_id);
+                    ctx.instance_repo
+                        .set_instance_outcome(instance.id, outcome, outcome_reason.clone(), tx)
+                        .await?;
 
                     ctx.outbox
                         .append_event(
@@ -4726,7 +4903,11 @@ async fn execute_token_flow(
                             None,
                             None,
                             "INSTANCE_COMPLETED",
-                            json!({"instance_id": instance.id}),
+                            json!({
+                                "instance_id": instance.id,
+                                "outcome": outcome,
+                                "outcome_reason": outcome_reason
+                            }),
                             tx,
                         )
                         .await?;

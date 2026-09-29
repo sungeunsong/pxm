@@ -890,6 +890,29 @@ impl WorkflowInstanceRepositoryPort for PostgresAdapter {
         Ok(())
     }
 
+    async fn set_instance_outcome(
+        &self,
+        instance_id: Uuid,
+        outcome: &str,
+        outcome_reason: Option<Value>,
+        tx: &mut dyn Tx,
+    ) -> Result<()> {
+        let sqlx_tx = get_tx_mut(tx)?;
+        sqlx::query(
+            r#"
+            update v2_process_instances
+            set outcome = $2, outcome_reason = $3
+            where id = $1
+            "#,
+        )
+        .bind(instance_id)
+        .bind(outcome)
+        .bind(outcome_reason)
+        .execute(&mut **sqlx_tx)
+        .await?;
+        Ok(())
+    }
+
     async fn create_instance(
         &self,
         instance_id: Uuid,

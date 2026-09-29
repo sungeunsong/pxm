@@ -699,9 +699,14 @@ v2_process_instances
 - `outcome_reason`은 `FAILURE`와 `REJECTED`에만 채운다
 - Outbox의 `INSTANCE_COMPLETED` / `INSTANCE_FAILED` 페이로드에 `outcome`과 `outcome_reason`을
   **실어 보내기만** 한다. 소비자가 Outbox에서 결과를 재구성할 필요가 없다
-- **기존 인스턴스는 `outcome`이 `null`이다.** 백필하지 않는다. 조회 시
-  `COMPLETED → SUCCESS`, `FAILED → FAILURE`, `TERMINATED → CANCELLED`로 추론하고
-  `outcome_inferred: true`를 함께 반환한다
+- **기존 인스턴스는 `outcome`이 `null`이다.** 백필하지 않고 추론도 하지 않는다.
+  운영 데이터가 없는 개발 단계에서 도입했으므로 추론 경로를 만들지 않았다
+
+> **구현됨 (UX 3단계).** 마이그레이션은 `012_instance_outcome.sql`이다. 설계와 다른 점:
+> `CANCELLED`에도 `outcome_reason`(취소 주체 `code`, `cancelled_by`)을 채운다.
+> 아직 남은 것: `INSTANCE_FAILED` 이벤트 페이로드에 `outcome` 싣기,
+> `subworkflow_failed`의 `retryable`을 자식에게서 물려받기(현재 항상 `false`),
+> 디자이너에서 End 노드 `outcome` 선택.
 
 `outcome_reason.failure_type`과 `retryable`은 **실패한 지점에서** 판정한다. 분류 기준은 8.4의 표를
 따르며, Invoke API는 저장된 값을 그대로 전달할 뿐 다시 추론하지 않는다.
@@ -710,7 +715,7 @@ v2_process_instances
 
 | 대상 | 내용 |
 |---|---|
-| `infra/db/migrations/013_instance_outcome.sql` | `v2_process_instances`에 `outcome`, `outcome_reason` 추가 (006의 `is_paused` 추가와 같은 형태) |
+| `infra/db/migrations/012_instance_outcome.sql` | `v2_process_instances`에 `outcome`, `outcome_reason` 추가 (006의 `is_paused` 추가와 같은 형태) |
 | `apps/engine/src/v2/ports.rs` | `update_instance`에 `outcome` 전달 경로 추가 |
 | `apps/engine/src/v2/infrastructure/{mongo,postgres}_adapter.rs` | 각 1곳 |
 | `apps/engine/src/v2/runtime.rs` | 종료 전이 지점(`COMPLETED` 2곳, `FAILED` 9곳)에서 `outcome` 지정 |

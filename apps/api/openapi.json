@@ -1749,6 +1749,37 @@
           "state"
         ]
       },
+      "InstanceOutcomeReasonDto": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "example": "APPROVAL_REJECTED",
+            "description": "프로그램에서 분기할 안정적인 결과 코드"
+          },
+          "failure_type": {
+            "type": "object",
+            "nullable": true,
+            "example": "upstream_error",
+            "description": "FAILURE의 원인 분류: configuration | upstream_error | timeout | script_error | subworkflow_failed | internal. 업무 결과(반려 등)는 business"
+          },
+          "retryable": {
+            "type": "boolean",
+            "description": "같은 입력으로 다시 실행하면 성공할 수 있는지. 자동 재시도 판단은 이 값을 기준으로 한다"
+          },
+          "message": {
+            "type": "object",
+            "nullable": true
+          },
+          "node_id": {
+            "type": "object",
+            "nullable": true
+          }
+        },
+        "required": [
+          "code"
+        ]
+      },
       "InstanceResultDto": {
         "type": "object",
         "properties": {
@@ -1758,7 +1789,28 @@
           },
           "status": {
             "type": "string",
-            "example": "COMPLETED"
+            "example": "COMPLETED",
+            "description": "실행 상태. 업무 결과는 outcome을 본다"
+          },
+          "outcome": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "SUCCESS",
+              "REJECTED",
+              "FAILURE",
+              "CANCELLED"
+            ],
+            "description": "업무 결과. 종료 전에는 null. 결재 반려는 status가 COMPLETED여도 REJECTED다"
+          },
+          "outcome_reason": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/InstanceOutcomeReasonDto"
+              }
+            ]
           },
           "result": {
             "type": "object",

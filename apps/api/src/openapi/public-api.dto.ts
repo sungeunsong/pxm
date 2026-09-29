@@ -68,9 +68,29 @@ export class InstanceStatsDto {
   scope!: 'all' | 'authorized';
 }
 
+export class InstanceOutcomeReasonDto {
+  @ApiProperty({ example: 'APPROVAL_REJECTED', description: '프로그램에서 분기할 안정적인 결과 코드' }) code!: string;
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'upstream_error',
+    description: 'FAILURE의 원인 분류: configuration | upstream_error | timeout | script_error | subworkflow_failed | internal. 업무 결과(반려 등)는 business',
+  })
+  failure_type?: string | null;
+  @ApiPropertyOptional({ description: '같은 입력으로 다시 실행하면 성공할 수 있는지. 자동 재시도 판단은 이 값을 기준으로 한다' }) retryable?: boolean;
+  @ApiPropertyOptional({ nullable: true }) message?: string | null;
+  @ApiPropertyOptional({ nullable: true }) node_id?: string | null;
+}
+
 export class InstanceResultDto {
   @ApiProperty({ format: 'uuid' }) instance_id!: string;
-  @ApiProperty({ example: 'COMPLETED' }) status!: string;
+  @ApiProperty({ example: 'COMPLETED', description: '실행 상태. 업무 결과는 outcome을 본다' }) status!: string;
+  @ApiPropertyOptional({
+    nullable: true,
+    enum: ['SUCCESS', 'REJECTED', 'FAILURE', 'CANCELLED'],
+    description: '업무 결과. 종료 전에는 null. 결재 반려는 status가 COMPLETED여도 REJECTED다',
+  })
+  outcome?: 'SUCCESS' | 'REJECTED' | 'FAILURE' | 'CANCELLED' | null;
+  @ApiPropertyOptional({ nullable: true, type: InstanceOutcomeReasonDto }) outcome_reason?: InstanceOutcomeReasonDto | null;
   @ApiPropertyOptional({ nullable: true, type: 'object', additionalProperties: true }) result?: Record<string, unknown> | null;
   @ApiPropertyOptional({ nullable: true }) result_path?: string | null;
   @ApiPropertyOptional({ nullable: true, format: 'date-time' }) completed_at?: string | null;

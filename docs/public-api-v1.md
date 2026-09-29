@@ -43,6 +43,13 @@ API Key로 시작한 실행**만 처리한다. Key를 재발급해도 소유자�
 `workflow:execute` scope가 없으면 `403`을 반환한다. 이미 완료·실패·종료된 실행은 오류로 만들지 않고
 `terminated_instances: []`로 응답한다. 같은 `Idempotency-Key`를 다시 보내면 최초 응답을 재생한다.
 
+## 실행 결과 판정
+
+`GET /api/v1/instances/:id/result`의 `status`는 실행 상태다. 업무 결과는 `outcome`
+(`SUCCESS` / `REJECTED` / `FAILURE` / `CANCELLED`, 진행 중이면 `null`)과 `outcome_reason`으로 판정한다.
+결재 반려는 `status: "COMPLETED"`, `outcome: "REJECTED"`다. 자동 재시도는 `outcome_reason.retryable`을
+기준으로 한다. 상세 규칙은 `docs/features.md`의 "실행 상태와 처리 결과"를 따른다.
+
 ## 오류 응답과 요청 추적
 
 클라이언트는 최대 128자의 영문자·숫자 및 `._:-`로 구성된 `X-Request-ID`를 보낼 수 있다. 생략하거나 유효하지 않으면 서버가 새 ID를 생성한다. 서버는 모든 응답의 `X-Request-ID` 헤더에 실제 사용한 값을 반환한다.

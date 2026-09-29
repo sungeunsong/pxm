@@ -282,6 +282,28 @@ AES-256-GCM으로 암호화 저장하며 원문은 다시 조회할 수 없다. 
 
 - `GET /api/v1/instances/:id/result` 조회
 - `GET /api/v1/instances/:id/stream` SSE 실시간 스트림
+
+### 실행 상태와 처리 결과
+
+`status`는 실행 상태이고, 업무 결과는 별도 필드 `outcome`으로 준다. 결재 반려는 실행이 정상 종료되므로
+`status`가 `COMPLETED`지만 `outcome`은 `REJECTED`다. 소비자는 `outcome`으로 판정한다.
+
+| `status` | `outcome` | 의미 |
+|---|---|---|
+| `COMPLETED` | `SUCCESS` | 정상 처리 |
+| `COMPLETED` | `REJECTED` | 결재 반려 (반려 분기를 거쳐 끝난 경우 포함) |
+| `COMPLETED` | `FAILURE` | End 노드 설정 `outcome: "failure"`로 선언한 업무 실패 |
+| `FAILED` | `FAILURE` | 노드 실행 실패 |
+| `TERMINATED` | `CANCELLED` | 신청 취소, 운영자 강제 종료, API 호출자 취소 |
+| 진행 중 | `null` | 아직 끝나지 않음 |
+
+`outcome_reason`에 `code`, `failure_type`, `retryable`, `message`, `node_id`를 담는다. 실패 원인은
+`configuration` / `upstream_error` / `timeout` / `script_error` / `subworkflow_failed`로 나누며,
+자동 재시도 여부는 `retryable`로 판단한다. 원문 오류는 실행 추적(trace)에만 남긴다.
+취소는 `code`로 주체를 구분한다(`REQUESTER_CANCELLED` / `OPERATOR_TERMINATED` / `CALLER_CANCELLED`).
+
+이 필드가 생기기 전에 끝난 실행은 `outcome`이 `null`이다. 백필하지 않는다.
+End 노드의 `outcome` 설정은 아직 디자이너에서 고를 수 없고 노드 설정 JSON으로만 지정한다.
 - 결과 Webhook: 서명 포함, 실패 시 재시도 및 수동 재전송 (`docs/webhook-delivery.md`)
 
 ---
@@ -297,7 +319,7 @@ AES-256-GCM으로 암호화 저장하며 원문은 다시 조회할 수 없다. 
 | 멱등성 | `Idempotency-Key` 재전송 시 같은 `instance_id` 반환. 인스턴스 명령에도 적용 |
 | 이벤트 로그 | Outbox append-only. 모든 상태 전이가 기록되며 SSE로 전달 |
 | 실행 추적 | `GET /api/v1/instances/:id/trace` 및 콘솔의 읽기 전용 그래프 추적. 노드의 실행 중·대기·완료·실패와 실제로 지나간 연결을 구분해 표시 |
-| 인스턴스 제어 | terminate / pause / resume / 실패 지점 재시도(preview 포함) |
+| 인스턴스 제어 | 강제 종료 / 신청 취소 / pause / resume / 실패 지점 재시도(preview 포함) |
 | 운영 상태 | Job 적체, 장시간 WAITING, 만료 lease, Webhook·Outbox DLQ 진단과 안전 재처리 |
 | 실행 이상 점검 | 런타임 무결성 scan / repair |
 | 감사 로그 | 관리 작업 감사 기록 및 콘솔 조회 화면 |
@@ -312,6 +334,13 @@ AES-256-GCM으로 암호화 저장하며 원문은 다시 조회할 수 없다. 
 연결선 라벨로 구분한다.
 실행 상세 패널을 닫아도 캔버스 표시는 유지되며, 범례의 `표시 지우기`를 누르거나 다른
 워크플로우로 전환하거나 새 실행을 시작할 때 초기화된다.
+
+콘솔의 종료는 두 가지다.
+
+- **강제 종료** (`POST /api/instances/:id/terminate`): 최고관리자, 운영자, 해당 그룹의 그룹 관리자만 가능하다.
+  요청을 읽을 수 있는 승인자나 신청자는 할 수 없다
+- **신청 취소** (`POST /api/instances/:id/cancel`, 콘솔 전용): 신청자 본인이 진행 중인 자기 요청만 취소한다.
+  남의 요청은 `404`, 이미 끝난 요청은 `409`다. "내 요청" 화면의 `요청 취소` 버튼이 이 경로를 쓴다
 
 인스턴스 종료는 공개 `/api/v1/instances/:id/terminate`에서도 지원한다. `workflow:execute` scope와
 대상 워크플로우 권한이 있어야 하며 같은 사용자 또는 서비스 계정 소유자의 API Key로 시작한 실행만

@@ -118,6 +118,14 @@ export class InstancesController {
     return result;
   }
 
+  /** 콘솔 전용. 신청자가 진행 중인 본인 요청을 취소한다. 공개 API의 취소는 terminate를 쓴다. */
+  @Post('/instances/:id/cancel')
+  async cancel(@Param('id') id: string, @Headers('idempotency-key') idempotencyKey: string | undefined, @Req() req: Request, @Res({ passthrough: true }) res?: Response) {
+    const result = await this.instances.cancelOwnRequest(id, actorFromRequest(req), idempotencyKey);
+    if (result.idempotent_replay) res?.setHeader('Idempotency-Replayed', 'true');
+    return result;
+  }
+
   @Post('/instances/:id/pause')
   async pause(@Param('id') id: string, @Headers('idempotency-key') idempotencyKey: string | undefined, @Req() req: Request, @Res({ passthrough: true }) res?: Response) {
     const result = await this.instances.setInstancePaused(id, true, actorFromRequest(req), idempotencyKey);

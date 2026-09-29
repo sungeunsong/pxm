@@ -1192,6 +1192,31 @@ impl WorkflowInstanceRepositoryPort for MongoAdapter {
         Ok(())
     }
 
+    async fn set_instance_outcome(
+        &self,
+        instance_id: Uuid,
+        outcome: &str,
+        outcome_reason: Option<Value>,
+        tx: &mut dyn Tx,
+    ) -> Result<()> {
+        let session = get_session_mut(tx)?;
+        let coll = self.db.collection::<Document>("v2_process_instances");
+        let filter = doc! { "_id": instance_id.to_string() };
+        let reason = outcome_reason
+            .as_ref()
+            .map(json_to_bson)
+            .unwrap_or(Bson::Null);
+        let update = doc! { "$set": { "outcome": outcome, "outcome_reason": reason } };
+
+        if let Some(sess) = session {
+            coll.update_one_with_session(filter, update, None, sess)
+                .await?;
+        } else {
+            coll.update_one(filter, update, None).await?;
+        }
+        Ok(())
+    }
+
     async fn create_instance(
         &self,
         instance_id: Uuid,

@@ -10,6 +10,9 @@ import {
   XCircle,
 } from 'lucide-react';
 import type { SessionUser } from '../api/session';
+import { Button } from '../components/Button';
+import { useFeedback } from '../components/feedback/feedback-context';
+import { errorMessage } from '../lib/error-message';
 import './MyRequestsPage.css';
 
 type ApprovalStatus =
@@ -28,17 +31,29 @@ type ApprovalSummary = {
   open_task_count: number;
 };
 
+type InstanceOutcome = 'SUCCESS' | 'REJECTED' | 'FAILURE' | 'CANCELLED';
+
+type OutcomeReason = {
+  code?: string;
+  message?: string | null;
+  failure_type?: string | null;
+};
+
 type RequestInstance = {
   id: string;
   requester_id?: string | null;
   template_name: string;
   state: string;
+  outcome: InstanceOutcome | null;
+  outcome_reason: OutcomeReason | null;
   created_at: string;
   updated_at: string;
   approval_summary: ApprovalSummary | null;
 };
 
 type RequestInstanceApiRow = Partial<RequestInstance> & {
+  outcome?: InstanceOutcome | null;
+  outcome_reason?: OutcomeReason | null;
   _id?: string;
   status?: string;
   context?: {
@@ -247,7 +262,13 @@ export function MyRequestsPage({
           {!selected ? (
             <Empty icon={<FileCheck2 size={26} />} title="확인할 요청을 선택하세요" />
           ) : (
-            <RequestDetail instance={selected} history={history} execution={executionDetail} loading={detailLoading} />
+            <RequestDetail
+              instance={selected}
+              history={history}
+              execution={executionDetail}
+              loading={detailLoading}
+              onChanged={() => void refresh()}
+            />
           )}
         </section>
       </div>
@@ -260,19 +281,49 @@ function RequestDetail({
   history,
   execution,
   loading,
+  onChanged,
 }: {
   instance: RequestInstance;
   history: ApprovalTask[];
   execution: ExecutionDetail | null;
   loading: boolean;
+  onChanged: () => void;
 }) {
+  const { toast, confirm: confirmDialog } = useFeedback();
+  const [cancelling, setCancelling] = useState(false);
   const status = requestStatus(instance);
+  const inFlight = !TERMINAL_STATES.includes(instance.state) && !instance.outcome;
+
+  const cancelRequest = async () => {
+    const proceed = await confirmDialog({
+      title: '이 요청을 취소할까요?',
+      description: '진행 중인 결재도 함께 중단됩니다. 취소한 요청은 되돌릴 수 없으며, 필요하면 새로 요청해야 합니다.',
+      confirmLabel: '요청 취소',
+      tone: 'danger',
+    });
+    if (!proceed) return;
+    setCancelling(true);
+    try {
+      const response = await fetch(`/api/instances/${encodeURIComponent(instance.id)}/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `my-request-cancel:${instance.id}` },
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.message || '요청을 취소하지 못했습니다.');
+      toast.success('요청을 취소했습니다.');
+      onChanged();
+    } catch (cancelError) {
+      toast.error('요청을 취소하지 못했습니다.', { description: errorMessage(cancelError) });
+    } finally {
+      setCancelling(false);
+    }
+  };
   const snapshot = history.find((item) => item.content_snapshot)?.content_snapshot || execution?.formData || null;
   const totalSteps = instance.approval_summary?.total_steps || Math.max(0, ...history.map((item) => item.total_steps || 0));
   const currentStep = instance.approval_summary?.current_step_order || Math.max(0, ...history.map((item) => item.current_step_order || 0));
   const hasApprovalFlow = !!instance.approval_summary || history.length > 0 || totalSteps > 0;
   const executionState = (execution?.state || instance.state).toUpperCase();
-  const progress = progressCopy(status, executionState, currentStep, totalSteps, hasApprovalFlow);
+  const progress = progressCopy(instance, status, executionState, currentStep, totalSteps, hasApprovalFlow);
 
   return (
     <>
@@ -282,7 +333,14 @@ function RequestDetail({
           <h3>{requestTitle(instance)}</h3>
           <code>{instance.id}</code>
         </div>
-        <StatusBadge status={status} hold={history.some((item) => item.status === 'OPEN' && !!item.hold)} />
+        <div className="request-detail-actions">
+          <StatusBadge status={status} hold={history.some((item) => item.status === 'OPEN' && !!item.hold)} />
+          {inFlight && (
+            <Button variant="danger" size="sm" onClick={() => void cancelRequest()} disabled={cancelling} data-testid="my-request-cancel">
+              {cancelling ? '취소하는 중' : '요청 취소'}
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="request-progress-card">
@@ -383,8 +441,24 @@ function Empty({ icon, title, description }: { icon: React.ReactNode; title: str
   return <div className="my-requests-empty">{icon}<strong>{title}</strong>{description && <p>{description}</p>}</div>;
 }
 
+const STATUS_LABELS: Record<string, string> = {
+  IN_PROGRESS: '진행 중',
+  PENDING: '진행 중',
+  RUNNING: '진행 중',
+  CREATED: '진행 중',
+  WAITING: '진행 중',
+  APPROVED: '승인 완료',
+  COMPLETED: '완료',
+  REJECTED: '반려',
+  FAILED: '처리 실패',
+  BUSINESS_FAILED: '처리 불가',
+  CANCELLED_BY_REQUESTER: '신청 취소',
+  TERMINATED: '강제 종료',
+  CANCELED: '취소',
+};
+
 function StatusBadge({ status, hold }: { status: string; hold: boolean }) {
-  const display = hold ? '보류' : status === 'IN_PROGRESS' || status === 'PENDING' || status === 'RUNNING' ? '진행 중' : status === 'APPROVED' ? '승인 완료' : status === 'COMPLETED' ? '완료' : status === 'REJECTED' ? '반려' : status === 'FAILED' ? '실패' : status === 'TERMINATED' || status === 'CANCELED' ? '종료' : status;
+  const display = hold ? '보류' : STATUS_LABELS[status] || status;
   return <span className={`my-request-status ${hold ? 'hold' : status.toLowerCase()}`}>{display}</span>;
 }
 
@@ -397,16 +471,27 @@ function normalizeExecutionDetail(value: unknown): ExecutionDetail {
   };
 }
 
-function progressCopy(status: string, executionState: string, currentStep: number, totalSteps: number, hasApprovalFlow: boolean) {
+function progressCopy(instance: RequestInstance, status: string, executionState: string, currentStep: number, totalSteps: number, hasApprovalFlow: boolean) {
+  // 종료된 요청은 업무 결과(outcome)로 설명한다. 누가 멈췄는지, 다음에 무엇을 하면 되는지까지 말한다.
+  if (status === 'CANCELLED_BY_REQUESTER') return { title: '요청을 취소했습니다', description: '취소한 요청은 더 진행되지 않습니다. 필요하면 새로 요청하세요.' };
+  if (status === 'TERMINATED') return { title: '운영자가 요청 처리를 중단했습니다', description: '사유는 업무 담당 관리자에게 문의하세요.' };
+  if (status === 'BUSINESS_FAILED') {
+    return { title: '요청을 처리할 수 없습니다', description: instance.outcome_reason?.message || '처리 조건을 충족하지 않습니다.' };
+  }
+  if (status === 'FAILED') {
+    const reason = instance.outcome_reason?.message;
+    return {
+      title: '요청 처리 중 문제가 발생했습니다',
+      description: `${reason ? `${reason} ` : ''}아래 요청 번호와 함께 업무 담당 관리자에게 문의하세요.`,
+    };
+  }
   if (hasApprovalFlow) {
     if (status === 'APPROVED') return { title: '모든 결재가 완료되었습니다', description: totalSteps > 0 ? `전체 ${totalSteps}단계` : '결재 완료' };
     if (status === 'REJECTED') return { title: '요청이 반려되었습니다', description: totalSteps > 0 ? `전체 ${totalSteps}단계` : '결재 종료' };
     return { title: `${currentStep || 1}단계 결재 진행 중`, description: totalSteps > 0 ? `전체 ${totalSteps}단계` : '결재 단계 준비 중' };
   }
-  if (executionState === 'COMPLETED') return { title: '워크플로우 실행이 완료되었습니다', description: '결재 없이 자동 처리가 완료되었습니다' };
-  if (executionState === 'FAILED') return { title: '워크플로우 실행에 실패했습니다', description: '실행 모니터링에서 실패 원인을 확인하세요' };
-  if (executionState === 'TERMINATED' || executionState === 'CANCELED') return { title: '워크플로우 실행이 종료되었습니다', description: '사용자 또는 운영자에 의해 종료되었습니다' };
-  return { title: '워크플로우를 실행하고 있습니다', description: '결재 없이 자동 처리 중입니다' };
+  if (executionState === 'COMPLETED') return { title: '요청 처리가 완료되었습니다', description: '결재 없이 자동 처리되었습니다' };
+  return { title: '요청을 처리하고 있습니다', description: '결재 없이 자동 처리 중입니다' };
 }
 
 function normalizeInstance(value: unknown): RequestInstance {
@@ -416,13 +501,31 @@ function normalizeInstance(value: unknown): RequestInstance {
     requester_id: row.requester_id || row.context?.runtime?.access?.requester_id || null,
     template_name: row.template_name || row.context?.runtime?.snapshot?.workflow?.name || '워크플로우',
     state: String(row.state || row.status || 'RUNNING').toUpperCase(),
+    outcome: row.outcome || null,
+    outcome_reason: row.outcome_reason || null,
     created_at: row.created_at || new Date().toISOString(),
     updated_at: row.updated_at || row.created_at || new Date().toISOString(),
     approval_summary: row.approval_summary || null,
   };
 }
 
+const TERMINAL_STATES = ['COMPLETED', 'FAILED', 'TERMINATED'];
+
+/** 목록·상세에 쓰는 대표 상태. 종료된 요청은 실행 상태가 아니라 업무 결과로 정한다. */
 function requestStatus(instance: RequestInstance): string {
+  switch (instance.outcome) {
+    case 'SUCCESS':
+      return instance.approval_summary?.status === 'APPROVED' ? 'APPROVED' : 'COMPLETED';
+    case 'REJECTED':
+      return 'REJECTED';
+    case 'FAILURE':
+      return instance.outcome_reason?.failure_type === 'business' ? 'BUSINESS_FAILED' : 'FAILED';
+    case 'CANCELLED':
+      return instance.outcome_reason?.code === 'REQUESTER_CANCELLED' ? 'CANCELLED_BY_REQUESTER' : 'TERMINATED';
+    default:
+      break;
+  }
+  if (instance.state === 'FAILED' || instance.state === 'TERMINATED') return instance.state;
   return instance.approval_summary?.status || instance.state;
 }
 

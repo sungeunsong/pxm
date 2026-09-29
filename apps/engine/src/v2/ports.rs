@@ -194,6 +194,16 @@ pub trait WorkflowInstanceRepositoryPort: Send + Sync {
         tx: &mut dyn Tx,
     ) -> Result<()>;
 
+    /// 종료 전이에서 업무 결과(outcome)를 기록합니다.
+    /// 종료 상태를 쓰는 같은 트랜잭션 안에서 호출해야 둘이 어긋나지 않습니다.
+    async fn set_instance_outcome(
+        &self,
+        instance_id: Uuid,
+        outcome: &str,
+        outcome_reason: Option<Value>,
+        tx: &mut dyn Tx,
+    ) -> Result<()>;
+
     /// 다른 워크플로우를 호출할 때 자식 인스턴스를 생성합니다.
     async fn create_instance(
         &self,
