@@ -1642,7 +1642,7 @@ export const FlowDesigner: React.FC<FlowDesignerProps> = ({ onSwitchToInbox, onE
           onClose={() => setCompatibilityReport(null)}
           footer={<Button variant="secondary" onClick={() => setCompatibilityReport(null)}>닫기</Button>}
         >
-          <CompatibilityReportView report={compatibilityReport} />
+          <CompatibilityReportView report={compatibilityReport} workflowId={currentTemplateId} />
         </Drawer>
       )}
 

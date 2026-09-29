@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { DashboardPage } from './dashboard/DashboardPage';
 import { FlowDesigner } from './flow-designer/FlowDesigner';
+import { ResourceRequestsPage } from './resource-requests/ResourceRequestsPage';
 import { RequestPortal } from './request-portal/RequestPortal';
 import { MyRequestsPage } from './my-requests/MyRequestsPage';
 import { InstanceTracker } from './instance-tracker/InstanceTracker';
@@ -56,6 +57,7 @@ type ActiveTab =
   | 'designer'
   | 'request'
   | 'workflows'
+  | 'resourceRequests'
   | 'myRequests'
   | 'presets'
   | 'tracker'
@@ -80,6 +82,7 @@ const ROUTE_TO_TAB: Record<string, ActiveTab> = {
   designer: 'designer',
   request: 'request',
   workflows: 'workflows',
+  'resource-requests': 'resourceRequests',
   'my-requests': 'myRequests',
   presets: 'presets',
   tracker: 'tracker',
@@ -103,6 +106,7 @@ const TAB_TO_ROUTE: Record<ActiveTab, string> = {
   designer: 'designer',
   request: 'request',
   workflows: 'workflows',
+  resourceRequests: 'resource-requests',
   myRequests: 'my-requests',
   presets: 'presets',
   tracker: 'tracker',
@@ -126,6 +130,7 @@ const PAGE_TITLE: Record<ActiveTab, string> = {
   designer: '워크플로우 설계',
   request: '요청하기',
   workflows: '워크플로우 관리',
+  resourceRequests: '자원 요청',
   myRequests: '내 요청',
   presets: '실행 프리셋',
   tracker: '실행 모니터링',
@@ -155,6 +160,7 @@ const GROUP_MANAGER_TABS = new Set<ActiveTab>([
   'tracker',
   'inbox',
   'credentials',
+  'resourceRequests',
   'access',
   'audit',
 ]);
@@ -237,6 +243,7 @@ function sidebarSections(role: SessionUser['role']): SidebarSectionDefinition[] 
     items: [
       { tab: 'access', label: '사용자 및 권한', icon: Shield },
       { tab: 'credentials', label: '연동 자격증명', icon: KeyRound },
+      { tab: 'resourceRequests', label: '자원 요청', icon: Inbox },
       ...(role === 'group_manager'
         ? [{ tab: 'audit' as const, label: '감사 로그', icon: FileClock }]
         : []),
@@ -496,6 +503,8 @@ function WorkspaceApp({ user, onUserChange, onLogout, onSessionRevoked, onSessio
           )}
 
           {activeTab === 'credentials' && <CredentialsPage currentUser={user} />}
+
+          {activeTab === 'resourceRequests' && <ResourceRequestsPage currentUser={user} />}
 
           {activeTab === 'access' && <AccessManagementPage currentUser={user} />}
 

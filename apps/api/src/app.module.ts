@@ -21,6 +21,7 @@ import { OperationsModule } from './operations/operations.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { HttpObservabilityModule } from './observability/http-observability.module';
 import { ScriptLibrariesModule } from './script-libraries/script-libraries.module';
+import { ResourceRequestsModule } from './resource-requests/resource-requests.module';
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { ScriptLibrariesModule } from './script-libraries/script-libraries.modul
     NotificationsModule,
     HttpObservabilityModule,
     ScriptLibrariesModule,
+    ResourceRequestsModule,
   ],
   providers: [
     {

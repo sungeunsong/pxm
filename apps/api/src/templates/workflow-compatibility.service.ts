@@ -29,6 +29,11 @@ export type CompatibilityItem = {
   status: CompatibilityStatus;
   message: string;
   remediation?: Remediation;
+  /** 제품 안 자원 요청(POST /api/resource-requests)으로 해결할 수 있으면 요청에 쓸 값 */
+  requestable?: {
+    resource_type: 'script_library' | 'credential';
+    resource_ref: { package_name?: string; version?: string; credential_id?: string };
+  };
 };
 
 export type CompatibilityReport = {
@@ -108,6 +113,7 @@ export class WorkflowCompatibilityService {
           status: 'action_required',
           message: '대상 그룹에서 사용이 승인되지 않았습니다.',
           remediation: { actor: 'admin', action: '최고관리자에게 플랫폼 설정 → JS 라이브러리에서 이 그룹의 사용 승인을 요청하세요.', group_id: groupId },
+          requestable: { resource_type: 'script_library', resource_ref: { package_name: usage.package_name, version: usage.version } },
         };
       }
       return {
@@ -145,6 +151,7 @@ export class WorkflowCompatibilityService {
             action: `자격증명을 소유한 그룹의 관리자에게 '${label}'을(를) ${groupName || '대상 그룹'}에 공유해 달라고 요청하세요.`,
             group_id: availability.owner_group_id,
           },
+          requestable: { resource_type: 'credential', resource_ref: { credential_id: credentialId } },
         });
       } else if (availability.status === 'inactive') {
         items.push({

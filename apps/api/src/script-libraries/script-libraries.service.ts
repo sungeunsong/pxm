@@ -201,6 +201,30 @@ export class ScriptLibrariesService {
     return toView(result);
   }
 
+  /** 자원 요청 판정용. 패키지 이름과 버전으로 등록 상태를 읽는다. */
+  async findByRef(packageName: string, version: string): Promise<ScriptLibraryView | null> {
+    const document = await this.db.collection<ScriptLibraryDocument>(COLLECTION).findOne({ package_name: packageName, version });
+    return document ? toView(document) : null;
+  }
+
+  /**
+   * 자원 요청을 승인해 승인된 라이브러리 버전을 요청 그룹에 허용한다.
+   * 허용 그룹이 비어 있으면 이미 모든 그룹에 허용된 상태이므로 바꾸지 않는다.
+   */
+  async allowGroupByRequest(packageName: string, version: string, groupId: string, actor: string, requestId: string): Promise<void> {
+    const collection = this.db.collection<ScriptLibraryDocument>(COLLECTION);
+    const document = await collection.findOne({ package_name: packageName, version });
+    if (!document || document.status !== 'approved') {
+      throw new BadRequestException(`승인된 JS 라이브러리가 아닙니다: ${packageName}@${version}`);
+    }
+    if (libraryUsabilityForGroup(document, groupId) === 'ok') return;
+    await collection.updateOne(
+      { _id: document._id },
+      { $addToSet: { allowed_group_ids: groupId }, $set: { updated_at: new Date().toISOString() } },
+    );
+    await this.appendAudit(document, 'group_allowed_by_request', actor, { group_id: groupId, request_id: requestId });
+  }
+
   /**
    * 워크플로우가 쓰는 라이브러리 각각을 대상 그룹 기준으로 판정한다.
    * 저장 시 hydrateNodes와 같은 판정(libraryUsabilityForGroup)을 쓰므로 진단과 저장 결과가 어긋나지 않는다.

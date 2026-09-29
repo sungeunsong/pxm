@@ -368,6 +368,56 @@ test.describe.serial('PXM 동적 결재 베타 회귀', () => {
     ]));
   });
 
+  test('점검 결과에서 필요한 자원을 요청하고, 처리 담당자가 승인하면 권한에 반영된다', async ({ browser }) => {
+    const libraryVersion = `0.2.${Date.now()}`;
+    const libraryId = `e2e-request-lib-${libraryVersion}`;
+    await db.collection<any>('v2_script_libraries').insertOne({
+      _id: libraryId, package_name: 'e2e-request-lib', version: libraryVersion, description: '', license: 'MIT',
+      integrity: 'sha512-e2e', bundle_sha256: 'e2e', bundle_bytes: 1, dependency_count: 0,
+      status: 'approved', allowed_group_ids: [fixture.groupId], created_by: 'admin',
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    });
+    const workflowName = uniqueTitle('자원 요청');
+    const workflow = await admin.post<any>('/templates', {
+      ...dynamicApprovalTemplate(),
+      name: workflowName,
+      nodes: [
+        ...dynamicApprovalTemplate().nodes,
+        { id: 'js-1', type: 'custom', position: { x: 0, y: 0 }, data: { nodeType: 'script', label: '계산', code: 'return {}', scriptLibraries: [{ package_name: 'e2e-request-lib', version: libraryVersion }] } },
+      ],
+    });
+    // 승인이 다른 그룹으로 바뀌어 이 그룹에서 쓸 수 없게 됐다.
+    await db.collection<any>('v2_script_libraries').updateOne({ _id: libraryId }, { $set: { allowed_group_ids: ['e2e-other-group'] } });
+
+    // 그룹 관리자: 점검 결과에서 바로 최고관리자에게 요청한다.
+    const managerUi = await loginPage(browser, fixture.users.manager.id, userPassword, 'workflows');
+    await managerUi.page.getByRole('row').filter({ hasText: workflowName }).first().click();
+    await managerUi.page.getByTestId('workflow-compat-run').click();
+    const report = managerUi.page.getByTestId('compatibility-report');
+    await expect(report).toContainText('e2e-request-lib', { timeout: 15_000 });
+    await report.getByTestId('compat-request').click();
+    await expect(report).toContainText('요청함', { timeout: 15_000 });
+
+    const [sent] = await manager.get<any[]>('/resource-requests?scope=mine&status=pending');
+    expect(sent).toMatchObject({ resource_type: 'script_library', approver_role: 'admin', target_group_id: fixture.groupId, workflow_id: workflow.id });
+    // 그룹 관리자는 라이브러리 요청을 처리할 수 없다.
+    expect((await manager.rawPost(`/resource-requests/${sent.id}/approve`, {})).status()).toBe(403);
+
+    // 최고관리자: 대시보드에서 요청을 보고 승인한다.
+    const adminUi = await loginPage(browser, fixture.users.admin.id, process.env.PXM_E2E_ADMIN_PASSWORD || 'E2eAdminPassword!2026', 'dashboard');
+    await adminUi.page.getByTestId('dashboard-next-actions').getByRole('link', { name: /처리할 자원 요청/ }).click();
+    const row = adminUi.page.getByTestId('resource-request-row').filter({ hasText: `e2e-request-lib@${libraryVersion}` });
+    await row.getByTestId('resource-request-approve').click();
+    await confirmDialogAction(adminUi.page, '승인');
+    await expect(row).toContainText('승인', { timeout: 15_000 });
+
+    const library = await db.collection<any>('v2_script_libraries').findOne({ _id: libraryId });
+    expect(library?.allowed_group_ids).toContain(fixture.groupId);
+    const after = await manager.get<any>(`/templates/${workflow.id}/compatibility`);
+    expect(after.summary.ready).toBe(true);
+    await closeContexts(managerUi.context, adminUi.context);
+  });
+
   test('ALL은 전원 승인까지 기다리고 ANY는 첫 승인 뒤 나머지를 취소한다', async () => {
     const title = uniqueTitle('ALL ANY 집계');
     const execution = await startApproval(admin, title, [

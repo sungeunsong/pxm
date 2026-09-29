@@ -189,6 +189,10 @@ export type CompatibilityItem = {
   status: CompatibilityStatus;
   message: string;
   remediation?: { actor: 'self' | 'group_manager' | 'admin'; action: string; group_id?: string | null };
+  requestable?: {
+    resource_type: 'script_library' | 'credential';
+    resource_ref: { package_name?: string; version?: string; credential_id?: string };
+  };
 };
 
 export type CompatibilityReport = {

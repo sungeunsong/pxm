@@ -718,7 +718,7 @@ export const RequestPortal: React.FC<{
                     {compatLoading ? '점검 중' : '그룹 호환성 점검'}
                   </button>
                 </div>
-                {compatReport && compatReport.workflow_id === selectedTemplate.id && <CompatibilityReportView report={compatReport} />}
+                {compatReport && compatReport.workflow_id === selectedTemplate.id && <CompatibilityReportView report={compatReport} workflowId={selectedTemplate.id} />}
               </div>}
 
               {!isRequester && selectedSummary.triggerType === 'schedule' && (
@@ -844,7 +844,7 @@ export const RequestPortal: React.FC<{
               />
             </label>
             <p className="form-info-text">원본은 바뀌지 않습니다. 새 워크플로우는 초안으로 만들어지고, 확인한 뒤 배포해야 요청을 받습니다.</p>
-            {cloneReport && <CompatibilityReportView report={cloneReport} />}
+            {cloneReport && <CompatibilityReportView report={cloneReport} workflowId={selectedTemplate.id} />}
           </div>
         </Drawer>
       )}

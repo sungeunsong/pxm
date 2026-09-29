@@ -45,6 +45,10 @@ describe('WorkflowCompatibilityService', () => {
       remediation: { actor: 'group_manager', group_id: 'group-a' },
     });
     expect(byKind.approver).toMatchObject({ status: 'blocked', remediation: { actor: 'self' } });
+    // 승인·공유로 풀리는 항목은 제품 안에서 바로 요청할 수 있다. 승인자 교체는 요청 대상이 아니다.
+    expect(byKind.script_library.requestable).toEqual({ resource_type: 'script_library', resource_ref: { package_name: 'lodash', version: '4.17.21' } });
+    expect(byKind.credential.requestable).toEqual({ resource_type: 'credential', resource_ref: { credential_id: 'cred-1' } });
+    expect(byKind.approver.requestable).toBeUndefined();
     expect(byKind.plugin).toMatchObject({ status: 'ok' });
     expect(report.summary).toMatchObject({ action_required: 2, blocked: 1, ready: false });
     expect(report.target_group_name).toBe('인프라팀');

@@ -121,7 +121,7 @@ function actionLabel(action: string) {
 }
 
 function resourceLabel(type: string) {
-  return ({ workflow: '워크플로우', task: '결재', group: '그룹', user: '사용자', service_account: '서비스 계정', api_key: 'API Key', credential: '자격증명', security_policy: '보안 정책', runtime_integrity: '실행 무결성', webhook_endpoint: 'Webhook', webhook_delivery: 'Webhook 전송', runtime_operation: '운영 조치', approval_notification: '승인 알림', external_principal_mapping: '외부 사용자 매핑' } as Record<string, string>)[type] || type;
+  return ({ workflow: '워크플로우', task: '결재', group: '그룹', user: '사용자', service_account: '서비스 계정', api_key: 'API Key', credential: '자격증명', security_policy: '보안 정책', runtime_integrity: '실행 무결성', webhook_endpoint: 'Webhook', webhook_delivery: 'Webhook 전송', runtime_operation: '운영 조치', approval_notification: '승인 알림', external_principal_mapping: '외부 사용자 매핑', resource_request: '자원 요청' } as Record<string, string>)[type] || type;
 }
 
 function shortId(value: string) {

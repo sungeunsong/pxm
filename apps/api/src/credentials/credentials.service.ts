@@ -376,6 +376,28 @@ export class CredentialsService implements OnModuleInit {
     });
   }
 
+  /**
+   * 자원 요청을 승인해 자격증명을 요청 그룹에 공유한다.
+   * 일반 공유 수정은 공유받는 그룹의 관리 권한도 요구하지만, 요청 승인은 요청 그룹 관리자가 이미 요청한
+   * 것이므로 소유 그룹 관리 권한만 확인한다. 누가 어떤 요청으로 공유했는지 감사 로그에 남긴다.
+   */
+  async shareWithGroupByRequest(id: string, groupId: string, actor: WorkflowHistoryActor, requestId: string): Promise<void> {
+    const doc = await this.findDocument(id);
+    assertCredentialOwnerAccess(actor, doc);
+    const group = await this.db.collection<any>('pxm_groups').findOne({ _id: groupId, status: 'active' });
+    if (!group) throw new BadRequestException(`shared group not found or inactive: ${groupId}`);
+    if (credentialAvailableToGroup(doc, groupId)) return;
+    await this.credentials.updateOne(
+      { _id: id },
+      { $addToSet: { shared_group_ids: groupId }, $set: { updated_at: new Date().toISOString() } },
+    );
+    await this.appendAudit(doc, 'shared_by_request', {
+      actor: actor.actor_id || 'system',
+      usage_group_id: doc.group_id,
+      details: { shared_group_id: groupId, request_id: requestId },
+    });
+  }
+
   private async assertShareTargetsManageable(actor: WorkflowHistoryActor, groupIds: string[]) {
     for (const groupId of groupIds) {
       assertCanManageGroup(actor, groupId);

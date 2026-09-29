@@ -109,6 +109,7 @@ const formatBytes = (bytes: number): string => {
 export const DashboardPage: React.FC = () => {
   const [templatesCount, setTemplatesCount] = useState<Loadable<number>>({ status: 'loading' });
   const [undeployed, setUndeployed] = useState<Array<{ id: string; name: string }>>([]);
+  const [pendingResourceRequests, setPendingResourceRequests] = useState(0);
   const [instanceStats, setInstanceStats] = useState<Loadable<InstanceStats>>({ status: 'loading' });
   const [recentInstances, setRecentInstances] = useState<Loadable<InstanceRow[]>>({ status: 'loading' });
   const [pendingApprovals, setPendingApprovals] = useState<Loadable<number>>({ status: 'loading' });
@@ -146,12 +147,17 @@ export const DashboardPage: React.FC = () => {
       .then((value) => setPendingApprovals({ status: 'ready', value: requireArray(value, '결재 대기').length }))
       .catch((error) => setPendingApprovals({ status: 'error', message: errorMessage(error) }));
 
+    const resourceRequests = getJson<unknown[]>('/api/resource-requests?scope=to_me&status=pending')
+      .then((value) => setPendingResourceRequests(Array.isArray(value) ? value.length : 0))
+      // 자원 요청은 보조 정보다. 실패해도 다른 현황을 막지 않고 항목만 숨긴다.
+      .catch(() => setPendingResourceRequests(0));
+
     const readiness = getJson<HealthReport>('/api/health/ready')
       .then((value) => setHealth({ status: 'ready', value }))
       // /health/ready 는 준비되지 않으면 503으로 응답한다. 이것도 유효한 상태다.
       .catch((error) => setHealth({ status: 'error', message: errorMessage(error) }));
 
-    await Promise.all([templates, stats, recent, tasks, readiness]);
+    await Promise.all([templates, stats, recent, tasks, resourceRequests, readiness]);
     setRefreshedAt(new Date());
   }, []);
 
@@ -204,6 +210,7 @@ export const DashboardPage: React.FC = () => {
         pendingApprovals={pendingApprovals.status === 'ready' ? pendingApprovals.value : null}
         failedInstances={countByState('FAILED')}
         undeployed={undeployed}
+        pendingResourceRequests={pendingResourceRequests}
       />
 
       <div className="dashboard-grid">
@@ -383,14 +390,19 @@ function NextActions({
   pendingApprovals,
   failedInstances,
   undeployed,
+  pendingResourceRequests,
 }: {
   pendingApprovals: number | null;
   failedInstances: number | null;
   undeployed: Array<{ id: string; name: string }>;
+  pendingResourceRequests: number;
 }) {
   const items: Array<{ key: string; title: string; description: string; href: string; tone: 'accent' | 'danger' | 'default' }> = [];
   if (pendingApprovals) {
     items.push({ key: 'inbox', title: `내 결재 ${pendingApprovals}건이 기다리고 있습니다`, description: '결재함에서 요청 내용을 확인하고 처리하세요.', href: hashFor('inbox'), tone: 'accent' });
+  }
+  if (pendingResourceRequests) {
+    items.push({ key: 'resource-requests', title: `처리할 자원 요청이 ${pendingResourceRequests}건 있습니다`, description: '다른 그룹이 워크플로우에 쓰려고 요청한 JS 라이브러리·자격증명입니다.', href: hashFor('resource-requests'), tone: 'accent' });
   }
   if (failedInstances) {
     items.push({ key: 'failed', title: `실패한 실행이 ${failedInstances}건 있습니다`, description: '실행 모니터링에서 원인을 확인하고 재시도하거나 종료하세요.', href: hashFor('tracker'), tone: 'danger' });

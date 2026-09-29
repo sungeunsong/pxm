@@ -1,0 +1,23 @@
+.resource-requests-page { display: flex; flex-direction: column; gap: 14px; }
+.resource-requests-intro { margin: 0; font-size: 13px; color: var(--text-secondary, #475569); }
+.resource-requests-tabs { display: flex; gap: 6px; align-items: center; border-bottom: 1px solid var(--border-subtle, #e2e8f0); }
+.resource-requests-tabs button[role="tab"] { padding: 8px 12px; border: none; border-bottom: 2px solid transparent; background: none; font-weight: 650; color: var(--text-tertiary, #64748b); cursor: pointer; }
+.resource-requests-tabs button.active { color: #2563eb; border-bottom-color: #2563eb; }
+.resource-requests-refresh { margin-left: auto; padding: 6px; border: 1px solid var(--border-subtle, #e2e8f0); border-radius: 6px; background: #fff; cursor: pointer; }
+.resource-requests-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.resource-requests-list li { padding: 12px 14px; border: 1px solid var(--border-subtle, #e2e8f0); border-left: 3px solid #94a3b8; border-radius: 10px; background: var(--surface-primary, #fff); }
+.resource-requests-list li.status-pending { border-left-color: #f59e0b; }
+.resource-requests-list li.status-approved { border-left-color: #10b981; }
+.resource-requests-list li.status-rejected { border-left-color: #e11d48; }
+.resource-requests-list p { margin: 6px 0 0; font-size: 12px; color: var(--text-secondary, #475569); }
+.resource-requests-list blockquote { margin: 8px 0 0; padding: 6px 10px; border-left: 3px solid #cbd5e1; background: #f8fafc; font-size: 12px; }
+.resource-requests-list blockquote.decision { border-left-color: #93c5fd; }
+.resource-request-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.resource-request-type { font-size: 11px; padding: 2px 6px; border-radius: 4px; background: #f1f5f9; color: #475569; }
+.resource-request-status { margin-left: auto; font-size: 12px; font-weight: 700; color: #475569; }
+.resource-request-status.status-pending { color: #b45309; }
+.resource-request-status.status-approved { color: #047857; }
+.resource-request-status.status-rejected { color: #be123c; }
+.resource-request-approver a { color: #2563eb; }
+.resource-request-actions { display: flex; gap: 6px; margin-top: 10px; }
+.resource-request-actions:empty { display: none; }

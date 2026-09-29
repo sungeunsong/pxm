@@ -1,5 +1,10 @@
-import { AlertTriangle, CheckCircle2, CircleSlash, UserRoundCog } from 'lucide-react';
+import { useState } from 'react';
+import { AlertTriangle, CheckCircle2, CircleSlash, Send, UserRoundCog } from 'lucide-react';
 import type { CompatibilityItem, CompatibilityReport, CompatibilityStatus } from '../api/templates';
+import { resourceRequestsApi } from '../api/resource-requests';
+import { useFeedback } from '../components/feedback/feedback-context';
+import { errorMessage } from '../lib/error-message';
+import { hashFor } from '../lib/deep-link';
 import './CompatibilityReportView.css';
 
 const KIND_LABEL: Record<CompatibilityItem['kind'], string> = {
@@ -27,8 +32,40 @@ const ORDER: CompatibilityStatus[] = ['blocked', 'action_required', 'warning', '
  * 호환성 진단 결과. 막히는 것부터 보여주고, 항목마다 누가 무엇을 하면 풀리는지 적는다.
  * 문제가 없는 항목은 개수만 보이고 펼쳐서 확인한다.
  */
-export function CompatibilityReportView({ report }: { report: CompatibilityReport }) {
+export function CompatibilityReportView({
+  report,
+  workflowId,
+}: {
+  report: CompatibilityReport;
+  /** 요청에 함께 남길 워크플로우. 저장 전 캔버스면 생략한다. */
+  workflowId?: string | null;
+}) {
+  const { toast } = useFeedback();
+  // 요청을 보낸 항목. 같은 화면에서 다시 누르지 않도록 표시한다(서버도 대기 중인 같은 요청은 하나로 합친다).
+  const [requested, setRequested] = useState<Record<string, 'sending' | 'sent'>>({});
   const groupName = report.target_group_name || '대상 그룹';
+
+  const sendRequest = async (item: CompatibilityItem) => {
+    if (!item.requestable || !report.target_group_id) return;
+    const key = `${item.kind}:${item.ref}`;
+    setRequested((current) => ({ ...current, [key]: 'sending' }));
+    try {
+      await resourceRequestsApi.create({
+        ...item.requestable,
+        target_group_id: report.target_group_id,
+        workflow_id: workflowId && workflowId !== 'unsaved' ? workflowId : null,
+      });
+      setRequested((current) => ({ ...current, [key]: 'sent' }));
+      toast.success('요청을 보냈습니다.', { description: `${item.label} · 처리 결과는 자원 요청의 보낸 요청에서 확인하세요.` });
+    } catch (error) {
+      setRequested((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+      toast.error('요청을 보내지 못했습니다.', { description: errorMessage(error) });
+    }
+  };
   const problems = report.items.filter((item) => item.status !== 'ok');
   const fine = report.items.filter((item) => item.status === 'ok');
   const sorted = [...problems].sort((a, b) => ORDER.indexOf(a.status) - ORDER.indexOf(b.status));
@@ -69,6 +106,25 @@ export function CompatibilityReportView({ report }: { report: CompatibilityRepor
                 </p>
               )}
               {item.node_ids.length > 0 && <small>사용하는 노드: {item.node_ids.join(', ')}</small>}
+              {item.requestable && report.target_group_id && (
+                <div className="compat-request">
+                  {requested[`${item.kind}:${item.ref}`] === 'sent' ? (
+                    <span className="compat-request-sent">
+                      요청함 · <a href={hashFor('resource-requests')}>보낸 요청에서 확인</a>
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      data-testid="compat-request"
+                      disabled={requested[`${item.kind}:${item.ref}`] === 'sending'}
+                      onClick={() => void sendRequest(item)}
+                    >
+                      <Send size={13} />
+                      {item.remediation?.actor === 'admin' ? '최고관리자에게 요청' : '소유 그룹 관리자에게 요청'}
+                    </button>
+                  )}
+                </div>
+              )}
             </li>
           ))}
         </ul>
