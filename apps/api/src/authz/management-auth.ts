@@ -77,6 +77,13 @@ export function manageableGroupId(actor: WorkflowHistoryActor, requestedGroupId?
   throw new ForbiddenException('management role is required');
 }
 
+/** 그룹 자원을 콘솔에서 볼 수 있는가. API Key는 관리 화면용 조회를 쓰지 않는다 */
+export function canViewGroupResources(actor: WorkflowHistoryActor, groupId: string): boolean {
+  if (isDevelopmentBypass(actor) || isAdmin(actor)) return true;
+  if (actor.api_key_id) return false;
+  return (actor.group_ids || []).includes(groupId);
+}
+
 export function isAdmin(actor: WorkflowHistoryActor): boolean {
   return !actor.api_key_id && actor.roles.includes('admin');
 }

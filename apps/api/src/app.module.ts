@@ -4,6 +4,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { InstancesModule } from './instances/instances.module';
 import { DebugModule } from './debug/debug.module';
 import { TemplatesModule } from './templates/templates.module';
+import { EntryPointsModule } from './entry-points/entry-points.module';
 import { TasksModule } from './tasks/tasks.module';
 import { PluginsModule } from './plugins/plugins.module';
 import { CredentialsModule } from './credentials/credentials.module';
@@ -49,6 +50,7 @@ import { ResourceRequestsModule } from './resource-requests/resource-requests.mo
     HttpObservabilityModule,
     ScriptLibrariesModule,
     ResourceRequestsModule,
+    EntryPointsModule,
   ],
   providers: [
     {

@@ -15,19 +15,25 @@ export function isValidGroupNamespace(value: unknown): value is string {
 }
 
 /**
- * 그룹 이름에서 초기값을 만든다. 영문·숫자가 없는 이름(한글 등)은 그룹 id에서 만든다.
- * 결과는 항상 GROUP_NAMESPACE_PATTERN을 만족한다.
+ * 그룹 이름에서 초기값을 만든다. 영문·숫자가 없는 이름(한글 등)은 읽을 수 있는 그룹 id에서,
+ * id가 UUID면 `group-` + id 앞 8자로 만든다. 결과는 항상 GROUP_NAMESPACE_PATTERN을 만족한다.
  */
 export function suggestGroupNamespace(name: string, groupId: string): string {
-  const fromName = slug(name);
-  if (fromName.length >= 2)
-    return fromName.slice(0, GROUP_NAMESPACE_MAX_LENGTH).replace(/[-_]+$/, '');
+  for (const source of [name, UUID_LIKE.test(groupId) ? '' : groupId]) {
+    const value = slug(source)
+      .slice(0, GROUP_NAMESPACE_MAX_LENGTH)
+      .replace(/[-_]+$/, '');
+    if (isValidGroupNamespace(value)) return value;
+  }
   const fromId = groupId
     .toLowerCase()
     .replace(/[^a-z0-9]/g, '')
     .slice(0, 8);
   return `group-${fromId || 'x'}`;
 }
+
+const UUID_LIKE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** 이미 쓰인 값과 겹치면 `-2`, `-3` … 을 붙인다. */
 export function uniqueGroupNamespace(

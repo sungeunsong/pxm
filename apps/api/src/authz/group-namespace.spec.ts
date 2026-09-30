@@ -13,8 +13,14 @@ describe('group namespace helpers', () => {
   });
 
   it('falls back to the group id when the name has no ASCII letters', () => {
-    const value = suggestGroupNamespace('보안운영팀', '9F2A-41c0-aaaa');
-    expect(value).toBe('group-9f2a41c0');
+    expect(suggestGroupNamespace('보안운영팀', 'security-ops')).toBe(
+      'security-ops',
+    );
+    const value = suggestGroupNamespace(
+      '보안운영팀',
+      '0CE44000-b3e7-483c-8025-c60a089d74f0',
+    );
+    expect(value).toBe('group-0ce44000');
     expect(isValidGroupNamespace(value)).toBe(true);
   });
 

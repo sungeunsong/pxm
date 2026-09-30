@@ -17,6 +17,6 @@ import { WorkflowCompatibilityService } from './workflow-compatibility.service';
   imports: [DbModule, InstancesModule, SchedulesModule, DbWatchModule, CredentialsModule, ManagementAuditModule, AuthzModule, ScriptLibrariesModule, PluginsModule, CommandsModule],
   controllers: [TemplatesController],
   providers: [TemplatesService, WorkflowCompatibilityService],
-  exports: [TemplatesService],
+  exports: [TemplatesService, WorkflowCompatibilityService],
 })
 export class TemplatesModule {}
