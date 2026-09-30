@@ -183,6 +183,25 @@ Start 노드의 `formSchema`는 신청 화면 표시와 실행 API 검증에 함
 - API: `POST /api/templates/:id/clone` `{ target_group_id, name }`. 원본을 읽을 수 있고 대상 그룹의 관리 권한이 있어야 한다.
   준비되지 않은 그룹이면 `409 CLONE_TARGET_NOT_READY`와 `report`를 돌려준다
 
+## 진입점 게시 (AI Tool) — 등록까지
+
+워크플로우를 바깥에 공개하는 입구를 등록한다. 설계: `docs/entry-points-design.md`.
+**지금은 등록·관리만 된다.** AI 하네스가 부르는 목록·실행 API는 PXM-70에서 붙인다. 게이트웨이 라우트는 아직 게시할 수 없다.
+
+- 그룹마다 바꿀 수 없는 **공개 이름**(`namespace`)이 있다. 그룹을 만들 때 이름에서 만들고(영문이 없으면 그룹 ID에서),
+  기존 그룹은 API 기동 때 채운다. 사용자 및 권한 화면의 그룹 목록에 보인다
+- 게시하면 워크플로우의 **현재 배포 버전에 고정**된다. 워크플로우를 다시 배포해도 바뀌지 않고, 버전 교체로만 바꾼다.
+  교체할 때 입력·출력 계약 변화를 비교하고, 호출하는 쪽이 깨지는 변경이면 확인을 받아야 바꾼다
+- 입력 스키마는 Start 입력 폼에서 만든다. 직접 고친 스키마도 받지만 입력 폼에 없는 항목은 막는다
+- 출력 스키마는 End 노드의 **결과 스키마**에서 가져온다. 없으면 형식 없음(`free_form`)으로 게시한다
+- 게시를 막는 것: 배포되지 않은 워크플로우, 입력 폼 없음, 파일 입력, End 노드 없음, 같은 그룹의 같은 Tool 이름
+- 경고만 하는 것: 설명 없는 입력 항목, 일부 모델이 못 읽는 스키마 구문, 결과 스키마 없음, 결재가 있는데 "승인 필요"가 아닌 부작용 구분,
+  그룹 호환성 점검에서 조치가 필요한 자원
+- 권한: 워크플로우 소유 그룹의 관리자가 게시·수정·교체·삭제한다. 그룹 구성원은 목록과 상세를 본다. API Key로는 쓸 수 없다
+- API(콘솔 전용): `GET /api/entry-points`, `POST /api/entry-points/preview`, `POST /api/entry-points`,
+  `GET|PATCH|DELETE /api/entry-points/:id`, `POST /api/entry-points/:id/rebind` `{ dry_run, confirm_breaking }`
+- 디자이너 End 노드: **업무 실패로 종료**(처리 결과를 업무 실패로 기록), **결과 스키마**(JSON Schema, 엔진은 읽지 않음)
+
 ## 콘솔 메뉴
 
 | 메뉴 | 역할 | 용도 |
@@ -360,7 +379,7 @@ AES-256-GCM으로 암호화 저장하며 원문은 다시 조회할 수 없다. 
 |---|---|---|
 | `COMPLETED` | `SUCCESS` | 정상 처리 |
 | `COMPLETED` | `REJECTED` | 결재 반려 (반려 분기를 거쳐 끝난 경우 포함) |
-| `COMPLETED` | `FAILURE` | End 노드 설정 `outcome: "failure"`로 선언한 업무 실패 |
+| `COMPLETED` | `FAILURE` | End 노드의 "업무 실패로 종료"(`outcome: "failure"`)로 선언한 업무 실패 |
 | `FAILED` | `FAILURE` | 노드 실행 실패 |
 | `TERMINATED` | `CANCELLED` | 신청 취소, 운영자 강제 종료, API 호출자 취소 |
 | 진행 중 | `null` | 아직 끝나지 않음 |

@@ -138,6 +138,8 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
   const [commandOptionsError, setCommandOptionsError] = React.useState<string | null>(null);
   const [dbWatchFilterJson, setDbWatchFilterJson] = React.useState('{}');
   const [dbWatchFilterError, setDbWatchFilterError] = React.useState<string | null>(null);
+  const [resultSchemaJson, setResultSchemaJson] = React.useState('');
+  const [resultSchemaError, setResultSchemaError] = React.useState<string | null>(null);
   const [dbWatchTestRunning, setDbWatchTestRunning] = React.useState(false);
   const [dbWatchTestResult, setDbWatchTestResult] = React.useState<TestDbWatchConnectionResponse | null>(null);
   const [dbWatchTestError, setDbWatchTestError] = React.useState<string | null>(null);
@@ -180,6 +182,8 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
     const data = node.data as any;
     setDbWatchFilterJson(JSON.stringify(data.dbWatchFilter || {}, null, 2));
     setDbWatchFilterError(null);
+    setResultSchemaJson(data.resultSchema ? JSON.stringify(data.resultSchema, null, 2) : '');
+    setResultSchemaError(null);
     setDbWatchTestResult(null);
     setDbWatchTestError(null);
   }, [node.id]);
@@ -1541,6 +1545,46 @@ export const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
           helperText="비워두면 context.data만 result로 저장됩니다."
           fullWidth
         />
+        <Checkbox
+          label="업무 실패로 종료"
+          checked={data.outcome === 'failure'}
+          onChange={(e) => {
+            // 노드 설정은 병합되므로 해제할 때는 undefined로 덮어쓴다
+            onUpdate(node.id, { ...data, outcome: e.target.checked ? 'failure' : undefined });
+          }}
+        />
+        <div className="property-helper-text">
+          이 End에 도착하면 실행은 정상 종료되지만 처리 결과는 실패(업무 실패)로 기록합니다. 예: 조건이 맞지 않아 신청을 거절하는 경로.
+        </div>
+        <div className="property-group">
+          <label className="property-label">결과 스키마 (JSON Schema, 선택)</label>
+          <textarea
+            className="property-textarea"
+            value={resultSchemaJson}
+            placeholder={'{\n  "type": "object",\n  "properties": {\n    "granted": { "type": "boolean", "description": "권한 부여 여부" }\n  }\n}'}
+            onChange={(e) => {
+              const raw = e.target.value;
+              setResultSchemaJson(raw);
+              if (!raw.trim()) {
+                setResultSchemaError(null);
+                onUpdate(node.id, { ...data, resultSchema: undefined });
+                return;
+              }
+              const parsed = parseJsonObject(raw);
+              if (parsed.ok) {
+                setResultSchemaError(null);
+                onUpdate(node.id, { ...data, resultSchema: parsed.value });
+              } else {
+                setResultSchemaError(parsed.message);
+              }
+            }}
+            spellCheck={false}
+          />
+          {resultSchemaError && <div className="property-error-text">{resultSchemaError}</div>}
+          <div className="property-helper-text">
+            AI Tool로 게시할 때 결과 형식으로 공개됩니다. 엔진은 이 값을 읽지 않습니다.
+          </div>
+        </div>
       </div>
     );
   };

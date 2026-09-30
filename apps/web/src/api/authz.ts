@@ -12,6 +12,8 @@ export type PxmGroup = {
   name: string;
   description?: string;
   status: 'active' | 'deleted';
+  /** AI Tool 이름·게이트웨이 주소에 쓰는 불변 식별자 */
+  namespace?: string | null;
   restored_at?: string | null;
   recovery_review_required?: boolean;
   created_at: string;

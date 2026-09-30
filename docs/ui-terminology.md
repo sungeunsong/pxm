@@ -14,6 +14,8 @@
 | formSchema / Start 입력 | 입력 항목 | 요청 내용 | 입력 폼 |
 | input preset | 저장한 입력값 | — | 실행 프리셋 |
 | outcome | 처리 결과 | 처리 결과 | 처리 결과 |
+| group namespace | — | — | 공개 이름 |
+| entry point | — | — | 진입점 (종류: AI Tool, 게이트웨이 라우트) |
 | terminate (본인이 요청) | 신청 취소 | — | — |
 | terminate (운영자가 실행) | — | — | 강제 종료 |
 

@@ -264,7 +264,12 @@ export function AccessManagementPage({ currentUser }: { currentUser: SessionUser
               >
                 <span>
                   <strong>{group.name}</strong>
-                  <small>{group.id}</small>
+                  <small>
+                    {group.id}
+                    {group.namespace && (
+                      <span title="AI Tool 이름과 게이트웨이 주소에 쓰입니다. 바꿀 수 없습니다."> · 공개 이름 {group.namespace}</span>
+                    )}
+                  </small>
                 </span>
                 <span className={`status-badge ${group.status}`}>{group.recovery_review_required ? '복구 후 확인 필요' : group.status}</span>
               </button>

@@ -142,6 +142,10 @@ export interface CustomNodeData {
 
   // End 노드 전용
   resultPath?: string;
+  /** AI Tool 등 진입점의 출력 스키마. 엔진은 읽지 않는다 */
+  resultSchema?: Record<string, any>;
+  /** 'failure'면 정상 종료지만 처리 결과를 업무 실패로 기록한다 */
+  outcome?: 'failure';
 }
 
 export type ExecutionNodeStatus = 'running' | 'waiting' | 'completed' | 'failed';
