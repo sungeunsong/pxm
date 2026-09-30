@@ -8,6 +8,11 @@ PXM 워크플로우를 LLM이 호출할 수 있는 **Tool**로 공개하는 기�
 - 2단계 이후(LLM Node, Agent Node)는 방향과 **지금 지켜야 할 계약**만 기록한다
 - 관련 문서: `docs/workflow-api-contract.md`, `docs/public-api-v1.md`, `docs/plugin-sdk-guide.md`
 
+> **공통 구조로 바뀐 부분 (2026-09-30, `docs/entry-points-design.md`)**
+> 이 문서의 Tool Registry는 게이트웨이 라우트와 함께 쓰는 진입점 저장소 `pxm_entry_points`(`kind: tool`)로 구현한다.
+> `tool_namespace`는 그룹 `namespace`로 이름을 바꿔 라우트 경로에도 쓴다. 호출 이력은 `pxm_entry_point_calls`를 쓴다.
+> 두 문서가 다르면 `entry-points-design.md`를 따른다.
+
 ---
 
 ## 1. 목적과 역할 분리

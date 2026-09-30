@@ -19,6 +19,7 @@
 | [webhook-delivery.md](webhook-delivery.md) | 결재 결과 Webhook 등록·서명·재전송 |
 | [plugin-sdk-guide.md](plugin-sdk-guide.md) | 플러그인 개발 가이드 (hosted / external_http) |
 | [ai-tool-publish-design.md](ai-tool-publish-design.md) | **설계 · 미구현.** 워크플로우를 AI Tool로 공개하는 Tool Registry와 Invoke API |
+| [entry-points-design.md](entry-points-design.md) | **설계 · 미구현.** 외부 호출 입구 세 가지(실행 API·AI Tool·게이트웨이 라우트)의 공통 등록 구조와 게이트웨이 라우트 |
 
 ## 결재
 
