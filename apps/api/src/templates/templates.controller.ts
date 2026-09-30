@@ -855,7 +855,7 @@ export class TemplatesController {
       return acceptedResponse;
     }
 
-    const waitResult = await this.waitForInstanceResult(resolvedInstanceId, body?.sync_timeout_ms);
+    const waitResult = await this.instancesService.waitForResult(resolvedInstanceId, normalizeSyncTimeoutMs(body?.sync_timeout_ms));
 
     if (waitResult.timedOut) {
       res?.status(HttpStatus.ACCEPTED);
@@ -874,38 +874,6 @@ export class TemplatesController {
       result_path: waitResult.result_path,
       completed_at: waitResult.completed_at,
       timed_out: false,
-    };
-  }
-
-  private async waitForInstanceResult(
-    instanceId: string,
-    requestedTimeoutMs?: number,
-  ): Promise<{
-    timedOut: boolean;
-    status?: string;
-    result?: any;
-    result_path?: string | null;
-    completed_at?: string | null;
-  }> {
-    const timeoutMs = normalizeSyncTimeoutMs(requestedTimeoutMs);
-    const pollMs = Number(process.env.START_SYNC_POLL_MS ?? 250);
-    const deadline = Date.now() + timeoutMs;
-    let latest: any = null;
-
-    while (Date.now() <= deadline) {
-      latest = await this.instancesService.getResult(instanceId);
-      if (latest?.status === 'COMPLETED' || latest?.status === 'FAILED') {
-        return { timedOut: false, ...latest };
-      }
-      await sleep(Math.max(50, pollMs));
-    }
-
-    latest = await this.instancesService.getResult(instanceId);
-    return {
-      timedOut: true,
-      status: latest?.status,
-      result_path: latest?.result_path,
-      completed_at: latest?.completed_at,
     };
   }
 
@@ -976,10 +944,6 @@ function startIdempotencyTtlMs(): number {
 
 function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function sanitizePresetValues(value: any): Record<string, any> {

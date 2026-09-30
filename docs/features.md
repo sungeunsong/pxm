@@ -344,7 +344,7 @@ AES-256-GCM으로 암호화 저장하며 원문은 다시 조회할 수 없다. 
 ## 실행 모드
 
 - **비동기(기본)**: 인스턴스 ID를 즉시 반환하고 결과는 조회·SSE·Webhook으로 받는다
-- **동기(`mode: "sync"`)**: 완료까지 대기하고 결과를 인라인 반환한다
+- **동기(`mode: "sync"`)**: 완료까지 대기하고 결과를 인라인 반환한다. 강제 종료된 실행도 끝난 것으로 보고 바로 돌려준다
 
 ## 결과 수신
 
@@ -384,6 +384,7 @@ End 노드의 `outcome` 설정은 아직 디자이너에서 고를 수 없고 �
 |---|---|
 | 재시도 | Exponential backoff + jitter. 노드별 `max_attempts` 재정의 가능 |
 | 분산 실행 안전성 | `FOR UPDATE SKIP LOCKED` job 획득 + advisory lock + lease + heartbeat |
+| 작업 즉시 처리 | MongoDB replica set에서는 새 작업을 change stream으로 알려 엔진이 바로 가져간다. 동기 실행 응답도 인스턴스 변경을 기다려 바로 돌아온다. 주기 확인(엔진 `ENGINE_POLL_MS` 기본 300ms, 동기 응답 `START_SYNC_POLL_MS` 기본 250ms)은 신호를 놓쳤을 때의 안전망이다. PostgreSQL과 단독 MongoDB는 주기 확인만 한다 |
 | 멱등성 | `Idempotency-Key` 재전송 시 같은 `instance_id` 반환. 인스턴스 명령에도 적용 |
 | 이벤트 로그 | Outbox append-only. 모든 상태 전이가 기록되며 SSE로 전달 |
 | 실행 추적 | `GET /api/v1/instances/:id/trace` 및 콘솔의 읽기 전용 그래프 추적. 노드의 실행 중·대기·완료·실패와 실제로 지나간 연결을 구분해 표시 |

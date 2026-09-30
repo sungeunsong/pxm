@@ -482,3 +482,46 @@ describe('InstancesService console terminate and requester cancel', () => {
       .rejects.toBeInstanceOf(ForbiddenException);
   });
 });
+
+describe('InstancesService.waitForResult', () => {
+  function build(states: string[], signal?: any) {
+    let reads = 0;
+    const instanceRepo = {
+      getInstance: jest.fn(async () => {
+        const state = states[Math.min(reads, states.length - 1)];
+        reads += 1;
+        return { id: 'instance-1', state, context: {}, outcome: state === 'COMPLETED' ? 'SUCCESS' : null };
+      }),
+    };
+    const service = new InstancesService(instanceRepo as any, {} as any, {} as any, {} as any, signal);
+    return { service, instanceRepo, reads: () => reads };
+  }
+
+  it('변경 신호를 받으면 주기를 기다리지 않고 다시 확인해 결과를 돌려준다', async () => {
+    const signal = { watch: () => ({ wait: jest.fn().mockResolvedValue(true), close: jest.fn() }) };
+    const { service } = build(['RUNNING', 'COMPLETED'], signal);
+    const started = Date.now();
+    const result = await service.waitForResult('instance-1', 5_000, 5_000);
+    expect(result).toMatchObject({ timedOut: false, status: 'COMPLETED', outcome: 'SUCCESS' });
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it('신호가 없어도 주기 확인으로 끝난다', async () => {
+    const { service } = build(['RUNNING', 'RUNNING', 'COMPLETED']);
+    const result = await service.waitForResult('instance-1', 5_000, 10);
+    expect(result).toMatchObject({ timedOut: false, status: 'COMPLETED' });
+  });
+
+  it('강제 종료된 실행도 끝난 것으로 본다', async () => {
+    const { service } = build(['TERMINATED']);
+    await expect(service.waitForResult('instance-1', 1_000, 10)).resolves.toMatchObject({ timedOut: false, status: 'TERMINATED' });
+  });
+
+  it('제한 시간이 지나면 진행 중으로 돌려주고 등록한 대기를 정리한다', async () => {
+    const close = jest.fn();
+    const signal = { watch: () => ({ wait: (ms: number) => new Promise((r) => setTimeout(() => r(false), ms)), close }) };
+    const { service } = build(['RUNNING'], signal);
+    await expect(service.waitForResult('instance-1', 40, 10)).resolves.toMatchObject({ timedOut: true, status: 'RUNNING' });
+    expect(close).toHaveBeenCalled();
+  });
+});

@@ -14,6 +14,12 @@ import {
   AuthzRepositoryPort,
 } from './ports/db.ports';
 import { MONGO_DB } from './mongo.provider';
+import type { Db } from 'mongodb';
+import {
+  InstanceChangeSignalPort,
+  MongoInstanceChangeSignal,
+  PollingInstanceChangeSignal,
+} from './instance-change-signal';
 
 const dbType = process.env.DB_TYPE || 'postgres';
 const isMongo = dbType === 'mongodb';
@@ -54,6 +60,14 @@ const isMongo = dbType === 'mongodb';
       provide: AuthzRepositoryPort,
       useClass: isMongo ? MongodbAdapter : PostgresAdapter,
     },
+    {
+      provide: InstanceChangeSignalPort,
+      inject: [MONGO_DB],
+      useFactory: (db: Db) =>
+        isMongo
+          ? new MongoInstanceChangeSignal(db)
+          : new PollingInstanceChangeSignal(),
+    },
   ],
   exports: [
     MONGO_DB,
@@ -65,6 +79,7 @@ const isMongo = dbType === 'mongodb';
     WorkflowScheduleRepositoryPort,
     WorkflowInputPresetRepositoryPort,
     AuthzRepositoryPort,
+    InstanceChangeSignalPort,
   ],
 })
 export class DbModule {}

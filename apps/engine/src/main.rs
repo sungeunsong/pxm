@@ -23,7 +23,10 @@ async fn main() -> Result<()> {
 
     println!("[engine] Starting. db_type={db_type}, worker_id={worker_id}, poll_ms={poll_ms}");
 
-    let v2_context = if db_type == "mongodb" {
+    let (v2_context, work_signal): (
+        v2::runtime::V2RuntimeContext,
+        Box<dyn v2::ports::WorkSignalPort>,
+    ) = if db_type == "mongodb" {
         let mongo_url = std::env::var("MONGODB_URL")
             .unwrap_or_else(|_| "mongodb://127.0.0.1:27017".to_string());
         let db_name = std::env::var("MONGO_DB_NAME").unwrap_or_else(|_| "pxm_db".to_string());
@@ -49,11 +52,19 @@ async fn main() -> Result<()> {
             );
         }
 
+        // change stream은 replica set에서만 된다. 단독 MongoDB(로컬 개발)는 주기 확인만 한다.
+        let work_signal: Box<dyn v2::ports::WorkSignalPort> = if is_replica_set {
+            Box::new(v2::infrastructure::work_signal::MongoChangeStreamWorkSignal::start(
+                client.database(&db_name),
+            ))
+        } else {
+            Box::new(v2::infrastructure::work_signal::PollingWorkSignal)
+        };
         let adapter =
             v2::infrastructure::mongo_adapter::MongoAdapter::new(client, &db_name, is_replica_set);
         let plugin_executor = v2::plugin_executor::PluginExecutorRegistry::new_default()?;
 
-        v2::runtime::V2RuntimeContext {
+        let context = v2::runtime::V2RuntimeContext {
             tx_manager: Box::new(adapter.clone()),
             job_queue: Box::new(adapter.clone()),
             instance_lock: Box::new(adapter.clone()),
@@ -64,7 +75,8 @@ async fn main() -> Result<()> {
             def_repo: Box::new(adapter.clone()),
             instance_repo: Box::new(adapter.clone()),
             plugin_executor: Box::new(plugin_executor),
-        }
+        };
+        (context, work_signal)
     } else {
         let db_url = std::env::var("DATABASE_URL")?;
         println!("[engine] Connecting to PostgreSQL...");
@@ -76,8 +88,11 @@ async fn main() -> Result<()> {
 
         let adapter = v2::infrastructure::postgres_adapter::PostgresAdapter::new(pool);
         let plugin_executor = v2::plugin_executor::PluginExecutorRegistry::new_default()?;
+        // PostgreSQL은 LISTEN/NOTIFY 구현 전까지 주기 확인만 한다.
+        let work_signal: Box<dyn v2::ports::WorkSignalPort> =
+            Box::new(v2::infrastructure::work_signal::PollingWorkSignal);
 
-        v2::runtime::V2RuntimeContext {
+        let context = v2::runtime::V2RuntimeContext {
             tx_manager: Box::new(adapter.clone()),
             job_queue: Box::new(adapter.clone()),
             instance_lock: Box::new(adapter.clone()),
@@ -88,7 +103,8 @@ async fn main() -> Result<()> {
             def_repo: Box::new(adapter.clone()),
             instance_repo: Box::new(adapter.clone()),
             plugin_executor: Box::new(plugin_executor),
-        }
+        };
+        (context, work_signal)
     };
 
     println!("[engine] connected and context initialized.");
@@ -116,6 +132,7 @@ async fn main() -> Result<()> {
             continue;
         }
 
-        tokio::time::sleep(Duration::from_millis(poll_ms)).await;
+        // 할 일이 없으면 poll_ms 동안 기다리되, 새 작업 신호가 오면 바로 다음 확인으로 간다.
+        work_signal.wait_for_work(Duration::from_millis(poll_ms)).await;
     }
 }

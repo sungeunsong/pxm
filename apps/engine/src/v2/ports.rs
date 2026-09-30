@@ -237,3 +237,14 @@ pub struct PluginExecutionResult {
 pub trait PluginExecutorPort: Send + Sync {
     async fn execute(&self, invocation: PluginInvocation) -> Result<PluginExecutionResult>;
 }
+
+/// 새 작업이 생겼을 때 작업 루프를 깨운다.
+///
+/// 작업 루프는 할 일이 없으면 주기적으로 큐를 확인한다. 이 포트는 그 사이에 새 작업이 들어오면
+/// 기다리지 않고 바로 돌아오게 해 요청 지연을 줄인다. 신호를 놓치더라도 주기 확인이 안전망이므로
+/// 정확성은 큐(잡 획득·락·lease)가 보장하고, 이 포트는 속도만 담당한다.
+#[async_trait]
+pub trait WorkSignalPort: Send + Sync {
+    /// 새 작업 신호가 오거나 `timeout`이 지나면 돌아온다.
+    async fn wait_for_work(&self, timeout: std::time::Duration);
+}

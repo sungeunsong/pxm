@@ -1,4 +1,5 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { InstanceChangeSignalPort, PollingInstanceChangeSignal } from '../db/instance-change-signal';
 import { CreateInstanceDto } from './dto/create-instance.dto';
 import { createHash, randomUUID } from 'crypto';
 import { InstanceOutcomeReason, OutboxRepositoryPort, WorkflowHistoryActor, WorkflowInstanceAccess, WorkflowInstanceRepositoryPort, WorkflowRepositoryPort } from '../db/ports/db.ports';
@@ -18,7 +19,38 @@ export class InstancesService {
     private readonly workflowRepo: WorkflowRepositoryPort,
     private readonly outboxRepo: OutboxRepositoryPort,
     private readonly authzService: AuthzService,
+    @Optional() private readonly changeSignal: InstanceChangeSignalPort = new PollingInstanceChangeSignal(),
   ) {}
+
+  /**
+   * 인스턴스가 끝나거나 timeoutMs가 지날 때까지 기다린다. 동기 실행과 Tool 실행이 함께 쓴다.
+   *
+   * 결과를 읽기 전에 변경 신호를 먼저 등록해, 읽는 사이에 끝난 경우도 놓치지 않는다.
+   * 신호가 없거나 놓쳐도 maxCheckIntervalMs마다 다시 확인하므로 결과는 항상 맞다.
+   */
+  async waitForResult(
+    instanceId: string,
+    timeoutMs: number,
+    maxCheckIntervalMs = Number(process.env.START_SYNC_POLL_MS ?? 250),
+  ): Promise<{ timedOut: boolean; [key: string]: any }> {
+    const deadline = Date.now() + timeoutMs;
+    const watch = this.changeSignal.watch(instanceId);
+    try {
+      for (;;) {
+        const latest = await this.getResult(instanceId);
+        if (TERMINAL_INSTANCE_STATES.includes(String(latest?.status || '').toUpperCase())) {
+          return { timedOut: false, ...latest };
+        }
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) {
+          return { timedOut: true, ...latest, result: undefined };
+        }
+        await watch.wait(Math.min(remaining, Math.max(50, maxCheckIntervalMs)));
+      }
+    } finally {
+      watch.close();
+    }
+  }
 
   async createInstance(dto: CreateInstanceDto, access?: WorkflowInstanceAccess) {
     const instanceId = randomUUID();
@@ -1254,3 +1286,5 @@ function detectSideEffect(node: any): {
     message: 'Service 노드는 외부 시스템 호출을 다시 수행할 수 있습니다.',
   };
 }
+
+const TERMINAL_INSTANCE_STATES = ['COMPLETED', 'FAILED', 'TERMINATED'];
