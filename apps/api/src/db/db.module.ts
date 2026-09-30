@@ -15,6 +15,9 @@ import {
 } from './ports/db.ports';
 import { MONGO_DB } from './mongo.provider';
 import type { Db } from 'mongodb';
+import { EntryPointRepositoryPort } from './ports/entry-points.port';
+import { MongoEntryPointRepository } from './adapters/entry-points.mongodb';
+import { PostgresEntryPointRepository } from './adapters/entry-points.postgres';
 import {
   InstanceChangeSignalPort,
   MongoInstanceChangeSignal,
@@ -61,6 +64,12 @@ const isMongo = dbType === 'mongodb';
       useClass: isMongo ? MongodbAdapter : PostgresAdapter,
     },
     {
+      provide: EntryPointRepositoryPort,
+      useClass: isMongo
+        ? MongoEntryPointRepository
+        : PostgresEntryPointRepository,
+    },
+    {
       provide: InstanceChangeSignalPort,
       inject: [MONGO_DB],
       useFactory: (db: Db) =>
@@ -79,6 +88,7 @@ const isMongo = dbType === 'mongodb';
     WorkflowScheduleRepositoryPort,
     WorkflowInputPresetRepositoryPort,
     AuthzRepositoryPort,
+    EntryPointRepositoryPort,
     InstanceChangeSignalPort,
   ],
 })

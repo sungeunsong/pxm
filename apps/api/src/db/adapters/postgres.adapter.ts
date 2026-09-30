@@ -2187,9 +2187,9 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
     const { rows } = await this.pool.query(
       `
       INSERT INTO pxm_groups
-        (id, name, description, status, created_by, updated_by, created_at, updated_at)
+        (id, name, description, status, namespace, created_by, updated_by, created_at, updated_at)
       VALUES
-        ($1, $2, $3, 'active', $4, $4, NOW(), NOW())
+        ($1, $2, $3, 'active', $5, $4, $4, NOW(), NOW())
       ON CONFLICT (id)
       DO UPDATE SET
         name = EXCLUDED.name,
@@ -2199,9 +2199,18 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
         updated_at = NOW()
       RETURNING *
       `,
-      [id, group.name.trim(), group.description || '', group.actor || null],
+      [id, group.name.trim(), group.description || '', group.actor || null, group.namespace || null],
     );
     return mapGroupRow(rows[0]);
+  }
+
+  async assignGroupNamespace(id: string, namespace: string): Promise<boolean> {
+    await this.ensureAuthzTables();
+    const { rowCount } = await this.pool.query(
+      `UPDATE pxm_groups SET namespace = $2 WHERE id = $1 AND namespace IS NULL`,
+      [id, namespace],
+    );
+    return (rowCount || 0) > 0;
   }
 
   async listGroups(includeDeleted = false): Promise<PxmGroup[]> {
@@ -2792,6 +2801,8 @@ export class PostgresAdapter implements WorkflowRepositoryPort, WorkflowInstance
     `);
     await this.pool.query(`ALTER TABLE pxm_groups ADD COLUMN IF NOT EXISTS restored_at TIMESTAMPTZ NULL`);
     await this.pool.query(`ALTER TABLE pxm_groups ADD COLUMN IF NOT EXISTS recovery_review_required BOOLEAN NOT NULL DEFAULT false`);
+    await this.pool.query(`ALTER TABLE pxm_groups ADD COLUMN IF NOT EXISTS namespace TEXT NULL`);
+    await this.pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS ux_pxm_groups_namespace ON pxm_groups (namespace) WHERE namespace IS NOT NULL`);
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS pxm_users (
         id TEXT PRIMARY KEY,
@@ -2968,6 +2979,7 @@ function mapGroupRow(row: any): PxmGroup {
     name: row.name,
     description: row.description || '',
     status: row.status || 'active',
+    namespace: row.namespace || null,
     created_by: row.created_by || null,
     updated_by: row.updated_by || null,
     deleted_at: row.deleted_at?.toISOString?.() || row.deleted_at || null,

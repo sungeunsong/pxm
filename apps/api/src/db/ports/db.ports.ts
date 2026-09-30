@@ -614,6 +614,8 @@ export type PxmGroup = {
   name: string;
   description?: string;
   status: PxmGroupStatus;
+  /** 진입점용 불변 식별자. 부여 전 그룹은 null (authz/group-namespace.ts) */
+  namespace?: string | null;
   created_by?: string | null;
   updated_by?: string | null;
   deleted_at?: string | null;
@@ -762,6 +764,8 @@ export type UpsertPxmGroup = {
   id?: string;
   name: string;
   description?: string;
+  /** 새 그룹일 때만 저장한다. 기존 그룹의 값은 바꾸지 않는다 */
+  namespace?: string;
   actor?: string | null;
 };
 
@@ -862,6 +866,8 @@ export abstract class AuthzRepositoryPort {
   abstract softDeleteGroup(id: string, actor?: string | null): Promise<boolean>;
   abstract restoreGroup(id: string, actor?: string | null): Promise<boolean>;
   abstract completeGroupRecoveryReview(id: string, actor?: string | null): Promise<boolean>;
+  /** namespace가 비어 있는 그룹에만 값을 넣는다. 이미 있으면 false. 중복이면 unique 오류를 던진다 */
+  abstract assignGroupNamespace(id: string, namespace: string): Promise<boolean>;
 
   abstract upsertUser(user: UpsertPxmUser): Promise<PxmUser>;
   abstract listUsers(groupId?: string): Promise<PxmUser[]>;

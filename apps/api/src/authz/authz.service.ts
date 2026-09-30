@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, HttpException, HttpStatus, Injectable, NotFoundException, Optional, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, HttpException, HttpStatus, Injectable, Logger, NotFoundException, OnModuleInit, Optional, UnauthorizedException } from '@nestjs/common';
 import { createHash, randomBytes } from 'crypto';
 import {
   ApiKeyUsageQuery,
@@ -38,6 +38,8 @@ import { ManagementAuditService } from '../audit/management-audit.service';
 import { CredentialsService } from '../credentials/credentials.service';
 import { assertCanManageGroup } from './management-auth';
 import { ExternalApprovalMailer } from '../tasks/external-approval.mailer';
+import { errorBody } from '../observability/remediation';
+import { isValidGroupNamespace, suggestGroupNamespace, uniqueGroupNamespace } from './group-namespace';
 
 const API_KEY_PREFIX = 'pxm_live_';
 const API_KEY_VISIBLE_PREFIX_LENGTH = 18;
@@ -48,7 +50,9 @@ const ALLOWED_API_KEY_SCOPES: PxmApiKeyScope[] = [
 ];
 
 @Injectable()
-export class AuthzService {
+export class AuthzService implements OnModuleInit {
+  private readonly logger = new Logger(AuthzService.name);
+
   constructor(
     private readonly authzRepo: AuthzRepositoryPort,
     private readonly workflowRepo: WorkflowRepositoryPort,
@@ -61,16 +65,72 @@ export class AuthzService {
     @Optional() private readonly approvalMailer?: ExternalApprovalMailer,
   ) {}
 
+  /** namespace 도입 전에 만든 그룹에 값을 한 번 채운다. 실패해도 기동은 막지 않는다 */
+  async onModuleInit(): Promise<void> {
+    try {
+      const groups = await this.authzRepo.listGroups(true);
+      for (const group of groups.filter((item) => !item.namespace)) {
+        await this.ensureGroupNamespace(group);
+      }
+    } catch (error) {
+      this.logger.warn(`group namespace backfill skipped: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   async upsertGroup(dto: UpsertGroupDto): Promise<PxmGroup> {
     if (!dto?.name?.trim()) {
       throw new BadRequestException('name is required');
     }
-    return this.authzRepo.upsertGroup({
-      id: optionalId(dto.id),
+    const id = optionalId(dto.id);
+    const requestedNamespace = optionalString(dto.namespace) ?? undefined;
+    const existing = id ? await this.authzRepo.getGroup(id) : null;
+    if (requestedNamespace !== undefined) {
+      if (!isValidGroupNamespace(requestedNamespace)) {
+        throw new BadRequestException(errorBody('GROUP_NAMESPACE_INVALID', 'namespace must match ^[a-z][a-z0-9_-]{1,31}$'));
+      }
+      if (existing?.namespace && existing.namespace !== requestedNamespace) {
+        throw new ConflictException(errorBody('GROUP_NAMESPACE_IMMUTABLE', 'group namespace cannot be changed', undefined, { namespace: existing.namespace }));
+      }
+      if (!existing?.namespace && (await this.takenGroupNamespaces()).has(requestedNamespace)) {
+        throw new ConflictException(errorBody('GROUP_NAMESPACE_TAKEN', 'namespace is already used by another group'));
+      }
+    }
+    const group = await this.authzRepo.upsertGroup({
+      id,
       name: dto.name.trim(),
       description: optionalString(dto.description) || '',
       actor: optionalString(dto.actor),
     });
+    return this.ensureGroupNamespace(group, requestedNamespace);
+  }
+
+  /**
+   * namespace가 없는 그룹에 값을 넣는다. 지정값이 없으면 그룹 이름에서 만들고, 겹치면 접미사를 붙인다.
+   * 이미 있는 그룹은 그대로 돌려준다(불변).
+   */
+  async ensureGroupNamespace(group: PxmGroup, requested?: string): Promise<PxmGroup> {
+    if (group.namespace) return group;
+    const taken = await this.takenGroupNamespaces();
+    let candidate = requested ?? uniqueGroupNamespace(suggestGroupNamespace(group.name, group.id), taken);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        await this.authzRepo.assignGroupNamespace(group.id, candidate);
+        break;
+      } catch (error) {
+        if (!isDuplicateKeyError(error)) throw error;
+        if (requested) {
+          throw new ConflictException(errorBody('GROUP_NAMESPACE_TAKEN', 'namespace is already used by another group'));
+        }
+        taken.add(candidate);
+        candidate = uniqueGroupNamespace(candidate, taken);
+      }
+    }
+    return (await this.authzRepo.getGroup(group.id)) ?? group;
+  }
+
+  private async takenGroupNamespaces(): Promise<Set<string>> {
+    const groups = await this.authzRepo.listGroups(true);
+    return new Set(groups.map((item) => item.namespace).filter((value): value is string => Boolean(value)));
   }
 
   async listGroups(includeDeleted = false): Promise<PxmGroup[]> {

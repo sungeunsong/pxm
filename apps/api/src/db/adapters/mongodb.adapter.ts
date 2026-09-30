@@ -2474,6 +2474,7 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
         },
         $setOnInsert: {
           _id: id,
+          ...(group.namespace ? { namespace: group.namespace } : {}),
           created_by: group.actor || null,
           created_at: now,
           deleted_at: null,
@@ -2484,6 +2485,15 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
       { upsert: true },
     );
     return mapGroupDoc(await this.db.collection<any>('pxm_groups').findOne({ _id: id }));
+  }
+
+  async assignGroupNamespace(id: string, namespace: string): Promise<boolean> {
+    await this.ensureAuthzIndexes();
+    const result = await this.db.collection<any>('pxm_groups').updateOne(
+      { _id: id, $or: [{ namespace: { $exists: false } }, { namespace: null }] },
+      { $set: { namespace } },
+    );
+    return result.modifiedCount > 0;
   }
 
   async listGroups(includeDeleted = false): Promise<PxmGroup[]> {
@@ -3085,6 +3095,12 @@ export class MongodbAdapter implements WorkflowRepositoryPort, WorkflowInstanceR
   private async ensureAuthzIndexes(): Promise<void> {
     if (this.authzIndexesReady) return;
     await this.db.collection<any>('pxm_groups').createIndex({ name: 1 }, { unique: true });
+    await this.db
+      .collection<any>('pxm_groups')
+      .createIndex(
+        { namespace: 1 },
+        { unique: true, name: 'ux_pxm_groups_namespace', partialFilterExpression: { namespace: { $type: 'string' } } },
+      );
     await this.db.collection<any>('pxm_users').createIndex({ group_ids: 1 });
     await this.db.collection<any>('pxm_approval_delegations').createIndex({ group_id: 1, delegator_id: 1, status: 1, starts_at: 1, ends_at: 1 });
     await this.db.collection<any>('pxm_approval_delegations').createIndex({ delegate_id: 1, status: 1, starts_at: 1, ends_at: 1 });
@@ -3137,6 +3153,7 @@ function mapGroupDoc(doc: any): PxmGroup {
     name: doc.name,
     description: doc.description || '',
     status: doc.status || 'active',
+    namespace: doc.namespace || null,
     created_by: doc.created_by || null,
     updated_by: doc.updated_by || null,
     deleted_at: doc.deleted_at || null,
