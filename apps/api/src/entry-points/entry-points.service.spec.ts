@@ -310,6 +310,32 @@ describe('EntryPointsService management', () => {
     ]);
   });
 
+  it('detects breaking form changes for a manual input schema', async () => {
+    const { service, workflow } = build();
+    const { entry_point } = await service.publish(actor(), {
+      ...toolInput,
+      input_schema: {
+        type: 'object',
+        properties: { user_id: { type: 'string', description: '조회할 사번' } },
+        required: ['user_id'],
+      },
+    });
+    expect(entry_point.input_schema_source).toBe('manual');
+    workflow.active_published_version = 2;
+    workflow.version = 2;
+
+    const dry = await service.rebind(actor(), entry_point.id, {
+      dry_run: true,
+    });
+    expect(dry).toMatchObject({ breaking: true });
+    expect(
+      dry.changes.map((change) => `${change.change}:${change.field}`),
+    ).toEqual(['added_required:reason']);
+    await expect(
+      service.rebind(actor(), entry_point.id),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
   it('deletes', async () => {
     const { service, store } = build();
     const { entry_point } = await service.publish(actor(), toolInput);

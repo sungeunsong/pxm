@@ -274,7 +274,11 @@ export function resolveOutputSchema(
   nodes: NodeLike[],
 ): SchemaCheck & { schema: Record<string, any> | null } {
   const warnings: SchemaIssue[] = [];
-  const ends = nodes.filter((node) => node?.data?.nodeType === 'end');
+  // 업무 실패로 끝나는 End의 결과는 실패 내용이라 출력 계약에 넣지 않는다
+  const ends = nodes.filter(
+    (node) =>
+      node?.data?.nodeType === 'end' && node.data?.outcome !== 'failure',
+  );
   const schemas = ends
     .map((node) => node.data?.resultSchema)
     .filter(
@@ -285,20 +289,16 @@ export function resolveOutputSchema(
     warnings.push({
       code: 'OUTPUT_SCHEMA_MISSING',
       message:
-        'End 노드에 결과 스키마가 없습니다. 결과 형식을 정하지 않은 채(free_form) 게시합니다.',
+        '정상 종료 End 노드에 결과 스키마가 없습니다. 결과 형식을 정하지 않은 채(free_form) 게시합니다.',
     });
     return { schema: null, blocks: [], warnings };
   }
   const distinct = new Set(schemas.map((value) => JSON.stringify(value)));
-  if (
-    distinct.size > 1 ||
-    schemas.length <
-      ends.filter((node) => node.data?.outcome !== 'failure').length
-  ) {
+  if (distinct.size > 1 || schemas.length < ends.length) {
     warnings.push({
       code: 'OUTPUT_SCHEMA_INCONSISTENT',
       message:
-        'End 노드마다 결과 스키마가 다르거나 빠져 있습니다. 첫 번째 스키마를 씁니다.',
+        '정상 종료 End 노드마다 결과 스키마가 다르거나 빠져 있습니다. 첫 번째 스키마를 씁니다.',
     });
   }
   return { schema: schemas[0], blocks: [], warnings };

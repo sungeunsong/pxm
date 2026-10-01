@@ -216,4 +216,24 @@ describe('resolveOutputSchema', () => {
     ]);
     expect(result.warnings).toEqual([]);
   });
+
+  it('does not publish the schema of a business-failure End as the output', () => {
+    const result = resolveOutputSchema([
+      { data: { nodeType: 'end' } },
+      {
+        data: {
+          nodeType: 'end',
+          outcome: 'failure',
+          resultSchema: {
+            type: 'object',
+            properties: { reason: { type: 'string' } },
+          },
+        },
+      },
+    ]);
+    expect(result.schema).toBeNull();
+    expect(result.warnings.map((item) => item.code)).toEqual([
+      'OUTPUT_SCHEMA_MISSING',
+    ]);
+  });
 });

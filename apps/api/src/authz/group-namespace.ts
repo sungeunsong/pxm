@@ -7,7 +7,8 @@
  *
  * 설계: docs/entry-points-design.md 2장
  */
-export const GROUP_NAMESPACE_PATTERN = /^[a-z][a-z0-9_-]{1,31}$/;
+// '__'는 한정 이름 {namespace}__{name}의 구분자라 쓸 수 없다. 그래야 첫 '__'에서 나눠 겹치지 않는다
+export const GROUP_NAMESPACE_PATTERN = /^(?!.*__)[a-z][a-z0-9_-]{1,31}$/;
 export const GROUP_NAMESPACE_MAX_LENGTH = 32;
 
 export function isValidGroupNamespace(value: unknown): value is string {

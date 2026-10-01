@@ -70,7 +70,10 @@ export class AuthzService implements OnModuleInit {
     try {
       const groups = await this.authzRepo.listGroups(true);
       for (const group of groups.filter((item) => !item.namespace)) {
-        await this.ensureGroupNamespace(group);
+        // 한 그룹이 실패해도 나머지는 채운다. 못 채운 그룹은 게시할 때 다시 시도한다
+        await this.ensureGroupNamespace(group).catch((error: unknown) =>
+          this.logger.warn(`group namespace backfill failed for ${group.id}: ${error instanceof Error ? error.message : String(error)}`),
+        );
       }
     } catch (error) {
       this.logger.warn(`group namespace backfill skipped: ${error instanceof Error ? error.message : String(error)}`);
@@ -86,7 +89,7 @@ export class AuthzService implements OnModuleInit {
     const existing = id ? await this.authzRepo.getGroup(id) : null;
     if (requestedNamespace !== undefined) {
       if (!isValidGroupNamespace(requestedNamespace)) {
-        throw new BadRequestException(errorBody('GROUP_NAMESPACE_INVALID', 'namespace must match ^[a-z][a-z0-9_-]{1,31}$'));
+        throw new BadRequestException(errorBody('GROUP_NAMESPACE_INVALID', 'namespace must match ^[a-z][a-z0-9_-]{1,31}$ without "__"'));
       }
       if (existing?.namespace && existing.namespace !== requestedNamespace) {
         throw new ConflictException(errorBody('GROUP_NAMESPACE_IMMUTABLE', 'group namespace cannot be changed', undefined, { namespace: existing.namespace }));
@@ -125,7 +128,12 @@ export class AuthzService implements OnModuleInit {
         candidate = uniqueGroupNamespace(candidate, taken);
       }
     }
-    return (await this.authzRepo.getGroup(group.id)) ?? group;
+    const saved = await this.authzRepo.getGroup(group.id);
+    // 다른 서버가 같은 순간 값을 넣었으면 그 값을 쓴다. 그래도 없으면 빈 채로 넘기지 않는다
+    if (!saved?.namespace) {
+      throw new ConflictException(errorBody('GROUP_NAMESPACE_UNAVAILABLE', 'could not assign a group namespace'));
+    }
+    return saved;
   }
 
   private async takenGroupNamespaces(): Promise<Set<string>> {

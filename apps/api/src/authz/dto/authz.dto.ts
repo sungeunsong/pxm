@@ -87,7 +87,7 @@ export class UpsertGroupDto {
   @IsOptional() @IsString() @MaxLength(1000)
   description?: string;
   /** 새 그룹일 때만 쓴다. 생략하면 그룹 이름에서 만든다. 만든 뒤에는 바꿀 수 없다 */
-  @IsOptional() @IsString() @Matches(/^[a-z][a-z0-9_-]{1,31}$/)
+  @IsOptional() @IsString() @Matches(/^(?!.*__)[a-z][a-z0-9_-]{1,31}$/)
   namespace?: string;
   @IsOptional() @IsString() @MaxLength(128)
   actor?: string;

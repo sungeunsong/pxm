@@ -46,6 +46,8 @@ describe('group namespace helpers', () => {
     expect(isValidGroupNamespace('1ops')).toBe(false);
     expect(isValidGroupNamespace('a')).toBe(false);
     expect(isValidGroupNamespace('sec_ops-1')).toBe(true);
+    // '__'는 한정 이름 구분자라 쓰면 다른 그룹 Tool 이름과 겹칠 수 있다
+    expect(isValidGroupNamespace('foo__x')).toBe(false);
   });
 });
 
@@ -126,6 +128,38 @@ describe('AuthzService group namespace', () => {
     await expect(
       service.upsertGroup({ id: 'g1', name: 'SecOps', namespace: 'other' }),
     ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('throws instead of returning a group without a namespace', async () => {
+    const { service, repo } = build([
+      { id: 'g1', name: 'Ops', namespace: null },
+    ]);
+    repo.assignGroupNamespace.mockImplementation(async () => {
+      throw Object.assign(new Error('duplicate'), { code: 11000 });
+    });
+    await expect(
+      service.ensureGroupNamespace({
+        id: 'g1',
+        name: 'Ops',
+        status: 'active',
+      } as any),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('uses the value another server assigned at the same time', async () => {
+    const { service, repo, store } = build([
+      { id: 'g1', name: 'Ops', namespace: null },
+    ]);
+    repo.assignGroupNamespace.mockImplementation(async () => {
+      store.set('g1', { ...store.get('g1')!, namespace: 'ops' });
+      return false;
+    });
+    const saved = await service.ensureGroupNamespace({
+      id: 'g1',
+      name: 'Ops',
+      status: 'active',
+    } as any);
+    expect(saved.namespace).toBe('ops');
   });
 
   it('backfills groups created before namespaces existed', async () => {

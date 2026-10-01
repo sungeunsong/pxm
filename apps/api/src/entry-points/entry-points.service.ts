@@ -305,9 +305,33 @@ export class EntryPointsService {
       },
       entry.id,
     );
+    // 직접 고친 스키마는 교체해도 그대로라 저장값끼리 비교하면 변화가 안 보인다.
+    // 실행 때 검증하는 것은 Start 입력 폼이므로 두 버전의 폼에서 만든 스키마를 비교한다.
+    const manual = entry.input_schema_source === 'manual';
+    const previous = manual
+      ? await this.snapshot(entry.definition_id, entry.pinned_version)
+      : null;
+    if (manual && !previous) {
+      throw new UnprocessableEntityException(
+        errorBody(
+          'PINNED_VERSION_MISSING',
+          `고정한 워크플로우 버전 v${entry.pinned_version}을 찾을 수 없어 변경을 비교할 수 없습니다.`,
+        ),
+      );
+    }
     const diff = diffEntryPointSchemas(
-      { input: entry.input_schema, output: entry.output_schema },
-      { input: plan.input_schema, output: plan.output_schema },
+      {
+        input: previous
+          ? deriveInputSchema(previous.nodes || []).schema
+          : entry.input_schema,
+        output: entry.output_schema,
+      },
+      {
+        input: manual
+          ? deriveInputSchema(plan.nodes).schema
+          : plan.input_schema,
+        output: plan.output_schema,
+      },
     );
     const result = {
       from_version: entry.pinned_version,
@@ -437,6 +461,14 @@ export class EntryPointsService {
     assertCanManageGroup(actor, template.group_id);
     let group = await this.authz.getGroup(template.group_id);
     group = await this.authz.ensureGroupNamespace(group);
+    if (!group.namespace) {
+      throw new ConflictException(
+        errorBody(
+          'GROUP_NAMESPACE_MISSING',
+          '그룹 공개 이름을 정하지 못했습니다. 잠시 뒤 다시 시도하세요.',
+        ),
+      );
+    }
 
     const blocks: SchemaIssue[] = [];
     const warnings: SchemaIssue[] = [];
