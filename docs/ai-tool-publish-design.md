@@ -12,7 +12,8 @@ PXM 워크플로우를 LLM이 호출할 수 있는 **Tool**로 공개하는 기�
 > 이 문서의 Tool Registry는 게이트웨이 라우트와 함께 쓰는 진입점 저장소 `pxm_entry_points`(`kind: tool`)로 구현한다.
 > `tool_namespace`는 그룹 `namespace`로 이름을 바꿔 라우트 경로에도 쓴다. 호출 이력은 `pxm_entry_point_calls`를 쓴다.
 > 두 문서가 다르면 `entry-points-design.md`를 따른다.
-> 관리 API는 `/api/tools`가 아니라 `/api/entry-points`로 구현했다(PXM-69). 시험 호출은 버전 지정 실행과 함께 PXM-70에서 만든다.
+> 관리 API는 `/api/tools`가 아니라 `/api/entry-points`로 구현했다(PXM-69). 시험 호출은 `POST /api/entry-points/:id/test`(PXM-70).
+> 결과 확인용 `GET /api/v1/tools/invocations/:instance_id`를 더했다(PXM-70). Tool 전용 키는 `workflow:read`가 없어 실행 결과 API를 읽지 못하기 때문이다.
 
 ---
 

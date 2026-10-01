@@ -12,11 +12,12 @@ import { ScriptLibrariesModule } from '../script-libraries/script-libraries.modu
 import { PluginsModule } from '../plugins/plugins.module';
 import { CommandsModule } from '../commands/commands.module';
 import { WorkflowCompatibilityService } from './workflow-compatibility.service';
+import { WorkflowStartService } from './workflow-start.service';
 
 @Module({
   imports: [DbModule, InstancesModule, SchedulesModule, DbWatchModule, CredentialsModule, ManagementAuditModule, AuthzModule, ScriptLibrariesModule, PluginsModule, CommandsModule],
   controllers: [TemplatesController],
-  providers: [TemplatesService, WorkflowCompatibilityService],
-  exports: [TemplatesService, WorkflowCompatibilityService],
+  providers: [TemplatesService, WorkflowCompatibilityService, WorkflowStartService],
+  exports: [TemplatesService, WorkflowCompatibilityService, WorkflowStartService],
 })
 export class TemplatesModule {}

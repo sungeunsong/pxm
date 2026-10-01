@@ -3,23 +3,15 @@ import { errorBody } from '../observability/remediation';
 import type { Request, Response } from 'express';
 import { TemplatesService } from './templates.service';
 import { WorkflowCompatibilityService } from './workflow-compatibility.service';
+import { WorkflowStartService, normalizeIdempotencyKey, normalizeSyncTimeoutMs } from './workflow-start.service';
 import { CreateTemplateDto, DeployTemplateDto, UpdateTemplateDto } from './dto/template.dto';
 import { WorkflowInputPresetRepositoryPort, type WorkflowInputPreset, WorkflowInstanceRepositoryPort, WorkflowScheduleRepositoryPort } from '../db/ports/db.ports';
 import { InstancesService } from '../instances/instances.service';
 import { actorFromRequest, instanceAccessFromRequest } from '../instances/history-auth';
-import { createHash, randomUUID } from 'crypto';
 import { assertCanManageGroup, isAdmin } from '../authz/management-auth';
 import { ManagementAuditService } from '../audit/management-audit.service';
 import { AuthzService } from '../authz/authz.service';
-import {
-  externalApprovalIdempotencyTtlMs,
-  externalApprovalKeyHash,
-  externalApprovalRequestHash,
-  dynamicApprovalRequestInputKey,
-  dynamicApprovalRequestPath,
-  normalizeExternalApprovalRequest,
-  stableStringify,
-} from '../instances/external-approval-start';
+import { dynamicApprovalRequestInputKey } from '../instances/external-approval-start';
 import { PUBLIC_API_VERSIONS } from '../public-api-version';
 import { ApiBody, ApiHeader, ApiOkResponse, ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { PublicApiController, PublicApiErrors } from '../openapi/public-api.decorators';
@@ -38,6 +30,7 @@ export class TemplatesController {
     private readonly audit: ManagementAuditService,
     private readonly authzService: AuthzService,
     private readonly compatibility: WorkflowCompatibilityService,
+    private readonly workflowStart: WorkflowStartService,
   ) {}
 
   /**
@@ -660,15 +653,7 @@ export class TemplatesController {
     assertCanExecuteWorkflow(actor, id);
     const normalizedIdempotencyKey = normalizeIdempotencyKey(idempotencyKey);
 
-    // 실행 요청마다 새로운 인스턴스를 발급한다
-    const instanceId = randomUUID();
     const mode = body?.mode === 'sync' ? 'sync' : 'async';
-
-    // 시작 노드 찾기
-    const startNode = template.nodes.find((n: any) => n.data?.nodeType === 'start');
-    if (!startNode) {
-      throw new Error('Start node not found in template');
-    }
 
     const requestedPreset = body?.preset_id || body?.preset_alias || body?.preset;
     const inputOverrides = body?.input ?? body?.formData ?? {};
@@ -695,138 +680,22 @@ export class TemplatesController {
       ));
     }
     const formData = normalizedInput.values;
-    const approvalRequestPath = dynamicApprovalRequestPath(template.nodes);
-    const externalApproval = normalizeExternalApprovalRequest(formData, approvalRequestPath);
-    const externalApprovalRequestDigest = externalApproval
-      ? externalApprovalRequestHash(template.id, formData, approvalRequestPath)
-      : null;
-    const requestAccess = instanceAccessFromRequest(req, formData);
-    const access = {
-      ...requestAccess,
-      group_id: template.group_id || requestAccess.group_id,
-      workflow_version_id: template.version ? `${template.id}:${template.version}` : null,
-    };
-    if (externalApproval) {
-      await this.authzService.resolveExternalApprovalPrincipals(
-        formData,
-        approvalRequestPath,
-        access.group_id,
-        template.nodes,
-      );
-    }
-    const groupSnapshot = template.group_id ? await this.authzService.getGroup(template.group_id).catch(() => null) : null;
-    const apiKeySnapshot = actor.api_key_id ? await this.authzService.getApiKey(actor.api_key_id).catch(() => null) : null;
-    const ctx = {
-      runtime: {
-        cursor: startNode.id,
-        nodes: template.nodes,
-        edges: template.edges,
-        template_id: template.id,
-        template_name: template.name,
-        snapshot: {
-          workflow: {
-            id: template.id,
-            name: template.name,
-            version: template.version || 1,
-          },
-          group: template.group_id
-            ? {
-                id: template.group_id,
-                name: groupSnapshot?.name || template.group || template.group_id,
-              }
-            : null,
-          caller: { type: actor.actor_type, id: actor.actor_id },
-          api_key: apiKeySnapshot
-            ? {
-                id: apiKeySnapshot.id,
-                name: apiKeySnapshot.name,
-                prefix: apiKeySnapshot.key_prefix,
-              }
-            : null,
-          business_actor: actor.business_actor || null,
-        },
-        access,
-        input_preset: inputPreset
-          ? {
-              id: inputPreset.id,
-              alias: inputPreset.alias,
-              name: inputPreset.name,
-              override_keys: Object.keys(inputOverrides),
-            }
-          : null,
-      },
-      data: {
-        formData,
-        outputs: {},
-      },
-    };
-
-    const startTokenId = randomUUID();
-    let resolvedInstanceId: string = instanceId;
-    let idempotentReplay = false;
-    if (normalizedIdempotencyKey || externalApproval) {
-      const principal = actor.api_key_id ? `api_key:${actor.api_key_id}` : `${actor.actor_type}:${actor.actor_id || 'anonymous'}`;
-      const keyHash = externalApproval
-        ? externalApprovalKeyHash(externalApproval)
-        : sha256(`workflow-start:v1:${principal}:${template.id}:${normalizedIdempotencyKey}`);
-      const requestHash = externalApproval
-        ? externalApprovalRequestDigest!
-        : sha256(
-            stableStringify({
-              workflow_id: template.id,
-              preset_id: inputPreset?.id || null,
-              input: formData,
-            }),
-          );
-      const result = await this.instanceRepo.createIdempotentStart({
-        key_hash: keyHash,
-        request_hash: requestHash,
-        expires_at: new Date(Date.now() + (externalApproval ? externalApprovalIdempotencyTtlMs() : startIdempotencyTtlMs())),
-        instance: {
-          id: instanceId,
-          definition_id: template.id,
-          status: 'CREATED',
-          context: ctx,
-          access,
-        },
-        token: {
-          id: startTokenId,
-          node_id: startNode.id,
-          status: 'ACTIVE',
-        },
-        job: {
-          type: 'START',
-          run_at: new Date(),
-          payload: {
-            node_id: startNode.id,
-            reason: 'template_execute',
-          },
-        },
-      });
-      if (result.outcome === 'conflict') {
-        throw new ConflictException(
-          externalApproval
-            ? 'External approval request key was already used with different workflow input; increment revision to resubmit'
-            : 'Idempotency-Key was already used with different workflow input',
-        );
-      }
-      resolvedInstanceId = result.instance_id;
-      idempotentReplay = result.outcome === 'replayed';
-      if (idempotentReplay) {
-        res?.setHeader('Idempotency-Replayed', 'true');
-        if (externalApproval) res?.setHeader('External-Approval-Replayed', 'true');
-      }
-    } else {
-      await this.instanceRepo.executeInstanceMutation({
-        create_instances: [{ id: instanceId, definition_id: template.id, status: 'CREATED', context: ctx, access }],
-        tokens: [{ id: startTokenId, instance_id: instanceId, node_id: startNode.id, status: 'ACTIVE' }],
-        jobs: [{
-          instance_id: instanceId,
-          type: 'START',
-          run_at: new Date(),
-          payload: { node_id: startNode.id, reason: 'template_execute' },
-        }],
-      });
+    const started = await this.workflowStart.start({
+      template,
+      actor,
+      access: instanceAccessFromRequest(req, formData),
+      formData,
+      inputPreset: inputPreset ? { id: inputPreset.id, alias: inputPreset.alias, name: inputPreset.name } : null,
+      inputOverrideKeys: Object.keys(inputOverrides),
+      idempotencyKey: normalizedIdempotencyKey,
+      idempotencyScope: template.id,
+      reason: 'template_execute',
+    });
+    const resolvedInstanceId = started.instance_id;
+    const idempotentReplay = started.idempotent_replay;
+    if (idempotentReplay) {
+      res?.setHeader('Idempotency-Replayed', 'true');
+      if (started.external_approval) res?.setHeader('External-Approval-Replayed', 'true');
     }
 
     if (!idempotentReplay) console.log(`[BFF] Executed template ${template.name}. instance_id=${resolvedInstanceId}`);
@@ -838,13 +707,7 @@ export class TemplatesController {
       status: 'CREATED',
       mode,
       idempotent_replay: idempotentReplay,
-      external_approval_key: externalApproval
-        ? {
-            provider: externalApproval.provider,
-            request_id: externalApproval.requestId,
-            revision: externalApproval.revision,
-          }
-        : null,
+      external_approval_key: started.external_approval,
       result_url: `/api/v1/instances/${resolvedInstanceId}/result`,
       trace_url: `/api/v1/instances/${resolvedInstanceId}/trace`,
       stream_url: `/api/v1/instances/${resolvedInstanceId}/stream`,
@@ -919,32 +782,6 @@ type InputPresetRequest = {
   group_id?: string | null;
   shared_group_ids?: string[];
 };
-
-function normalizeSyncTimeoutMs(value?: number): number {
-  const defaultTimeout = Number(process.env.START_SYNC_TIMEOUT_MS ?? 10000);
-  const maxTimeout = Number(process.env.START_SYNC_MAX_TIMEOUT_MS ?? 30000);
-  const timeout = Number.isFinite(value) && value ? Number(value) : defaultTimeout;
-  return Math.min(Math.max(timeout, 100), maxTimeout);
-}
-
-function normalizeIdempotencyKey(value?: string): string | null {
-  if (value === undefined) return null;
-  const key = value.trim();
-  if (!key || key.length > 200 || /[\u0000-\u001f\u007f]/.test(key)) {
-    throw new BadRequestException('Idempotency-Key must contain 1 to 200 printable characters');
-  }
-  return key;
-}
-
-function startIdempotencyTtlMs(): number {
-  const hours = Number(process.env.START_IDEMPOTENCY_TTL_HOURS ?? 24);
-  const normalizedHours = Number.isFinite(hours) && hours > 0 ? hours : 24;
-  return normalizedHours * 60 * 60 * 1000;
-}
-
-function sha256(value: string): string {
-  return createHash('sha256').update(value).digest('hex');
-}
 
 function sanitizePresetValues(value: any): Record<string, any> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {

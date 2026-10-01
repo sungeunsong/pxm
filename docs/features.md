@@ -183,10 +183,10 @@ Start 노드의 `formSchema`는 신청 화면 표시와 실행 API 검증에 함
 - API: `POST /api/templates/:id/clone` `{ target_group_id, name }`. 원본을 읽을 수 있고 대상 그룹의 관리 권한이 있어야 한다.
   준비되지 않은 그룹이면 `409 CLONE_TARGET_NOT_READY`와 `report`를 돌려준다
 
-## 진입점 게시 (AI Tool) — 등록까지
+## 진입점 게시와 AI Tool 호출
 
-워크플로우를 바깥에 공개하는 입구를 등록한다. 설계: `docs/entry-points-design.md`.
-**지금은 등록·관리만 된다.** AI 하네스가 부르는 목록·실행 API는 PXM-70에서 붙인다. 게이트웨이 라우트는 아직 게시할 수 없다.
+워크플로우를 바깥에 공개하는 입구를 등록하고, AI 하네스가 Tool로 부른다. 설계: `docs/entry-points-design.md`.
+호출 API 계약은 `docs/public-api-v1.md`의 "AI Tool". 관리 화면은 아직 없다(PXM-72). 게이트웨이 라우트는 아직 게시할 수 없다.
 
 - 그룹마다 바꿀 수 없는 **공개 이름**(`namespace`)이 있다. 그룹을 만들 때 이름에서 만들고(영문이 없으면 그룹 ID에서),
   기존 그룹은 API 기동 때 채운다. 사용자 및 권한 화면의 그룹 목록에 보인다
@@ -201,6 +201,13 @@ Start 노드의 `formSchema`는 신청 화면 표시와 실행 API 검증에 함
 - API(콘솔 전용): `GET /api/entry-points`, `POST /api/entry-points/preview`, `POST /api/entry-points`,
   `GET|PATCH|DELETE /api/entry-points/:id`, `POST /api/entry-points/:id/rebind` `{ dry_run, confirm_breaking }`
 - 디자이너 End 노드: **업무 실패로 종료**(처리 결과를 업무 실패로 기록), **결과 스키마**(JSON Schema, 엔진은 읽지 않음)
+- **호출**: `GET /api/v1/tools`, `POST /api/v1/tools/:name/invoke`, `GET /api/v1/tools/invocations/:instance_id`.
+  API Key 권한 범위 `tool:read`(목록)·`tool:invoke`(호출)가 따로 있다. 그 아래에서 키의 그룹·워크플로우 허용 목록이 그대로 적용된다
+- 호출은 Tool에 **고정된 버전**을 실행한다. 워크플로우가 배포 상태가 아니면(`DISABLED` 등) 호출을 거부한다
+- 결재가 있는 Tool은 결재 대기에 들어가면 기다리지 않고 바로 `202 pending_approval`과 결재자 이름을 준다
+- 콘솔 시험 호출 `POST /api/entry-points/:id/test`: 관리자가 비활성 Tool도 실제로 실행해 본다. 외부 호출·결재 요청도 그대로 일어난다
+- 기존 실행 API(`/templates/:id/execute`)와 Tool 호출은 인스턴스를 만드는 코드를 함께 쓴다. 동작은 바뀌지 않았다
+- 아직 없는 것: 최종 사용자 전달(`on_behalf_of`)과 호출 묶음(`trace_context`) — PXM-71, 호출 이력 화면 — PXM-72
 
 ## 콘솔 메뉴
 
@@ -452,7 +459,7 @@ End 노드의 `outcome` 설정은 아직 디자이너에서 고를 수 없고 �
 
 | 통제 | 내용 |
 |---|---|
-| scope | `workflow:read`, `workflow:execute`, `task:approve` 세 가지 |
+| scope | `workflow:read`, `workflow:execute`, `task:approve`, `tool:read`, `tool:invoke` 다섯 가지 |
 | 워크플로우 접근 정책 | `all_in_group`(그룹에 이후 추가되는 것도 허용) 또는 `allowlist`(명시된 것만) |
 | IP allowlist | 지원 |
 | Rate limit | 지원 |

@@ -34,6 +34,36 @@ API 코드와 DTO가 문서의 원본이다. 서버를 다시 실행하면 Swagg
 - `POST /api/v1/tasks/:id/complete`
 - `GET /api/v1/instances/:instanceId/tasks`
 
+### AI Tool
+
+AI 하네스용이다. 게시된 워크플로우를 Tool 이름으로 부르고, Tool에 고정된 버전을 실행한다.
+게시·관리는 콘솔 전용 `/api/entry-points`에서 한다.
+
+- `GET /api/v1/tools` (`tool:read`) — LLM tool 정의로 바로 바꿀 수 있는 목록. `naming=auto|qualified|plain`, `side_effect`, `tags`
+- `GET /api/v1/tools/:name` (`tool:read`)
+- `POST /api/v1/tools/:name/invoke` (`tool:invoke`, 선택적 `Idempotency-Key`) — `{ arguments, group_id?, mode?, sync_timeout_ms? }`
+- `GET /api/v1/tools/invocations/:instance_id` (`tool:invoke`) — 202를 받은 뒤 결과 확인. 응답 모양은 실행과 같다
+
+이름은 Tool 이름(`request_access`) 또는 한정 이름(`{그룹 공개 이름}__{Tool 이름}`)이다.
+같은 Tool 이름이 여러 그룹에 있으면 추측해서 실행하지 않고 `409 TOOL_NAME_AMBIGUOUS`를 준다.
+여러 턴에 걸쳐 이름을 캐시하는 하네스는 `naming=qualified`를 쓴다.
+
+| 응답 | HTTP | 뜻 |
+|---|---|---|
+| `status: ok` | 200 | 완료. 결과는 `result` |
+| `status: error`, `error.kind: business` | 200 | 업무 실패(반려, 업무 실패로 종료). 재시도하지 않는다 |
+| `status: pending_approval` | 202 | 결재 대기. `pending.approvers`, 결과는 `result_url` |
+| `status: running` | 202 | 진행 중(`mode: async` 또는 대기 한도 초과) |
+| `TOOL_EXECUTION_FAILED` | 422 / 502 / 504 / 500 | 실행 실패. `failure_type`·`retryable`, 재시도 가능하면 `Retry-After` |
+| `TOOL_EXECUTION_TERMINATED` | 409 | 운영자·호출자가 실행을 종료했다 |
+
+시작 전 오류: `400 TOOL_INPUT_INVALID`(항목별 `details[].path`), `403 MISSING_SCOPE`, `404 TOOL_NOT_FOUND`(권한 밖도 같다),
+`409 TOOL_DISABLED`, `409 TOOL_VERSION_UNAVAILABLE`. 모든 오류에 `retryable`이 있다.
+
+- 자동 재시도는 HTTP 코드가 아니라 `retryable`로 판단한다. `side_effect`가 `read_only`가 아니면 첫 호출과 같은 `Idempotency-Key`로 재시도한다
+- 최종 사용자 전달(`on_behalf_of`)은 아직 받지 않는다(`400 ON_BEHALF_OF_UNSUPPORTED`). 검증 기능과 함께 연다(PXM-71)
+- `trace_url`·`stream_url`은 키에 `workflow:read`가 있을 때만 응답에 넣는다. Tool 이름에는 `__`를 쓸 수 없다(한정 이름 구분자)
+
 그룹, 사용자, API Key, credential, plugin, webhook 설정, 운영 복구 API는 관리 콘솔용 `/api` 경로에만 존재한다.
 인스턴스 `pause`와 `resume`도 운영자 제어 기능이므로 관리 콘솔용 `/api` 경로에만 둔다.
 

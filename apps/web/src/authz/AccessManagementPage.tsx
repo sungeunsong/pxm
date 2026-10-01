@@ -24,16 +24,20 @@ import './AccessManagementPage.css';
 import { ApiKeyUsagePanel } from './ApiKeyUsagePanel';
 
 // 조회가 기본 권한이므로 먼저 보여준다. 실행·승인은 그 위에 얹는 동작이다.
-const scopeOptions: ApiKeyScope[] = ['workflow:read', 'workflow:execute', 'task:approve'];
+const scopeOptions: ApiKeyScope[] = ['workflow:read', 'workflow:execute', 'task:approve', 'tool:read', 'tool:invoke'];
 const scopeLabels: Record<ApiKeyScope, string> = {
   'workflow:read': '조회 (읽기 전용)',
   'workflow:execute': '워크플로우 실행',
   'task:approve': '결재 승인·반려',
+  'tool:read': 'AI Tool 목록',
+  'tool:invoke': 'AI Tool 호출',
 };
 const scopeDescriptions: Record<ApiKeyScope, string> = {
   'workflow:read': '워크플로우 목록, 실행 상태, 결과를 읽기만 합니다. 실행은 할 수 없습니다.',
   'workflow:execute': '새 실행을 시작합니다. 결과까지 확인하려면 조회도 함께 선택합니다.',
   'task:approve': '이 사용자에게 배정된 결재를 승인하거나 반려합니다.',
+  'tool:read': 'AI 하네스가 쓸 수 있는 Tool 목록과 입력 형식을 읽습니다.',
+  'tool:invoke': '게시된 AI Tool을 호출합니다. 호출 결과도 함께 받습니다.',
 };
 type AccessDetailTab = 'users' | 'serviceAccounts' | 'apiKeys' | 'externalMappings';
 type AccessPageSection = 'groups' | 'users';

@@ -4,7 +4,7 @@ export type PxmGroupRole = Exclude<PxmRole, 'admin'>;
 export type PxmGroupMembership = { group_id: string; role: PxmGroupRole };
 export type PrincipalStatus = 'active' | 'disabled' | 'deleted';
 export type ApiKeyOwnerType = 'USER' | 'SERVICE_ACCOUNT';
-export type ApiKeyScope = 'workflow:read' | 'workflow:execute' | 'task:approve';
+export type ApiKeyScope = 'workflow:read' | 'workflow:execute' | 'task:approve' | 'tool:read' | 'tool:invoke';
 export type ApiKeyWorkflowAccess = 'all_in_group' | 'allowlist';
 
 export type PxmGroup = {

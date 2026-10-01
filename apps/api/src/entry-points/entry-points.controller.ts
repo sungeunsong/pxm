@@ -8,9 +8,15 @@ import {
   Post,
   Query,
   Req,
+  Res,
 } from '@nestjs/common';
-import type { Request } from 'express';
-import { actorFromRequest } from '../instances/history-auth';
+import type { Request, Response } from 'express';
+import {
+  actorFromRequest,
+  instanceAccessFromRequest,
+} from '../instances/history-auth';
+import { correlationIdFromRequest } from '../observability/correlation-id.middleware';
+import type { ToolInvokeBody } from './tools.service';
 import type { EntryPointKind } from '../db/ports/entry-points.port';
 import {
   EntryPointsService,
@@ -85,6 +91,32 @@ export class EntryPointsController {
       dry_run: body?.dry_run === true,
       confirm_breaking: body?.confirm_breaking === true,
     });
+  }
+
+  /**
+   * 시험 호출. 고정 버전을 실제로 실행하므로 외부 시스템 호출·결재 요청도 그대로 일어난다.
+   * 비활성 상태여도 실행한다(켜기 전에 확인하는 용도). 관리 권한이 있어야 한다.
+   */
+  @Post(':id/test')
+  async test(
+    @Param('id') id: string,
+    @Body() body: ToolInvokeBody | undefined,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const outcome = await this.service.test(
+      actorFromRequest(req),
+      id,
+      body || {},
+      {
+        access: (formData) => instanceAccessFromRequest(req, formData),
+        requestId: correlationIdFromRequest(req),
+      },
+    );
+    for (const [header, value] of Object.entries(outcome.headers))
+      res.setHeader(header, value);
+    res.status(outcome.http_status);
+    return outcome.body;
   }
 
   @Delete(':id')

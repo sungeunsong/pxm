@@ -145,7 +145,7 @@ export class CreateApiKeyDto {
   owner_id: string;
   @IsString() @MinLength(1) @MaxLength(128)
   group_id: string;
-  @IsOptional() @IsArray() @ArrayMaxSize(3) @IsIn(['workflow:read', 'workflow:execute', 'task:approve'], { each: true })
+  @IsOptional() @IsArray() @ArrayMaxSize(5) @IsIn(['workflow:read', 'workflow:execute', 'task:approve', 'tool:read', 'tool:invoke'], { each: true })
   scopes?: PxmApiKeyScope[];
   @IsIn(['all_in_group', 'allowlist'])
   workflow_access: 'all_in_group' | 'allowlist';

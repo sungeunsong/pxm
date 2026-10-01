@@ -74,6 +74,14 @@ export class TemplatesService {
     return result ? this.mapToDto(result, true) : null;
   }
 
+  /** 고정 버전 실행용. 버전 스냅샷을 런타임 번들까지 포함해 돌려준다. 배포 상태는 부르는 쪽이 판단한다 */
+  async findVersionForExecution(id: string, version: number): Promise<TemplateResponseDto | null> {
+    const snapshot = await this.workflowRepo.getDefinitionVersion(id, version);
+    if (snapshot) return this.mapToDto(snapshot, true);
+    const current = await this.workflowRepo.getDefinition(id);
+    return current && Number(current.version || 1) === version ? this.mapToDto(current, true) : null;
+  }
+
   async update(id: string, dto: UpdateTemplateDto): Promise<TemplateResponseDto | null> {
     // V2 템플릿 변경: 기존 정의 데이터 로드 후 업데이트 수행
     const current = await this.workflowRepo.getDefinition(id);

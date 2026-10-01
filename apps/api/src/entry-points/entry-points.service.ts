@@ -7,7 +7,11 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import type { PxmGroup, WorkflowHistoryActor } from '../db/ports/db.ports';
+import type {
+  PxmGroup,
+  WorkflowHistoryActor,
+  WorkflowInstanceAccess,
+} from '../db/ports/db.ports';
 import {
   EntryPoint,
   EntryPointConflictError,
@@ -40,8 +44,10 @@ import {
   resolveOutputSchema,
 } from './entry-point-schema';
 import { diffEntryPointSchemas } from './schema-diff';
+import { ToolsService, type ToolInvokeBody } from './tools.service';
 
-export const TOOL_NAME_PATTERN = /^[a-z][a-z0-9_]{2,63}$/;
+// '__'는 한정 이름 {namespace}__{name}의 구분자라 Tool 이름에도 쓸 수 없다
+export const TOOL_NAME_PATTERN = /^(?!.*__)[a-z][a-z0-9_]{2,63}$/;
 /** OpenAI·Anthropic 모두 Tool 이름을 64자로 제한한다 */
 const MODEL_TOOL_NAME_LIMIT = 64;
 const SIDE_EFFECTS: EntryPointSideEffect[] = [
@@ -112,6 +118,7 @@ export class EntryPointsService {
     private readonly authz: AuthzService,
     private readonly compatibility: WorkflowCompatibilityService,
     private readonly audit: ManagementAuditService,
+    private readonly tools: ToolsService,
   ) {}
 
   /** 저장하지 않고 게시 결과(스키마, 차단·경고)를 미리 본다 */
@@ -389,6 +396,39 @@ export class EntryPointsService {
     return { ...result, applied: true, entry_point: await this.view(saved) };
   }
 
+  async test(
+    actor: WorkflowHistoryActor,
+    id: string,
+    body: ToolInvokeBody,
+    context: {
+      access: (formData: Record<string, any>) => WorkflowInstanceAccess;
+      requestId: string;
+    },
+  ) {
+    const entry = await this.manageable(actor, id);
+    if (entry.kind !== 'tool') {
+      throw new BadRequestException(
+        errorBody(
+          'ENTRY_POINT_KIND_UNSUPPORTED',
+          '게이트웨이 라우트 시험 호출은 아직 지원하지 않습니다 (PXM-74).',
+        ),
+      );
+    }
+    const outcome = await this.tools.test(actor, entry, body, context);
+    await this.audit.append({
+      action: 'entry_point.tested',
+      resource_type: 'entry_point',
+      resource_id: id,
+      group_id: entry.group_id,
+      actor_id: actor.actor_id,
+      details: {
+        instance_id: outcome.body.instance_id ?? null,
+        status: outcome.body.status ?? null,
+      },
+    });
+    return outcome;
+  }
+
   async remove(actor: WorkflowHistoryActor, id: string) {
     const entry = await this.manageable(actor, id);
     await this.repo.deleteEntryPoint(id);
@@ -428,7 +468,7 @@ export class EntryPointsService {
       throw new BadRequestException(
         errorBody(
           'TOOL_NAME_INVALID',
-          'tool.name must match ^[a-z][a-z0-9_]{2,63}$',
+          'tool.name must match ^[a-z][a-z0-9_]{2,63}$ without "__"',
         ),
       );
     }

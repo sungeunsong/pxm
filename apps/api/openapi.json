@@ -1500,6 +1500,418 @@
           "Approvals"
         ]
       }
+    },
+    "/api/v1/tools": {
+      "get": {
+        "description": "tool:read 권한 범위가 필요합니다. 응답은 LLM tool 정의로 바로 바꿀 수 있는 모양입니다. naming=auto(기본)는 이름이 겹치는 Tool만 한정 이름을 씁니다. 여러 턴에 걸쳐 이름을 캐시하면 naming=qualified를 쓰세요.",
+        "operationId": "Tools_list",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "description": "호출자가 지정하는 요청 추적 ID. 생략하면 서버가 생성합니다.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "client-request-42"
+            }
+          },
+          {
+            "name": "tags",
+            "required": false,
+            "in": "query",
+            "description": "쉼표로 여러 값. 하나라도 맞으면 포함",
+            "schema": {}
+          },
+          {
+            "name": "side_effect",
+            "required": false,
+            "in": "query",
+            "description": "쉼표로 여러 값",
+            "schema": {}
+          },
+          {
+            "name": "naming",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "enum": [
+                "auto",
+                "qualified",
+                "plain"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolListResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key가 없거나 유효하지 않음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "필요한 scope가 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "리소스가 없거나 접근 범위 밖임",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "내부 정보가 제거된 서버 오류",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api-key": []
+          }
+        ],
+        "summary": "Tool 목록",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/tools/invocations/{instance_id}": {
+      "get": {
+        "description": "tool:invoke 권한 범위가 필요합니다. 202(pending_approval·running)를 받은 뒤 이 주소로 결과를 확인합니다. 응답 모양은 실행 API와 같습니다.",
+        "operationId": "Tools_invocation",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "description": "호출자가 지정하는 요청 추적 ID. 생략하면 서버가 생성합니다.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "client-request-42"
+            }
+          },
+          {
+            "name": "instance_id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "완료 또는 업무 실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolInvokeResponseDto"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "결재 대기 또는 진행 중",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolInvokeResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key가 없거나 유효하지 않음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "필요한 scope가 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "리소스가 없거나 접근 범위 밖임",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "내부 정보가 제거된 서버 오류",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api-key": []
+          }
+        ],
+        "summary": "Tool 호출 결과 확인",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/tools/{name}": {
+      "get": {
+        "description": "tool:read 권한 범위가 필요합니다. 이름은 Tool 이름 또는 한정 이름입니다.",
+        "operationId": "Tools_describe",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "description": "호출자가 지정하는 요청 추적 ID. 생략하면 서버가 생성합니다.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "client-request-42"
+            }
+          },
+          {
+            "name": "name",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "group_id",
+            "required": false,
+            "in": "query",
+            "schema": {}
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolDefinitionDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key가 없거나 유효하지 않음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "필요한 scope가 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "리소스가 없거나 접근 범위 밖임",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "내부 정보가 제거된 서버 오류",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api-key": []
+          }
+        ],
+        "summary": "Tool 상세",
+        "tags": [
+          "Tools"
+        ]
+      }
+    },
+    "/api/v1/tools/{name}/invoke": {
+      "post": {
+        "description": "tool:invoke 권한 범위가 필요합니다. Tool에 고정된 워크플로우 버전을 실행합니다. 200 ok(완료) / 200 error(업무 실패, 재시도하지 않음) / 202 pending_approval(결재 대기) / 202 running(진행 중). 실행 실패는 원인별 HTTP 코드와 failure_type·retryable을 줍니다. 자동 재시도는 HTTP 코드가 아니라 retryable로 판단하고, side_effect가 read_only가 아니면 첫 호출과 같은 Idempotency-Key로 재시도하세요.",
+        "operationId": "Tools_invoke",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "description": "호출자가 지정하는 요청 추적 ID. 생략하면 서버가 생성합니다.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "client-request-42"
+            }
+          },
+          {
+            "name": "name",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1~200자의 중복 실행 방지 키",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolInvokeDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "완료 또는 업무 실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolInvokeResponseDto"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "결재 대기 또는 진행 중",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolInvokeResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API Key가 없거나 유효하지 않음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "필요한 scope가 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "리소스가 없거나 접근 범위 밖임",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "내부 정보가 제거된 서버 오류",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api-key": []
+          }
+        ],
+        "summary": "Tool 실행",
+        "tags": [
+          "Tools"
+        ]
+      }
     }
   },
   "info": {
@@ -2038,6 +2450,245 @@
         "required": [
           "action"
         ]
+      },
+      "ToolDefinitionDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "LLM에 넣을 이름. naming에 따라 tool_name 또는 qualified_name",
+            "example": "request_access"
+          },
+          "tool_name": {
+            "type": "string",
+            "example": "request_access"
+          },
+          "qualified_name": {
+            "type": "string",
+            "description": "{그룹 공개 이름}__{Tool 이름}. Tool 수명 동안 바뀌지 않는다",
+            "example": "security-ops__request_access"
+          },
+          "display_name": {
+            "type": "object",
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "description": "LLM이 Tool을 고를 때 읽는 설명"
+          },
+          "input_schema": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "JSON Schema"
+          },
+          "output_schema": {
+            "type": "object",
+            "additionalProperties": true,
+            "nullable": true
+          },
+          "output_contract": {
+            "type": "string",
+            "enum": [
+              "declared",
+              "free_form"
+            ]
+          },
+          "side_effect": {
+            "type": "string",
+            "enum": [
+              "read_only",
+              "mutating",
+              "requires_approval"
+            ]
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "group_id": {
+            "type": "string"
+          },
+          "group_name": {
+            "type": "object",
+            "nullable": true
+          },
+          "namespace": {
+            "type": "object",
+            "nullable": true
+          },
+          "name_conflict": {
+            "type": "boolean",
+            "description": "쓸 수 있는 Tool 중 같은 tool_name이 다른 그룹에도 있음"
+          },
+          "pinned_version": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "name",
+          "tool_name",
+          "qualified_name",
+          "description",
+          "input_schema",
+          "output_contract",
+          "side_effect",
+          "tags",
+          "group_id",
+          "name_conflict",
+          "pinned_version"
+        ]
+      },
+      "ToolListResponseDto": {
+        "type": "object",
+        "properties": {
+          "tools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ToolDefinitionDto"
+            }
+          },
+          "has_name_conflict": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tools",
+          "has_name_conflict"
+        ]
+      },
+      "ToolInvokeErrorDto": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "business"
+            ]
+          },
+          "code": {
+            "type": "string",
+            "example": "APPROVAL_REJECTED"
+          },
+          "message": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean",
+            "example": false
+          }
+        },
+        "required": [
+          "kind",
+          "code",
+          "message",
+          "retryable"
+        ]
+      },
+      "ToolInvokeResponseDto": {
+        "type": "object",
+        "properties": {
+          "tool": {
+            "type": "string"
+          },
+          "qualified_name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "error",
+              "pending_approval",
+              "running"
+            ]
+          },
+          "instance_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "SUCCESS",
+              "REJECTED",
+              "FAILURE"
+            ],
+            "nullable": true
+          },
+          "result": {
+            "type": "object",
+            "nullable": true,
+            "description": "업무 결과 (End 노드 결과)"
+          },
+          "error": {
+            "description": "status=error일 때 업무 실패 내용. 재시도 대상이 아니다",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ToolInvokeErrorDto"
+              }
+            ]
+          },
+          "pending": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "status=pending_approval일 때 결재 대기 정보"
+          },
+          "result_url": {
+            "type": "string"
+          },
+          "trace_url": {
+            "type": "string",
+            "description": "workflow:read가 있을 때만 준다"
+          },
+          "stream_url": {
+            "type": "string",
+            "description": "workflow:read가 있을 때만 준다"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool",
+          "qualified_name",
+          "status",
+          "instance_id",
+          "result_url",
+          "idempotent_replay",
+          "request_id"
+        ]
+      },
+      "ToolInvokeDto": {
+        "type": "object",
+        "properties": {
+          "arguments": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "input_schema를 따르는 인자"
+          },
+          "group_id": {
+            "type": "string",
+            "description": "일반 이름이 여러 그룹에 있을 때 그룹을 정한다"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "sync",
+              "async"
+            ],
+            "default": "sync"
+          },
+          "sync_timeout_ms": {
+            "type": "number",
+            "minimum": 100,
+            "maximum": 30000
+          }
+        }
       },
       "WorkflowResultWebhookSourceDto": {
         "type": "object",

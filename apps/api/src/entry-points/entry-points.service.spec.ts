@@ -199,6 +199,10 @@ describe('EntryPointsService publish', () => {
     ).rejects.toMatchObject({
       response: { code: 'ENTRY_POINT_KIND_UNSUPPORTED' },
     });
+    // '__'는 한정 이름 구분자라 Tool 이름에 쓸 수 없다
+    await expect(
+      service.publish(actor(), { ...toolInput, tool: { name: 'get__user' } }),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('requires group manager rights on the workflow group', async () => {

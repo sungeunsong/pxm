@@ -47,6 +47,8 @@ const ALLOWED_API_KEY_SCOPES: PxmApiKeyScope[] = [
   'workflow:read',
   'workflow:execute',
   'task:approve',
+  'tool:read',
+  'tool:invoke',
 ];
 
 @Injectable()

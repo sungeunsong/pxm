@@ -22,6 +22,10 @@ const EXPECTED_PUBLIC_PATHS = [
   '/api/v1/templates/{id}',
   '/api/v1/templates/{id}/execute',
   '/api/v1/templates/{id}/start',
+  '/api/v1/tools',
+  '/api/v1/tools/invocations/{instance_id}',
+  '/api/v1/tools/{name}',
+  '/api/v1/tools/{name}/invoke',
 ].sort();
 
 describe('PXM public OpenAPI', () => {

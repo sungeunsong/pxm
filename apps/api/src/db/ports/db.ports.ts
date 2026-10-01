@@ -607,7 +607,7 @@ export type PxmPrincipalStatus = 'active' | 'disabled' | 'deleted';
 export type ExternalPrincipalMappingStatus = 'active' | 'disabled';
 export type PxmApiKeyOwnerType = 'USER' | 'SERVICE_ACCOUNT';
 export type PxmApiKeyStatus = 'active' | 'disabled' | 'expired';
-export type PxmApiKeyScope = 'workflow:read' | 'workflow:execute' | 'task:approve';
+export type PxmApiKeyScope = 'workflow:read' | 'workflow:execute' | 'task:approve' | 'tool:read' | 'tool:invoke';
 
 export type PxmGroup = {
   id: string;

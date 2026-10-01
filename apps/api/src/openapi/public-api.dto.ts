@@ -169,3 +169,56 @@ export class WorkflowResultWebhookDto {
   @ApiProperty({ format: 'date-time' }) occurred_at!: string;
   @ApiProperty({ type: WorkflowResultWebhookDataDto }) data!: WorkflowResultWebhookDataDto;
 }
+
+export class ToolDefinitionDto {
+  @ApiProperty({ description: 'LLM에 넣을 이름. naming에 따라 tool_name 또는 qualified_name', example: 'request_access' }) name!: string;
+  @ApiProperty({ example: 'request_access' }) tool_name!: string;
+  @ApiProperty({ description: '{그룹 공개 이름}__{Tool 이름}. Tool 수명 동안 바뀌지 않는다', example: 'security-ops__request_access' }) qualified_name!: string;
+  @ApiPropertyOptional({ nullable: true }) display_name?: string | null;
+  @ApiProperty({ description: 'LLM이 Tool을 고를 때 읽는 설명' }) description!: string;
+  @ApiProperty({ type: 'object', additionalProperties: true, description: 'JSON Schema' }) input_schema!: Record<string, unknown>;
+  @ApiPropertyOptional({ type: 'object', additionalProperties: true, nullable: true }) output_schema?: Record<string, unknown> | null;
+  @ApiProperty({ enum: ['declared', 'free_form'] }) output_contract!: string;
+  @ApiProperty({ enum: ['read_only', 'mutating', 'requires_approval'] }) side_effect!: string;
+  @ApiProperty({ type: [String] }) tags!: string[];
+  @ApiProperty() group_id!: string;
+  @ApiPropertyOptional({ nullable: true }) group_name?: string | null;
+  @ApiPropertyOptional({ nullable: true }) namespace?: string | null;
+  @ApiProperty({ description: '쓸 수 있는 Tool 중 같은 tool_name이 다른 그룹에도 있음' }) name_conflict!: boolean;
+  @ApiProperty() pinned_version!: number;
+}
+
+export class ToolListResponseDto {
+  @ApiProperty({ type: [ToolDefinitionDto] }) tools!: ToolDefinitionDto[];
+  @ApiProperty() has_name_conflict!: boolean;
+}
+
+export class ToolInvokeDto {
+  @ApiPropertyOptional({ type: 'object', additionalProperties: true, description: 'input_schema를 따르는 인자' }) arguments?: Record<string, unknown>;
+  @ApiPropertyOptional({ description: '일반 이름이 여러 그룹에 있을 때 그룹을 정한다' }) group_id?: string;
+  @ApiPropertyOptional({ enum: ['sync', 'async'], default: 'sync' }) mode?: 'sync' | 'async';
+  @ApiPropertyOptional({ minimum: 100, maximum: 30000 }) sync_timeout_ms?: number;
+}
+
+export class ToolInvokeErrorDto {
+  @ApiProperty({ enum: ['business'] }) kind!: string;
+  @ApiProperty({ example: 'APPROVAL_REJECTED' }) code!: string;
+  @ApiProperty() message!: string;
+  @ApiProperty({ example: false }) retryable!: boolean;
+}
+
+export class ToolInvokeResponseDto {
+  @ApiProperty() tool!: string;
+  @ApiProperty() qualified_name!: string;
+  @ApiProperty({ enum: ['ok', 'error', 'pending_approval', 'running'] }) status!: string;
+  @ApiProperty({ format: 'uuid' }) instance_id!: string;
+  @ApiPropertyOptional({ enum: ['SUCCESS', 'REJECTED', 'FAILURE'], nullable: true }) outcome?: string | null;
+  @ApiPropertyOptional({ nullable: true, description: '업무 결과 (End 노드 결과)' }) result?: unknown;
+  @ApiPropertyOptional({ type: ToolInvokeErrorDto, description: 'status=error일 때 업무 실패 내용. 재시도 대상이 아니다' }) error?: ToolInvokeErrorDto;
+  @ApiPropertyOptional({ type: 'object', additionalProperties: true, description: 'status=pending_approval일 때 결재 대기 정보' }) pending?: Record<string, unknown>;
+  @ApiProperty() result_url!: string;
+  @ApiPropertyOptional({ description: 'workflow:read가 있을 때만 준다' }) trace_url?: string;
+  @ApiPropertyOptional({ description: 'workflow:read가 있을 때만 준다' }) stream_url?: string;
+  @ApiProperty() idempotent_replay!: boolean;
+  @ApiProperty() request_id!: string;
+}

@@ -265,6 +265,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Tool 목록
+         * @description tool:read 권한 범위가 필요합니다. 응답은 LLM tool 정의로 바로 바꿀 수 있는 모양입니다. naming=auto(기본)는 이름이 겹치는 Tool만 한정 이름을 씁니다. 여러 턴에 걸쳐 이름을 캐시하면 naming=qualified를 쓰세요.
+         */
+        get: operations["Tools_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tools/invocations/{instance_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Tool 호출 결과 확인
+         * @description tool:invoke 권한 범위가 필요합니다. 202(pending_approval·running)를 받은 뒤 이 주소로 결과를 확인합니다. 응답 모양은 실행 API와 같습니다.
+         */
+        get: operations["Tools_invocation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tools/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Tool 상세
+         * @description tool:read 권한 범위가 필요합니다. 이름은 Tool 이름 또는 한정 이름입니다.
+         */
+        get: operations["Tools_describe"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tools/{name}/invoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Tool 실행
+         * @description tool:invoke 권한 범위가 필요합니다. Tool에 고정된 워크플로우 버전을 실행합니다. 200 ok(완료) / 200 error(업무 실패, 재시도하지 않음) / 202 pending_approval(결재 대기) / 202 running(진행 중). 실행 실패는 원인별 HTTP 코드와 failure_type·retryable을 줍니다. 자동 재시도는 HTTP 코드가 아니라 retryable로 판단하고, side_effect가 read_only가 아니면 첫 호출과 같은 Idempotency-Key로 재시도하세요.
+         */
+        post: operations["Tools_invoke"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export interface webhooks {
     workflowResult: {
@@ -520,6 +600,93 @@ export interface components {
             result?: {
                 [key: string]: unknown;
             };
+        };
+        ToolDefinitionDto: {
+            /**
+             * @description LLM에 넣을 이름. naming에 따라 tool_name 또는 qualified_name
+             * @example request_access
+             */
+            name: string;
+            /** @example request_access */
+            tool_name: string;
+            /**
+             * @description {그룹 공개 이름}__{Tool 이름}. Tool 수명 동안 바뀌지 않는다
+             * @example security-ops__request_access
+             */
+            qualified_name: string;
+            display_name?: Record<string, never> | null;
+            /** @description LLM이 Tool을 고를 때 읽는 설명 */
+            description: string;
+            /** @description JSON Schema */
+            input_schema: {
+                [key: string]: unknown;
+            };
+            output_schema?: {
+                [key: string]: unknown;
+            } | null;
+            /** @enum {string} */
+            output_contract: "declared" | "free_form";
+            /** @enum {string} */
+            side_effect: "read_only" | "mutating" | "requires_approval";
+            tags: string[];
+            group_id: string;
+            group_name?: Record<string, never> | null;
+            namespace?: Record<string, never> | null;
+            /** @description 쓸 수 있는 Tool 중 같은 tool_name이 다른 그룹에도 있음 */
+            name_conflict: boolean;
+            pinned_version: number;
+        };
+        ToolListResponseDto: {
+            tools: components["schemas"]["ToolDefinitionDto"][];
+            has_name_conflict: boolean;
+        };
+        ToolInvokeErrorDto: {
+            /** @enum {string} */
+            kind: "business";
+            /** @example APPROVAL_REJECTED */
+            code: string;
+            message: string;
+            /** @example false */
+            retryable: boolean;
+        };
+        ToolInvokeResponseDto: {
+            tool: string;
+            qualified_name: string;
+            /** @enum {string} */
+            status: "ok" | "error" | "pending_approval" | "running";
+            /** Format: uuid */
+            instance_id: string;
+            /** @enum {string|null} */
+            outcome?: "SUCCESS" | "REJECTED" | "FAILURE" | null;
+            /** @description 업무 결과 (End 노드 결과) */
+            result?: Record<string, never> | null;
+            /** @description status=error일 때 업무 실패 내용. 재시도 대상이 아니다 */
+            error?: components["schemas"]["ToolInvokeErrorDto"];
+            /** @description status=pending_approval일 때 결재 대기 정보 */
+            pending?: {
+                [key: string]: unknown;
+            };
+            result_url: string;
+            /** @description workflow:read가 있을 때만 준다 */
+            trace_url?: string;
+            /** @description workflow:read가 있을 때만 준다 */
+            stream_url?: string;
+            idempotent_replay: boolean;
+            request_id: string;
+        };
+        ToolInvokeDto: {
+            /** @description input_schema를 따르는 인자 */
+            arguments?: {
+                [key: string]: unknown;
+            };
+            /** @description 일반 이름이 여러 그룹에 있을 때 그룹을 정한다 */
+            group_id?: string;
+            /**
+             * @default sync
+             * @enum {string}
+             */
+            mode: "sync" | "async";
+            sync_timeout_ms?: number;
         };
         WorkflowResultWebhookSourceDto: {
             /** @example acrapoint */
@@ -1485,6 +1652,278 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApprovalTaskPageDto"];
+                };
+            };
+            /** @description API Key가 없거나 유효하지 않음 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicApiErrorDto"];
+                };
+            };
+            /** @description 필요한 scope가 없음 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicApiErrorDto"];
+                };
+            };
+            /** @description 리소스가 없거나 접근 범위 밖임 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicApiErrorDto"];
+                };
+            };
+            /** @description 내부 정보가 제거된 서버 오류 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicApiErrorDto"];
+                };
+            };
+        };
+    };
+    Tools_list: {
+        parameters: {
+            query?: {
+                /** @description 쉼표로 여러 값. 하나라도 맞으면 포함 */
+                tags?: unknown;
+                /** @description 쉼표로 여러 값 */
+                side_effect?: unknown;
+                naming?: "auto" | "qualified" | "plain";
+            };
+            header?: {
+                /** @description 호출자가 지정하는 요청 추적 ID. 생략하면 서버가 생성합니다. */
+                "X-Request-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolListResponseDto"];
+                };
+            };
+            /** @description API Key가 없거나 유효하지 않음 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicApiErrorDto"];
+                };
+            };
+            /** @description 필요한 scope가 없음 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicApiErrorDto"];
+                };
+            };
+            /** @description 리소스가 없거나 접근 범위 밖임 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicApiErrorDto"];
+                };
+            };
+            /** @description 내부 정보가 제거된 서버 오류 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicApiErrorDto"];
+                };
+            };
+        };
+    };
+    Tools_invocation: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 호출자가 지정하는 요청 추적 ID. 생략하면 서버가 생성합니다. */
+                "X-Request-ID"?: string;
+            };
+            path: {
+                instance_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 완료 또는 업무 실패 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolInvokeResponseDto"];
+                };
+            };
+            /** @description 결재 대기 또는 진행 중 */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolInvokeResponseDto"];
+                };
+            };
+            /** @description API Key가 없거나 유효하지 않음 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicApiErrorDto"];
+                };
+            };
+            /** @description 필요한 scope가 없음 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicApiErrorDto"];
+                };
+            };
+            /** @description 리소스가 없거나 접근 범위 밖임 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicApiErrorDto"];
+                };
+            };
+            /** @description 내부 정보가 제거된 서버 오류 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicApiErrorDto"];
+                };
+            };
+        };
+    };
+    Tools_describe: {
+        parameters: {
+            query?: {
+                group_id?: unknown;
+            };
+            header?: {
+                /** @description 호출자가 지정하는 요청 추적 ID. 생략하면 서버가 생성합니다. */
+                "X-Request-ID"?: string;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolDefinitionDto"];
+                };
+            };
+            /** @description API Key가 없거나 유효하지 않음 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicApiErrorDto"];
+                };
+            };
+            /** @description 필요한 scope가 없음 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicApiErrorDto"];
+                };
+            };
+            /** @description 리소스가 없거나 접근 범위 밖임 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicApiErrorDto"];
+                };
+            };
+            /** @description 내부 정보가 제거된 서버 오류 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicApiErrorDto"];
+                };
+            };
+        };
+    };
+    Tools_invoke: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 호출자가 지정하는 요청 추적 ID. 생략하면 서버가 생성합니다. */
+                "X-Request-ID"?: string;
+                /** @description 1~200자의 중복 실행 방지 키 */
+                "Idempotency-Key"?: string;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ToolInvokeDto"];
+            };
+        };
+        responses: {
+            /** @description 완료 또는 업무 실패 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolInvokeResponseDto"];
+                };
+            };
+            /** @description 결재 대기 또는 진행 중 */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolInvokeResponseDto"];
                 };
             };
             /** @description API Key가 없거나 유효하지 않음 */

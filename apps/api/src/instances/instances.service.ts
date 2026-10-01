@@ -32,7 +32,9 @@ export class InstancesService {
     instanceId: string,
     timeoutMs: number,
     maxCheckIntervalMs = Number(process.env.START_SYNC_POLL_MS ?? 250),
-  ): Promise<{ timedOut: boolean; [key: string]: any }> {
+    /** 끝나지 않았어도 더 기다릴 필요가 없으면 true. 예: 결재 대기에 들어간 Tool 실행 */
+    settled?: (latest: Awaited<ReturnType<InstancesService['getResult']>>) => Promise<boolean>,
+  ): Promise<{ timedOut: boolean; settled?: boolean; [key: string]: any }> {
     const deadline = Date.now() + timeoutMs;
     const watch = this.changeSignal.watch(instanceId);
     try {
@@ -40,6 +42,9 @@ export class InstancesService {
         const latest = await this.getResult(instanceId);
         if (TERMINAL_INSTANCE_STATES.includes(String(latest?.status || '').toUpperCase())) {
           return { timedOut: false, ...latest };
+        }
+        if (settled && latest && (await settled(latest))) {
+          return { timedOut: false, settled: true, ...latest };
         }
         const remaining = deadline - Date.now();
         if (remaining <= 0) {
